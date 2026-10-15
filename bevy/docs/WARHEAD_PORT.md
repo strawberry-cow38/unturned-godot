@@ -53,11 +53,9 @@ and wall shelter, crossbow save/load/rebase/pickup, animal capsule contact and
 world-frozen behavior, vertical spawn pose, and the nailgun exclusion. The new
 crossbow journey fails against the previous executable because no arrow exists.
 
-Native warhead FX and stuck-item pose rendering remain a follow-up after the
-current renderer checkpoint. Original thin-surface/water piercing is now handled by an optional continuation
+Original thin-surface/water piercing is handled by the optional continuation
 adapter described below. Ordinary dropped-item physics has not been generalized
-by this change. In-flight
-bullets remain transient across saves, as before.
+by this change. In-flight bullets remain transient across saves, as before.
 
 
 ## Surface continuation
@@ -99,5 +97,52 @@ it does not deduplicate coincident shotgun hits by position or emit another FX.
 The origin barrier drains that queue before translating retained positions,
 while normals remain directions. Four real-host regressions cover water-to-solid
 ordering, coincident pellets, actual animal capsule normals and the origin
-barrier. Native must consume these fields for water classification; the
-managed metadata alone does not establish splash rendering parity.
+barrier.
+
+## Native accepted presentation
+
+The existing impact consumer now keeps the accepted point and normalized normal.
+Its short local probe only supplies the original material classification and
+decal parent; older facts without a normal retain the original probe behavior.
+Accepted water bypasses solid geometry entirely and uses the source lit cutout
+droplets. `bulletPierced` does not emit another splash. Coincident pellets remain
+separate impacts because retained event sequence, rather than position, identifies
+each fact.
+
+`bulletExplosion` shares the existing source fireball, two dust columns, fading
+light and bomb audio used by frag grenades. Smoke and flare events remain distinct.
+The source large water column appears at sea level when the accepted explosion
+is no higher than sea+2m, with scale `clamp(radius/5,2,4)`. Effect/audio consumers
+deduplicate retained sequences and reset on world session changes. Source blast
+camera flinch is still a separate pending camera integration.
+
+World-item replicas consume `stuckDirection` as a frozen negative-Z look direction
+or `stuckEuler` in the source YXZ order. The same pose survives a live update,
+origin shift and load with a new network ID. The existing source mesh, oriented
+focus box and ordinary pickup/removal path remain in use. Unmarked dropped items
+retain their prior presentation; no loose-item physics or moving-target parenting
+is inferred from this frozen-ammunition metadata.
+
+Native Bevy-world regressions cover the water-versus-solid probe conflict,
+authoritative normal versus later contact, retained splash deduplication, source
+ocean blast cutoff/count, actual blast light/emitters/lifetime/pause/session
+cleanup, original bomb voice selection, and arrow orientation/focus/removal.
+Actual PEI input/render verification used the immutable 120-test bridge candidate.
+A real crossbow shot consumed its round, produced Arrow347 at the accepted wall
+contact, and the native focus prompt picked it back up through the server
+(world item removed; inventory gained one arrow). A real RPG-7 shot at the ocean
+consumed its round and emitted one `bulletExplosion` at y25.7 with radius9. The
+captured frame shows the blast light/fireball; a later frame shows the rising
+column. Capture metadata records the original24 water droplets at sea y25.6 and
+the original three blast emitters. No native damage is applied.
+
+This check also exposed two independent presentation/geometry defects. The
+container door exporter omitted the authored leaf AABB center (fixed separately
+with an actual bridge ray regression). The original arrow pickup mesh has its
+nose along +Y, while `StickProjectile.LookAt` aligns root -Z, so faithfully
+applying the saved root pose leaves this mesh sideways to the flight. A separate
+native adapter correction will rotate only the known arrow mesh and focus box;
+the accepted root pose and saved state remain unchanged. Local artifacts:
+`bevy-crossbow-arrow-pickup-focus`, `bevy-crossbow-arrow-recovered`,
+`bevy-rocket-ocean-blast` and `bevy-rocket-ocean-column` (PNG plus JSON under
+`bevy/artifacts/`).

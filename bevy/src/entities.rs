@@ -490,9 +490,11 @@ fn sync_world_items(
             .unwrap_or(0);
         live.insert(id);
         let existing = replicas.entities.get(&id).copied();
+        let rotation = items::rotation(item, id);
         if let Some(entity) = existing {
             if let Ok((mut transform, displayed)) = transforms.get_mut(entity) {
                 transform.translation = position;
+                transform.rotation = rotation;
                 if displayed.item_id == item_id && displayed.amount == amount {
                     continue;
                 }
@@ -528,12 +530,7 @@ fn sync_world_items(
                 art.focus,
                 Mesh3d(art.mesh),
                 MeshMaterial3d(art.material),
-                Transform::from_translation(position).with_rotation(Quat::from_euler(
-                    EulerRot::YXZ,
-                    ((id.wrapping_mul(137)) % 360) as f32 * std::f32::consts::PI / 180.,
-                    std::f32::consts::FRAC_PI_2,
-                    0.,
-                )),
+                Transform::from_translation(position).with_rotation(rotation),
             ))
             .remove::<bevy::camera::primitives::Aabb>();
         replicas.entities.insert(id, entity);

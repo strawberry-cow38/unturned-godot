@@ -62,6 +62,25 @@ pub(super) struct Displayed {
     pub item_id: u16,
     pub amount: u16,
 }
+/// StickProjectile freezes the ordinary pickup at the accepted contact. Its
+/// direction already includes the source normal-offset LookAt correction; a
+/// vertical hit instead retains WorldItem.Spawn's original YXZ Euler pose.
+pub(super) fn rotation(item: &serde_json::Value, net_id: u32) -> Quat {
+    if let Some(direction) =
+        crate::player::vector(&item["stuckDirection"]).and_then(Vec3::try_normalize)
+    {
+        return Transform::IDENTITY.looking_to(direction, Vec3::Y).rotation;
+    }
+    if let Some(euler) = crate::player::vector(&item["stuckEuler"]) {
+        return Quat::from_euler(EulerRot::YXZ, euler.y, euler.x, euler.z);
+    }
+    Quat::from_euler(
+        EulerRot::YXZ,
+        ((net_id.wrapping_mul(137)) % 360) as f32 * std::f32::consts::PI / 180.,
+        std::f32::consts::FRAC_PI_2,
+        0.,
+    )
+}
 #[derive(Clone)]
 pub(super) struct Art {
     pub mesh: Handle<Mesh>,

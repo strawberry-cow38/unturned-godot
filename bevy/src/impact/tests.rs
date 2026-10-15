@@ -17,6 +17,8 @@ fn app() -> App {
     .add_plugins(bevy::pbr::decal::ForwardDecalPlugin)
     .init_resource::<WorldConfig>()
     .init_resource::<crate::world::WorldGeometry>()
+    .init_resource::<crate::world::WorldState>()
+    .init_resource::<crate::entities::ItemCatalog>()
     .init_resource::<Settings>()
     .init_resource::<WorldSessionEpoch>()
     .insert_resource(UiState {
@@ -339,4 +341,119 @@ fn moving_decal_parent_uses_current_physics_pose_before_render_propagation() {
             .distance(hole.translation)
             < 1e-5
     );
+}
+
+#[test]
+fn accepted_water_contact_ignores_solid_probe_and_retained_pierce_does_not_duplicate_splash() {
+    let mut app = app();
+    app.world_mut().spawn((
+        crate::world::WorldObject {
+            guid: String::new(),
+            asset_name: "ac_0".into(),
+            source_index: 0,
+        },
+        Collider::cuboid(1., 1., 0.1),
+        RigidBody::Fixed,
+        Transform::from_xyz(0., 1., 0.),
+    ));
+    for _ in 0..4 {
+        app.update();
+    }
+    let impact = json!({"pos":[0,1,0.1],"surface":1,"normal":[0,1,0],"water":true,"thin":false});
+    event(&mut app, 1, "impact", impact.clone());
+    event(
+        &mut app,
+        2,
+        "bulletPierced",
+        json!({"point":[0,1,0.1],"water":true}),
+    );
+    app.update();
+    let (name, pose, emitter) = app
+        .world_mut()
+        .query::<(&Name, &Transform, &particles::Emitter)>()
+        .single(app.world())
+        .unwrap();
+    assert_eq!(name.as_str(), "Accepted Water impact");
+    assert_eq!(pose.translation, Vec3::new(0., 1., 0.1));
+    assert_eq!(emitter.debug_state().1, 2);
+    assert_eq!(
+        app.world_mut().query::<&Hole>().iter(app.world()).count(),
+        0
+    );
+    event(&mut app, 1, "impact", impact);
+    app.update();
+    assert_eq!(
+        emitters(&mut app),
+        1,
+        "the retained contact and continuation diagnostic are one splash"
+    );
+}
+
+#[test]
+fn accepted_world_normal_and_position_survive_a_different_later_probe_contact() {
+    let mut app = app();
+    app.world_mut().spawn((
+        crate::world::WorldObject {
+            guid: String::new(),
+            asset_name: "ac_0".into(),
+            source_index: 0,
+        },
+        Collider::cuboid(1., 1., 0.1),
+        RigidBody::Fixed,
+        Transform::from_xyz(0., 1., 0.),
+    ));
+    for _ in 0..4 {
+        app.update();
+    }
+    let point = Vec3::new(0., 1., 0.2);
+    let normal = Vec3::new(0., 1., 1.).normalize();
+    event(
+        &mut app,
+        1,
+        "impact",
+        json!({"pos":point.to_array(),"surface":1,"normal":normal.to_array(),"water":false}),
+    );
+    app.update();
+    let pose = app
+        .world_mut()
+        .query_filtered::<&Transform, With<Hole>>()
+        .single(app.world())
+        .unwrap();
+    assert!(pose.translation.distance(point + normal * 0.06) < 1e-5);
+    assert!((pose.rotation * Vec3::Y).distance(normal) < 1e-5);
+}
+
+#[test]
+fn accepted_ocean_warhead_has_one_source_large_column_at_sea_level() {
+    let mut app = app();
+    app.world_mut()
+        .resource_mut::<crate::world::WorldState>()
+        .sea_level = Some(7.);
+    let blast = json!({"position":[4,9,6],"radius":15,"itemId":519});
+    event(&mut app, 1, "bulletExplosion", blast.clone());
+    app.update();
+    let (name, pose, emitter) = app
+        .world_mut()
+        .query::<(&Name, &Transform, &particles::Emitter)>()
+        .single(app.world())
+        .unwrap();
+    assert_eq!(name.as_str(), "Accepted ocean blast splash");
+    assert_eq!(pose.translation, Vec3::new(4., 7., 6.));
+    assert_eq!(emitter.debug_state().1, 24);
+    event(&mut app, 1, "bulletExplosion", blast);
+    event(
+        &mut app,
+        2,
+        "bulletExplosion",
+        json!({"position":[4,9.01,6],"radius":15}),
+    );
+    app.update();
+    assert_eq!(
+        emitters(&mut app),
+        1,
+        "source upper limit is sea + 2, with retained facts deduplicated"
+    );
+    app.world_mut().resource_mut::<WorldSessionEpoch>().0 += 1;
+    app.update();
+    assert_eq!(emitters(&mut app), 0);
 }

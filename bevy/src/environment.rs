@@ -45,7 +45,7 @@ impl Plugin for EnvironmentPlugin {
                     update_environment,
                     ambience,
                     gun_audio,
-                    blast_audio,
+                    blast_audio.after(crate::entities::ApplyInteractions),
                     hand_audio,
                     apply_volume,
                 )
@@ -552,6 +552,8 @@ fn gun_audio(
         ));
     }
 }
+#[derive(Component)]
+struct BlastVoice;
 fn blast_audio(
     mut commands: Commands,
     mut events: MessageReader<CoreEvent>,
@@ -559,20 +561,25 @@ fn blast_audio(
     assets: Res<AssetServer>,
     config: Res<WorldConfig>,
     settings: Res<Settings>,
+    epoch: Res<crate::player::WorldSessionEpoch>,
+    mut cursor: Local<(u64, u64)>,
+    voices: Query<Entity, With<BlastVoice>>,
 ) {
-    for event in events.read().filter(|e| e.kind == "grenadeExploded") {
-        let id = event.data["itemId"].as_u64().unwrap_or(254) as u16;
-        if catalog
-            .items
-            .get(&id)
-            .is_some_and(|i| crate::projectiles::effects::throwable_kind(&i.throwable["kind"]) != 0)
-        {
+    if cursor.0 != epoch.0 {
+        for voice in &voices {
+            commands.entity(voice).try_despawn();
+        }
+        *cursor = (epoch.0, 0);
+    }
+    for event in events.read() {
+        if event.sequence <= cursor.1 {
             continue;
         }
-        let Some(at) = crate::player::vector(&event.data["pos"]) else {
+        cursor.1 = event.sequence;
+        let Some((at, radius)) = crate::projectiles::effects::accepted_blast(event, &catalog)
+        else {
             continue;
         };
-        let radius = event.data["radius"].as_f64().unwrap_or(8.) as f32;
         let path = format!("audio/explosions/bomb_fire_{:02}.wav", event.sequence % 7);
         if !config.content_root.join(&path).is_file() {
             continue;
@@ -593,7 +600,7 @@ fn blast_audio(
         );
         commands
             .entity(node)
-            .insert(Transform::from_translation(at));
+            .insert((Transform::from_translation(at), BlastVoice));
     }
 }
 fn hand_audio(
@@ -720,5 +727,62 @@ mod tests {
         cloud_step(&mut env, 5.);
         assert_eq!(env.offset, previous);
         assert_ne!(env.offset, env.offset2);
+    }
+    #[test]
+    fn accepted_warhead_plays_original_bomb_voice_once_at_the_authoritative_position() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<AudioSource>()
+            .init_resource::<crate::entities::ItemCatalog>()
+            .init_resource::<crate::player::WorldSessionEpoch>()
+            .init_resource::<WorldConfig>()
+            .init_resource::<Settings>()
+            .add_message::<CoreEvent>()
+            .add_systems(Update, blast_audio);
+        let root = app.world().resource::<WorldConfig>().content_root.clone();
+        assert!(root.join("audio/explosions/bomb_fire_01.wav").is_file());
+        let fact = CoreEvent {
+            sequence: 1,
+            kind: "bulletExplosion".into(),
+            data: serde_json::json!({"position":[7,8,9],"radius":15,"itemId":519}),
+        };
+        app.world_mut().write_message(fact.clone());
+        app.update();
+        let (pose, playback, audio) = app
+            .world_mut()
+            .query::<(&Transform, &PlaybackSettings, &AudioPlayer)>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(pose.translation, Vec3::new(7., 8., 9.));
+        assert!(playback.spatial);
+        assert!((0.95..=1.05).contains(&playback.speed));
+        assert_eq!(
+            app.world()
+                .resource::<AssetServer>()
+                .get_path(audio.0.id())
+                .unwrap()
+                .path(),
+            std::path::Path::new("audio/explosions/bomb_fire_01.wav")
+        );
+        app.world_mut().write_message(fact);
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&AudioPlayer>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        app.world_mut()
+            .resource_mut::<crate::player::WorldSessionEpoch>()
+            .0 += 1;
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&AudioPlayer>()
+                .iter(app.world())
+                .count(),
+            0
+        );
     }
 }

@@ -31,6 +31,78 @@ fn app() -> App {
     app
 }
 #[test]
+fn accepted_stuck_arrow_keeps_look_at_across_updates_new_ids_and_origin_shifts() {
+    let mut app = app();
+    // Source LookAt begins 5cm outside the target and aims at hit + direction.
+    let direction = Vec3::new(0.2, -0.1, -1.05).normalize();
+    let put = |app: &mut App, id, position: [f32; 3]| {
+        app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"worldItems":[{
+            "netId":id,"itemId":347,"amount":1,"quality":100,"position":position,
+            "settled":true,"stuckDirection":direction.to_array(),"stuckNormal":[0,0,1]
+        }]});
+        app.update();
+    };
+    put(&mut app, 10, [4., 1., -2.95]);
+    let entity = app.world().resource::<Replicas>().entities[&10];
+    let pose = *app.world().get::<Transform>(entity).unwrap();
+    assert!((pose.rotation * Vec3::NEG_Z).distance(direction) < 1e-5);
+    let focus = app.world().get::<Focus>(entity).unwrap();
+    let center = pose.transform_point(focus.center);
+    assert!(
+        focus
+            .ray(&pose, center - direction * 2., direction, 4.)
+            .is_some(),
+        "frozen recovered ammo remains an ordinary focusable pickup"
+    );
+    // Update a live unchanged item: that early return must still adopt rotation.
+    app.world_mut()
+        .get_mut::<Transform>(entity)
+        .unwrap()
+        .rotation = Quat::IDENTITY;
+    put(&mut app, 10, [-1020., 1., -2.95]);
+    assert_eq!(app.world().resource::<Replicas>().entities[&10], entity);
+    let shifted = app.world().get::<Transform>(entity).unwrap();
+    assert!((shifted.rotation * Vec3::NEG_Z).distance(direction) < 1e-5);
+    assert_eq!(shifted.translation, Vec3::new(-1020., 1., -2.95));
+    put(&mut app, 29, [-1020., 1., -2.95]);
+    assert!(app.world().get_entity(entity).is_err());
+    let loaded = app.world().resource::<Replicas>().entities[&29];
+    assert!(
+        app.world()
+            .get::<Transform>(loaded)
+            .unwrap()
+            .rotation
+            .abs_diff_eq(pose.rotation, 1e-5)
+    );
+    app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"worldItems":[]});
+    app.update();
+    assert!(app.world().get_entity(loaded).is_err());
+}
+#[test]
+fn vertical_stuck_arrow_uses_captured_yxz_euler_while_unmarked_drops_keep_existing_pose() {
+    let mut app = app();
+    let euler = Vec3::new(1.62, 0.73, -0.2);
+    app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"worldItems":[
+        {"netId":10,"itemId":347,"amount":1,"position":[1,2,3],"settled":true,"stuckDirection":null,"stuckEuler":euler.to_array()},
+        {"netId":11,"itemId":347,"amount":1,"position":[4,5,6],"settled":true}
+    ]});
+    app.update();
+    let entities = &app.world().resource::<Replicas>().entities;
+    let vertical = app.world().get::<Transform>(entities[&10]).unwrap();
+    let expected = Quat::from_rotation_y(euler.y)
+        * Quat::from_rotation_x(euler.x)
+        * Quat::from_rotation_z(euler.z);
+    assert!(vertical.rotation.abs_diff_eq(expected, 1e-5));
+    let ordinary = app.world().get::<Transform>(entities[&11]).unwrap();
+    let expected = Quat::from_euler(
+        EulerRot::YXZ,
+        (11 * 137 % 360) as f32 * std::f32::consts::PI / 180.,
+        std::f32::consts::FRAC_PI_2,
+        0.,
+    );
+    assert!(ordinary.rotation.abs_diff_eq(expected, 1e-5));
+}
+#[test]
 fn real_dropped_shirt_has_its_manifest_mesh_material_mips_and_rotated_focus_box() {
     let mut app = app();
     app.world_mut().resource_mut::<GameSnapshot>().0 =

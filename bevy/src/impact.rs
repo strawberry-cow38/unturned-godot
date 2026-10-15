@@ -293,7 +293,11 @@ fn receive(
     mut events: MessageReader<CoreEvent>,
     mut feedback: ResMut<Feedback>,
     epoch: Res<WorldSessionEpoch>,
-    snapshot: Res<GameSnapshot>,
+    (snapshot, catalog, world): (
+        Res<GameSnapshot>,
+        Res<crate::entities::ItemCatalog>,
+        Res<crate::world::WorldState>,
+    ),
     config: Res<WorldConfig>,
     settings: Res<Settings>,
     assets: Res<AssetServer>,
@@ -323,6 +327,34 @@ fn receive(
         feedback.last_event = event.sequence;
         let data = &event.data;
         let seed = event.sequence.wrapping_mul(6364136223846793005);
+        // Original Explode adds a large ocean column independently of its fire
+        // and dust. The accepted position/radius do not apply any native damage.
+        if let Some((at, radius)) = crate::projectiles::effects::accepted_blast(event, &catalog) {
+            if let Some(sea) = world.sea_level.filter(|sea| at.y <= sea + 2.) {
+                let (material, _) = feedback.material(
+                    "Water",
+                    "impact_water_static_0.png",
+                    Color::srgb(0.82, 0.9, 1.),
+                    0.5,
+                    &config,
+                    &assets,
+                    &mut materials,
+                );
+                let entity = particles::spawn(
+                    &mut commands,
+                    &mut meshes,
+                    &particles,
+                    water_spec(material, (radius / 5.).clamp(2., 4.)),
+                    Vec3::new(at.x, sea, at.z),
+                    None,
+                    seed,
+                );
+                commands
+                    .entity(entity)
+                    .insert((Name::new("Accepted ocean blast splash"), ImpactTransient));
+            }
+            continue;
+        }
         let marker = match event.kind.as_str() {
             "hit" => Some(if data["headshot"].as_bool() == Some(true) {
                 markers::Kind::Head
@@ -414,27 +446,51 @@ fn receive(
             }
             continue;
         }
-        // Original PlayerController.RenderImpactFx recovers the surface normal
-        // with a one-metre local probe around the accepted point; no damage ray.
-        let hit = rapier.single().ok().and_then(|context| {
-            context.cast_ray_and_get_normal(
-                point - direction * 0.5,
-                direction,
-                1.,
-                true,
-                QueryFilter::default()
-                    .exclude_sensors()
-                    .groups(CollisionGroups::new(
-                        Group::ALL,
-                        Group::ALL & !Group::GROUP_2 & !Group::GROUP_5 & !Group::GROUP_6,
-                    )),
+        // The old wire carries no material: retain its local presentation probe.
+        // Host-enriched facts own the contact point/normal, and water is a
+        // non-solid slab, so a later solid-world probe cannot reclassify it.
+        let accepted_normal = crate::player::vector(&data["normal"]).and_then(Vec3::try_normalize);
+        let accepted_water = data["water"].as_bool() == Some(true);
+        let hit = (!accepted_water)
+            .then(|| {
+                rapier.single().ok().and_then(|context| {
+                    context.cast_ray_and_get_normal(
+                        point - direction * 0.5,
+                        direction,
+                        1.,
+                        true,
+                        QueryFilter::default()
+                            .exclude_sensors()
+                            .groups(CollisionGroups::new(
+                                Group::ALL,
+                                Group::ALL & !Group::GROUP_2 & !Group::GROUP_5 & !Group::GROUP_6,
+                            )),
+                    )
+                })
+            })
+            .flatten();
+        let (point, normal, surface, parent) = if accepted_water {
+            (
+                point,
+                accepted_normal.unwrap_or(Vec3::Y),
+                Surface::Water,
+                None,
             )
-        });
-        let (point, normal, surface, parent) = if let Some((entity, hit)) = hit {
-            let (s, p) = surfaces.at(entity, hit.point);
-            (hit.point, hit.normal, s, p)
+        } else if let Some((entity, hit)) = hit {
+            let point = if accepted_normal.is_some() {
+                point
+            } else {
+                hit.point
+            };
+            let (s, p) = surfaces.at(entity, point);
+            (point, accepted_normal.unwrap_or(hit.normal), s, p)
         } else {
-            (point, Vec3::Y, Surface::Dirt, None)
+            (
+                point,
+                accepted_normal.unwrap_or(Vec3::Y),
+                Surface::Dirt,
+                None,
+            )
         };
         let snow = surface == Surface::Snow;
         let water = surface == Surface::Water;

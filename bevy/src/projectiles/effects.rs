@@ -68,6 +68,28 @@ pub fn throwable_kind(value: &serde_json::Value) -> u64 {
         _ => value.as_u64().unwrap_or(0),
     }
 }
+/// Source Explode is shared by explosive ammunition and frag throwables. Smoke
+/// and flares have their own presentation and must never borrow a blast effect.
+pub(crate) fn accepted_blast(event: &CoreEvent, catalog: &ItemCatalog) -> Option<(Vec3, f32)> {
+    let (point, fallback) = match event.kind.as_str() {
+        "bulletExplosion" => (&event.data["position"], 0.),
+        "grenadeExploded" => {
+            let id = event.data["itemId"].as_u64().unwrap_or(254) as u16;
+            if catalog
+                .items
+                .get(&id)
+                .is_some_and(|i| throwable_kind(&i.throwable["kind"]) != 0)
+            {
+                return None;
+            }
+            (&event.data["pos"], 8.)
+        }
+        _ => return None,
+    };
+    let point = crate::player::vector(point)?;
+    let radius = event.data["radius"].as_f64().unwrap_or(fallback) as f32;
+    (radius.is_finite() && radius > 0.).then_some((point, radius))
+}
 fn reset_session(
     mut commands: Commands,
     epoch: Res<WorldSessionEpoch>,
@@ -89,8 +111,31 @@ fn events(
     assets: Res<AssetServer>,
     particles: Res<ParticleAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
+    epoch: Res<WorldSessionEpoch>,
+    mut cursor: Local<(u64, u64)>,
 ) {
-    for event in events.read().filter(|e| e.kind == "grenadeExploded") {
+    if cursor.0 != epoch.0 {
+        *cursor = (epoch.0, 0);
+    }
+    for event in events.read() {
+        if event.sequence <= cursor.1 {
+            continue;
+        }
+        cursor.1 = event.sequence;
+        if let Some((at, radius)) = accepted_blast(event, &catalog) {
+            blast(
+                &mut commands,
+                &mut meshes,
+                &particles,
+                at,
+                radius,
+                event.sequence,
+            );
+            continue;
+        }
+        if event.kind != "grenadeExploded" {
+            continue;
+        }
         let Some(at) = crate::player::vector(&event.data["pos"]) else {
             continue;
         };
@@ -120,16 +165,7 @@ fn events(
                 ));
             }
             2 => {}
-            _ => {
-                blast(
-                    &mut commands,
-                    &mut meshes,
-                    &particles,
-                    at,
-                    event.data["radius"].as_f64().unwrap_or(8.) as f32,
-                    event.sequence,
-                );
-            }
+            _ => {}
         }
     }
 }
@@ -466,6 +502,149 @@ fn age_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), TransformPlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .init_resource::<ItemCatalog>()
+            .init_resource::<WorldSessionEpoch>()
+            .insert_resource(UiState {
+                screen: crate::ui::Screen::Playing,
+                ..default()
+            })
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(20),
+            ))
+            .add_message::<CoreEvent>()
+            .add_plugins((crate::particles::ParticlePlugin, ProjectileEffectsPlugin));
+        for (id, kind) in [(254, "Frag"), (267, "Smoke"), (259, "Flare")] {
+            let item = serde_json::from_value(json!({"id":id,"name":"test","type":"throwable","throwable":{"kind":kind,"radius":8,"effectSeconds":40}})).unwrap();
+            app.world_mut()
+                .resource_mut::<ItemCatalog>()
+                .items
+                .insert(id, item);
+        }
+        app.update();
+        app.update();
+        app
+    }
+    fn event(app: &mut App, sequence: u64, kind: &str, data: serde_json::Value) {
+        app.world_mut().write_message(CoreEvent {
+            sequence,
+            kind: kind.into(),
+            data,
+        });
+    }
+    fn roots(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&EffectRoot>()
+            .iter(app.world())
+            .count()
+    }
+    #[test]
+    fn accepted_warhead_reuses_source_blast_without_grenade_metadata_or_duplicate_damage() {
+        let mut app = app();
+        let snapshot = json!({"player":{"health":73},"worldItems":[]});
+        app.insert_resource(crate::player::GameSnapshot(snapshot.clone()));
+        let blast = json!({"position":[2,3,4],"radius":18,"itemId":519,"sequence":7,"pellet":0});
+        event(&mut app, 1, "bulletExplosion", blast.clone());
+        app.update();
+        let pose = app
+            .world_mut()
+            .query_filtered::<&Transform, With<EffectRoot>>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(pose.translation, Vec3::new(2., 3., 4.));
+        let light = app
+            .world_mut()
+            .query::<&PointLight>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(
+            light.range, 36.,
+            "source radius scales the existing authored blast"
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&particles::Emitter>()
+                .iter(app.world())
+                .count(),
+            3
+        );
+        assert_eq!(
+            app.world().resource::<crate::player::GameSnapshot>().0,
+            snapshot
+        );
+        event(&mut app, 1, "bulletExplosion", blast);
+        event(&mut app, 2, "bulletPierced", json!({"point":[2,3,4]}));
+        app.update();
+        assert_eq!(roots(&mut app), 1);
+        for _ in 0..170 {
+            app.update();
+        }
+        assert_eq!(roots(&mut app), 0);
+        assert_eq!(
+            app.world_mut()
+                .query::<&particles::Emitter>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+    }
+    #[test]
+    fn frag_still_blasts_smoke_and_flare_do_not_and_new_session_accepts_reused_sequence() {
+        let mut app = app();
+        event(
+            &mut app,
+            1,
+            "grenadeExploded",
+            json!({"pos":[0,1,2],"itemId":254,"radius":9}),
+        );
+        event(
+            &mut app,
+            2,
+            "grenadeExploded",
+            json!({"pos":[0,1,2],"itemId":267,"radius":9}),
+        );
+        event(
+            &mut app,
+            3,
+            "grenadeExploded",
+            json!({"pos":[0,1,2],"itemId":259,"radius":9}),
+        );
+        app.update();
+        assert_eq!(
+            roots(&mut app),
+            2,
+            "one blast and one palette-pending smoke, no flare blast"
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&PointLight>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        app.world_mut().resource_mut::<WorldSessionEpoch>().0 += 1;
+        app.update();
+        assert_eq!(roots(&mut app), 0);
+        event(
+            &mut app,
+            1,
+            "bulletExplosion",
+            json!({"position":[3,2,1],"radius":6}),
+        );
+        app.update();
+        assert_eq!(roots(&mut app), 1);
+        app.world_mut().resource_mut::<UiState>().screen = crate::ui::Screen::Paused;
+        for _ in 0..200 {
+            app.update();
+        }
+        assert_eq!(roots(&mut app), 1, "pause retains source effect lifetime");
+    }
     #[test]
     fn loaded_flare_uses_authority_remaining_life_instead_of_restarting_full_burn() {
         let mut app = App::new();
