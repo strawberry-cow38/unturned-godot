@@ -104,7 +104,7 @@ impl Default for Session {
 }
 
 #[derive(Clone, Copy)]
-struct StanceHeights {
+pub(crate) struct StanceHeights {
     stand: f32,
     crouch: f32,
     prone: f32,
@@ -119,7 +119,7 @@ impl Default for StanceHeights {
     }
 }
 impl StanceHeights {
-    fn for_stance(self, stance: &str) -> f32 {
+    pub(crate) fn for_stance(self, stance: &str) -> f32 {
         match stance {
             "crouch" => self.crouch,
             "prone" => self.prone,

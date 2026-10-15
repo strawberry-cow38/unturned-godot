@@ -20,6 +20,7 @@ pub mod camera;
 mod death;
 mod held;
 mod pose;
+pub(crate) mod remotes;
 pub use camera::Perspective;
 pub use held::AvatarMuzzleUpdate;
 
@@ -28,7 +29,8 @@ pub struct AvatarPlugin;
 pub struct AvatarUpdate;
 impl Plugin for AvatarPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Perspective>()
+        app.add_plugins(remotes::RemotePlayersPlugin)
+            .init_resource::<Perspective>()
             .init_resource::<AvatarState>()
             .init_resource::<held::Mirror>()
             .init_resource::<death::Death>()
@@ -196,7 +198,21 @@ fn spawn(
     }
 }
 fn outfit(state: &Value, arms: bool, catalog: &crate::entities::ItemCatalog) -> Appearance {
-    let worn = &state["inventory"]["worn"];
+    outfit_parts(
+        &state["inventory"]["worn"],
+        &state["inventory"]["wornQuality"],
+        state["player"]["profile"]["face"].as_u64().unwrap_or(0).min(31) as u8,
+        arms,
+        catalog,
+    )
+}
+fn outfit_parts(
+    worn: &Value,
+    quality: &Value,
+    face: u8,
+    arms: bool,
+    catalog: &crate::entities::ItemCatalog,
+) -> Appearance {
     let id = |slot: &str| worn[slot].as_i64().filter(|n| *n > 0).unwrap_or(-1) as i32;
     let wear = |slot: &str| {
         if !catalog
@@ -206,9 +222,7 @@ fn outfit(state: &Value, arms: bool, catalog: &crate::entities::ItemCatalog) -> 
         {
             return 0.;
         }
-        let q = state["inventory"]["wornQuality"][slot]
-            .as_f64()
-            .unwrap_or(100.) as f32;
+        let q = quality[slot].as_f64().unwrap_or(100.) as f32;
         ((1. - q.clamp(0., 100.) / 100.) * 50.).round_ties_even() / 50.
     };
     Appearance {
@@ -223,16 +237,7 @@ fn outfit(state: &Value, arms: bool, catalog: &crate::entities::ItemCatalog) -> 
                 .filter(|id| *id > 0)
                 .collect()
         },
-        face: if arms {
-            None
-        } else {
-            Some(
-                state["player"]["profile"]["face"]
-                    .as_u64()
-                    .unwrap_or(0)
-                    .min(31) as u8,
-            )
-        },
+        face: if arms { None } else { Some(face) },
         wear: Vec2::new(wear("shirt"), wear("pants")),
         ..default()
     }

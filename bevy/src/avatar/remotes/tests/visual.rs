@@ -1,0 +1,132 @@
+//! Opt-in render fixture for the production replica/rig/clothing path. This is
+//! fixed replica data, not evidence of a complete multiplayer gameplay journey.
+use super::*;
+use bevy::{
+    app::AppExit,
+    core_pipeline::tonemapping::Tonemapping,
+    render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
+    winit::WinitPlugin,
+};
+
+#[derive(Resource)]
+struct Shot(String);
+
+#[test]
+#[ignore = "requires a graphics display; writes UG_REMOTE_POSE_SHOT or /tmp/bevy-remote-poses.png"]
+fn render_remote_pose_fixture() {
+    let config = WorldConfig::default();
+    let path = std::env::var("UG_REMOTE_POSE_SHOT")
+        .unwrap_or_else(|_| "/tmp/bevy-remote-poses.png".into());
+    let mut players = vec![row(1, Vec3::ZERO)];
+    for (i, stance) in [0, 2, 3, 4].into_iter().enumerate() {
+        let mut peer = row(i as u16 + 2, Vec3::new((i as f32 - 1.5) * 2., 0., 0.));
+        peer["stance"] = json!(stance);
+        players.push(peer);
+    }
+    let mut app = App::new();
+    app.insert_resource(Shot(path.clone()))
+        .insert_resource(ClearColor(Color::srgb(0.12, 0.15, 0.19)))
+        .add_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    file_path: config
+                        .content_root
+                        .canonicalize()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        resolution: (1280, 720).into(),
+                        title: "Remote-player production pose fixture".into(),
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(WinitPlugin {
+                    run_on_any_thread: true,
+                    ..default()
+                }),
+        )
+        .insert_resource(config)
+        .init_resource::<WorldSessionEpoch>()
+        .init_resource::<ItemCatalog>()
+        .insert_resource(GameSnapshot(json!({"connected":true,"playerId":1,
+            "players":players,"vehicles":[]})))
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(20),
+        ))
+        .add_plugins((
+            crate::content::ContentPlugin,
+            crate::rig::RigPlugin,
+            crate::character::CharacterPlugin,
+            RemotePlayersPlugin,
+        ))
+        .add_systems(Startup, scene)
+        .add_systems(Update, capture);
+    app.world_mut().resource_mut::<ItemCatalog>().items.insert(
+        24,
+        serde_json::from_value(
+            json!({"id":24,"name":"Gold shirt","type":"shirt","hasCondition":true}),
+        )
+        .unwrap(),
+    );
+    app.run();
+    assert!(
+        std::path::Path::new(&path).is_file(),
+        "render did not save the fixture"
+    );
+}
+
+fn scene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let side = std::env::var_os("UG_REMOTE_POSE_SIDE").is_some();
+    commands.spawn((
+        Camera3d::default(),
+        Tonemapping::TonyMcMapface,
+        Msaa::Off,
+        Transform::from_xyz(if side { -5. } else { 0. }, 3.5, -10.)
+            .looking_at(Vec3::new(0., 0.75, 0.), Vec3::Y),
+    ));
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 8000.,
+            shadow_maps_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(-3., 6., -5.).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    commands.insert_resource(GlobalAmbientLight {
+        color: Color::WHITE,
+        brightness: 100.,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(12., 0.1, 8.))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.5, 0.5, 0.5),
+            perceptual_roughness: 1.,
+            ..default()
+        })),
+        Transform::from_xyz(0., -0.05, 0.),
+    ));
+}
+
+fn capture(mut frames: Local<u32>, mut commands: Commands, path: Res<Shot>) {
+    *frames += 1;
+    if *frames == 60 {
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path.0.clone()))
+            .observe(
+                |_: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
+                    exit.write(AppExit::Success);
+                },
+            );
+    }
+}

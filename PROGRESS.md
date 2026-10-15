@@ -1159,3 +1159,17 @@ Container_0 leaf: the old uncentred export misses, the production export hits th
 front, opening clears the old position and moves the hit surface with the leaf.
 Repeat live arrow evidence follows in the next combined renderer; HDR/lean
 compositor work remains separate and uncommitted until its visual verification.
+
+### Bevy accepted remote-player body checkpoint (2026-10-15)
+
+Native peer replicas now spawn the original human skeleton, skin, face, worn gear
+and condition-aware clothing while excluding the local owner. Original movement
+glide, measured-speed smoothing, teleport threshold and stance clips drive those
+bodies. Real Rapier regressions verify local-player collision without vehicle
+blocking, seated collision disable and full leave/session cleanup. Four focused
+native tests pass. A ninth real-UDP bridge test caught and guards the distinction
+between transform-wire stance and the different combat appearance enum; snapshots
+also expose original worn condition, attachments and light flags. The opt-in
+production-render pose fixture is added with visual review pending. Remote held
+weapons, gestures, names, footsteps, lighting and reclined furniture remain work;
+this checkpoint does not claim end-to-end multiplayer is playable.

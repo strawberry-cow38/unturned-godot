@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SDG.NetPak;
+using SDG.Unturned;
 using SDG.NetTransport;
 using SDG.NetTransport.Mem;
 using SDG.NetTransport.Udp;
@@ -80,10 +81,20 @@ public sealed partial class BridgeHost
             playerId = player.OwnerPlayerId, position = Array(player.Pos), yaw = player.YawDegrees,
             profile = profile == null ? null : new { name = profile.Name, face = profile.Face, avatarHash = profile.AvatarHash },
             alive = combat?.Alive ?? true, health = combat?.Health ?? 100,
-            heldItemId = combat?.HeldId ?? 0, stance = combat?.Stance ?? 0, gesture = combat?.Gesture ?? 0,
+            // Transform wire stance (0 stand .. 4 furniture sitting), rather
+            // than the distinct EPlayerStance enum in appearance publication.
+            heldItemId = combat?.HeldId ?? 0, stance = player.Stance, gesture = combat?.Gesture ?? 0,
             worn = new { hat = combat?.WornHat ?? 0, glasses = combat?.WornGlasses ?? 0,
                 mask = combat?.WornMask ?? 0, shirt = combat?.WornShirt ?? 0, vest = combat?.WornVest ?? 0,
                 backpack = combat?.WornBackpack ?? 0, pants = combat?.WornPants ?? 0 },
+            wornQuality = new {
+                hat = Durability.UnpackWorn(combat?.WornCond ?? 0, 0), glasses = Durability.UnpackWorn(combat?.WornCond ?? 0, 1),
+                mask = Durability.UnpackWorn(combat?.WornCond ?? 0, 2), shirt = Durability.UnpackWorn(combat?.WornCond ?? 0, 3),
+                vest = Durability.UnpackWorn(combat?.WornCond ?? 0, 4), backpack = Durability.UnpackWorn(combat?.WornCond ?? 0, 5),
+                pants = Durability.UnpackWorn(combat?.WornCond ?? 0, 6),
+            },
+            attachments = new { sightId = combat?.HeldSight ?? 0, magazineId = combat?.HeldMagazine ?? 0, barrelId = combat?.HeldBarrel ?? 0 },
+            lights = new { worn = combat?.WornLightOn ?? false, held = combat?.HeldLightOn ?? false },
         };
     }).ToArray();
 }

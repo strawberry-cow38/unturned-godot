@@ -189,6 +189,20 @@ public sealed class NetworkSessionTests
     }
 
     [Test]
+    public void PeerPoseUsesWireStanceRatherThanTheDistinctAppearanceEnum()
+    {
+        Listen();
+        var peer = Peer();
+        Pump();
+        for (int n = 0; n < 12; n++) { peer.SendMoveInput(0, 0, 0, buttons: 2 << 1); Pump(1); }
+        var row = State().GetProperty("players").EnumerateArray().Single(p => p.GetProperty("playerId").GetUInt16() == peer.PlayerId);
+        Assert.That(row.GetProperty("stance").GetByte(), Is.EqualTo(2), "wire crouch is2; EPlayerStance.CROUCH is4");
+        Assert.That(row.GetProperty("wornQuality").GetProperty("shirt").GetInt32(), Is.InRange(0,100));
+        Assert.That(row.GetProperty("attachments").GetProperty("sightId").GetInt32(), Is.Zero);
+        Assert.That(row.GetProperty("lights").GetProperty("worn").GetBoolean(), Is.False);
+    }
+
+    [Test]
     public void ExistingBrowserProtocolReportsLivePeerCountMapAndContentIdentity()
     {
         Listen();
