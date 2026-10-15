@@ -201,6 +201,10 @@ impl PlayerInput {
     pub(crate) fn yaw(&self) -> f32 {
         self.yaw
     }
+    /// Body/look heading before the separate camera gaze (source LookBasis).
+    pub(crate) fn world_yaw(&self) -> f32 {
+        self.yaw + if self.in_seat { self.seat_yaw } else { 0. }
+    }
     pub(crate) fn pitch(&self) -> f32 {
         self.pitch
     }
@@ -515,6 +519,9 @@ fn ui_intents(
             UiIntent::Save => bridge.request("save", json!({"path":save_path(&options.0.map)})),
             UiIntent::Load => bridge.request("load", json!({"path":save_path(&options.0.map)})),
             UiIntent::Action { name, args } => {
+                if name == "console" && crate::entities::npcs::is_console_command(args["text"].as_str().unwrap_or("")) {
+                    continue;
+                }
                 let gesture = if name == "console" {
                     crate::avatar::gestures::console(
                         args["text"].as_str().unwrap_or(""),

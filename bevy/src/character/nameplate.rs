@@ -42,6 +42,9 @@ pub(crate) struct Nameplate {
     /// None is no avatar; corrupt non-null bytes use missing_texture instead.
     pub picture: Option<Handle<Image>>,
 }
+/// NPC look focus is an additional gate; the range check must not reopen it.
+#[derive(Component)]
+pub(crate) struct NameplateEnabled(pub bool);
 impl Nameplate {
     pub const HEIGHT: f32 = 2.05;
     pub fn above_gear(top_local_y: f32) -> f32 {
@@ -144,13 +147,14 @@ fn quad(
 }
 fn range(
     camera: Query<&GlobalTransform, With<crate::player::PlayerCamera>>,
-    mut plates: Query<(&GlobalTransform, &mut Visibility), With<Nameplate>>,
+    mut plates: Query<(&GlobalTransform, &mut Visibility, Option<&NameplateEnabled>), With<Nameplate>>,
 ) {
     let Ok(camera) = camera.single() else {
         return;
     };
-    for (pose, mut visibility) in &mut plates {
-        *visibility = if pose.translation().distance_squared(camera.translation()) <= 60. * 60. {
+    for (pose, mut visibility, enabled) in &mut plates {
+        *visibility = if enabled.is_none_or(|e| e.0)
+            && pose.translation().distance_squared(camera.translation()) <= 60. * 60. {
             Visibility::Inherited
         } else {
             Visibility::Hidden

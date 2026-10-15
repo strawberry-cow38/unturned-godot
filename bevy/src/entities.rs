@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 mod items;
 mod map_bindings;
+pub(crate) mod npcs;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -186,7 +187,8 @@ pub struct CoreEvent {
 pub struct EntityPlugin;
 impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ItemCatalog>()
+        app.add_plugins(npcs::NpcPlugin)
+            .init_resource::<ItemCatalog>()
             .init_resource::<ServiceManifest>()
             .init_resource::<map_bindings::Bindings>()
             .init_resource::<InteractionFocus>()

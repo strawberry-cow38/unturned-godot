@@ -276,6 +276,7 @@ fn shift_world(world: &mut World, shift: Vec3, offset: DVec2) {
     crate::player::shift_origin(world, shift);
     crate::vehicle::shift_origin(world, shift);
     crate::zombie::shift_origin(world, shift);
+    crate::entities::npcs::shift_origin(world, shift);
     super::interactables::shift_origin(world, shift);
     super::beds::shift_origin(world, shift);
     super::rain::shift_origin(world, shift);
@@ -320,6 +321,9 @@ fn shift_world(world: &mut World, shift: Vec3, offset: DVec2) {
             shift_entry(entry, shift);
         }
         for entry in &mut services.seats {
+            shift_entry(entry, shift);
+        }
+        for entry in &mut services.npcs {
             shift_entry(entry, shift);
         }
     }

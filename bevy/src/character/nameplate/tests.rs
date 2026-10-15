@@ -80,6 +80,12 @@ fn source_range_uses_plate_position_and_gear_height_never_lowers_the_anchor() {
         *app.world().get::<Visibility>(plate).unwrap(),
         Visibility::Inherited
     );
+    app.world_mut().entity_mut(plate).insert(NameplateEnabled(false));
+    app.update();
+    assert_eq!(*app.world().get::<Visibility>(plate).unwrap(), Visibility::Hidden);
+    app.world_mut().get_mut::<NameplateEnabled>(plate).unwrap().0 = true;
+    app.update();
+    assert_eq!(*app.world().get::<Visibility>(plate).unwrap(), Visibility::Inherited);
     *app.world_mut().get_mut::<GlobalTransform>(camera).unwrap() =
         GlobalTransform::from_translation(Vec3::new(60.01, 2.05, 0.));
     app.update();

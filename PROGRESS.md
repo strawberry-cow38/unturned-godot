@@ -1437,3 +1437,25 @@ occupancy, the original reclined rig and successful stand; code and four images
 passed independent review and the renderer quit cleanly. Full native dedicated
 fallback launching, bed damage/destruction and the separate demo door remain
 explicit work, as documented in bevy/docs/PROP_SEATS_PORT.md.
+
+### Bevy original human NPC characters and focus (2026-10-15)
+
+Ported authored and diagnostic NPC puppets through the shared human rig, clothes,
+face and headgear pipeline. The source fixed capsule, actual Idle_Stand clip,
+camera focus reach, sanitized world label and missing-dialogue notice are native;
+F sends the existing managed intent and waits for accepted conversation data.
+Keys/placements stay distinct when numeric asset IDs collide. Session and origin
+changes keep roots and cached placements aligned. The original npc console lists
+keys or spawns ahead on the real terrain, using body look heading independently
+of free camera gaze. Normal maps gain no invented NPC placements.
+
+Five focused regressions pass, including posed Chef gear, physics occlusion,
+F-to-accepted dialogue, terrain/heading, rebasing, disconnect and visibility gates.
+The combined native working tree passed403 tests (four explicit render fixtures
+ignored); the final vehicle-focus guard then passed its focused regression. The
+Vulkan character fixture and actual ordinary-eye PEI Chef focus were opened and
+independently reviewed. The low-angle fixture exposes perspective overlap with
+the source fixed label offset, while the ordinary-eye name is readable; this is
+recorded rather than claiming clearance from every angle. Accepted combat-ray
+occlusion against the native capsule remains a separate integration task.
+See bevy/docs/NPC_CHARACTER_PORT.md for exact scope and artifacts.

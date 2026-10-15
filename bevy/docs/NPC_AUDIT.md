@@ -28,9 +28,11 @@ implementation. Preserve all behavior that remains in the selected branch.
 Human NPCs are a separate path: `NpcCharacter.cs` builds the shared player rig,
 wearable gear and face from `NpcCharacterDef`, a static radius.35/height1.8 capsule,
 focused nameplates measured above headwear, and interaction through the existing
-F focus. `NpcCatalog`, `DialogueUI`, `QuestTracker`, `QuestLogPanel`, and original
-core quest/vendor rules still require native presentation and authoritative
-interaction wiring. `NpcHeli` and its turret tests are another explicit subsystem.
+F focus. The native body/focus/console implementation and its validation are
+recorded in `NPC_CHARACTER_PORT.md`; accepted catalog/dialogue/trade/quest data
+and native UI progress are recorded in `NPC_UI_PORT.md`. Those checkpoints do
+not imply completed editor or combat-occlusion parity. `NpcHeli` and its turret
+tests are another explicit subsystem.
 
 Wildlife implementation and its verified asset limitations are recorded in
 `WILDLIFE_PORT.md`.
