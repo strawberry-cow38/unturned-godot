@@ -278,6 +278,8 @@ public sealed partial class BridgeHost : IDisposable
                         ? dynamicIx.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, verts.Length).ToArray(),
                         Int(mesh, "destructibleIndex", -1), resource: Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"), thin: Bool(mesh,"thin"), water: Bool(mesh,"water"));
                 }
+                if (r.TryGetProperty("capsules", out var capsules)) foreach (var capsule in capsules.EnumerateArray())
+                    dynamicGeometry.AddCapsule(Vec(capsule, "foot"), Float(capsule, "radius"), Float(capsule, "height"));
                 dynamicGeometry.Build(); _geometry.SetDynamic(Text(r, "key"), dynamicGeometry);
                 return new { key = Text(r, "key"), triangles = dynamicGeometry.Count };
             case "worldRay":

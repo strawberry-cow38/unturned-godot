@@ -24,9 +24,12 @@ use bevy_rapier3d::prelude::*;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
+mod collision;
+
 pub(super) struct NpcPlugin;
 impl Plugin for NpcPlugin {
     fn build(&self, app: &mut App) {
+        collision::install(app);
         app.init_resource::<Registry>()
             .init_resource::<CurrentNpcSpeaker>()
             .init_resource::<LookedAt>()

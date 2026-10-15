@@ -149,14 +149,33 @@ fn capture(
     path: Res<Shot>,
     npcs: Query<&Npc>,
     plates: Query<(&Transform, &NameplateEnabled)>,
+    bridge: Res<CoreBridge>,
 ) {
     *frames += 1;
     if *frames == 80 {
         assert_eq!(npcs.iter().count(), 3);
         let chef = npcs.iter().find(|n| n.speaker.key == "Chef").unwrap();
         let (transform, gate) = plates.get(chef.plate).unwrap();
-        assert!(gate.0, "productionphysicsfocusmustshowchefplate");
+        assert!(gate.0, "production physics focus must show Chef plate");
         assert!(transform.translation.y > 2.05);
+        let contact = bridge
+            .request(
+                "worldRay",
+                json!({"from":[0.,1.25,-2.55],"to":[0.,1.25,0.]}),
+            )
+            .unwrap();
+        assert_eq!(
+            contact["result"]["hit"], true,
+            "the visible Chef body also stops authority rays"
+        );
+        assert!(
+            (crate::player::vector(&contact["result"]["point"])
+                .unwrap()
+                .z
+                + 0.35)
+                .abs()
+                < 0.0001
+        );
         println!(
             "[npcplate] Chef plateY={} measured={}",
             transform.translation.y, chef.measured

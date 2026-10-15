@@ -1537,3 +1537,22 @@ shader errors. The run separately exposed a loaded-save seated correction loop,
 now assigned to player authority. Source horizontal melee targeting, absent bed
 save records and the unported standalone demo door are documented separately in
 bevy/docs/PROP_SEATS_PORT.md; no client damage or invented blast behavior added.
+
+## 2026-10-15 — Bevy NPC host collision parity
+
+Playable/listen NPCs now publish the source radius0.35/height1.8 opaque capsule
+to authority geometry. Existing analytic capsule helpers preserve rounded caps
+and contact normals; world/cosmetic rays, blast obstruction and navigation boxes
+share the body. Native publication follows original placement identity, geometry
+replacement, removal, origin barriers and session epochs. Remote scenes retain
+local physics but cannot publish authority geometry; dedicated source worlds
+continue to omit NPCs. No NPC damage, loot or entity replication was invented.
+
+Seven native NPC tests and three managed regressions pass. A real UDP shot
+spends ammo while the NPC prevents damage to the tree behind it; removing that
+body lets the same accepted shot kill the tree. The native regression fails
+against the previous bridge at the missing capsule hit. Frozen combined checks
+pass407 native tests (four manual renders ignored) and62 managed tests. The
+updated Vulkan fixture passes with a visible-Chef authority-ray assertion and
+its PNG was opened; original low-camera hat/nameplate perspective is documented.
+Independent review found no blocker. See bevy/docs/NPC_CHARACTER_PORT.md.

@@ -101,6 +101,98 @@ fn root(app: &App, index: usize) -> Entity {
     app.world().resource::<Registry>().instances[&format!("map:{index}")].entity
 }
 
+fn authority_ray(app: &App, x: f32) -> Value {
+    app.world()
+        .resource::<CoreBridge>()
+        .request(
+            "worldRay",
+            json!({
+                "from":[x,1.,2.],"to":[x,1.,-2.]
+            }),
+        )
+        .unwrap()["result"]
+        .clone()
+}
+
+#[test]
+fn host_capsule_follows_manifest_replacement_origin_and_session_without_stale_bodies() {
+    let mut app = app();
+    let chef = character(&app, "Chef");
+    add(&mut app, chef, Vec3::ZERO);
+    app.update();
+    let first = authority_ray(&app, 0.);
+    assert_eq!(first["hit"], true);
+    assert!((crate::player::vector(&first["point"]).unwrap().z - 0.35).abs() < 0.0001);
+    assert_eq!(first["destructibleIndex"], -1);
+    assert_eq!(first["resourceIndex"], -1);
+    app.world()
+        .resource::<CoreBridge>()
+        .request("worldGeometry", json!({"replace":true,"meshes":[]}))
+        .unwrap();
+    assert_eq!(authority_ray(&app, 0.)["hit"], false);
+    app.world_mut().resource_mut::<WorldGeometry>().revision += 1;
+    app.update();
+    assert_eq!(authority_ray(&app, 0.)["hit"], true);
+    app.world()
+        .resource::<CoreBridge>()
+        .request("rebase", json!({"shift":[256,0,0],"expectedEpoch":0}))
+        .unwrap();
+    app.world().resource::<CoreBridge>().adopt_origin(1);
+    assert_eq!(
+        authority_ray(&app, -256.)["hit"],
+        true,
+        "managed origin barrier moves the collider immediately"
+    );
+    shift_origin(app.world_mut(), Vec3::X * 256.);
+    app.world_mut().resource_mut::<ServiceManifest>().npcs[0]["position"] = json!([-256., 0., 0.]);
+    app.world_mut().resource_mut::<WorldGeometry>().revision += 1;
+    app.update();
+    assert_eq!(authority_ray(&app, 0.)["hit"], false);
+    assert_eq!(authority_ray(&app, -256.)["hit"], true);
+    app.world_mut()
+        .resource_mut::<ServiceManifest>()
+        .npcs
+        .clear();
+    app.update();
+    assert_eq!(
+        authority_ray(&app, -256.)["hit"],
+        false,
+        "removing the puppet removes the host body"
+    );
+    let content = app.world().resource::<WorldConfig>().content_root.clone();
+    let reply = app
+        .world()
+        .resource::<CoreBridge>()
+        .request("init", json!({"contentRoot":content}))
+        .unwrap();
+    app.world_mut().resource_mut::<GameSnapshot>().0 = reply["state"].clone();
+    app.world_mut().resource_mut::<WorldSessionEpoch>().0 += 1;
+    app.update();
+    let chef = character(&app, "Chef");
+    add(&mut app, chef, Vec3::ZERO);
+    app.update();
+    assert_eq!(authority_ray(&app, -256.)["hit"], false);
+    assert_eq!(authority_ray(&app, 0.)["hit"], true);
+}
+
+#[test]
+fn remote_npc_puppets_keep_local_physics_without_publishing_host_capsules() {
+    let mut app = app();
+    app.world_mut().resource_mut::<GameSnapshot>().0["network"]["ownsWorld"] = json!(false);
+    let chef = character(&app, "Chef");
+    add(&mut app, chef, Vec3::ZERO);
+    for _ in 0..5 {
+        app.update();
+    }
+    assert!(app.world().get::<Collider>(root(&app, 0)).is_some());
+    assert!(app.world().resource::<LookedAt>().0.is_some());
+    assert_eq!(
+        authority_ray(&app, 0.)["hit"],
+        false,
+        "a remote scene never writes authority geometry"
+    );
+}
+
 #[test]
 fn source_characters_keep_duplicate_numeric_ids_separate_and_measure_posed_chef_hat() {
     let mut app = app();

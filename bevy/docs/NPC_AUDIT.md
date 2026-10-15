@@ -31,7 +31,9 @@ focused nameplates measured above headwear, and interaction through the existing
 F focus. The native body/focus/console implementation and its validation are
 recorded in `NPC_CHARACTER_PORT.md`; accepted catalog/dialogue/trade/quest data
 and native UI progress are recorded in `NPC_UI_PORT.md`. Those checkpoints do
-not imply completed editor or combat-occlusion parity. `NpcHeli` and its turret
+not imply completed editor parity. Playable/listen host combat now receives the
+exact opaque NPC capsules; remote scenes cannot upload their local diagnostics,
+and the source dedicated-world omission is preserved. `NpcHeli` and its turret
 tests are another explicit subsystem.
 
 Wildlife implementation and its verified asset limitations are recorded in

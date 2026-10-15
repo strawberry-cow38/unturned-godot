@@ -31,7 +31,8 @@ replacement has evidence of parity.
 Measured source: 187 engine-independent C# files / 60,586 lines, 342 gameplay
 files / 146,706 lines, 319 in-engine test files / 62,166 lines, and 194 core test
 files / 45,176 lines. Historical repository summaries are stale. The current
-protocol is version 61; inventory has 22 pages including vehicle compartments.
+source protocol is version61; the port is now version63 for accepted equipment
+and resource contact replication. Inventory has22 pages including vehicle compartments.
 
 ## Milestones
 
@@ -50,7 +51,7 @@ not make its features playable.
 | 6 | All vehicle types, suspension, seats/storage, tow/hitch, crane/turrets, damage | In progress; remaining parity below |
 | 7 | Deployables, building, power, fluids, appliances, crops, resource interactions | In progress; remaining parity below |
 | 8 | Terrain/foliage/roads, procedural worlds/buildings, streaming, weather/water/audio | In progress; remaining parity below |
-| 9 | NPCs, quests, trading, animals and remaining current gameplay | In progress; human rigs/focus/console and accepted NPC read model validated in `NPC_CHARACTER_PORT.md` / `NPC_UI_PORT.md`; remaining parity below |
+| 9 | NPCs, quests, trading, animals and remaining current gameplay | In progress; human rigs/focus/console, host capsule collision, accepted dialogue/trade/quest UI validated in `NPC_CHARACTER_PORT.md` / `NPC_UI_PORT.md`; remaining parity below |
 | 10 | Full menus/settings/HUD/chat/map/console, editor and authoring tools | In progress; remaining parity below |
 | 11 | Regression migration, gameplay journeys, reviewed visual captures, packaging | Pending |
 

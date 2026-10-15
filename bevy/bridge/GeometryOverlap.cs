@@ -38,6 +38,16 @@ public sealed partial class WorldGeometry
             }
             return false;
         }
-        return VisitBox(_root)||_dynamic.Values.Any(VisitBox);
+        bool CapsuleBox(Capsule capsule)
+        {
+            // Closest separation of the vertical capsule axis and the query AABB.
+            float x=Math.Max(0,Math.Abs(capsule.Foot.x-center.x)-half.x);
+            float z=Math.Max(0,Math.Abs(capsule.Foot.z-center.z)-half.z);
+            float y=Math.Max(0,Math.Max(capsule.Foot.y+capsule.Radius-(center.y+half.y),
+                center.y-half.y-(capsule.Foot.y+capsule.Height-capsule.Radius)));
+            return x*x+y*y+z*z<=capsule.Radius*capsule.Radius;
+        }
+        return VisitBox(_root)||_dynamic.Values.Any(VisitBox)||_capsules.Any(CapsuleBox)
+            ||_dynamicCapsules.Values.Any(capsules=>capsules.Any(CapsuleBox));
     }
 }

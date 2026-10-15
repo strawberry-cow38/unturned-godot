@@ -29,7 +29,7 @@ The original diagnostic `npc` console command lists catalog keys or accepts
 free camera gaze, clamps distance1–20m, samples the actual terrain ahead, faces
 the player, and optionally sends the same talk intent. These diagnostic puppets
 are local presentation, as in the original console; they do not create shared
-NPC authority or write authored placement files. Session/map changes remove them.
+NPC gameplay authority or write authored placement files. Session/map changes remove them.
 Origin rebasing translates live roots and cached placement data without recreating
 the rigs or resetting their animation.
 
@@ -56,13 +56,36 @@ depth or introducing an invented height offset. Spine/Skull/Skeleton tracks in
 the original idle clip are constant; this is not an unposed first-frame measure.
 Both captures and the body/focus implementation received independent review.
 
-The native capsule blocks movement and interaction rays. Exporting matching opaque
-geometry to integrated-host combat queries remains a separate integration task;
-this checkpoint does not claim accepted bullets/melee stop at NPCs. Source
-dedicated worlds omit NPC puppets, so that boundary needs its own audit rather
-than assuming local diagnostic spawns are replicated authority.
+The native capsule blocks movement and interaction rays. A subsequent collision
+checkpoint also publishes its exact analytic shape into the playable/listen
+host's world geometry. This follows `MpLoopback.GodotWorldRay`, which queries the
+shared scene's world-layer bodies. `ZombieCombat.RayCapsule` and `CapsuleNormal`
+provide the existing exact rounded geometry and outward normals; capsules remain
+opaque world bodies with no invented damage, loot or NPC entity replication.
+World and cosmetic rays, blast obstruction, and navigation box queries include
+them. Native publication uses placement identity and the current geometry revision;
+removal, terrain replacement, origin barriers and session changes are covered.
+
+Remote scenes retain their local movement/focus colliders but do not publish
+authority geometry, and the bridge refuses a remote upload. Source dedicated
+worlds explicitly omit NPC puppets; this change does not fabricate them there.
+The host's diagnostic `npc` command does produce an opaque collider in its own
+scene, exactly as the original shared viewport does.
+
+Collision validation: all seven native NPC integration tests pass, including
+geometry replacement/rebase/session cleanup and the remote publication gate.
+Three managed regressions cover exact cap normals, nearest-hit identity and a
+real UDP accepted shot that spends ammo but cannot damage a tree behind the NPC;
+the same shot kills the tree after the NPC collider is removed. The native host
+regression fails against the previous `resource-contact-59` bridge at its first
+expected capsule hit. The frozen combined checkpoint passes407 native tests
+(four manual fixtures ignored) and62 managed tests. The updated Vulkan fixture
+passes in6.72s and asserts that the visible Chef also stops the host ray;
+`bevy/artifacts/bevy-npc-authority-capsules.png` was opened and reviewed. The
+low-camera label perspective limitation described above remains unchanged.
 
 This checkpoint does not complete NPC/editor parity. NPC placement authoring,
-helicopter behavior and the remaining dialogue/trade/quest journeys are separate
-work. The current source's missing quest progress/save producers are recorded in
+helicopter behavior and remaining NPC integration are separate work. Accepted
+dialogue, dollar trading and quest UI journeys are recorded in `NPC_UI_PORT.md`.
+The current source's missing quest progress/save producers are recorded in
 the interface audit rather than implemented with invented rules.

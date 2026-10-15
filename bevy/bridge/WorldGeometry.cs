@@ -10,6 +10,9 @@ public sealed partial class WorldGeometry
 {
     readonly List<Triangle> _triangles = new();
     readonly Dictionary<string, Node> _dynamic = new();
+    readonly List<Capsule> _capsules = new();
+    readonly Dictionary<string, Capsule[]> _dynamicCapsules = new();
+    readonly record struct Capsule(Vector3 Foot, float Radius, float Height);
     Node _root;
     readonly List<Triangle> _terrainTriangles = new();
     Node _terrainRoot;
@@ -26,9 +29,9 @@ public sealed partial class WorldGeometry
         public Node Left, Right;
         public Triangle[] Leaf;
     }
-    public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _root = null; _terrainRoot = null; _dynamic.Clear(); _layerPatches.Clear(); }
-    public void ClearDynamic() => _dynamic.Clear();
-    public void RemoveDynamic(string key) => _dynamic.Remove(key);
+    public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _capsules.Clear(); _root = null; _terrainRoot = null; ClearDynamic(); _layerPatches.Clear(); }
+    public void ClearDynamic() { _dynamic.Clear(); _dynamicCapsules.Clear(); }
+    public void RemoveDynamic(string key) { _dynamic.Remove(key); _dynamicCapsules.Remove(key); }
     public void TranslateWorld(Vector3 delta)
     {
         Triangle Shift(Triangle t) => t with { A = t.A + delta, B = t.B + delta, C = t.C + delta };
@@ -42,13 +45,27 @@ public sealed partial class WorldGeometry
         for (int i = 0; i < _triangles.Count; i++) _triangles[i] = Shift(_triangles[i]);
         for (int i = 0; i < _terrainTriangles.Count; i++) _terrainTriangles[i] = Shift(_terrainTriangles[i]);
         Tree(_root); Tree(_terrainRoot); foreach (var tree in _dynamic.Values) Tree(tree);
+        for (int i = 0; i < _capsules.Count; i++) _capsules[i] = _capsules[i] with { Foot = _capsules[i].Foot + delta };
+        foreach (var capsules in _dynamicCapsules.Values)
+            for (int i = 0; i < capsules.Length; i++) capsules[i] = capsules[i] with { Foot = capsules[i].Foot + delta };
         foreach (var p in _layerPatches) { p.X += delta.x; p.Z += delta.z; }
     }
 
     public void SetDynamic(string key, WorldGeometry geometry)
     {
         if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Dynamic geometry requires a stable key");
-        if (geometry._root == null || DynamicAlive?.Invoke(key) == false) _dynamic.Remove(key); else _dynamic[key] = geometry._root;
+        if (DynamicAlive?.Invoke(key) == false) { RemoveDynamic(key); return; }
+        if (geometry._root == null) _dynamic.Remove(key); else _dynamic[key] = geometry._root;
+        if (geometry._capsules.Count == 0) _dynamicCapsules.Remove(key); else _dynamicCapsules[key] = geometry._capsules.ToArray();
+    }
+    /// <summary>Opaque world-layer body, such as NpcCharacter's original standing
+    /// capsule. This carries no damageable entity identity or reward semantics.</summary>
+    public void AddCapsule(Vector3 foot, float radius, float height)
+    {
+        if (!float.IsFinite(foot.x) || !float.IsFinite(foot.y) || !float.IsFinite(foot.z)
+            || !float.IsFinite(radius) || radius <= 0 || !float.IsFinite(height) || height < radius * 2)
+            throw new ArgumentException("Invalid world capsule dimensions or position");
+        _capsules.Add(new(foot, radius, height));
     }
     public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false, int resource = -1, uint vehicle = 0, uint deployable = 0, string bodyPart = null, bool thin = false, bool water = false)
     {
@@ -99,40 +116,58 @@ public sealed partial class WorldGeometry
     {
         bool found = RayDetailed(from, to, out var result); hit = result.Point; destructible = result.DestructibleIndex; return found;
     }
-    bool RayTriangle(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle)
-        => RayTriangle(from,to,out point,out triangle,out _);
-    bool RayTriangle(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle,out string dynamicKey)
+    bool RayContact(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle,out Vector3 normal,out string dynamicKey,bool worldOnly=false)
     {
         float nearest=1f;triangle=default;bool found=false;dynamicKey=null;
-        Visit(_root,from,to-from,ref nearest,ref triangle,ref found);
+        Visit(_root,from,to-from,ref nearest,ref triangle,ref found,worldOnly);
         foreach(var pair in _dynamic)
-            if(Visit(pair.Value,from,to-from,ref nearest,ref triangle,ref found))dynamicKey=pair.Key;
+            if(Visit(pair.Value,from,to-from,ref nearest,ref triangle,ref found,worldOnly))dynamicKey=pair.Key;
+        normal=Vector3.Cross(triangle.B-triangle.A,triangle.C-triangle.A).normalized;
+        if(Vector3.Dot(normal,to-from)>0)normal=-normal;
+        float length=(to-from).magnitude;
+        if(length>0)
+        {
+            var direction=(to-from)/length;
+            if(VisitCapsules(_capsules,from,direction,length,ref nearest,ref normal))
+            { found=true;dynamicKey=null;triangle=new(default,default,default,-1); }
+            foreach(var group in _dynamicCapsules)
+                if(VisitCapsules(group.Value,from,direction,length,ref nearest,ref normal))
+                { found=true;dynamicKey=group.Key;triangle=new(default,default,default,-1); }
+        }
         point=found?from+(to-from)*nearest:to;return found;
+    }
+    static bool VisitCapsules(IReadOnlyList<Capsule> capsules,Vector3 from,Vector3 direction,float length,ref float nearest,ref Vector3 normal)
+    {
+        bool changed=false;
+        for(int i=0;i<capsules.Count;i++)
+        {
+            var capsule=capsules[i];
+            float distance=ZombieCombat.RayCapsule(from,direction,capsule.Foot,capsule.Radius,capsule.Height);
+            if(distance<0||distance>nearest*length)continue;
+            nearest=distance/length;changed=true;
+            normal=ZombieCombat.CapsuleNormal(from+direction*distance,capsule.Foot,capsule.Radius,capsule.Height);
+        }
+        return changed;
     }
     /// <summary>Identity of the nearest host-owned moving collider. A static wall
     /// returns a null key; callers must not ray-test their fixture in isolation.</summary>
     public bool RayDynamicKey(Vector3 from,Vector3 to,out string key)
-        => RayTriangle(from,to,out _,out _,out key);
+        => RayContact(from,to,out _,out _,out _,out key);
     public bool RayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit)
     {
-        bool found=RayTriangle(from,to,out var point,out var triangle);
-        var normal=Vector3.Cross(triangle.B-triangle.A,triangle.C-triangle.A).normalized;
-        if(Vector3.Dot(normal,to-from)>0)normal=-normal;
+        bool found=RayContact(from,to,out var point,out var triangle,out var normal,out _);
         hit=found?new(point,triangle.Destructible,triangle.Resource,triangle.Vehicle,triangle.Deployable,triangle.Part,
             normal:normal,thin:triangle.Thin,water:triangle.Water):new(to);
         return found;
     }
     public bool RayCosmetic(Vector3 from,Vector3 to,out Vector3 point,out bool thin,out bool water)
     {
-        bool found=RayTriangle(from,to,out point,out var triangle);thin=triangle.Thin;water=triangle.Water;return found;
+        bool found=RayContact(from,to,out point,out var triangle,out _,out _);thin=triangle.Thin;water=triangle.Water;return found;
     }
     public bool BlastBlocked(Vector3 from, Vector3 to)
     {
         var up = new Vector3(0, .8f, 0); from += up; to += up;
-        float nearest = 1; Triangle triangle = default; bool found = false;
-        Visit(_root, from, to - from, ref nearest, ref triangle, ref found, true);
-        foreach (var tree in _dynamic.Values) Visit(tree, from, to - from, ref nearest, ref triangle, ref found, true);
-        return found;
+        return RayContact(from,to,out _,out _,out _,out _,true);
     }
     public float GroundHeight(float x, float z)
     {
