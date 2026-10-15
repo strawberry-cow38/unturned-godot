@@ -132,11 +132,20 @@ impl ObjData {
         parse_obj(&fs::read_to_string(path)?)
             .map_err(|e| ContentError(format!("{}: {e}", path.display())))
     }
+    /// Original Mesh.GetFaces keeps finite referenced vertices even when their
+    /// triangle has zero area. Rendering still uses `load` and drops those faces.
+    pub fn load_source_faces(path: &Path) -> Result<Self, ContentError> {
+        parse_obj_inner(&fs::read_to_string(path)?, true)
+            .map_err(|e| ContentError(format!("{}: {e}", path.display())))
+    }
 }
 
 /// Wavefront parsing with independent position/UV/normal indices, negative indices,
 /// polygon fan triangulation, optional vertex RGB, and the original V inversion.
 pub fn parse_obj(source: &str) -> Result<ObjData, ContentError> {
+    parse_obj_inner(source, false)
+}
+fn parse_obj_inner(source: &str, retain_degenerate: bool) -> Result<ObjData, ContentError> {
     let mut vertices = Vec::<Vec3>::new();
     let mut normals = Vec::<Vec3>::new();
     let mut uvs = Vec::<[f32; 2]>::new();
@@ -219,7 +228,7 @@ pub fn parse_obj(source: &str) -> Result<ObjData, ContentError> {
                     let mut tri = [corners[0], corners[i], corners[i + 1]];
                     let geometric = (vertices[tri[1].0] - vertices[tri[0].0])
                         .cross(vertices[tri[2].0] - vertices[tri[0].0]);
-                    if geometric.length_squared() < 1e-20 {
+                    if !retain_degenerate && geometric.length_squared() < 1e-20 {
                         continue;
                     }
                     let authored: Vec3 = tri.iter().filter_map(|v| v.2.map(|n| normals[n])).sum();
@@ -228,7 +237,7 @@ pub fn parse_obj(source: &str) -> Result<ObjData, ContentError> {
                     }
                     let fallback = (vertices[tri[1].0] - vertices[tri[0].0])
                         .cross(vertices[tri[2].0] - vertices[tri[0].0])
-                        .normalize();
+                        .normalize_or_zero();
                     for (v, uv, n) in tri {
                         out.min = out.min.min(vertices[v]);
                         out.max = out.max.max(vertices[v]);
@@ -257,12 +266,21 @@ pub fn parse_obj(source: &str) -> Result<ObjData, ContentError> {
 #[derive(Resource, Default)]
 pub struct ContentCache {
     pub geometry: HashMap<PathBuf, Arc<ObjData>>,
+    source_faces: HashMap<PathBuf, Arc<ObjData>>,
     pub meshes: HashMap<PathBuf, Handle<Mesh>>,
     pub materials: HashMap<String, Handle<StandardMaterial>>,
     alpha_cutouts: HashMap<PathBuf, bool>,
     pending_mipmaps: HashSet<AssetId<Image>>,
 }
 impl ContentCache {
+    pub fn load_source_faces(&mut self, path: &Path) -> Result<Arc<ObjData>, ContentError> {
+        if let Some(data) = self.source_faces.get(path) {
+            return Ok(data.clone());
+        }
+        let data = Arc::new(ObjData::load_source_faces(path)?);
+        self.source_faces.insert(path.into(), data.clone());
+        Ok(data)
+    }
     pub fn load_mesh(
         &mut self,
         path: &Path,
@@ -458,6 +476,18 @@ pub fn load_guid_map(root: &Path) -> Result<HashMap<String, String>, ContentErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_face_stream_retains_degenerate_references_without_changing_render_mesh() {
+        let source = "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 20 3 4\nf 1 2 3\nf 4 4 4\n";
+        let render = parse_obj(source).unwrap();
+        let faces = parse_obj_inner(source, true).unwrap();
+        assert_eq!(render.positions.len(), 3);
+        assert_eq!(render.max, Vec3::new(1., 1., 0.));
+        assert_eq!(faces.positions.len(), 6);
+        assert_eq!(&faces.positions[3..], &[[20., 3., 4.]; 3]);
+        assert!(faces.normals.iter().flatten().all(|v| v.is_finite()));
+        assert_eq!(faces.max, Vec3::new(20., 3., 4.));
+    }
     #[test]
     fn mipmaps_include_all_levels_and_average_rgba_without_losing_base_pixels() {
         let original = vec![

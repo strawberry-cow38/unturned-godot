@@ -222,7 +222,25 @@ impl VehicleSpec {
         if self.mass > 0. { self.mass } else { 900. }
     }
     pub fn ground_clearance(&self) -> f32 {
-        let mut lowest = (self.box_center[1] - self.box_size[1] * 0.5).min(0.);
+        // Source measures attached BOX children, not the convex band's bounds.
+        // Every shipped authored branch has at least one nondegenerate part.
+        let authored = super::collision::authored::enabled(self)
+            && (self.hull_boxes.as_ref().is_some_and(|v| !v.is_empty())
+                || self.hull_bands.as_ref().is_some_and(|v| !v.is_empty())
+                || self.hull_trimesh.is_some());
+        let mut lowest = if authored {
+            0.
+        } else {
+            (self.box_center[1] - self.box_size[1] * 0.5).min(0.)
+        };
+        if authored {
+            for (size, center, _) in self.hull_boxes.iter().flatten() {
+                lowest = lowest.min(center[1] - size[1] * 0.5);
+            }
+        }
+        if self.landing_gear_size != [0.; 3] {
+            lowest = lowest.min(self.landing_gear_center[1] - self.landing_gear_size[1] * 0.5);
+        }
         for (size, center) in self.extra_boxes.iter().flatten() {
             lowest = lowest.min(center[1] - size[1] * 0.5);
         }

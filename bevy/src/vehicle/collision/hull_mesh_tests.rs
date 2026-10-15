@@ -6,7 +6,7 @@ use bevy::ecs::system::{RunSystemOnce, SystemState};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-fn app() -> App {
+pub(super) fn app() -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -27,7 +27,7 @@ fn app() -> App {
     });
     app
 }
-fn ship(app: &mut App) -> (Entity, Entity) {
+pub(super) fn ship(app: &mut App) -> (Entity, Entity) {
     let owner = crate::vehicle::tests::body(app, "ship", Vec3::ZERO);
     app.world_mut().entity_mut(owner).insert((
         RigidBody::Fixed,
@@ -88,12 +88,15 @@ fn original_ship_region_installs_exact_world_surface_and_follows_its_parent() {
     let mut app = app();
     let (owner, hull) = ship(&mut app);
     let d = data::named("ship").unwrap();
-    let original = ObjData::load(
+    let mut original = ObjData::load_source_faces(
         &WorldConfig::default()
             .content_root
             .join(d.spec.body.as_ref().unwrap()),
     )
     .unwrap();
+    for vertex in &mut original.positions {
+        *vertex = super::source_face_vertex(*vertex).to_array();
+    }
     let (lo, hi) = d.spec.hull_trimesh.unwrap();
     let lo = Vec3::from_array(lo);
     let hi = Vec3::from_array(hi);

@@ -36,30 +36,27 @@ pub(in crate::vehicle) fn build(
     commands: &mut Commands,
     owner: Entity,
     definition: &VehicleDefinition,
-    root: &Path,
-    cache: &ContentCache,
-) {
+    source: Option<&crate::content::ObjData>,
+) -> bool {
     let spec = &definition.spec;
-    if (spec.hull_bands.is_none() && spec.hull_boxes.is_none())
-        || std::env::var("UG_SHIPBOX").as_deref() == Ok("1")
-    {
-        return;
+    if !super::authored::enabled(spec) {
+        return false;
     }
     let Some((min, max)) = spec.hull_trimesh else {
-        return;
+        return false;
     };
-    let Some(source) = spec
-        .body
-        .as_ref()
-        .and_then(|name| cache.geometry.get(&root.join(name)))
-    else {
-        return;
+    let Some(source) = source else {
+        return false;
     };
     // Same inclusive ALL-three-corners selection as Vehicle.MeshRegion10707;
     // centroid selection drags enormous deck triangles into the deckhouse.
-    let (_, region) = source.split_zones(&[(Vec3::from_array(min), Vec3::from_array(max))]);
+    let mut faces = source.clone();
+    for vertex in &mut faces.positions {
+        *vertex = source_face_vertex(*vertex).to_array();
+    }
+    let (_, region) = faces.split_zones(&[(Vec3::from_array(min), Vec3::from_array(max))]);
     if region.positions.is_empty() {
-        return;
+        return false;
     }
     let vertices = region
         .positions
@@ -72,7 +69,7 @@ pub(in crate::vehicle) fn build(
         .map(|t| [t[0], t[1], t[2]])
         .collect();
     let Ok(collider) = Collider::trimesh(vertices, indices) else {
-        return;
+        return false;
     };
     commands.spawn((
         Name::new("HullMesh"),
@@ -84,4 +81,5 @@ pub(in crate::vehicle) fn build(
         Transform::default(),
         ChildOf(owner),
     ));
+    true
 }

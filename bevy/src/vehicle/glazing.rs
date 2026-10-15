@@ -275,8 +275,7 @@ fn mesh_hitbox() -> bool {
 fn body_hitbox(spec: &VehicleSpec) -> bool {
     mesh_hitbox()
         && spec.body.is_some()
-        && spec.hull_bands.is_none()
-        && spec.hull_boxes.is_none()
+        && !super::collision::authored::enabled(spec)
         && std::env::var("UG_BOXHULL").as_deref() != Ok("1")
 }
 

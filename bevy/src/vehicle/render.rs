@@ -278,40 +278,35 @@ pub fn build(
             wheel_mat,
         );
     }
-    super::collision::hull_mesh::build(commands, entity, d, root, cache);
-    if s.body.is_some()
-        && s.hull_bands.is_none()
-        && s.hull_boxes.is_none()
-        && std::env::var("UG_BOXHULL").as_deref() != Ok("1")
-    {
+    let authored = super::collision::authored::enabled(s);
+    let source = s.body.as_ref().and_then(|name| {
+        if authored {
+            cache.load_source_faces(&root.join(name)).ok()
+        } else {
+            cache.geometry.get(&root.join(name)).cloned()
+        }
+    });
+    let separate_hull = super::collision::hull_mesh::build(commands, entity, d, source.as_deref());
+    let (shapes, pending) = super::collision::authored::initial(
+        d,
+        source.as_deref(),
+        separate_hull,
+        authored,
+        std::env::var("UG_BOXHULL").as_deref() == Ok("1"),
+    );
+    if pending {
         commands
             .entity(entity)
             .insert(super::collision::PendingHull);
     }
-    let mut shapes = Vec::new();
-    let mut box_shape = |size: [f32; 3], center: [f32; 3], yaw: f32| {
-        if size.iter().all(|n| *n > 0.) {
-            shapes.push((
-                Vec3::from_array(center),
-                Quat::from_rotation_y(yaw),
-                Collider::cuboid(size[0] * 0.5, size[1] * 0.5, size[2] * 0.5),
-            ));
-        }
-    };
-    box_shape(s.box_size, s.box_center, 0.);
-    if let Some((size, center)) = d.roof {
-        box_shape(size, center, 0.);
+    if !shapes.is_empty() {
+        commands.entity(entity).insert((
+            Collider::compound(shapes),
+            ColliderMassProperties::Density(0.0),
+        ));
+    } else {
+        commands.entity(entity).remove::<Collider>();
     }
-    for (size, center) in s.extra_boxes.iter().flatten() {
-        box_shape(*size, *center, 0.);
-    }
-    for (size, center, yaw) in s.hull_boxes.iter().flatten() {
-        box_shape(*size, *center, yaw.to_radians());
-    }
-    commands.entity(entity).insert((
-        Collider::compound(shapes),
-        ColliderMassProperties::Density(0.0),
-    ));
 }
 
 pub(super) fn spawn_mesh(

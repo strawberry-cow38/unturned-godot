@@ -2712,3 +2712,29 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - The native forage correction uses the original look-only fruit boxes, preserving nonuniform radial scaling and wall occlusion without adding walking/combat colliders. Accepted harvest removes only the last fruit mesh; bush leaves remain and regrowth restores focus. Fruit outlines and harvest audio remain pending.
 - Verification: immutable finite-services-final passes all200 managed tests, including real UDP registration rejection/read-only binding, reach rejection, accepted door/harvest, full tilted basis and save/load. Native actual registration/uploader1 and forage2 regressions pass. Two actual Vulkan sessions opened the authored container door and harvested Raw Viriberries272 from resource395; all four before/after PNGs opened and independently reviewed. Both sessions exited cleanly through Quit.
 - Full finite parity remains open: authored spawn/respawn pool, fresh-only original populations, editor tools/custom sidecars, chart/menu/remote entry and separate BuildingGen. See bevy/docs/FINITE_WORLD_PORT.md for exact boundaries and artifacts.
+
+
+## Bevy authored driving hulls and parked trailer supports — 2026-10-15
+
+- Ported the original authored hull branch: ship lower convex band + nine boxes,
+  six small trailers' three boxes, and fallback only when nothing was built.
+  Existing independent HullMesh counts as a made source part. `UG_SHIPBOX`
+  still reaches normal car decomposition unless `UG_BOXHULL` disables it too.
+- All seven parked landing supports now exist and survive ordinary car hull
+  replacement; spawn clearance includes the original attached box supports.
+  Coupling/retraction, rigid cargo carriage and future non-null HullDecompose
+  remain separate; every current shipping HullDecompose field is null.
+- Independent original C# methods running in Godot caught 40 native vs 34 source
+  reduced points: engine GetFaces snaps 0.0001 m before selection. It also retains
+  13 zero-area ship region triangles that rendering drops. Added a separate
+  cached source-face mode to the shared OBJ parser and exact float-step/double
+  snap, leaving the default visible loader unchanged. No duplicated OBJ parser
+  or tolerance-based hull approximation. Shared MeshCut monotone chain retains
+  its distinct epsilon dedup rule.
+- Validation: 129 vehicle + 10 content tests PASS, plus opt-in Godot oracle
+  matching band/snap float bits and all 1437 selected region vertices. Real
+  Rapier tests verify wider-side collision, empty tapered bow and parked
+  support; restoring only the old broad box/removing only the support
+  reproduces false contact/drop. Previous HullMesh/world-authority cases pass.
+  Frozen executable `native-authored-hulls-final`; authority fixture bridge
+  `crafting-station-live-v72-final`. See `bevy/docs/VEHICLE_WORLD_COLLISION.md`.

@@ -1,4 +1,5 @@
 //! Reuses the original shipped convex bakes; new meshes decompose off the render thread.
+pub(super) mod authored;
 pub(super) mod hull_mesh;
 #[cfg(test)]
 mod hull_mesh_tests;
@@ -17,6 +18,15 @@ use std::{
     io::{Cursor, Read},
     path::Path,
 };
+
+/// Godot Mesh.GetFaces goes through TriangleMesh::create and snaps each
+/// component to0.0001 before Vehicle.ConvexBand or MeshRegion sees it.
+/// Math::snapped computes in double with a real_t(float) step, then narrows.
+/// https://github.com/godotengine/godot/blob/4.6/core/math/triangle_mesh.cpp#L127
+fn source_face_vertex(position: [f32; 3]) -> Vec3 {
+    let step = 0.0001_f32 as f64;
+    Vec3::from_array(position.map(|v| (((v as f64 / step) + 0.5).floor() * step) as f32))
+}
 
 #[derive(Resource, Default)]
 pub struct Hulls {
@@ -91,13 +101,7 @@ fn with_extras(d: &VehicleDefinition, base: Vec<Collider>) -> Collider {
             shapes.push((Vec3::ZERO, Quat::IDENTITY, collider));
         }
     }
-    for (size, center) in d.spec.extra_boxes.iter().flatten() {
-        shapes.push((
-            Vec3::from_array(*center),
-            Quat::IDENTITY,
-            Collider::cuboid(size[0] * 0.5, size[1] * 0.5, size[2] * 0.5),
-        ));
-    }
+    authored::extras(d, &mut shapes);
     Collider::compound(shapes)
 }
 pub fn update(

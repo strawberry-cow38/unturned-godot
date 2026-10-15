@@ -132,28 +132,7 @@ impl Set {
         if points.len() < 3 {
             return;
         }
-        points.sort_by(|a, b| a[u].total_cmp(&b[u]).then(a[w].total_cmp(&b[w])));
-        let cross = |o: Vec3, a: Vec3, b: Vec3| {
-            (a[u] - o[u]) * (b[w] - o[w]) - (a[w] - o[w]) * (b[u] - o[u])
-        };
-        let mut hull: Vec<Vec3> = Vec::new();
-        for &point in &points {
-            while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0.
-            {
-                hull.pop();
-            }
-            hull.push(point);
-        }
-        let lower = hull.len() + 1;
-        for &point in points[..points.len() - 1].iter().rev() {
-            while hull.len() >= lower
-                && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0.
-            {
-                hull.pop();
-            }
-            hull.push(point);
-        }
-        hull.pop();
+        let hull = planar_hull(points, u, w);
         for i in 1..hull.len().saturating_sub(1) {
             self.face([hull[0], hull[i], hull[i + 1]], normal, uv, color);
         }
@@ -180,6 +159,34 @@ impl Set {
             color,
         }));
     }
+}
+
+/// Shared Andrew monotone chain. Callers retain their distinct source
+/// duplicate rules (MeshCut epsilon vs Vehicle.ConvexBand exact equality).
+pub(crate) fn planar_hull(mut points: Vec<Vec3>, u: usize, w: usize) -> Vec<Vec3> {
+    if points.len() < 3 {
+        return points;
+    }
+    points.sort_by(|a, b| a[u].total_cmp(&b[u]).then(a[w].total_cmp(&b[w])));
+    let cross =
+        |o: Vec3, a: Vec3, b: Vec3| (a[u] - o[u]) * (b[w] - o[w]) - (a[w] - o[w]) * (b[u] - o[u]);
+    let mut hull: Vec<Vec3> = Vec::new();
+    for &point in &points {
+        while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0. {
+            hull.pop();
+        }
+        hull.push(point);
+    }
+    let lower = hull.len() + 1;
+    for &point in points[..points.len() - 1].iter().rev() {
+        while hull.len() >= lower && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0.
+        {
+            hull.pop();
+        }
+        hull.push(point);
+    }
+    hull.pop();
+    hull
 }
 
 fn split_triangle(
