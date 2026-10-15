@@ -171,6 +171,7 @@ impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Occupancy>()
             .add_plugins(turrets::fx::MountedEffectsPlugin)
+            .add_plugins(turrets::crew::CrewPlugin)
             .init_resource::<turrets::Operator>()
             .init_resource::<Vehicles>()
             .init_resource::<collision::Hulls>()

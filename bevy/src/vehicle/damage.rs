@@ -14,6 +14,23 @@ pub(super) struct WheelDebris {
 }
 #[derive(Resource, Default)]
 pub struct WreckMaterial(Option<Handle<StandardMaterial>>);
+impl WreckMaterial {
+    pub(in crate::vehicle) fn handle(
+        &mut self,
+        materials: &mut Assets<StandardMaterial>,
+    ) -> Handle<StandardMaterial> {
+        self.0
+            .get_or_insert_with(|| {
+                materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.05, 0.05, 0.05),
+                    perceptual_roughness: 1.,
+                    cull_mode: None,
+                    ..default()
+                })
+            })
+            .clone()
+    }
+}
 
 pub fn update(
     mut commands: Commands,
@@ -31,17 +48,7 @@ pub fn update(
     settings: Res<Settings>,
     mut wreck_material: ResMut<WreckMaterial>,
 ) {
-    let charred = wreck_material
-        .0
-        .get_or_insert_with(|| {
-            materials.add(StandardMaterial {
-                base_color: Color::srgb(0.05, 0.05, 0.05),
-                perceptual_roughness: 1.,
-                cull_mode: None,
-                ..default()
-            })
-        })
-        .clone();
+    let charred = wreck_material.handle(&mut materials);
     for event in events.read().filter(|e| e.kind == "vehicleExploded") {
         let Some(id) = event.data["netId"].as_u64() else {
             continue;

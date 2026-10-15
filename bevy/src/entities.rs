@@ -65,6 +65,7 @@ pub struct ItemCatalog {
     pub throw_motion: Value,
     pub bullet_visuals: Option<crate::bullets::Visuals>,
     pub mounted_weapons: HashMap<String, f32>,
+    pub(crate) npc_crew: Option<crate::vehicle::turrets::crew::Definition>,
 }
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
@@ -288,6 +289,7 @@ fn load_catalog(
             serde_json::from_value(response["result"]["bulletVisuals"].clone()).ok();
         catalog.mounted_weapons =
             serde_json::from_value(response["result"]["mountedWeapons"].clone()).unwrap_or_default();
+        catalog.npc_crew = serde_json::from_value(response["result"]["npcCrew"].clone()).ok();
         Ok(serde_json::from_value::<Vec<ItemVisual>>(
             response["result"]["items"].clone(),
         )?)

@@ -9,6 +9,7 @@ use std::{path::Path, sync::LazyLock};
 
 mod tank;
 mod seats;
+pub(crate) mod crew;
 pub(crate) mod input;
 pub(crate) mod fx;
 pub(crate) use input::Operator;
