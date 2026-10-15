@@ -39,13 +39,14 @@ public sealed partial class BridgeHost : IDisposable
     BodyCombatServices _bodies;
     WeaponServices _weapons;
     CosmeticBulletServices _cosmetic;
+    WarheadServices _warheads;
     readonly Dictionary<uint, byte> _vehicleRecov = new();
     readonly List<JsonElement> _serviceSpecs = new();
     WildlifeServices _wildlife;
     ZombieServices _zombies;
     int _seed = 1337;
     bool _worldChanged;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null, CosmeticBulletServices.WaterSaved[] CosmeticWater = null);
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null, CosmeticBulletServices.WaterSaved[] CosmeticWater = null, WarheadServices.Saved[] StuckProjectiles = null);
     public sealed record BridgeEvent(long Seq, string Kind, object Data, long Tick);
     void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data, _server?.Session.CurrentTick ?? 0));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson(), new ByteArrayJson() } };
@@ -144,7 +145,7 @@ public sealed partial class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture(), _cosmetic.CaptureWater()));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture(), _cosmetic.CaptureWater(), _warheads.Capture()));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -165,6 +166,7 @@ public sealed partial class BridgeHost : IDisposable
                 _zombies.Restore(extra?.Zombies);
                 _weapons.Restore(extra?.Weapons);
                 _cosmetic.RestoreWater(extra?.CosmeticWater);
+                _warheads.Restore(extra?.StuckProjectiles);
                 _services.Harvesting.Restore(extra?.Resources);
                 _services.RestorePropDoors(extra?.ObjectDoors); _bodies.Restore(extra?.Bodies); _vehicles.RestoreParts(extra?.VehicleParts);
                 if (extra?.Loot != null)
@@ -294,6 +296,7 @@ public sealed partial class BridgeHost : IDisposable
         _zombies.RainIntensity=()=>_environment.Sim.BlendAlpha*_environment.Severity;
         _weapons = new WeaponServices(_server, _catalog, Emit);
         _cosmetic = new CosmeticBulletServices(_server,_geometry,_weapons,Emit);
+        _warheads = new WarheadServices(_server,_weapons,Emit);
         _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
         _movingInput=false;_footNoiseTimer=0;
         _bodies.RepairRate = _weapons.RepairRate;
@@ -525,7 +528,9 @@ public sealed partial class BridgeHost : IDisposable
             recipes = Recipes(inv, skills?.Skills, includeRecipes),
             skills = new { experience = skills?.Skills.experience ?? 0, groups = skills?.Skills.skills },
             worldItems = _client.WorldItems.All.Select(e => new { netId = e.NetIdValue, itemId = e.ItemId, amount = e.Amount,
-                quality = e.Quality, position = Array(e.Pos), settled = e.Settled }).ToArray(),
+                quality = e.Quality, position = Array(e.Pos), settled = e.Settled,
+                stuckDirection = _warheads.PoseOf(e.NetIdValue)?.Direction, stuckNormal = _warheads.PoseOf(e.NetIdValue)?.Normal,
+                stuckEuler = _warheads.PoseOf(e.NetIdValue)?.Euler }).ToArray(),
             projectiles = ProjectileSnapshots(),
             bullets = _cosmetic.Snapshots(),
             animals = _wildlife.Snapshots(_client),

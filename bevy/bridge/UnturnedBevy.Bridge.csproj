@@ -59,6 +59,7 @@
     <Compile Include="$(IntermediateOutputPath)Data/ItemRarity.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeatherCommands.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/CosmeticRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/WarheadRules.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/CosmeticScatter.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponAmmoActions.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NoiseRules.g.cs" />

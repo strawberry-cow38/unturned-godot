@@ -90,6 +90,7 @@ public sealed class WeaponServices
     public bool SetFiremode(ushort owner, NetWorldClient client, int mode) => State(owner).SetFiremode(client, mode);
     public void Step() { foreach (var player in _server.CombatState.All) State(player.OwnerPlayerId).Step(); }
     public object Snapshot(ushort owner) => State(owner).Snapshot();
+    public WarheadServices.Payload CaptureWarhead(ushort owner) => State(owner).CaptureWarhead();
     public float RepairRate(ushort owner) => State(owner).RepairRate;
 }
 
@@ -279,6 +280,8 @@ public sealed partial class WeaponState
             barrelId,Suppressed,barrel.Silenced,clip,barrel.Volume,Profile.MuzzleVelocity,AttachmentNoise.BreaksOnShot(barrelId));
     }
     public WeaponServices.ShotFlight CaptureFlight(WeaponServices.ShotFacts facts) => Gun==null?null:new(facts,Gun,Profile.Pellets,Profile.BallisticSteps,-9.81f*Profile.GravityMultiplier);
+    public WarheadServices.Payload CaptureWarhead() => Gun==null||_heldItem==null?null:new(_heldItem.id,Profile.AssetName,
+        Gun.BlastRadius,Gun.BlastPlayerDamage,Gun.BlastZombieDamage,Gun.BlastVehicleDamage,WarheadRules.StickAmmoFor(Gun));
     static int BarrelMask=>1<<System.Array.IndexOf(AttachmentNoise.Slots,"Barrel");
     public bool Suppressed => (Gun?.IntegrallySuppressed??false)
         || (_heldItem?.gunBarrelId>0?AttachmentNoise.IsSilencer(_heldItem.gunBarrelId):_heldItem?.gunAttach>=0&&(_heldItem.gunAttach&BarrelMask)!=0);

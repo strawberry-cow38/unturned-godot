@@ -29,6 +29,11 @@ the actual outcome appears in subsequent replicated state.
   Seated packets still carry held selection and deduplicated combat; the opted-in
   host ignores their movement fields. Vehicle seats remain the pose authority.
 - `snapshot`: read current replica state. Inventory has all 22 pages.
+  Recovered arrows/bolts are ordinary settled `worldItems` with optional
+  `stuckDirection`/`stuckNormal`/`stuckEuler` frozen-pose metadata. Accepted gun
+  warheads emit `bulletExplosion` (`position`, `radius`, original `gun`/`itemId`);
+  cosmetic bullet retirement never authorizes damage. See
+  [WARHEAD_PORT](../docs/WARHEAD_PORT.md).
 - `action`: `name` and `args`, as below. Commands go through `NetWorldClient` and
   the existing server command validators. Most effects appear within 2–4 ticks.
 - `save` / `load`: `path`, using original versioned `WorldSave` format and map gate.

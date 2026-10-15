@@ -18,7 +18,9 @@ public sealed partial class ZombieServices
             if(b.Dead)continue;
             float distance=ZombieCombat.RayCapsule(from,direction,U(b.GlobalPosition),.4f,1.8f);
             if(distance<0||distance>nearest)continue;
-            nearest=distance;hit=new(from+direction*distance,zombieNetId:b.NetId);found=true;
+            var point=from+direction*distance;
+            nearest=distance;hit=new(point,zombieNetId:b.NetId,
+                normal:ZombieCombat.CapsuleNormal(point,U(b.GlobalPosition),.4f,1.8f));found=true;
         }
         return found;
     }

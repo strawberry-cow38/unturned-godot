@@ -93,7 +93,9 @@ public sealed partial class WildlifeServices
             if(a.Dead)continue;
             float distance=ZombieCombat.RayCapsule(from,direction,U(a.GlobalPosition),a.Radius,Math.Max(.6f,a.BodyH));
             if(distance<0||distance>nearest)continue;
-            nearest=distance;hit=new CombatWorldHit(from+direction*distance,animalNetId:a.NetId);found=true;
+            var point=from+direction*distance;
+            nearest=distance;hit=new CombatWorldHit(point,animalNetId:a.NetId,
+                normal:ZombieCombat.CapsuleNormal(point,U(a.GlobalPosition),a.Radius,Math.Max(.6f,a.BodyH)));found=true;
         }
         return found;
     }

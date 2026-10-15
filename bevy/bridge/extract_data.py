@@ -384,6 +384,14 @@ constants.append('public const int Segments = '+number(r'const int N = (\d+)',tr
 constants.append(match(r'public static readonly Vector3 RocketMeshFix = new\([^;]+;',read('game/SamMissile.cs')))
 (out/'CosmeticRules.g.cs').write_text('using Godot; namespace UnturnedBevy { public static class CosmeticRules {\n'+'\n'.join(constants)+'}}')
 
+# The one-round magazine rule is gameplay, separate from cosmetic flight.
+stick=method(player,'static ushort StickAmmoFor(GunDef g)').replace('static ushort','public static ushort',1)
+drop=read('game/inventory/WorldItem.cs')
+rotation=match(r'Rotation = new Vector3\(\s*Mathf\.DegToRad\(90f.*?;',drop).replace('Rotation =','return',1)
+rotation=rotation.replace('GD.RandRange','Range')
+(out/'WarheadRules.g.cs').write_text('using Godot; using UnturnedGodot; namespace UnturnedBevy { public static class WarheadRules {\n'+stick+
+    '\nstatic double Range(double min,double max)=>min+System.Random.Shared.NextDouble()*(max-min);\npublic static Vector3 DropEuler() {'+rotation+'}\n}}')
+
 # Console weather changes remain in the authoritative host. Strike is a cosmetic
 # accepted fact; the source switch and actual weather asset indices are retained.
 weather_command=method(read('game/WeatherManager.cs'),'public bool ApplyCommand(string arg)')
