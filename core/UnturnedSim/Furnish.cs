@@ -354,7 +354,11 @@ namespace UnturnedSim
         /// (one wardrobe to a bedroom) hold whoever asks (null: nothing more).</summary>
         public static Func<GenRoom, IEnumerable<string>> FurnishAlso;
 
-        static void Furnish(BuildingGenResult res, int seed)
+        /// <summary>(galley: a kitchen every layout leaves short of its fridge, its sink or its stove falls back on a galley
+        /// -- BuildOut asks for it only of the building it has settled on, built again, once nothing else would put that
+        /// right; and `draws` holds where each room left the draws in the build before, so that in the galley's build every
+        /// room ends where it did there, and a kitchen given a galley moves no room furnished after it.)</summary>
+        static void Furnish(BuildingGenResult res, int seed, Dictionary<GenRoom, ulong> draws = null, bool galley = false)
         {
             var rng = new Rng(seed ^ 0x51ED);
             // (a basement's last, on draws of its own: a building is furnished above ground as it was without one)
@@ -367,8 +371,10 @@ namespace UnturnedSim
                 var done = new List<Furnisher>();
                 foreach (var room in res.Layout.Where(r => r.Floor == f))
                 {
-                    var fu = new Furnisher(res, fp, room, f < 0 ? cellar : rng) { Seed = seed };
+                    var own = f < 0 ? cellar : rng;
+                    var fu = new Furnisher(res, fp, room, own) { Seed = seed, MayGalley = galley };
                     fu.Run();
+                    if (draws != null) { if (galley && draws.TryGetValue(room, out var left)) own.Rewind(left); else draws[room] = own.Mark; }
                     done.Add(fu);
                 }
                 // the potted plants once the whole floor is furnished, then the wall décor: what the next room hangs later (a
@@ -766,8 +772,9 @@ namespace UnturnedSim
             bool Clear(string name, float x, float z, float yaw)
             {
                 var fp = FurnitureCatalog.Footprint(name, x, z, yaw); float h = FurnitureCatalog.Sizes[name].H;
+                if (_cramped) return CrampedClear(fp);
                 if (Boxy(name, yaw)) return Clear(fp, h);
-                var t = h > TallFurniture ? _badTall : _bad;
+                var t = h > _tall ? _badTall : _bad;
                 int n = 0;
                 foreach (var (i, j) in Under(name, x, z, yaw))
                 {
@@ -796,11 +803,12 @@ namespace UnturnedSim
             /// doorways and stair tiles, and if tall out of the windows.</summary>
             bool Clear((float X0, float Z0, float X1, float Z1) a, float h)
             {
+                if (_cramped) return CrampedClear(a);
                 int i0 = (int)MathF.Ceiling((a.X0 - _p.Ox) / FloorPlan.Step - 0.5f) - _i0, i1 = (int)MathF.Floor((a.X1 - _p.Ox) / FloorPlan.Step - 0.5f) - _i0;
                 int j0 = (int)MathF.Ceiling((a.Z0 - _p.Oz) / FloorPlan.Step - 0.5f) - _j0, j1 = (int)MathF.Floor((a.Z1 - _p.Oz) / FloorPlan.Step - 0.5f) - _j0;
                 if (i1 < i0 || j1 < j0) return false;
                 if (i0 < 0 || j0 < 0 || i1 >= _ni || j1 >= _nj) return false;   // past the room's box: not in the room
-                var t = h > TallFurniture ? _badTall : _bad;
+                var t = h > _tall ? _badTall : _bad;
                 for (int b = j0; b <= j1; b++) if (t[b, i1 + 1] - t[b, i0] != 0) return false;
                 return true;
             }
@@ -979,7 +987,7 @@ namespace UnturnedSim
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
                     // where you stand at a sink, no door's leaf swings (a doorway's walk is fine: you stand in it)
-                    if (Stand(name) > 0f && swing != null && _p.LeafRects.Any(r => Overlaps(swing.Value, r))) continue;
+                    if (Stand(name) > 0f && swing != null && !_cramped && _p.LeafRects.Any(r => Overlaps(swing.Value, r))) continue;
                     // a bed: a long side (both, a double's) to get in at
                     var way = name.StartsWith("Bed") ? BedWay(name, x, z, yaw) : null;
                     if (name.StartsWith("Bed") && way == null) continue;
@@ -1696,6 +1704,10 @@ namespace UnturnedSim
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
                     if (_area >= 72f) Dining();
                 }
+                // and where none of that leaves it a fridge, a sink AND a stove, a galley (Galley). Only here, once every layout,
+                // the scatter and the table have had their go and their draws -- a kitchen laid again for its table included --
+                // so a kitchen they furnish is the kitchen it always was; and only on the building BuildOut settles on (MayGalley)
+                if (!Full() && MayGalley) Galley(runs, three);
                 // a corner left free may take a lone corner cabinet, once the kitchen has what it needs
                 LoneCorner(runs);
                 WindowsOverPieces();
@@ -1704,6 +1716,110 @@ namespace UnturnedSim
             }
 
             const int MinPrep = 2;
+
+            /// <summary>The galleys a kitchen falls back on, best first: the fridge, the sink, a counter and the stove in a row
+            /// (5.86 m: the sink and the stove a counter apart, and a counter to work at); then the sink, the fridge and the
+            /// stove (4.36 m: the fridge between, so the stove is never beside the sink).</summary>
+            static readonly string[][] Galleys = { new[] { "Fridge_0", "Counter_1", "Counter_0", "Oven_0" }, new[] { "Counter_1", "Fridge_0", "Oven_0" } };
+
+            /// <summary>How tall a piece is before it may not stand in front of a window (TallFurniture), and whether the kitchen
+            /// is laid cramped: the floor you stand on at a sink may be swept by a door's leaf (Put), and a doorway's shoulders
+            /// may be stood on (CrampedClear) -- all given up only by a kitchen that cannot otherwise cook (Galley).</summary>
+            float _tall = TallFurniture;
+            bool _cramped;
+            /// <summary>Whether a kitchen left unable to cook may fall back on a galley (Galley): only in the last build of a
+            /// building, once BuildOut's own fixes -- an open plan closed, a door hung single -- have had their go, since a
+            /// cramped galley would stop it trying them (a 5x5 house whose kitchen cooked once its door was hung single).</summary>
+            public bool MayGalley;
+
+            /// <summary>The floor a cramped kitchen (Galley) still never stands on: each doorway's own walk, jamb to jamb and
+            /// DoorWalk out of both faces (a vehicle door's 6 m), and every door leaf's sweep (LeafRects). What it may take that
+            /// the floor plan keeps (KeepDoor): a doorway walk's 0.3 m shoulders past its jambs -- in a 6 m kitchen-diner with
+            /// a 2.5 m door near each end of two facing walls, those shoulders are what keeps a stove out of the corners.</summary>
+            List<(float X0, float Z0, float X1, float Z1)> _doorCores;
+            const float DoorWalk = 1.3f;
+            bool CrampedClear((float X0, float Z0, float X1, float Z1) a)
+            {
+                int i0 = (int)MathF.Ceiling((a.X0 - _p.Ox) / FloorPlan.Step - 0.5f), i1 = (int)MathF.Floor((a.X1 - _p.Ox) / FloorPlan.Step - 0.5f);
+                int j0 = (int)MathF.Ceiling((a.Z0 - _p.Oz) / FloorPlan.Step - 0.5f), j1 = (int)MathF.Floor((a.Z1 - _p.Oz) / FloorPlan.Step - 0.5f);
+                if (i1 < i0 || j1 < j0) return false;
+                for (int i = i0; i <= i1; i++)
+                    for (int j = j0; j <= j1; j++)
+                        if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
+                if (_doorCores == null)
+                {
+                    _doorCores = new List<(float, float, float, float)>(_p.LeafRects);
+                    foreach (var w in RoomWalls())
+                        foreach (var o in w.Openings.Where(o => o.V < 0.05f))
+                            _doorCores.Add(OpeningZone(w, o, 0f, o.Archetype == ArchGarage ? 6f : DoorWalk));
+                }
+                return !_doorCores.Any(r => Overlaps(a, r));
+            }
+
+            /// <summary>A kitchen every layout and the scatter left short of its fridge, its sink or its stove (cow tools,
+            /// 2026-10-15: "a 4x6 small house came out with no fridge/sink/stove"). A small house's kitchen-diner, 6 m square,
+            /// has its hall door and its back door in two facing walls, each 2.5 m wide: their walks (1.3 m deep, 0.3 m past each
+            /// jamb) take the corners of the two walls between, so a stove (1.37 m deep) fits only the middle 2.9 m of them;
+            /// their leaves sweep 2.5 m quarter circles, and where you stand at a sink no leaf may swing, so no wall takes the
+            /// sink; and the windows keep the fridge off the outside wall. Every layout and the scatter come away with a fridge
+            /// and nothing to cook on.
+            ///
+            /// So -- in the last build only (MayGalley), each from an empty kitchen, its table taken up too -- a galley in a row
+            /// along one wall (Galleys, Row: clear floor, backed, every swing clear, counters on along it while the wall
+            /// lasts); then the same CRAMPED (_cramped, _tall), three of the kitchen's comforts given up -- the sink's floor
+            /// clear of door leaves, the fridge clear of the windows (the window is raised over it, as over any piece:
+            /// WindowsOverPieces), and a doorway walk's shoulders (CrampedClear) -- since a door that can touch the cook, a
+            /// fridge under a high window or a stove at a doorway's jamb beats a house nobody can cook in; then, still cramped,
+            /// the stove at each place along a wall it fits and the sink and the fridge each nearest what is in, the stove
+            /// never beside the sink (Clash, as the scatter). The doorways' own walks, the door leaves, the stairs and the
+            /// room's walk stay as hard as ever. Then, by the ordinary rules, a counter beside the sink or the stove where a
+            /// wall still takes one, and the table where the house eats in its kitchen and one still goes. Where even that
+            /// cannot give it all three, the kitchen goes back to what it had.</summary>
+            void Galley(List<(int Nx, int Nz, float Face, float Lo, float Hi)> runs, string[] three)
+            {
+                bool Full() => three.All(n => _mine.Any(m => m.Name == n));
+                var was = _mine.Select(m => (m.Name, X: m.X, Z: m.Z, m.Yaw)).ToList();
+                void Clean() { foreach (var m in _mine.ToList()) Remove(m); }
+                string how = null;
+                Clean();
+                foreach (bool cramped in new[] { false, true })
+                {
+                    (_tall, _cramped) = cramped ? (float.MaxValue, true) : (TallFurniture, false);
+                    foreach (var names in Galleys)
+                        if (Row(runs, names) != null) { how = (cramped ? "cramped " : "") + "galley " + string.Join("-", names); break; }
+                    if (how != null) break;
+                }
+                if (how == null)
+                {
+                    // still cramped: the stove (deepest, and kept off the sink's side) at each place along a wall it fits, then
+                    // the sink and the fridge each where it fits nearest what is in -- and failing every place, the sink first
+                    bool Clash(string a, (float X, float Z, float Yaw) c) => _mine.Any(p => (a, p.Name) is ("Oven_0", "Counter_1") or ("Counter_1", "Oven_0")
+                        && Overlaps(Grow(FurnitureCatalog.Footprint(a, c.X, c.Z, c.Yaw), 0.5f), p.Footprint));
+                    double Near(float x, float z) => -_mine.Where(m => three.Contains(m.Name)).Sum(p => MathF.Sqrt((p.X - x) * (p.X - x) + (p.Z - z) * (p.Z - z)));
+                    foreach (var order in new[] { new[] { "Oven_0", "Counter_1", "Fridge_0" }, new[] { "Counter_1", "Oven_0", "Fridge_0" } })
+                    {
+                        foreach (var c in Against(order[0], Side.Back).ToList())
+                        {
+                            Clean();
+                            if (Put(order[0], new[] { c }) == null) continue;
+                            foreach (var a in order.Skip(1)) Put(a, Against(a, Side.Back).Where(q => !Clash(a, q)), (x, z, _) => Near(x, z));
+                            if (Full()) break;
+                        }
+                        if (Full()) { how = "cramped scatter"; break; }
+                    }
+                }
+                (_tall, _cramped) = (TallFurniture, false);
+                if (how != null && Full())
+                {
+                    if (!Worktop(_mine)) TopUp(1);
+                    // and the table of a house that eats in its kitchen, where it still goes
+                    if (EatsInKitchen(_res, _room)) Dining(1);
+                    FurnishTrace?.Invoke($"{how} in {_room}");
+                    return;
+                }
+                Clean();
+                foreach (var (n, x, z, yaw) in was) Put(n, new[] { (x, z, yaw) });
+            }
 
             /// <summary>Plain counters (prep space) beside the run: first one beside the sink or the stove where the kitchen
             /// has none there (Worktop), then a Counter_0 next to the sink, stove, dishwasher, fridge or another counter, on

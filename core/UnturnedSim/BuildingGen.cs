@@ -2249,6 +2249,18 @@ namespace UnturnedSim
             // Reset clears -- to go back to without building it again; and the doors tried single for nothing)
             List<(GenRoom A, GenRoom B)> latched = null; int latchedShortBy = 0; Action builtBoth = null;
             var tried = new HashSet<(GenRoom A, GenRoom B)>();
+            // (and whether this is the last build: the building settled on, built again where a kitchen in it cannot cook --
+            // no fridge, sink or stove -- with its kitchens let fall back on a galley, each room ending on the draws it left
+            // in that building, Furnish)
+            bool galley = false;
+            var draws = new Dictionary<GenRoom, ulong>();
+            bool Galley()
+            {
+                if (galley || !Shortfall(res).Any(m => m.What is "Kitchen: fridge" or "Kitchen: sink" or "Kitchen: stove")) return false;
+                galley = true; latched = null; builtBoth = null;
+                Reset();
+                return true;
+            }
             static Action Keep<T>(List<T> list) { var kept = list.ToList(); return () => { list.Clear(); list.AddRange(kept); }; }
             Action Built()
             {
@@ -2260,6 +2272,7 @@ namespace UnturnedSim
                 };
                 var chimney = res.Chimney;
                 var records = res.Layout.Select(g => (g, g.Hvac, g.Electrical)).ToList();
+                var drew = draws.ToList();
                 var at = doors.Select(d => (d.At, d.Width)).ToList();
                 return () =>
                 {
@@ -2267,6 +2280,7 @@ namespace UnturnedSim
                     res.Chimney = chimney;
                     foreach (var (g, h, e) in records) { g.Hvac = h; g.Electrical = e; }
                     for (int i = 0; i < doors.Count; i++) (doors[i].At, doors[i].Width) = at[i];
+                    draws.Clear(); foreach (var (g, m) in drew) draws[g] = m;
                 };
             }
             for (int pass = 0, closes = 0; ; pass++)
@@ -2299,7 +2313,8 @@ namespace UnturnedSim
                 }
                 // the basement, once the chimney has settled (it keeps off the hatch's well, which was planned with the rooms)
                 BuildBasement(res);
-                Furnish(res, spec.Seed);
+                Furnish(res, spec.Seed, draws, galley);
+                if (galley) return;
                 var unfurnished = new HashSet<GenRoom>(); int shortBy = Shortfall(res, unfurnished).Sum(x => x.Weight);
                 if (res.OpenPlan.Count > 0)
                 {
@@ -2320,12 +2335,13 @@ namespace UnturnedSim
                         // no better for it: the doors swing both ways again, in the building as it was
                         res.SingleSwing.RemoveAll(latched.Contains); tried.UnionWith(latched);
                         builtBoth();
+                        if (Galley()) continue;
                         return;
                     }
                     latched = null; builtBoth = null;
                 }
                 var single = DoubleSwingDoors(res).Where(p => (unfurnished.Contains(p.A) || unfurnished.Contains(p.B)) && !tried.Contains(p)).Distinct().ToList();
-                if (single.Count == 0) return;
+                if (single.Count == 0) { if (Galley()) continue; return; }
                 res.SingleSwing.AddRange(single); latched = single; latchedShortBy = shortBy; builtBoth = Built();
                 Reset();
             }
