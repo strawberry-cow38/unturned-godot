@@ -117,3 +117,35 @@ foliage shading and the remaining parity ledger still need further validation.
 - Inventory Equip now uses exact-instance `equipAndHold`, and hotbar selection
   uses authoritative cells. Two identical weapons cannot substitute for the
   selected instance while the slot transaction is pending.
+
+## Native consumables, throws and chair exits
+
+- Native suite: 115 passed; bridge integration: 33 passed; original core network
+  suite with optional host adapters: 623 passed.
+
+- Corrected weapon captures (`bevy-weapon-corrected-hip.png` and
+  `bevy-weapon-corrected-ads.png`) show both original iron sights, with the
+  sight line aligned in ADS. The native camera retains the original vertical FOV.
+- Real UI journey equipped two separate cans of beans, played the original
+  eating clip/held-part animation, deleted the selected can, restored food,
+  and equipped the next can. Eating the last can restored the prior rifle
+  with all 30 rounds intact. `bevy-food-held`, `bevy-food-used`,
+  `bevy-food-rearmed` and `bevy-food-empty-restores-gun` capture this sequence.
+- A six-second grenade hold kept both grenades in inventory and no projectile
+  existed. Release spent one and created authoritative projectile 717 at
+  `[-522.84375,33.84375,54.464844]`; its original mesh rendered in flight, and
+  the entity retired after the fuse. The remaining grenade re-equipped. See
+  `bevy-grenade-held`, `bevy-grenade-windup-held-six-seconds`,
+  `bevy-grenade-released`, and `bevy-grenade-rearmed`. Smoke/flare/blast
+  presentation remains a separate unfinished port.
+- Peer review fixed same-ID weapon burst carryover using an exact-selection
+  version, broken-gun burst cancellation, the source 2.2-second consume fallback,
+  fallback weapon preservation across food switches, and rejected re-equip
+  recovery. Native repair input now renews the server's short blowtorch lease;
+  actual repair/salvage effects remain authoritative.
+- A real Rapier chair-exit test checks the original ordered fan around a wall,
+  supporting-floor leniency, and a fully blocked exit. Seated capsules and camera
+  poses follow replicated prop-seat occupancy, then use the source exit search.
+- Session loads reset hand transactions, player capsules and projectile replicas;
+  explicit session epochs also refresh vehicle and door geometry even when IDs
+  and transforms happen to match the previous session.

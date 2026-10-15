@@ -5,9 +5,11 @@ mod entities;
 mod environment;
 mod locomotion;
 mod player;
+mod projectiles;
 mod rig;
 mod settings;
 mod ui;
+mod use_items;
 mod viewmodel;
 mod vehicle;
 mod weapons;
@@ -102,6 +104,7 @@ fn main() -> Result<()> {
         .add_plugins((
             RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule(),
             content::ContentPlugin,
+            projectiles::ProjectilePlugin,
             entities::EntityPlugin,
             environment::EnvironmentPlugin,
             world::WorldPlugin,

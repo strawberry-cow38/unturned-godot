@@ -20,6 +20,7 @@ pub struct Buttons {
 #[derive(Resource, Default)]
 pub struct Trigger {
     held: u16,
+    selection: Value,
     last_event: u64,
     burst_wait: f32,
     burst_left: u32,
@@ -71,9 +72,15 @@ impl Trigger {
         buttons: Buttons,
         ready: bool,
     ) -> Vec<Intent> {
-        if self.held != held {
+        let selection = if weapon["selectionVersion"].is_null() {
+            weapon["held"].clone()
+        } else {
+            weapon["selectionVersion"].clone()
+        };
+        if self.held != held || self.selection != selection {
             *self = Self {
                 held,
+                selection,
                 last_event: self.last_event,
                 ..default()
             };
@@ -83,7 +90,14 @@ impl Trigger {
             self.cancel();
             return Vec::new();
         }
+        if weapon["broken"].as_bool().unwrap_or(false) || weapon["canFire"].as_bool() == Some(false)
+        {
+            self.cancel();
+        }
         if gun.is_null() {
+            if melee["repair"].as_bool().unwrap_or(false) {
+                return Vec::new();
+            }
             if held == 0 || !melee.is_null() {
                 let repeated = melee["repeated"].as_bool().unwrap_or(false);
                 if buttons.press || (repeated && buttons.fire) {
@@ -120,7 +134,11 @@ impl Trigger {
             self.cancel();
             return vec![Intent::Reload];
         }
-        if mode == 0 || weapon["rechambering"].as_bool().unwrap_or(false) {
+        if mode == 0
+            || weapon["rechambering"].as_bool().unwrap_or(false)
+            || weapon["broken"].as_bool().unwrap_or(false)
+            || weapon["canFire"].as_bool() == Some(false)
+        {
             self.cancel();
             return Vec::new();
         }
@@ -154,6 +172,81 @@ impl Trigger {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn replacing_an_identical_rifle_or_breaking_it_cancels_queued_burst() {
+        let gun = json!({"hasSemi":true,"burstCount":3});
+        let mut weapon = json!({"firemode":3,"ammo":30,"selectionVersion":1});
+        let mut trigger = Trigger::default();
+        assert_eq!(
+            trigger.step(
+                0.02,
+                4,
+                &gun,
+                &Value::Null,
+                &weapon,
+                Buttons {
+                    press: true,
+                    ..default()
+                },
+                true
+            ),
+            vec![Intent::Fire]
+        );
+        weapon["selectionVersion"] = json!(2);
+        assert!(
+            trigger
+                .step(
+                    0.02,
+                    4,
+                    &gun,
+                    &Value::Null,
+                    &weapon,
+                    Buttons::default(),
+                    true
+                )
+                .is_empty()
+        );
+        trigger.step(
+            0.02,
+            4,
+            &gun,
+            &Value::Null,
+            &weapon,
+            Buttons {
+                press: true,
+                ..default()
+            },
+            true,
+        );
+        weapon["broken"] = json!(true);
+        assert!(
+            trigger
+                .step(
+                    0.02,
+                    4,
+                    &gun,
+                    &Value::Null,
+                    &weapon,
+                    Buttons::default(),
+                    true
+                )
+                .is_empty()
+        );
+        weapon["broken"] = json!(false);
+        assert!(
+            trigger
+                .step(
+                    0.02,
+                    4,
+                    &gun,
+                    &Value::Null,
+                    &weapon,
+                    Buttons::default(),
+                    true
+                )
+                .is_empty()
+        );
+    }
     #[test]
     fn semi_holding_does_not_repeat_and_burst_finishes_after_release() {
         let gun = json!({"hasSafety":true,"hasSemi":true,"burstCount":3,"firerate":4});

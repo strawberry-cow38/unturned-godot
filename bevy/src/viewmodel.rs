@@ -193,6 +193,7 @@ fn build_viewmodel(
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut active_cameras: Query<&mut Camera, With<ViewmodelCamera>>,
+    hand_use: Res<crate::use_items::HandUse>,
 ) {
     let visible = !matches!(ui.screen, Screen::MainMenu | Screen::Dead)
         && snapshot.0["connected"].as_bool().unwrap_or(false)
@@ -246,7 +247,9 @@ fn build_viewmodel(
     if !visible {
         return;
     }
-    let held = snapshot.0["player"]["heldItemId"].as_u64().unwrap_or(0) as u16;
+    let held = hand_use
+        .visual_item()
+        .unwrap_or_else(|| snapshot.0["player"]["heldItemId"].as_u64().unwrap_or(0) as u16);
     if state.held == Some(held) {
         return;
     }
@@ -577,6 +580,8 @@ fn aim_ease(progress: f32) -> f32 {
 }
 fn animate_viewmodel(
     mut events: MessageReader<CoreEvent>,
+    mut hand_events: MessageReader<crate::use_items::HandEvent>,
+    hand_use: Res<crate::use_items::HandUse>,
     mut state: ResMut<ViewmodelState>,
     mut status: ResMut<ViewmodelStatus>,
     mut rigs: Query<&mut RigPlayback>,
@@ -600,6 +605,26 @@ fn animate_viewmodel(
     state.shot_hold = (state.shot_hold - dt).max(0.);
     let held = state.held.unwrap_or(0);
     let item = catalog.items.get(&held);
+    for event in hand_events.read() {
+        use crate::use_items::HandEvent;
+        match event {
+            HandEvent::Start(id) if *id == held => {
+                let clip = state.use_clip.clone();
+                play_once(&mut rig, &clip, 1.);
+            }
+            HandEvent::Finish(id) if *id == held => {
+                let clip = state.hold_clip.clone();
+                play_once(&mut rig, &clip, 1.);
+                state.equip_elapsed = 0.;
+            }
+            HandEvent::Cancel => {
+                let clip = state.hold_clip.clone();
+                play_once(&mut rig, &clip, 1.);
+                rig.time = rig.data.anims.get(&clip).map_or(0., |c| c.length);
+            }
+            _ => {}
+        }
+    }
     for event in events
         .read()
         .filter(|e| e.data["playerId"] == snapshot.0["playerId"])
@@ -678,13 +703,14 @@ fn animate_viewmodel(
         .iter()
         .any(|a| settings.pressed(*a, &keys, &mouse));
     status.held = held;
-    status.ready = held == 0
-        || state.equip_elapsed
-            >= rig
-                .data
-                .anims
-                .get(&state.hold_clip)
-                .map_or(0., |c| c.length);
+    status.ready = !hand_use.busy()
+        && (held == 0
+            || state.equip_elapsed
+                >= rig
+                    .data
+                    .anims
+                    .get(&state.hold_clip)
+                    .map_or(0., |c| c.length));
     status.aiming = state.is_gun
         && status.ready
         && !ui.captures_input()
@@ -781,6 +807,7 @@ fn relative_pose(
 fn pose_viewmodel(
     state: Res<ViewmodelState>,
     status: Res<ViewmodelStatus>,
+    hand_use: Res<crate::use_items::HandUse>,
     parents: Query<&ChildOf>,
     mut transforms: ParamSet<(Query<&Transform>, Query<&mut Transform>)>,
     mut cameras: Query<&mut Projection, With<ViewmodelCamera>>,
@@ -798,7 +825,7 @@ fn pose_viewmodel(
     let mut aim = None;
     if let Some(gun) = state.gun {
         if let Ok(mut visibility) = held_visibility.get_mut(gun) {
-            *visibility = if state.hands_off {
+            *visibility = if state.hands_off || hand_use.hide_item() {
                 Visibility::Hidden
             } else {
                 Visibility::Inherited

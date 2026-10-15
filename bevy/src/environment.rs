@@ -42,6 +42,7 @@ impl Plugin for EnvironmentPlugin {
                     update_environment,
                     ambience,
                     gun_audio,
+                    hand_audio,
                     apply_volume,
                 )
                     .chain()
@@ -500,12 +501,9 @@ fn gun_audio(
         if !config.content_root.join(&path).exists() {
             continue;
         }
-        let p = &event.data["origin"];
-        let position = Vec3::new(
-            p["x"].as_f64().unwrap_or(0.) as f32,
-            p["y"].as_f64().unwrap_or(0.) as f32,
-            p["z"].as_f64().unwrap_or(0.) as f32,
-        );
+        let Some(position) = crate::player::vector(&event.data["origin"]) else {
+            continue;
+        };
         commands.spawn((
             AudioPlayer::new(assets.load(path)),
             PlaybackSettings::DESPAWN
@@ -516,6 +514,57 @@ fn gun_audio(
             SoundGain(db_gain(if local { -3. } else { 9. })),
         ));
     }
+}
+fn hand_audio(
+    mut commands: Commands,
+    mut events: MessageReader<crate::use_items::HandEvent>,
+    catalog: Res<crate::entities::ItemCatalog>,
+    config: Res<WorldConfig>,
+    assets: Res<AssetServer>,
+) {
+    use crate::use_items::HandEvent;
+    for event in events.read() {
+        let path = match event {
+            HandEvent::Start(id) => catalog
+                .items
+                .get(id)
+                .filter(|i| i.is_consumable)
+                .and_then(|i| i.consume_animation["sound"].as_str())
+                .map(|s| format!("sounds/{s}.wav")),
+            HandEvent::Released(id) => {
+                throwable_stem(*id).map(|s| format!("audio/items/throwables_{s}_use.ogg"))
+            }
+            _ => None,
+        };
+        if let Some(path) = path.filter(|p| config.content_root.join(p).is_file()) {
+            commands.spawn((
+                AudioPlayer::new(assets.load(path)),
+                PlaybackSettings::DESPAWN,
+                SoundGain(db_gain(-4.)),
+            ));
+        }
+    }
+}
+pub fn throwable_stem(id: u16) -> Option<&'static str> {
+    Some(match id {
+        254 => "grenade",
+        1242 => "grenade_makeshift",
+        255 => "flare_blue",
+        256 => "flare_green",
+        257 => "flare_orange",
+        258 => "flare_purple",
+        259 => "flare_red",
+        260 => "flare_yellow",
+        261 => "smoke_black",
+        262 => "smoke_blue",
+        263 => "smoke_green",
+        264 => "smoke_orange",
+        265 => "smoke_purple",
+        266 => "smoke_red",
+        267 => "smoke_white",
+        268 => "smoke_yellow",
+        _ => return None,
+    })
 }
 fn apply_volume(
     settings: Res<Settings>,
