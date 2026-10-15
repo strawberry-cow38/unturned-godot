@@ -1116,6 +1116,29 @@ faint residual remains compared with the earlier clean night baseline. That
 render issue stays open; no claim of complete off-state visual parity is made.
 See bevy/docs/HDR_NIGHTVISION_PORT.md for membership and remaining integration.
 
+### Bevy physical lean, camera peek and accepted aim — 2026-10-15
+
+The native player now follows the selected source's 50 Hz lean-side decision,
+strict eye-to-side 0.95 m capsule clearance, 75 ms third-person shoulder tap delay,
+20-degree foot-pivot roll and 4/s smooth return/stance eye easing. Camera and
+actual accepted firing origin share the physical eyes; aim uses yaw × lean ×
+pitch, preserving pitched cover shots while keeping Alt head-look independent.
+The rendered body's spine leans after its real upper-body animation without
+rotating the collision body or locomotion legs. Accepted restraint state alone
+permits the original side-change struggle intent.
+
+Six focused adapter regressions pass, including real Rapier cover, actual camera
+motion, live native fire through the authoritative bridge, and original rig
+spine/leg/chair behavior. All 13 player tests pass, including seated actions. The
+original Godot 4.6.2 `player.lean` behavior fixture independently passes 45 checks;
+its dummy-renderer run is not visual evidence. Root/world source reviews found
+no blocker. This is a physical-adapter checkpoint: the oversized viewmodel
+render target, centered crop and source 2D image roll remain in progress, and
+live lean/ADS/third-person render validation is still required. See
+`bevy/docs/LEAN_PORT.md` for exact boundaries. Also extended the translucent-item
+lifecycle regression to prove a hot-edited source material rebuilds its depth
+companion without changing the source 0.99 cutoff.
+
 
 ### Bevy integrated UDP transport checkpoint — 2026-10-15
 

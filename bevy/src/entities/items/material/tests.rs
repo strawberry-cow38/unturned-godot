@@ -196,6 +196,34 @@ fn original_alpha_thresholds_share_sampler_culling_and_shape_and_retire_with_par
             Some(&RenderLayers::layer(3))
         );
     }
+    // A live material edit must rebuild the shared cached pair, rather than
+    // leave invisible depth/shadow children sampling a stale texture/color.
+    let old_depth_material = app
+        .world()
+        .get::<MeshMaterial3d<DepthMaterial>>(depth)
+        .unwrap()
+        .0
+        .clone();
+    app.world_mut()
+        .resource_mut::<Assets<StandardMaterial>>()
+        .get_mut(&material)
+        .unwrap()
+        .base_color = Color::srgba(0.3, 0.7, 0.4, 0.8);
+    app.update(); // AssetEvent flush follows Update.
+    app.update();
+    let replacement = &app
+        .world()
+        .get::<MeshMaterial3d<DepthMaterial>>(depth)
+        .unwrap()
+        .0;
+    assert_ne!(replacement, &old_depth_material);
+    let refreshed = app
+        .world()
+        .resource::<Assets<DepthMaterial>>()
+        .get(replacement)
+        .unwrap();
+    assert_eq!(refreshed.base.base_color, Color::srgba(0.3, 0.7, 0.4, 0.8));
+    assert_eq!(refreshed.base.alpha_mode, AlphaMode::Mask(0.99));
     app.world_mut().entity_mut(parent).remove::<RenderLayers>();
     app.update();
     assert_eq!(

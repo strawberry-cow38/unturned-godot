@@ -156,15 +156,22 @@ all 142 tests at this checkpoint.
 
 ## Still required for vehicle parity
 
+Subsequent player checkpoints added the original driver wheel-arm pose, passenger
+pose, mesh-bounds chase cameras, aircraft chase rules and accepted first-person
+passenger gun actions; see `AVATAR_PORT.md` and `SEATED_ACTION_PORT.md`. The
+blowtorch's accepted repair path now restores hull and proportional engine/rotor
+pools, and native effects adopt those authoritative values. These do not imply
+completion of the remaining vehicle controls below.
+
 This milestone is not the whole 11,264-line vehicle shell. The following remains:
 aircraft turbulence; ship
 deck/superstructure collider details and riding; suspension surface-material
 selection and wheel dust; husk settling;
 dynamic headlights/sirens/beacons; towing, kingpin, sling, winch and cargo;
 turret weapons/hatches and optics;
-doors/hood/trunk animations and storage dashboard; repair/refuel/battery/carjack
+doors/hood/trunk animations and storage dashboard; refuel/battery/carjack
 interaction tools; remaining vehicle console/test entry points; remote-client
-puppets; seat switching and fully posed seated character cameras. Jet afterburner
+puppets; seat switching and turret-specific seated poses/cameras. Jet afterburner
 and contrail shader effects are still pending.
 
 The source data for these systems remains in the export, and the original C#

@@ -16,6 +16,8 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 use serde_json::{Value, json};
 
+pub(crate) mod lean;
+
 #[cfg(test)]
 mod seated_tests;
 
@@ -37,6 +39,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<crate::use_items::HandUse>()
             .add_message::<crate::use_items::HandEvent>()
             .init_resource::<PlayerInput>()
+            .init_resource::<lean::LeanState>()
             .init_resource::<GameSnapshot>()
             .add_systems(Startup, spawn_player.after(WorldReady))
             .add_systems(
@@ -61,6 +64,11 @@ impl Plugin for PlayerPlugin {
                     .in_set(PlayerCameraUpdate)
                     .after(crate::vehicle::VehicleUpdate)
                     .after(PlayerUpdate),
+            )
+            .add_systems(FixedUpdate, lean::step.before(simulate))
+            .add_systems(
+                Update,
+                lean::ease.after(PlayerUpdate).before(PlayerCameraUpdate),
             )
             .add_systems(FixedUpdate, simulate.before(PhysicsSet::SyncBackend))
             .add_systems(
@@ -637,6 +645,7 @@ fn simulate(
         MessageWriter<crate::use_items::HandEvent>,
         Res<crate::avatar::Perspective>,
         Query<&Transform, (With<PlayerCamera>, Without<PlayerBody>)>,
+        Option<Res<lean::LeanState>>,
     ),
     ladders: Query<(&crate::world::WorldObject, &GlobalTransform, &Collider), Without<PlayerBody>>,
     mut bodies: Query<(
@@ -821,13 +830,8 @@ fn simulate(
                 continue;
             }
             UseIntent::Throw { item, strong } => {
-                let mut direction = Quat::from_euler(
-                    EulerRot::YXZ,
-                    input.yaw.to_radians(),
-                    input.pitch.to_radians(),
-                    0.,
-                ) * Vec3::NEG_Z;
-                let mut eye = transform.translation + Vec3::Y * body.eye_height;
+                let (mut eye, mut direction) =
+                    aim_eye(transform.translation, &body, &input, hands.4.as_deref());
                 if seated {
                     let Ok(camera) = hands.3.single() else {
                         continue;
@@ -886,13 +890,8 @@ fn simulate(
             && viewmodel.held == input.held_item_id,
     );
     for action in actions {
-        let eye = body.eye_height;
-        let mut direction = Quat::from_euler(
-            EulerRot::YXZ,
-            input.yaw.to_radians(),
-            input.pitch.to_radians(),
-            0.0,
-        ) * Vec3::NEG_Z;
+        let (eyes, mut direction) =
+            aim_eye(transform.translation, &body, &input, hands.4.as_deref());
         let world_yaw = if seated {
             let Ok(camera) = hands.3.single() else {
                 continue;
@@ -903,7 +902,7 @@ fn simulate(
         };
         let request = match action {
             crate::weapons::Intent::Fire => {
-                let mut origin = transform.translation + Vec3::Y * eye;
+                let mut origin = eyes;
                 if seated {
                     // Seated look is relative to the moving seat, not the
                     // owner's walking yaw. Fire from the actual seated eye.
@@ -933,6 +932,35 @@ fn simulate(
             model.notice(error.to_string());
         }
     }
+}
+
+/// Same foot pivot and roll-before-pitch chain as the physical eyes. Reading
+/// camera Euler angles here would include Alt gaze and lose lean/pitch coupling.
+fn aim_eye(
+    feet: Vec3,
+    body: &PlayerBody,
+    input: &PlayerInput,
+    lean: Option<&lean::LeanState>,
+) -> (Vec3, Vec3) {
+    lean.map_or_else(
+        || {
+            (
+                feet + Vec3::Y * body.eye_height,
+                Quat::from_euler(
+                    EulerRot::YXZ,
+                    input.yaw.to_radians(),
+                    input.pitch.to_radians(),
+                    0.,
+                ) * Vec3::NEG_Z,
+            )
+        },
+        |lean| {
+            (
+                lean.eyes(feet, input.yaw),
+                lean.aim(input.yaw, input.pitch) * Vec3::NEG_Z,
+            )
+        },
+    )
 }
 
 fn seated_weapon_allowed(seat: Option<crate::vehicle::OccupiedSeat>, first_person: bool, gun: bool) -> bool {
@@ -1128,6 +1156,7 @@ fn camera_follow(
     time: Res<Time>,
     context: ReadRapierContext,
     vehicles:crate::avatar::camera::VehicleCameras,
+    lean: Option<Res<lean::LeanState>>,
     mut camera: Query<(&mut Transform, &mut Projection), (With<PlayerCamera>, Without<PlayerBody>)>,
 ) {
     let Ok((entity, body, posture)) = body.single() else {
@@ -1173,15 +1202,24 @@ fn camera_follow(
                 transform.translation = eye.translation;
                 transform.rotation = eye.rotation * look;
             } else {
+                // Source TP pivot eases toward target stance height itself;
+                // only FP uses the separately smoothed physical-eye height.
+                let eye = if perspective.first_person {
+                    lean.as_ref()
+                        .map_or(posture.eye_height, |lean| lean.eye_height)
+                } else {
+                    posture.eye_height
+                };
                 *transform = crate::avatar::camera::follow(
                     &mut perspective,
                     context.single().ok().as_ref(),
                     entity,
                     body.translation,
-                    posture.eye_height,
+                    eye,
                     posture.height,
                     input.yaw,
                     input.pitch,
+                    lean.as_ref().map_or(0., |lean| lean.angle),
                     time.delta_secs(),
                 );
             }

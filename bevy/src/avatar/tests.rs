@@ -41,6 +41,7 @@ fn source_camera_pivot_orbit_and_crosshair_convergence() {
         2.,
         0.,
         -45.,
+        0.,
         1.,
     );
     assert!((pose.translation - Vec3::Y * 1.605).length() - 2. < 1e-5);
@@ -496,5 +497,43 @@ fn aircraft_alt_input_uses_source_wrap_pitch_and_entry_reset_without_resetting_s
     assert!(
         view.fly.x > 0. && view.fly.x < 170. && view.fly.y > 0. && view.fly.y < 70.,
         "release smoothly returns aircraft look"
+    );
+}
+
+#[test]
+fn accepted_lean_rotates_real_spine_without_tilting_root_or_walking_legs_and_clears_in_chair() {
+    let mut app = avatar_app();
+    app.world_mut().resource_mut::<Time<Virtual>>().pause();
+    app.insert_resource(crate::player::lean::LeanState::default());
+    app.update();
+    let root = app.world().resource::<AvatarState>().root.unwrap();
+    let rig = app.world().get::<RigPlayback>(root).unwrap();
+    let spine = rig.bones["Spine"];
+    let leg = rig.bones["Left_Leg"];
+    let root_pose = *app.world().get::<Transform>(root).unwrap();
+    let before = app.world().get::<Transform>(spine).unwrap().rotation;
+    let leg_pose = *app.world().get::<Transform>(leg).unwrap();
+    app.world_mut()
+        .resource_mut::<crate::player::lean::LeanState>()
+        .angle = 20_f32.to_radians();
+    app.update();
+    let after = app.world().get::<Transform>(spine).unwrap().rotation;
+    assert!((before.angle_between(after).to_degrees() - 20.).abs() < 0.01);
+    assert_eq!(*app.world().get::<Transform>(root).unwrap(), root_pose);
+    assert_eq!(*app.world().get::<Transform>(leg).unwrap(), leg_pose);
+    app.world_mut()
+        .resource_mut::<crate::world::interactables::PropOccupancy>()
+        .seat = Some(crate::world::interactables::OccupiedPropSeat {
+        net_id: 44,
+        body_pose: Transform::IDENTITY,
+        eye_pose: Transform::IDENTITY,
+        anchor: Vec3::ZERO,
+        exit_position: Vec3::X,
+    });
+    app.update();
+    assert_eq!(
+        app.world().get::<pose::TorsoPose>(root).unwrap().lean,
+        0.,
+        "sitting never carries the old walking lean into the chair pose"
     );
 }

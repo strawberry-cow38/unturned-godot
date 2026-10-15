@@ -131,12 +131,6 @@ fn controls(
             }
         }
     } else {
-        if settings.just_pressed(GameAction::LeanLeft, &keys, &mouse) {
-            view.left = true;
-        }
-        if settings.just_pressed(GameAction::LeanRight, &keys, &mouse) {
-            view.left = false;
-        }
         if free {
             let delta = motion.delta * settings.mouse_sensitivity;
             if view.first_person {
@@ -264,6 +258,7 @@ fn update(
     ui: Res<UiState>,
     view: Res<Perspective>,
     input: Res<PlayerInput>,
+    lean: Option<Res<crate::player::lean::LeanState>>,
     body: Query<(&Transform, &PlayerBody), Without<LocalAvatar>>,
     occupancy: Res<crate::vehicle::Occupancy>,
     prop: Res<crate::world::interactables::PropOccupancy>,
@@ -344,6 +339,7 @@ fn update(
             );
             *pose = pose::TorsoPose {
                 pitch: input.pitch(),
+                lean: lean.as_ref().map_or(0., |lean| lean.angle.to_degrees()),
                 ..default()
             };
         }

@@ -94,25 +94,31 @@ pub fn follow(
     height: f32,
     yaw: f32,
     pitch: f32,
+    lean: f32,
     dt: f32,
 ) -> Transform {
     if view.first_person {
-        return Transform::from_translation(feet + Vec3::Y * eye).with_rotation(Quat::from_euler(
-            EulerRot::YXZ,
-            (yaw + view.head.x).to_radians(),
-            (pitch + view.head.y).clamp(-89., 89.).to_radians(),
-            0.,
-        ));
+        let pivot = crate::player::lean::pivot(yaw, lean);
+        return Transform::from_translation(feet + pivot * Vec3::Y * eye).with_rotation(
+            pivot
+                * Quat::from_euler(
+                    EulerRot::YXZ,
+                    view.head.x.to_radians(),
+                    (pitch + view.head.y).clamp(-89., 89.).to_radians(),
+                    0.,
+                ),
+        );
     }
     view.shoulder =
         view.shoulder + (if view.left { -1. } else { 1. } - view.shoulder) * (8. * dt).min(1.);
     view.pivot_height += (pivot(eye, height) - view.pivot_height) * (4. * dt).min(1.);
-    let rotation = Quat::from_euler(
-        EulerRot::YXZ,
-        (yaw - view.shoulder * 5. + view.orbit.x).to_radians(),
-        (pitch + view.orbit.y).clamp(-89., 89.).to_radians(),
-        0.,
-    );
+    let rotation = crate::player::lean::pivot(yaw, lean)
+        * Quat::from_euler(
+            EulerRot::YXZ,
+            (-view.shoulder * 5. + view.orbit.x).to_radians(),
+            (pitch + view.orbit.y).clamp(-89., 89.).to_radians(),
+            0.,
+        );
     let origin = feet + Vec3::Y * view.pivot_height;
     let dir = rotation * offset(view.shoulder);
     let distance = context.map_or(2., |c| sweep(c, origin, dir, 2., owner));

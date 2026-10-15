@@ -2,14 +2,14 @@
 use super::*;
 use crate::vehicle::{Occupancy, OccupiedSeat};
 
-fn tick(bridge: &CoreBridge, count: usize) -> Value {
+pub(super) fn tick(bridge: &CoreBridge, count: usize) -> Value {
     let mut state = Value::Null;
     for _ in 0..count {
         state = bridge.request("tick", json!({})).unwrap()["state"].clone();
     }
     state
 }
-fn fixture(vehicle: bool) -> (App, Entity) {
+pub(super) fn fixture(vehicle: Option<bool>) -> (App, Entity) {
     let bridge = CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/content");
     bridge
@@ -26,7 +26,7 @@ fn fixture(vehicle: bool) -> (App, Entity) {
         let item: crate::entities::ItemVisual = serde_json::from_value(row.clone()).unwrap();
         catalog.items.insert(item.id, item);
     }
-    let net_id = if vehicle {
+    let net_id = if vehicle == Some(true) {
         let id=bridge.request("worldVehicles", json!({"vehicles":[{"typeId":1,"key":"seated-test","position":[0,0,0],"health":300,"fuel":10,"seatOffsets":[[0,0,0],[0,0,0]]}]})).unwrap()["result"]["vehicles"][0]["netId"].as_u64().unwrap() as u32;
         bridge
             .request(
@@ -35,7 +35,7 @@ fn fixture(vehicle: bool) -> (App, Entity) {
             )
             .unwrap();
         id
-    } else {
+    } else if vehicle == Some(false) {
         bridge
             .request(
                 "worldServices",
@@ -46,11 +46,11 @@ fn fixture(vehicle: bool) -> (App, Entity) {
             .request("action", json!({"name":"sitSeat","args":{"netId":900}}))
             .unwrap();
         900
-    };
+    } else {0};
     let snapshot = tick(&bridge, 12);
-    if vehicle {
+    if vehicle == Some(true) {
         assert_eq!(snapshot["player"]["vehicleSeat"], 1);
-    } else {
+    } else if vehicle == Some(false) {
         assert_eq!(
             snapshot["interactables"]["seats"][0]["occupant"],
             snapshot["playerId"]
@@ -78,7 +78,7 @@ fn fixture(vehicle: bool) -> (App, Entity) {
             held_item_id: 4,
             fire: true,
             fire_pressed: true,
-            in_seat: true,
+            in_seat: vehicle.is_some(),
             ..default()
         })
         .insert_resource(viewmodel)
@@ -98,7 +98,7 @@ fn fixture(vehicle: bool) -> (App, Entity) {
                 velocity: Vec3::ZERO,
                 grounded: false,
                 height: 2.,
-                stance: "sitting".into(),
+                stance: if vehicle.is_some() {"sitting"} else {"stand"}.into(),
                 eye_height: 1.75,
                 locomotion: default(),
             },
@@ -111,7 +111,7 @@ fn fixture(vehicle: bool) -> (App, Entity) {
         .id();
     let camera = Transform::from_xyz(0., 1., 0.).looking_at(Vec3::new(10., 1., 0.), Vec3::Y);
     app.world_mut().spawn((PlayerCamera, camera));
-    if vehicle {
+    if vehicle == Some(true) {
         app.world_mut().resource_mut::<Occupancy>().seat = Some(OccupiedSeat {
             vehicle: body,
             net_id,
@@ -122,7 +122,7 @@ fn fixture(vehicle: bool) -> (App, Entity) {
             driver: false,
             aircraft: false,
         });
-    } else {
+    } else if vehicle == Some(false) {
         app.world_mut()
             .resource_mut::<crate::world::interactables::PropOccupancy>()
             .seat = Some(crate::world::interactables::OccupiedPropSeat {
@@ -137,7 +137,7 @@ fn fixture(vehicle: bool) -> (App, Entity) {
 }
 #[test]
 fn passenger_fire_uses_seated_camera_without_motion_and_blocks_driver_or_third_person() {
-    let (mut app, body) = fixture(true);
+    let (mut app, body) = fixture(Some(true));
     app.update();
     let state = tick(app.world().resource::<CoreBridge>(), 12);
     assert_eq!(
@@ -185,7 +185,7 @@ fn passenger_fire_uses_seated_camera_without_motion_and_blocks_driver_or_third_p
 }
 #[test]
 fn prop_seat_can_fire_and_melee_while_its_only_body_stays_fixed() {
-    let (mut app, body) = fixture(false);
+    let (mut app, body) = fixture(Some(false));
     app.update();
     let state = tick(app.world().resource::<CoreBridge>(), 12);
     assert_eq!(
