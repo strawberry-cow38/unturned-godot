@@ -45,6 +45,26 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void PollBarrier_AcceptedConsoleTeleportDeliversOwnerRecoveryBeforeRebase()
+        {
+            var h = new TransactionalHarness(8846); h.Server.SpawnProvider = _ => new Vector3(1025, 40, 12);
+            h.Server.Transactions.RepositionOwner = h.Server.PlayerHost.RepositionOwner;
+            h.Connected("walker"); h.Step(8); var c = h.Clients[0];
+            c.SendPlayerState(new Vector3(1025, 40, 12), 0, 0, Vector3.zero, 0, true, 0); Drain(h);
+            int recoveries = 0; Vector3 owner = Vector3.zero; byte ack = 0;
+            c.PlayerRecov += e => { recoveries++; owner = e.Pos; ack = e.RecovCounter; };
+            long tick = h.Server.Session.CurrentTick;
+            c.SendConsole("teleport 1030 42 18"); Drain(h);
+            Assert.That(recoveries, Is.EqualTo(1)); Assert.That(owner, Is.EqualTo(new Vector3(1030, 42, 18)));
+            Assert.That(h.Server.Session.CurrentTick, Is.EqualTo(tick));
+            var delta = new Vector3(-1024, 0, 0); WorldRebase.Translate(h.Server, c, delta); owner += delta;
+            c.SendPlayerState(owner, 0, 0, Vector3.zero, 0, true, ack); Drain(h);
+            Assert.That(h.Server.Players.TryGetByOwner(c.PlayerId, out var p), Is.True);
+            Assert.That(p.Pos, Is.EqualTo(new Vector3(6, 42, 18)));
+            Assert.That(recoveries, Is.EqualTo(1), "the accepted new-frame claim needs no second correction");
+        }
+
+        [Test]
         public void Rebase_PreservesAuthorityRecoveryWindow_AndUnsentCombatOrigin()
         {
             var h = new TransactionalHarness(8842); h.Server.SpawnProvider = _ => new Vector3(1025, 0, -1025);

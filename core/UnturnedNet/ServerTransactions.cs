@@ -132,6 +132,10 @@ namespace UnturnedGodot.Net
         /// the fight -- reject instead. NetWorldServer wires this to VehicleHost.IsDriver (it's built
         /// after this object); null (bare L0 harnesses without vehicles) = never seated.</summary>
         public Func<ushort, bool> IsSeated;
+        /// <summary>Optional host hook for accepted console teleports. A client-driven owner
+        /// needs its recovery/freeze event immediately, even when the host drains commands
+        /// without stepping time. Return false to retain the original entity-only fallback.</summary>
+        public Func<ushort, Vector3, long, bool> RepositionOwner;
 
         /// <summary>The server-side craft queue. Null on a host that has not wired one, in which case OnCraft
         /// falls back to crafting instantly -- named with a trailing underscore only because `Crafting` is the
@@ -2313,7 +2317,9 @@ namespace UnturnedGodot.Net
                 { Diag.ConsoleRejected++; return "usage: teleport <x> <y> <z>"; }
                 if (!_players.TryGetByOwner(sender, out _)) { Diag.ConsoleRejected++; return "no player"; }
                 if (IsSeated?.Invoke(sender) == true) { Diag.ConsoleRejected++; return "exit the vehicle first"; }
-                _players.ServerTeleport(sender, new Vector3(x, y, z), _tick());
+                var destination = new Vector3(x, y, z);
+                if (RepositionOwner?.Invoke(sender, destination, _tick()) != true)
+                    _players.ServerTeleport(sender, destination, _tick());
                 Diag.ConsoleApplied++;
                 return FormattableString.Invariant($"teleported to ({x:0.#}, {y:0.#}, {z:0.#})");
             }
