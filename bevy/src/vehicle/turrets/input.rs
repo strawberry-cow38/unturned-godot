@@ -217,9 +217,13 @@ fn crosshair(
     parents: &Query<&ChildOf>,
     oceans: &Query<(&crate::world::OceanBox, &Transform)>,
 ) -> Vec3 {
-    let skip = |entity, _: &_| {
+    let skip = |entity, collider: &bevy_rapier3d::rapier::geometry::Collider| {
+        let groups = collider.collision_groups();
+        let driving_hull = groups.memberships.bits() & Group::GROUP_4.bits() != 0
+            && groups.filter.bits() & Group::GROUP_2.bits() == 0;
         entity != player
             && entity != vehicle
+            && !driving_hull
             && !parents
                 .iter_ancestors(entity)
                 .take(24)

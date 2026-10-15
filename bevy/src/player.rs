@@ -27,6 +27,8 @@ mod seated_tests;
 mod mounted_tests;
 #[cfg(test)]
 mod menu_tests;
+#[cfg(test)]
+mod collision_tests;
 
 pub struct PlayerPlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -253,6 +255,16 @@ fn capsule(height: f32) -> Collider {
     Collider::capsule(Vec3::Y * radius, Vec3::Y * (height - radius), radius)
 }
 
+fn player_collision_groups() -> CollisionGroups {
+    // PlayerController's own walking mask also supplies HeadroomFor/CapsuleFits:
+    // world/props, vehicle model surfaces and remote players. Animals/enemies
+    // have separate hit layers, and a stripped driving hull is not a surface.
+    CollisionGroups::new(
+        Group::GROUP_2,
+        Group::GROUP_1 | Group::GROUP_4 | Group::GROUP_15,
+    )
+}
+
 fn spawn_player(mut commands: Commands, world: Res<WorldState>) {
     commands.spawn((
         Name::new("Local player body"),
@@ -267,12 +279,9 @@ fn spawn_player(mut commands: Commands, world: Res<WorldState>) {
         Transform::from_translation(world.spawn),
         RigidBody::KinematicPositionBased,
         capsule(2.0),
-        CollisionGroups::new(Group::GROUP_2, Group::ALL & !Group::GROUP_3),
+        player_collision_groups(),
         KinematicCharacterController {
-            filter_groups: Some(CollisionGroups::new(
-                Group::GROUP_2,
-                Group::ALL & !Group::GROUP_3,
-            )),
+            filter_groups: Some(player_collision_groups()),
             offset: CharacterLength::Absolute(0.015),
             autostep: Some(CharacterAutostep {
                 max_height: CharacterLength::Absolute(0.5),
@@ -1034,16 +1043,7 @@ fn simulate(
                 let hit = context
                     .single()
                     .ok()
-                    .and_then(|p| {
-                        p.cast_ray(
-                            eye,
-                            direction,
-                            probe,
-                            true,
-                            QueryFilter::default().exclude_collider(entity),
-                        )
-                    })
-                    .map(|(_, d)| d);
+                    .and_then(|p| throw_clearance(&p, entity, eye, direction, probe));
                 let origin = crate::use_items::throw_origin(eye, direction, hit, gap);
                 let velocity = crate::use_items::throw_velocity(
                     direction,
@@ -1380,11 +1380,16 @@ fn prop_exit_position(
     let angle = delta.z.atan2(delta.x);
     let filter = QueryFilter::default()
         .exclude_collider(entity)
-        .exclude_sensors();
+        .exclude_sensors()
+        .groups(player_collision_groups());
+    let floor = filter.groups(CollisionGroups::new(
+        Group::GROUP_2,
+        Group::GROUP_1 | Group::GROUP_4,
+    ));
     let capsule = Collider::capsule(Vec3::Y * (0.25 + 0.35), Vec3::Y * (height - 0.35), 0.35);
     let clamp = |mut point: Vec3| {
         if let Some((_, distance)) =
-            context.cast_ray(point + Vec3::Y * 2., Vec3::NEG_Y, 5., true, filter)
+            context.cast_ray(point + Vec3::Y * 2., Vec3::NEG_Y, 5., true, floor)
         {
             let ground = point.y + 2. - distance;
             if point.y < ground + 0.1 {
@@ -1630,13 +1635,48 @@ fn has_headroom(
         &probe,
         QueryFilter::default()
             .exclude_collider(owner)
-            .exclude_sensors(),
+            .exclude_sensors()
+            .groups(player_collision_groups()),
         |_, _| {
             blocked = true;
             false
         },
     );
     !blocked
+}
+fn throw_clearance(
+    context: &RapierContext,
+    owner: Entity,
+    eye: Vec3,
+    direction: Vec3,
+    length: f32,
+) -> Option<f32> {
+    // ThrowOrigin uses source bits0|6. HitMesh/panes are bits15|5, so neither
+    // those nor a stripped driving hull participate; a fallback chassis keeps
+    // its original world bit. The grenade's later bounce query is independent.
+    let world_surface = |_, collider: &bevy_rapier3d::rapier::geometry::Collider| {
+        let groups = collider.collision_groups();
+        let vehicle = groups.memberships.bits() & Group::GROUP_4.bits() != 0;
+        let fallback = groups.filter.bits() & (Group::GROUP_2 | Group::GROUP_4).bits()
+            == (Group::GROUP_2 | Group::GROUP_4).bits();
+        !vehicle || fallback
+    };
+    context
+        .cast_ray(
+            eye,
+            direction,
+            length,
+            true,
+            QueryFilter::default()
+                .exclude_collider(owner)
+                .exclude_sensors()
+                .predicate(&world_surface)
+                .groups(CollisionGroups::new(
+                    Group::ALL,
+                    Group::GROUP_1 | Group::GROUP_4,
+                )),
+        )
+        .map(|(_, distance)| distance)
 }
 fn eye_height(stance: &str) -> f32 {
     match stance {

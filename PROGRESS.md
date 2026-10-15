@@ -2112,3 +2112,16 @@ the source and comparison images independently. The real radial fullgame capture
 also passed; root will capture actual Inventory/Crafting/Information on the next
 application build. Source MenuSwoop transitions remain the next separate slice.
 See `bevy/docs/MODAL_BACKDROP_PORT.md` and `bevy-dashboard-backdrop-*` artifacts.
+
+
+### Native source player clearance and mounted aim masks (2026-10-15)
+
+Walking, headroom and furniture exits now share the original physical mask;
+stripped vehicle driving hulls cannot block them, actual model surfaces and remote
+players still do, and animal hit layers stay separate. Mounted aiming excludes
+those hulls while retaining the real zombie filter. Throw clearance preserves its
+different source world-only mask, including fallback chassis but excluding model
+panes. Three new physics regressions, the extended real crosshair query and all33
+player tests pass (one render fixture ignored). World independently reviewed source
+and code; its throw-mask finding was corrected before validation. See
+`bevy/docs/VALIDATION.md` for evidence and the source distinction.

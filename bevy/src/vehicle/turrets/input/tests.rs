@@ -117,12 +117,39 @@ fn actual_crosshair_skips_nested_own_barrel_and_queries_water_and_remote_bodies(
     );
     app.world_mut()
         .entity_mut(target)
-        .insert(CollisionGroups::new(Group::GROUP_6, Group::ALL));
+        .insert(CollisionGroups::new(Group::GROUP_6, Group::GROUP_1));
     app.update();
     assert!(
         app.world_mut().run_system_once(ray).unwrap().distance(hit) < 0.001,
         "the original zombie layer participates too"
     );
+    // A different car's stripped chassis is not its visible model. Keep the
+    // unrestricted query membership for enemy hit layers, but ignore that hull.
+    app.world_mut().spawn((
+        Transform::from_xyz(0., 0., -4.),
+        Collider::cuboid(0.5, 0.5, 0.5),
+        CollisionGroups::new(Group::GROUP_4, Group::ALL & !Group::GROUP_2),
+    ));
+    for _ in 0..2 {
+        app.update();
+    }
+    assert!(app.world_mut().run_system_once(ray).unwrap().distance(hit) < 0.001);
+    let surface = app
+        .world_mut()
+        .spawn((
+            Transform::from_xyz(0., 0., -6.),
+            Collider::cuboid(0.5, 0.5, 0.5),
+            CollisionGroups::new(Group::GROUP_4, Group::GROUP_2),
+        ))
+        .id();
+    for _ in 0..2 {
+        app.update();
+    }
+    assert!(
+        (app.world_mut().run_system_once(ray).unwrap().z + 5.5).abs() < 0.001,
+        "actual vehicle model still intercepts the aim"
+    );
+    app.world_mut().despawn(surface);
     app.world_mut().spawn((
         crate::world::OceanBox {
             size: Vec3::new(20., 0.2, 20.),

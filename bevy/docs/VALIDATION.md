@@ -226,3 +226,29 @@ foliage shading and the remaining parity ledger still need further validation.
 - Opened and inspected `bevy-blowtorch-idle-fixed`, `bevy-blowtorch-burning-fixed`, `bevy-blowtorch-released-fixed` and `bevy-blowtorch-moving`: source blue sparks originate at the nozzle, follow the viewport frame, and expire after release. The earlier captures without the `fixed` suffix were taken before equip and are not validation evidence.
 - Opened `bevy-chainsaw-idle`, `bevy-chainsaw-cutting` and `bevy-chainsaw-released`. A peer flagged the large foreground forearm; running the original Godot chainsaw harness and inspecting `godot-chainsaw/rig_00.png` confirms that authored close pose. Native viewmodel lighting remains darker, and the original viewport glow is not yet reproduced. No exact lighting or pixel parity claim is made.
 - Native live renderer logs contain no shader/ECS failures. Original Godot captured successfully but logged its existing render-thread finalization warning during shutdown. This machine has no audio output device: source files, scheduling, gains, attenuation limits and pause behavior were checked, but sound was not verified by listening.
+
+
+### Source player and aiming query masks (2026-10-15)
+
+The source body-mesh collision handoff also applies to clearance and aiming.
+Native walking, standing-height checks and furniture exit capsules now share the
+source world/props, vehicle surface and remote-player mask. A vehicle's stripped
+driving hull cannot create a phantom ceiling or exit floor; the actual model
+surface still blocks, as does a living remote player. Original animal hit layers
+do not become walking obstacles. Mounted aiming retains membership broad enough
+to see real zombie hitboxes while explicitly skipping stripped driving hulls.
+
+ThrowOrigin has a distinct original mask: source bits0|6 deliberately omit the
+vehicle HitMesh/pane bits15|5. The native clearance probe preserves that distinction,
+including fallback chassis which retain their original world-layer role. The
+projectile's later collision path is independent. Peer review caught and corrected
+an initial attempt to include model panes in this probe; that would have changed
+the source behavior.
+
+Three Rapier regressions pass, including the old unfiltered-query negative control,
+real roof/wall/fallback positives, both pane states and remote-player occupancy.
+The mounted crosshair regression now uses the production zombie collision filter
+and verifies a foreign stripped hull cannot obscure the target while its real
+model surface does. All33 native player tests pass (one render fixture ignored);
+source and code review passed. Logs: `/tmp/unturned-player-surface-tests.log`,
+`/tmp/unturned-player-surface-broad.log`, `/tmp/unturned-player-crosshair-tests.log`.
