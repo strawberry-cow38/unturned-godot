@@ -96,9 +96,20 @@ source distance/cone adapter: its readable grass/beach light pool extends beyond
 the baseline's weak central patch. The source-light Vulkan run has no shader
 validation failures; all six focused HDR tests pass. Root peer review confirmed
 both night-vision modes, the scope/crosshair image and the broader lamp pool.
-An immediate lamp-off screenshot still retained illumination despite its switch
-sidecar being false; capture latency versus visibility scheduling remains under
-investigation. Other scope variants remain unverified.
+The earlier immediate lamp-off screenshot retained illumination despite its
+switch sidecar being false. A regression using Bevy's actual VisibilityPlugin
+and LightPlugin reproduced an ordering defect: newly enabled lights had stale
+InheritedVisibility in their first render frame. Player lamp presentation now
+runs before visibility propagation and light bounding-sphere updates. The same
+regression verifies creation, repeated on/off transitions and camera movement
+through both InheritedVisibility and the ViewVisibility consumed by PBR.
+Thirteen focused lighting tests pass. Opened fresh `bevy-headlamp-visible-now`,
+`bevy-headlamp-hidden-now` and delayed `bevy-headlamp-hidden-settled` images show
+the main pool dimming when switched off, but retain a faint ground pool relative
+to the earlier clean night baseline. This residual is a separate unresolved
+render issue; the switch sidecar and propagation regression do not prove that
+all GPU light contribution has disappeared.
+Other scope variants remain unverified.
 
 The Godot and upstream BakingLab MIT notices are in
 `licenses/GODOT_POSTPROCESS.txt`. Source references:
@@ -111,7 +122,27 @@ The Godot and upstream BakingLab MIT notices are in
 
 The viewmodel adapter now supplies the source camera-space sunlight, two
 readability fills, night floors and per-view ambient override through
-`viewmodel/lighting.rs`, using the same derived light units. Dynamic world-light
-mirrors from `Viewmodel.SetWorldLights`, source label/focus-outline renderers,
-and the broader volumetric-fog pipeline remain separate presentation work.
-Further scope variants remain pending; the fixed-night cases above are verified.
+`viewmodel/lighting.rs`, using the same derived light units. Its `lighting/world.rs`
+adapter also ports `PlayerController.ScanWorldLights` and
+`Viewmodel.SetWorldLights`: every fifth simulation tick it selects the nearest
+four tagged sources within twice their range and pools shadowless layer1 omni
+mirrors under the viewport camera. It walks hidden ancestors explicitly, because
+Bevy's explicitly-visible child otherwise overrides a hidden parent. The shared
+`NearbyLight` resource averages every eligible source in the original sRGB color
+space and caps energy at4, even while unarmed or without a viewport camera.
+Camera replacement rebuilds the pool; origin changes preserve camera-local
+placement. Vehicle fire carries the exact original `dynlight` tag, and
+`UG_TESTLIGHT=1` creates the original WorldBuilder diagnostic red lamp. Actual
+source membership is narrower than its comments: current ThrowableFx flare,
+blast, player eye lamp and muzzle constructors do not join `dynlight`, so the
+adapter does not invent membership for them. Future native grid fixtures,
+deployable lamps and vehicle headlights/sirens/afterburners must carry the tag
+when those light renderers are ported. Inventory-stage consumption, source
+label/focus-outline renderers and the broader volumetric-fog pipeline remain
+separate presentation work. Five focused lighting tests cover the source scan,
+aggregation, hidden ancestry, camera/origin mapping and replacement lifecycle;
+the opened midnight `bevy-world-light-mirror` PNG/JSON shows the original
+UG_TESTLIGHT red source reaching the separate rifle viewport while all player
+lamps and goggles are off. The fixture also initializes visibility on its native
+physics-only parent, avoiding an incomplete visibility hierarchy. Further scope variants remain pending;
+the fixed-night cases above are verified.

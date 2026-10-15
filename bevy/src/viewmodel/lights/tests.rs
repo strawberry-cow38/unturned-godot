@@ -371,3 +371,6 @@ fn torch_secondary_is_a_switch_and_never_spends_a_strong_melee_hit() {
     );
     assert_eq!(actions, [crate::weapons::Intent::Melee(false)]);
 }
+
+#[path = "visibility_tests.rs"]
+mod extraction_visibility;

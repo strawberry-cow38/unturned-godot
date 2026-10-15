@@ -64,7 +64,9 @@ impl Plugin for LightPlugin {
                 render
                     .after(bevy::transform::TransformSystems::Propagate)
                     .after(crate::avatar::AvatarMuzzleUpdate)
-                    .before(bevy::camera::visibility::VisibilitySystems::CalculateBounds),
+                    .before(bevy::camera::visibility::VisibilitySystems::CalculateBounds)
+                    .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
+                    .before(bevy::light::SimulationLightSystems::UpdateBounds),
             )
             .add_systems(Update, emission.after(LightInput));
     }

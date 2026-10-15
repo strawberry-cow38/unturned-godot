@@ -1096,3 +1096,22 @@ Dropped translucent items now retain the source alpha-blended color surface plus
 ### Bevy original gesture metadata and immediate refusal — 2026-10-15
 
 The bridge catalog now exposes the original GestureRules table directly, including clip, loop/stop, request whitelist, broadcast and required stance metadata. RequestGesture runs the same source advisory check against the local accepted stance/held state and replicated gesture/seats, returning the original refusal text without posing optimistically; admitted requests still traverse the existing command and authoritative publisher. Four real-host gesture regressions pass, including exact metadata, forged system gestures, hand/stance refusal, accepted delayed surrender, one-shot delivery and old-session mailbox cleanup. This checkpoint was built independently from committed source plus its two narrow hooks in `/tmp/unturned-bridge-gesture-metadata`; frozen120 integration artifacts remain unchanged. Native gesture presentation is the next separate consumer.
+
+
+### Bevy source world-light mirrors and light visibility ordering (2026-10-15)
+
+Ported the original 10 Hz dynlight scan and nearest-four shadowless first-person
+mirrors, including ancestor visibility, camera-relative placement, pooled
+lifecycle and the source sRGB nearby-light aggregate. Vehicle fire carries its
+original tag; UG_TESTLIGHT provides the original red diagnostic lamp. Five
+focused mirror tests pass, including the peer-review camera-replacement fix.
+The opened midnight bevy-world-light-mirror PNG shows the red source illuminating
+the separate gun/scope viewport; root independently reviewed it.
+
+A real Bevy visibility/light regression reproduced stale first-frame lamp
+visibility. Presentation now precedes propagation and light bounds; 13 focused
+lighting tests pass, and the combined native suite passes 307 tests. Fresh
+headlamp on/off and delayed-off images were opened: the main pool dims, but a
+faint residual remains compared with the earlier clean night baseline. That
+render issue stays open; no claim of complete off-state visual parity is made.
+See bevy/docs/HDR_NIGHTVISION_PORT.md for membership and remaining integration.

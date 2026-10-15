@@ -1,6 +1,8 @@
 //! Viewmodel.MatchWorldLight: one camera-space sun and two readability fills.
+mod world;
 use super::{LAYER, PlayerCamera, ViewmodelCamera, ViewmodelFrame};
 use bevy::{camera::visibility::RenderLayers, prelude::*};
+pub(crate) use world::{NearbyLight, WorldLight};
 
 #[derive(Component)]
 struct ViewmodelLight(u8);
@@ -8,6 +10,7 @@ struct ViewmodelLight(u8);
 pub(super) struct LightingPlugin;
 impl Plugin for LightingPlugin {
     fn build(&self, app: &mut App) {
+        world::install(app);
         app.add_systems(
             PostUpdate,
             match_world

@@ -354,6 +354,7 @@ pub fn update(
                 commands
                     .spawn((
                         Name::new("Vehicle fire light"),
+                        crate::viewmodel::lighting::WorldLight,
                         PointLight {
                             color: Color::srgb(1., 0.55, 0.2),
                             range: 8.,
