@@ -1498,3 +1498,21 @@ an existing content gap: his quest 9 has no shipped definition and therefore no
 catalog log row. No quest content or authority was invented to mask it. Original
 quest persistence/progress callsites, Information/map UI and editor remain in the
 ledger. See bevy/docs/NPC_UI_PORT.md for exact source boundaries and artifacts.
+
+### Bevy accepted resource contacts over real UDP (2026-10-15)
+
+Protocol63 appends reliable ordered Event54 for original tree/ore hit and fall
+facts. The authoritative registry index, accepted tick, original point/root,
+fall direction, trunk length and debris lifetime travel to remote presentation;
+unknown tags, truncated tails and invalid values are rejected before dispatch.
+Names remain manifest/catalog identity. Integrated mode suppresses its wire echo,
+remote JSON retains the accepted tick and known event age, and late joins receive
+the lasting dead bitmap without replaying falls. Source damage, ore tool gates,
+reward delays and regrowth remain unchanged. Version62 is refused explicitly.
+
+Four new core and three real UDP/source bridge tests pass; full656 core,59 managed
+and121 Python authority checks pass on immutable resource-contact-59. Removing
+only the client subscription in an isolated build makes the remote regression
+fail. The59-test artifact includes the separate bed-damage adapter's three tests;
+this commit does not own that adapter. Native accepted-age adoption and a remote
+fall render remain the presentation follow-up. See bevy/docs/RESOURCE_PROTOCOL.md.

@@ -1052,6 +1052,7 @@ namespace UnturnedGodot.Net
                                                                     Vitals, Containers, Animals, Destructibles,
                                                                     InteractableState, Profiles, Equipment });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
             RegisterEquipmentEvents();
+            RegisterResourceContactEvents();
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {

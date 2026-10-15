@@ -29,15 +29,19 @@ public sealed class ResourceServices
         string kind = Text(r, "kind");
         if (kind is not ("tree" or "ore")) return;
         int index = Int(r, "index");
+        if (index < 0 || index > ushort.MaxValue) throw new ArgumentException("Resource index exceeds its wire budget");
         string name = Text(r, "name");
         var tree = ResourceRules.Tree(name);
         bool ore = kind == "ore";
         float health = Float(r, "health", ore ? ResourceRules.OreHealth : tree.Health);
         float reset = Float(r, "resetSeconds", ore ? ResourceRules.OreReset : tree.Reset);
         if (!float.IsFinite(health) || health <= 0 || !float.IsFinite(reset) || reset <= 0) throw new ArgumentException("Invalid resource health/reset");
+        float trunkLength = Float(r, "trunkLength", 8);
+        if (!float.IsFinite(trunkLength) || trunkLength <= 0) throw new ArgumentException("Invalid resource trunk length");
         var p = Vec(r, "position");
+        if (!float.IsFinite(p.x) || !float.IsFinite(p.y) || !float.IsFinite(p.z)) throw new ArgumentException("Invalid resource position");
         var node = new ResourceNode { Index = index, Name = name, Ore = ore, Position = new(p.x, p.y, p.z),
-            Health = health, MaxHealth = health, ResetTicks = Ticks(reset), TrunkLength = Float(r, "trunkLength", 8),
+            Health = health, MaxHealth = health, ResetTicks = Ticks(reset), TrunkLength = trunkLength,
             LogItem = tree.Log, RewardMin = ore ? ResourceRules.OreRewardMin : tree.Min,
             RewardMax = ore ? ResourceRules.OreRewardMax : tree.Max };
         node.Spawn = (item, pos) => _server.WorldItems.ServerSpawn(_server.Ids.Mint(), item, new(pos.X, pos.Y, pos.Z), _server.Session.CurrentTick);
@@ -54,9 +58,12 @@ public sealed class ResourceServices
             if (!hit.Melee || hit.Weapon != "axe_pick") damage = 0;
             else damage = _catalog.MeleeDefs.Values.FirstOrDefault(m => m.Name == hit.Weapon)?.ResourceDamage ?? hit.Damage;
         }
-        if (!float.IsFinite(damage) || damage < 0) return;
+        if (!float.IsFinite(damage) || damage < 0
+            || !float.IsFinite(hit.Point.x) || !float.IsFinite(hit.Point.y) || !float.IsFinite(hit.Point.z)
+            || !float.IsFinite(hit.Direction.x) || !float.IsFinite(hit.Direction.y) || !float.IsFinite(hit.Direction.z)) return;
         n.Health = Math.Max(0, n.Health - damage);
-        _emit("resourceHit", new { index = n.Index, name = n.Name, kind = n.Ore ? "ore" : "tree", health = n.Health, damage, point = Array(hit.Point) });
+        Publish(n, new ResourceContactEvent { Kind = ResourceContactKind.Hit, Position = hit.Point,
+            Tick = unchecked((uint)hit.Tick), Health = n.Health, Damage = damage });
         if (n.Health > 0) return;
         _server.Transactions.SetResourceAlive(n.Index, false);
         n.RegrowAt = hit.Tick + n.ResetTicks;
@@ -65,9 +72,17 @@ public sealed class ResourceServices
         n.FallDirection = new(dir.x, dir.y, dir.z);
         if (n.Ore) n.Reward();
         else n.DropAt = hit.Tick + Ticks(ResourceRules.DebrisLife);
-        _emit("resourceFelled", new { index = n.Index, name = n.Name, kind = n.Ore ? "ore" : "tree",
-            position = new[] { n.Position.X, n.Position.Y, n.Position.Z }, direction = Array(dir),
-            trunkLength = n.TrunkLength, debrisSeconds = n.Ore ? 0 : ResourceRules.DebrisLife });
+        Publish(n, new ResourceContactEvent { Kind = ResourceContactKind.Felled, Tick = unchecked((uint)hit.Tick),
+            Position = new(n.Position.X, n.Position.Y, n.Position.Z), Direction = dir,
+            TrunkLength = n.TrunkLength, DebrisSeconds = n.Ore ? 0 : (float)ResourceRules.DebrisLife });
+    }
+    void Publish(ResourceNode node, ResourceContactEvent value)
+    {
+        value.Index = checked((ushort)node.Index);
+        value.Material = node.Ore ? ResourceContactMaterial.Ore : ResourceContactMaterial.Tree;
+        var message = NetMessagePak.Pack(ReplicationIds.EventResourceContact, value.Write);
+        _emit(ResourceEvents.Name(value), ResourceEvents.Data(value, node.Name));
+        _server.BroadcastEvent(message);
     }
     public void Step()
     {

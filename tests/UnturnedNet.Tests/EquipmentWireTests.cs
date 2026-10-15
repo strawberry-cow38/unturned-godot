@@ -127,11 +127,11 @@ namespace UnturnedNet.Tests
         [Test]
         public void Version61CannotJoinTheChangedEquipmentFraming()
         {
-            Assert.That(NetProtocol.Version, Is.EqualTo(62));
+            Assert.That(NetProtocol.Version, Is.GreaterThanOrEqualTo(62));
             var h = new NetSimHarness(seed: 7621); var client = h.AddClient("old equipment", version: 61); client.Connect();
             Assert.That(h.StepUntil(() => client.State == NetSessionState.Disconnected, 100), Is.True);
             Assert.That(client.RejectReason, Is.EqualTo(NetRejectReason.VersionMismatch));
-            Assert.That(client.RejectServerVersion, Is.EqualTo(62)); Assert.That(h.Server.Peers, Is.Empty);
+            Assert.That(client.RejectServerVersion, Is.EqualTo(NetProtocol.Version)); Assert.That(h.Server.Peers, Is.Empty);
         }
     }
 }

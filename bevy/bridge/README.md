@@ -233,8 +233,12 @@ methods. Tree logs/sticks spawn after the original 11-second debris timer; ore
 accepts only pickaxe Resource_Damage. The authoritative alive bit disables the
 combat collider until regrowth. Events `resourceHit` and `resourceFelled` carry
 index/name/kind, point/position and fall direction/trunkLength/debrisSeconds for
-native effects. Save extensions retain partial health and pending timers. Container random rolls preserve the
-source's unseeded range/distribution contract through a portable RNG adapter;
+native effects. Protocol63 carries these accepted facts to remote clients with
+acceptedTick and known ageSeconds; remote name is null because the manifest owns
+identity. Integrated clients suppress their wire echo. No historical falls replay
+on join/load. See `../docs/RESOURCE_PROTOCOL.md`. Save extensions retain partial
+health and pending timers. Container random rolls preserve the source's unseeded
+range/distribution contract through a portable RNG adapter;
 the resulting inventories are saved, rather than rerolled on load.
 
 

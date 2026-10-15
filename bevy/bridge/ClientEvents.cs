@@ -58,6 +58,7 @@ public sealed partial class BridgeHost
         };
         _client.CropPlanted += e => Emit("cropPlanted", e);
         _client.CropHarvested += e => Emit("cropHarvested", e);
+        _client.ResourceContact += ReceiveResourceContact;
         _client.ResourceHarvested += e => Emit("resourceHarvested", e);
         _client.ResourceRespawned += e => Emit("resourceRespawned", e);
         _client.ObjectDestroyed += e => Emit("objectDestroyed", e);
