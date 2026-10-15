@@ -92,6 +92,25 @@ PNG/JSON journey runs the production native key consumer against an actual UDP
 host and remote client. Its accepted phase is 0→0.45→1→0, with `ownsWorld=false`
 and driver seat 0 throughout. The original leaves visibly close, fold inward and
 stack beside the clear step; independent review of the accepted half/open views
-also passed. This is a scripted key/authority render fixture;
-a full playable-map OS-input bus journey remains uncaptured. Audio device
-listening is unavailable in this environment.
+also passed. This is a scripted key/authority render fixture. Audio device listening is
+unavailable in this environment.
+
+A subsequent full playable PEI run uses actual X11 keyboard/mouse input through
+the normal game. An isolated temporary save places the existing harness bus on
+a town street, away from the coastal spawn's steep slope. The world is saved
+and loaded through the production Pause controls; only this test save's bus and
+player placement are adjusted. F opens the door on foot, displaying the passive
+moving prompt, and normal walking/F boards the driver seat. Real 12ms Ctrl
+chords then produce accepted closed -> open -> closed phases (0 -> 1 -> 0).
+Switching to third person and orbiting around the front/right repeats that
+cycle with the entire doorway visible. F exits successfully with HP100.
+`bevy-crafting-pei-bus-{f-request,open,driver-step-enter,driver-ctrl-open,
+driver-ctrl-close,three-quarter-closed,three-quarter-open,
+three-quarter-reclosed,exit}.png/json` were opened and inspected. The accepted
+bus ID/seat/phase are recorded in the sidecars. No claim of normal spawn
+placement or audible hardware verification follows from the test setup.
+
+The broad first-person driving forearms match the original opened
+`godot-driving-reference/rig_02.png`. Source own-body layers and seated Skull
+eye placement also match; no speculative body/arms change was made.
+

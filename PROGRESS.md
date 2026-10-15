@@ -2643,3 +2643,15 @@ Root independently reviewed extraction, persistence and array boundaries.
 Native decoder/streaming/authority, original PNG persistence, finite Vulkan
 world validation and separate BuildingGen materialization remain in progress.
 See bevy/docs/FINITE_WORLD_PORT.md; no finite playable milestone is claimed yet.
+
+### Bevy full PEI OS keyboard and bus control journeys
+
+New immutable main with the focused-keyboard correction passes a real fast
+Ctrl+A/Birch -> Maple replacement in playable PEI, with both captures opened.
+The normal Pause save/load controls also prepare an isolated street-positioned
+bus test save. Physical F opens its folding door, walking/F boards driver0,
+12ms Ctrl chords open/close the accepted phase, third-person orbit shows the
+same cycle across the complete doorway, and F exits alive. All relevant PNG/JSON
+captures were opened. The original Godot reference confirms the broad driving
+forearms; layer/Skull review finds no duplication bug. See CRAFTING_PORT.md and
+BUS_DOOR_PORT.md for the exact evidence and test-setup limitations.

@@ -70,7 +70,13 @@ the retained crafting search. The relevant captures were opened and inspected.
 The playable check also exposed an engine focused-keyboard modifier batching
 bug: a 12ms Ctrl+A chord consumed in one slow frame inserted `a` after Ctrl had
 already been released. Its failing-first regressions and narrow engine fix are
-tracked separately in `vendor/bevy_input_focus/PATCHES.md`.
+tracked separately in `vendor/bevy_input_focus/PATCHES.md`. The fixed
+engine passes three actual-dispatch regressions, forty upstream tests and a
+four-stage real X11 12ms-chord fixture at 2 FPS. All four PNGs were opened.
+The full native suite passes 637 tests with 33 renderer/OS tests ignored.
+A newly linked playable PEI run also verifies fast Ctrl+A selecting Birch and
+typing Maple replacing it; both `bevy-crafting-pei-patched-fast-*.png/json`
+captures were opened.
 
 Search supports the original caret, Unicode selection, IME, normal clipboard
 shortcuts, control-character paste filtering and deferred undo/redo history.
