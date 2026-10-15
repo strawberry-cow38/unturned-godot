@@ -400,7 +400,7 @@ namespace UnturnedSim
             if (!NoDoodads)
             {
                 foreach (var fu in all) fu.TopDoodads();
-                Outdoors(res, seed);
+                if (OutdoorDoodads) Outdoors(res, seed);
             }
             LabelRecords(res);
         }
