@@ -669,6 +669,7 @@ namespace UnturnedGodot
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         LampLight _focusLamp;         // the standing/desk lamp being LOOKED AT -> F toggles it on/off
         ElevatorButton _focusElevButton;   // the elevator floor-BUTTON being LOOKED AT -> F calls the car to that floor
+        RoomLightSwitch _focusLightSwitch;   // a room's wall switch being LOOKED AT -> F flips that room's ceiling lights
         NpcCharacter _focusNpc;            // the person being LOOKED AT -> their name shows, F talks to them
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         SDG.Unturned.Item _heldPaintItem; // a vehicle spraypaint in hand -> LMB the car you are aimed at to respray it
@@ -756,6 +757,7 @@ namespace UnturnedGodot
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ElevatorButton hitElevButton = null;   // elevator floor-button under the ray -> F sends the car to that floor
+            RoomLightSwitch hitLightSwitch = null;   // a room's wall switch under the ray -> F flips its ceiling lights
             ForagePlant hitForage = null;          // berry bush / mushroom under the ray -> F picks it (server decides what you get)
             CarLift hitLift = null;                // car-lift platform under the ray -> F raises/lowers it (needs power)
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
@@ -812,6 +814,7 @@ namespace UnturnedGodot
                     else if (rcol is Node vmn && vmn.HasMeta(VendingMachine.HitMeta) && vmn.GetMeta(VendingMachine.HitMeta).As<VendingMachine>() is VendingMachine vmd && IsInstanceValid(vmd)) hitVendor = vmd;   // drinks machine body -> its device (F buys)
                     else if (rcol is Node psn && psn.HasMeta(PropSeat.HitMeta) && NearestFreeSeat(psn, _lookEnd) is PropSeat pss) hitSeat = pss;   // chair/couch/bench body tagged in WorldBuilder -> the seat NEAREST where you aimed (F sits)
                     else if (rcol is Node lmn && lmn.HasMeta(LampLight.LookMeta) && lmn.GetMeta(LampLight.LookMeta).As<LampLight>() is LampLight lmd && IsInstanceValid(lmd)) hitLamp = lmd;   // standing/desk lamp body tagged in WorldBuilder -> its LampLight (F on/off)
+                    else if (rcol is RoomLightSwitch rls && IsInstanceValid(rls)) hitLightSwitch = rls;   // a generated room's light switch -> F flips that room's ceiling lights
                     else if (rcol is ElevatorButton eb && IsInstanceValid(eb)) hitElevButton = eb;   // elevator floor button -> F sends the car to its floor (the whole car is no longer the interactable, master)
                     else if (rcol is ForagePlant fpl && IsInstanceValid(fpl) && fpl.Alive) hitForage = fpl;   // berry bush / mushroom -> F asks the server for it
                     else if (rcol is Node cln && cln.HasMeta(CarLift.HitMeta) && cln.GetMeta(CarLift.HitMeta).As<CarLift>() is CarLift cld && IsInstanceValid(cld)) hitLift = cld;   // the car lift's platform -> F works it
@@ -826,7 +829,7 @@ namespace UnturnedGodot
                 // sphere is still allowed to speak, because picking an individual item off a shelf you are looking at
                 // is exactly what it is for. The ray chain above is else-if, so at most one of these is ever set.
                 rayTerminal = hitDoor != null || hitObjectDoor != null || hitBed != null || hitDeploy != null || hitSeat != null
-                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || hitMonitor != null || hitLamp != null || hitElevButton != null || hitNote != null || hitForage != null || hitLift != null || rayShelfItem;
+                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || hitMonitor != null || hitLamp != null || hitElevButton != null || hitLightSwitch != null || hitNote != null || hitForage != null || hitLift != null || rayShelfItem;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
@@ -871,7 +874,7 @@ namespace UnturnedGodot
                 _debugLookCandidates = (rayTerminal ? 1 : 0) + (hitShelf != null ? 1 : 0)
                                      + (hitItem != null ? 1 : 0) + (hitVeh != null ? 1 : 0)
                                      + (hitShelfItem != null && !rayShelfItem ? 1 : 0) + (hitPuppet != null ? 1 : 0);
-                if (won != Look.RayOther) { hitDoor = null; hitObjectDoor = null; hitBed = null; hitDeploy = null; hitFluid = null; hitGasPump = null; hitGrid = null; hitTV = null; hitMonitor = null; hitLamp = null; hitElevButton = null; hitSeat = null; hitForage = null; }
+                if (won != Look.RayOther) { hitDoor = null; hitObjectDoor = null; hitBed = null; hitDeploy = null; hitFluid = null; hitGasPump = null; hitGrid = null; hitTV = null; hitMonitor = null; hitLamp = null; hitElevButton = null; hitLightSwitch = null; hitSeat = null; hitForage = null; }
                 if (won != Look.Shelf) hitShelf = null;
                 if (won != Look.ShelfItem) hitShelfItem = null;
                 if (won != Look.Item) hitItem = null;
@@ -1063,6 +1066,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusElevButton)) _focusElevButton.SetLookFocused(false);
                 _focusElevButton = hitElevButton;
                 _focusElevButton?.SetLookFocused(true);
+            }
+            if (hitLightSwitch != _focusLightSwitch)   // a room's wall switch look-focus: the plate's white outline, same pattern as the button
+            {
+                if (IsInstanceValid(_focusLightSwitch)) _focusLightSwitch.SetLookFocused(false);
+                _focusLightSwitch = hitLightSwitch;
+                _focusLightSwitch?.SetLookFocused(true);
             }
             if (hitNpc != _focusNpc)   // person look-focus: their nameplate appears, which is the affordance
             {
@@ -7787,7 +7796,8 @@ namespace UnturnedGodot
             // that cannot contradict itself. Null in SP/loopback -> the direct path below is unchanged.
             var lead = d.GroupLead;
             if (lead.NetId != 0 && NetToggleObjectDoor != null) { NetToggleObjectDoor(lead.NetId); return true; }
-            return d.Toggle();
+            // (a double-acting door opens away from where this player stands; over the wire the server reads that itself)
+            return d.ToggleFrom(GlobalPosition);
         }
 
         // A placed door is BARRICADED if a window-barricade panel fills EITHER face of its opening -> it won't open
@@ -9030,6 +9040,7 @@ namespace UnturnedGodot
                     VendPromptSet(_focusVendor);   // show the answer on this frame, not at the next 30 Hz scan
                 }
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
+                else if (_focusLightSwitch != null && IsInstanceValid(_focusLightSwitch)) _focusLightSwitch.Press();   // looking at a room's light switch: F flips its ceiling lights
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
                 else if (TradeOpen) _tradeUI.Close();   // trading: F backs out to the conversation, not to the world

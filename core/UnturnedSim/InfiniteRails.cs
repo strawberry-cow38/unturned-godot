@@ -4,12 +4,13 @@ using System.Collections.Generic;
 
 namespace SDG.Unturned
 {
-    /// <summary>One tile of track (InfiniteRoads.TrackOf), absolute metres. Kind 0 = a New_Rail_Unit: its root on the
-    /// centreline at RailOriginY, the unit's +Z along (DX, DY, DZ) -- grade included -- stretched by K along it, owning
-    /// the sleeper at its root. Kind 1 = a New_Rail_Sleeper closing a line's open end.</summary>
+    /// <summary>One tile of track (InfiniteRoads.TrackOf), absolute metres. Kind 0 = a New_Rail_Unit: its root on its
+    /// track's centreline at RailOriginY, the unit's +Z along (DX, DY, DZ) -- grade included -- stretched by K along it,
+    /// owning the sleeper at its root. Kind 1 = a New_Rail_Sleeper closing a track's open end. Track: which of the line's
+    /// two (0 on the left of its way, 1 on the right; RailTrackOffset either side of the line).</summary>
     public struct RailPiece
     {
-        public byte Kind;
+        public byte Kind, Track;
         public double X, Z; public float Y;
         public float DX, DY, DZ;
         public float K;
@@ -56,7 +57,15 @@ namespace SDG.Unturned
     {
         // ---- the kit: New_Rail_Unit, measured (+Y up, +Z along, root on the centreline; EditorRailSpline)
         public const float RailPitch = 2.0f;               // EditorRailSpline.Pitch
-        public const float RailHalfWidth = 3.4675f;        // EditorRailSpline.HalfWidth: the ballast's foot
+        public const float RailHalfWidth = 3.4675f;        // EditorRailSpline.HalfWidth: one track's ballast foot
+        /// <summary>DOUBLE TRACK (strawberry 2026-10-11: "work on double rail lines, rail branching, merging, split parallel
+        /// lines etc."): every line carries two tracks, their centrelines this far either side of its own -- 5.2 m apart.
+        /// Not a main line's 4-4.5 m: the unit's ballast top is 2.59 m either side of its root, and two tops overlapping
+        /// at one height are a strip of z-fighting down the middle. At 5.2 m the tops part by 2.5 cm and the two inner
+        /// slopes meet in a shallow V.</summary>
+        public const float RailTrackOffset = 2.6f;
+        /// <summary>The outer track's ballast foot, from the line's centreline.</summary>
+        public const float RailOuterHalf = RailTrackOffset + RailHalfWidth;
         public const float RailBallastFoot = -0.44f, RailBallastTop = 0.08f, RailBallastTopHalf = 2.5875f;
         public const float RailHead = 0.31f;               // the rails' top over the root
         /// <summary>The room a train needs over the rails' top and either side of the centreline: Train_Engine_0 stands
@@ -72,15 +81,15 @@ namespace SDG.Unturned
         public const float RailProud = 0.005f;
 
         // ---- the formation and the line
-        /// <summary>Flat ground either side of the centreline: the ballast's foot plus one LOD0 cell's DIAGONAL (4 m grid),
+        /// <summary>Flat ground either side of the centreline: the outer ballast's foot plus one LOD0 cell's DIAGONAL (4 m grid),
         /// so every ground triangle any part of the ballast stands on has all three corners on the formation. At 5 m, a
         /// triangle under the foot reached a corner already in the shoulder's blend: 260 of 7594 feet hung over the
         /// mesh by more than 10 mm on embankments (worst 158 mm), and cuttings buried them by up to 495 mm.</summary>
-        public const float RailFormationHalf = RailHalfWidth + 4f * 1.41422f + 0.1f;
+        public const float RailFormationHalf = RailOuterHalf + 4f * 1.41422f + 0.1f;
         public const float RailBank = 2f;                  // a cutting's or embankment's side: 1 up in 2 across
         public const float RailMaxShoulder = 60f;
         public const float RailGrade = 0.025f;             // a main line's ruling grade, generously
-        public const float RailDeckHalf = 4f;              // a rail deck's roadway: the bridge unit narrowed (DeckScale 0.5)
+        public const float RailDeckHalf = 6.5f;            // a rail deck's roadway: the bridge unit narrowed (DeckScale 0.81) to both tracks' ballast
         /// <summary>Fill under the track (at its centre and the ballast's feet) past which an embankment becomes a
         /// viaduct. A highway's is 3 m; a railway is made of embankments, but at 10 m its 1:2 sides made a mound 40 m
         /// wide under it (strawberry 2026-10-11: "prevent railways making super-mounds beneath them"): 9.4 km of 129
@@ -214,6 +223,7 @@ namespace SDG.Unturned
                      long Id(int br) => (1L << 61) | ((long)(key.Item1 & 1) << 60) | ((key.Item2 & 0xFFFFF) << 40) | ((key.Item3 & 0xFFFFFFF) << 8) | (long)br;
                      l.Id = Id(0);
                      if (l.Branches != null) for (int i = 0; i < l.Branches.Count; i++) l.Branches[i].Id = Id(i + 1);
+                     if (l.Chords != null) for (int i = 0; i < l.Chords.Count; i++) l.Chords[i].Id = Id(64 + i);
                      return l;
                  });
         }
@@ -632,10 +642,290 @@ namespace SDG.Unturned
                 }
                 FindTunnels(e, KeepOpen);
             }
+            MarkRailSplits(e, arc, axis, band, k);
+            RailShoulders(e);
+            Rebox(e);
+            if (axis == 1) BuildChords(e, Arc(e), band, k);
+            return e;
+        }
+
+        // ---- CHORDS (strawberry 2026-10-11: "rail branching, merging"): where a north-south line crosses an east-west one
+        // (over it, on a viaduct), single-track connecting curves in some of the four quadrants: each leaves one line's
+        // near track tangentially, swings through the quadrant and runs onto the other's near track -- a turnout at each
+        // end. Owned by the north-south line, which is built after the east-west ones and can read them.
+        /// <summary>A chord's ends are this far along each line from the crossing (its curve's radius at a square crossing).</summary>
+        public const double ChordReach = 650.0;
+        /// <summary>Chance per quadrant.</summary>
+        public const double ChordChance = 0.4;
+        /// <summary>No chord bends tighter than this.</summary>
+        public const double ChordMinRadius = 350.0;
+        /// <summary>The ends are kept this far off the other line's decks, tunnels, splits and segment ends.</summary>
+        public const double ChordEndClear = 120.0;
+        /// <summary>Cut or fill under a chord past this and it is not laid (it would be a canyon or a dyke).</summary>
+        public const float ChordMaxDepth = 12f;
+        /// <summary>Where a chord runs inside the line it leaves, its track is let down by ChordSink: over the other line's
+        /// ballast the two tops would otherwise be one plane, flickering.</summary>
+        public const float ChordSink = 0.03f;
+        /// <summary>A chord takes the profile of the line it leaves inside that line's formation, blending to its own over
+        /// this far past the formation's edge.</summary>
+        public const double ChordBlend = 25.0;
+        /// <summary>Why each chord offered was not laid (diagnostics): keyed by the crossing's rounded position and quadrant.</summary>
+        public readonly ConcurrentDictionary<(long x, long z, int q), string> ChordMisses = new();
+
+        void BuildChords(Line b, double[] arcB, long band, long k)
+        {
+            var easts = new List<Line>();
+            TakeRails(b.MinX, b.MinZ, b.MaxX, b.MaxZ, easts, 0);
+            foreach (var a in easts)
+            {
+                if (a.SingleTrack) continue;
+                var arcA = Arc(a);
+                foreach (var c in Crossings(b.X, b.Z, b.X.Length, a))
+                {
+                    double aB = ArcAtF(arcB, c.f), aA = ArcAtF(arcA, c.g);
+                    long cx = (long)Math.Round(c.x), cz = (long)Math.Round(c.z);
+                    for (int q = 0; q < 4; q++)
+                    {
+                        uint h = InfiniteTerrain.Hash(cx, cz * 4 + q, _s ^ 0xC4D);
+                        if ((h & 0xFFFF) / 65536.0 >= ChordChance) continue;
+                        int sB = (q & 1) == 0 ? 1 : -1, sA = (q & 2) == 0 ? 1 : -1;
+                        var ch = Chord(a, arcA, aA + sA * ChordReach, -sA, b, arcB, aB + sB * ChordReach, sB, out string why);
+                        if (ch == null) { ChordMisses[(cx, cz, q)] = why; continue; }
+                        (b.Chords ??= new List<Line>()).Add(ch);
+                    }
+                }
+            }
+        }
+
+        /// <summary>Distance from (x, z) to e's centreline, and the fractional dense index there.</summary>
+        static (double d, double f) NearestOnLine(Line e, double x, double z)
+        {
+            double best = double.MaxValue, bf = 0;
+            for (int i = 0; i < e.Segments; i++)
+            {
+                double sx = e.X[i + 1] - e.X[i], sz = e.Z[i + 1] - e.Z[i], ss = sx * sx + sz * sz;
+                if (ss < 1e-12) continue;
+                double t = Math.Clamp(((x - e.X[i]) * sx + (z - e.Z[i]) * sz) / ss, 0.0, 1.0);
+                double dx = e.X[i] + sx * t - x, dz = e.Z[i] + sz * t - z, d = dx * dx + dz * dz;
+                if (d < best) { best = d; bf = i + t; }
+            }
+            return (Math.Sqrt(best), bf);
+        }
+
+        static double ArcAtF(double[] arc, double f)
+        {
+            int fk = Math.Clamp((int)Math.Floor(f), 0, arc.Length - 2);
+            return arc[fk] + (arc[fk + 1] - arc[fk]) * Math.Clamp(f - fk, 0.0, 1.0);
+        }
+
+        /// <summary>A line's centreline point, profile height and unit heading at horizontal arc s (null past its ends).</summary>
+        static (double x, double z, float h, double tx, double tz, double f)? PointOn(Line e, double[] arc, double s)
+        {
+            if (s < 0 || s > arc[arc.Length - 1]) return null;
+            double f = FracAt(arc, s);
+            int k = Math.Clamp((int)f, 0, e.Segments - 1); double t = f - k;
+            var (ax, az) = RibbonTangent(e, k); var (bx, bz) = RibbonTangent(e, k + 1);
+            double tx = ax + (bx - ax) * t, tz = az + (bz - az) * t, tl = Math.Sqrt(tx * tx + tz * tz);
+            return (e.X[k] + (e.X[k + 1] - e.X[k]) * t, e.Z[k] + (e.Z[k + 1] - e.Z[k]) * t, e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t, tx / tl, tz / tl, f);
+        }
+
+        /// <summary>One chord from line a at arc sA (heading dA along a: toward the crossing) to line b at arc sB (heading dB
+        /// along b: away from it), each end on that line's track on the chord's side. Null (and why) where it cannot be.</summary>
+        Line Chord(Line a, double[] arcA, double sA, int dA, Line b, double[] arcB, double sB, int dB, out string why)
+        {
+            why = null;
+            // the ends: on open, double, unsplit track, clear of decks, tunnels and the segments' own ends
+            bool EndOk(Line e, double[] arc, double s, out string w)
+            {
+                w = null;
+                double total = arc[arc.Length - 1];
+                if (s < ChordEndClear + 200 || s > total - ChordEndClear - 200) { w = "near a segment's end"; return false; }
+                if (e.TunnelSpans != null) foreach (var tn in e.TunnelSpans) if (tn.A1 >= s - ChordEndClear && tn.A0 <= s + ChordEndClear) { w = "by a tunnel"; return false; }
+                if (e.Raised != null) foreach (var st in e.Raised) if (arc[Math.Min(arc.Length - 1, st.I1)] >= s - ChordEndClear && arc[Math.Max(0, st.I0)] <= s + ChordEndClear) { w = "by a deck"; return false; }
+                if (e.Splits != null) foreach (var sp in e.Splits) if (sp.A1 >= s - ChordEndClear && sp.A0 <= s + ChordEndClear) { w = "by a split"; return false; }
+                return true;
+            }
+            if (!EndOk(a, arcA, sA, out why) || !EndOk(b, arcB, sB, out why)) return null;
+            var pa = PointOn(a, arcA, sA); var pb = PointOn(b, arcB, sB);
+            if (pa == null || pb == null) { why = "off a line"; return null; }
+            var (ax, az, ah, atx, atz, _) = pa.Value; var (bx, bz, bh, btx, btz, _) = pb.Value;
+            // each end on its line's track on the chord's side (the left normal of (tx, tz) is (tz, -tx))
+            double sideA = Math.Sign((bx - ax) * atz - (bz - az) * atx), sideB = Math.Sign((ax - bx) * btz - (az - bz) * btx);
+            ax += atz * sideA * RailTrackOffset; az -= atx * sideA * RailTrackOffset;
+            bx += btz * sideB * RailTrackOffset; bz -= btx * sideB * RailTrackOffset;
+            double h0x = dA * atx, h0z = dA * atz, h1x = dB * btx, h1z = dB * btz;   // the chord's heading at each end
+            double turn = Math.Acos(Math.Clamp(h0x * h1x + h0z * h1z, -1.0, 1.0));
+            if (turn < 20 * Math.PI / 180) { why = "lines too near parallel"; return null; }
+            // a cubic from end to end with the two headings: a circular arc's handle length for that turn
+            double chordLen = Math.Sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
+            double r = chordLen / (2 * Math.Sin(turn / 2)), m = 4 * r * Math.Tan(turn / 4);
+            double len = r * turn;
+            int n = Math.Max(8, (int)Math.Ceiling(len / 12.0));
+            var xs = new double[n + 1]; var zs = new double[n + 1]; var hs = new float[n + 1];
+            for (int i = 0; i <= n; i++)
+            {
+                double t = (double)i / n, t2 = t * t, t3 = t2 * t;
+                double p0 = 2 * t3 - 3 * t2 + 1, m0 = t3 - 2 * t2 + t, p1 = -2 * t3 + 3 * t2, m1 = t3 - t2;
+                xs[i] = p0 * ax + m0 * m * h0x + p1 * bx + m1 * m * h1x;
+                zs[i] = p0 * az + m0 * m * h0z + p1 * bz + m1 * m * h1z;
+            }
+            var e = new Line { Kind = RoadKind.Rail, X = xs, Z = zs, H = hs, SingleTrack = true, Sites = new List<RailSite>() };
+            var arc = Arc(e);
+            double total = arc[n];
+            // the profile: straight from one end's height to the other's, within the ruling grade
+            if (Math.Abs(bh - ah) > RailGrade * 0.95 * total) { why = $"too steep ({Math.Abs(bh - ah):0.0} m over {total:0} m)"; return null; }
+            // ...but where it still runs inside either line's formation it IS that line's profile (that line's carve is the
+            // ground there, and a chord leaving at a few metres a hundred metres stood 0.4 m over it), blended out over
+            // ChordBlend past the formation's edge -- and let down a touch there, where its ballast is over the other's
+            var arcA2 = arcA; var arcB2 = arcB;
+            for (int i = 0; i <= n; i++)
+            {
+                float lin = ah + (bh - ah) * (float)(arc[i] / total), h = lin, sink = 0f;
+                foreach (var (o, end) in new[] { (a, 0), (b, n) })
+                {
+                    var (d, f) = NearestOnLine(o, xs[i], zs[i]);
+                    float w = Smoothstep(RailFormationHalf + (float)ChordBlend, RailFormationHalf, (float)d);
+                    if (w <= 0f) continue;
+                    int fk = Math.Clamp((int)f, 0, o.Segments - 1);
+                    float oh = o.H[fk] + (o.H[fk + 1] - o.H[fk]) * (float)(f - fk);
+                    h = h + (oh - h) * w; sink = Math.Max(sink, w);
+                }
+                hs[i] = h - ChordSink * sink;
+            }
+            for (int i = 0; i < n; i++)
+                if (Math.Abs(hs[i + 1] - hs[i]) > RailGrade * (arc[i + 1] - arc[i]) * 1.0001) { why = "too steep where it leaves a line"; return null; }
+            // no tighter than ChordMinRadius anywhere
+            for (int i = 1; i < n; i++)
+            {
+                double ux = xs[i] - xs[i - 1], uz = zs[i] - zs[i - 1], vx = xs[i + 1] - xs[i], vz = zs[i + 1] - zs[i];
+                double lu = Math.Sqrt(ux * ux + uz * uz), lv = Math.Sqrt(vx * vx + vz * vz);
+                double tt = Math.Acos(Math.Clamp((ux * vx + uz * vz) / (lu * lv), -1.0, 1.0));
+                if (tt > 1e-9 && 0.5 * (lu + lv) / tt < ChordMinRadius) { why = $"bends to {0.5 * (lu + lv) / tt:0} m"; return null; }
+            }
+            // not a canyon or a dyke, and dry
+            for (int i = 0; i <= n; i++)
+            {
+                float g = _t.RawHeight(xs[i], zs[i]);
+                if (g < InfiniteTerrain.SeaLevel + 1f) { why = "over water"; return null; }
+                if (Math.Abs(hs[i] - Bed - g) > ChordMaxDepth) { why = $"{Math.Abs(hs[i] - Bed - g):0.0} m of cut or fill"; return null; }
+            }
+            Rebox(e);
+            // crossing nothing between its ends: no highway, and no rail but the two it joins
+            var near2 = new List<Line>();
+            TakeHighways(e.MinX, e.MinZ, e.MaxX, e.MaxZ, near2);
+            foreach (var o in near2) if (Crossings(xs, zs, n + 1, o).Count > 0) { why = "crosses a highway"; return null; }
+            var rails = new List<Line>();
+            TakeRails(e.MinX, e.MinZ, e.MaxX, e.MaxZ, rails, 0);
+            foreach (var o in rails) if (o != a && Crossings(xs, zs, n + 1, o).Count > 0) { why = "crosses another rail"; return null; }
+            // (north-south lines other than b are not read here: b is still being built, and they may be too)
+            // its embankments become viaducts as any rail's do, and its sides are carved to its depth
+            MarkRailStretches(e, arc, new List<(double a0, double a1)>());
+            if (Bridges)
+            {
+                e.BridgePieces = new List<BridgePiece>();
+                foreach (var st in e.Raised) WalkBridge(e, st, e.BridgePieces);
+            }
             RailShoulders(e);
             Rebox(e);
             return e;
         }
+
+        // ---- SPLITS (strawberry 2026-10-11: "...split parallel lines etc."): the two tracks part, run on parallel with
+        // grass between them, and come back together. One line, one bench under both: its formation widens with them.
+        /// <summary>Each track's offset from the centreline while split: RailSplitMin..RailSplitMax (so 22-30 m apart). Not
+        /// under ~10: each track keeps RailFormationHalf - RailTrackOffset (9.2 m) of formation to its side, and at 9 m out
+        /// the two met in the middle with no grass between.</summary>
+        public const float RailSplitMin = 11f, RailSplitMax = 15f;
+        /// <summary>How long the tracks take to part (and to come back), on half a cosine: at the widest split's 12.4 m
+        /// change over 300 m, each track's own bend is 1470 m in radius at the tightest (on top of the line's).</summary>
+        public const double RailSplitEase = 300.0;
+        public const double RailSplitHoldMin = 400.0, RailSplitHoldMax = 1100.0;
+        /// <summary>Kept this far off a deck, a tunnel, a grade separation and the segment's ends (and the level-crossing
+        /// sites this near it are struck off).</summary>
+        public const double RailSplitClear = 200.0, RailSplitEnd = 400.0;
+        /// <summary>The land across the widened bench (natural ground, at the centre and out past each track's ballast)
+        /// within this of the formation: a split is for open, level country, where the bench between is the land's own.</summary>
+        public const float RailSplitRelief = 3.5f;
+        /// <summary>...and the line no tighter than this there.</summary>
+        public const double RailSplitMinRadius = 800.0;
+        /// <summary>Chance a segment is offered a split (it gets one if it has room for it anywhere).</summary>
+        public const double RailSplitChance = 0.85;
+
+        /// <summary>Where the line's two tracks part and rejoin (at most once a segment): its width and length hashed, then
+        /// every place along the line where that fits -- RailSplitClear off everything that needs the tracks where they
+        /// are, on a straight or a gentle curve, and where the land is level across the whole widened bench -- and one of
+        /// those, hashed. Sets TrackOffset and Splits, and strikes off the level-crossing sites it covers.</summary>
+        void MarkRailSplits(Line e, double[] arc, int axis, long band, long k)
+        {
+            double total = arc[arc.Length - 1];
+            uint h = InfiniteTerrain.Hash(band * 7919 + k, axis, _s ^ 0x5E11);
+            if ((h & 0xFFFF) / 65536.0 >= RailSplitChance) { RailSplitMisses[(axis, band, k)] = "not chosen"; return; }
+            uint h2 = InfiniteTerrain.Hash(band * 7919 + k, axis, _s ^ 0x5E12);
+            double hold = RailSplitHoldMin + (RailSplitHoldMax - RailSplitHoldMin) * ((h2 & 0xFF) / 255.0);
+            float w = RailSplitMin + (RailSplitMax - RailSplitMin) * (float)(((h2 >> 8) & 0xFF) / 255.0);
+            double len = 2 * RailSplitEase + hold;
+            int n = e.X.Length;
+            // each dense point: may it be inside a split (with its 50 m of run-in)?
+            var ok = new bool[n];
+            float across = w + RailHalfWidth + 4f;
+            for (int i = 0; i < n; i++)
+            {
+                ok[i] = true;
+                if (i > 0 && i + 1 < n)
+                {
+                    // (the ease's own bend adds to the line's: at RailSplitMinRadius the tighter track is ~530 m)
+                    double ax = e.X[i] - e.X[i - 1], az = e.Z[i] - e.Z[i - 1], bx = e.X[i + 1] - e.X[i], bz = e.Z[i + 1] - e.Z[i];
+                    double la = Math.Sqrt(ax * ax + az * az), lb = Math.Sqrt(bx * bx + bz * bz);
+                    double turn = Math.Acos(Math.Clamp((ax * bx + az * bz) / (la * lb), -1.0, 1.0));
+                    if (turn > 1e-9 && 0.5 * (la + lb) / turn < RailSplitMinRadius) { ok[i] = false; continue; }
+                }
+                var (tx, tz) = RibbonTangent(e, i);
+                float bed = e.H[i] - Bed;
+                foreach (float o in new[] { -across, -across * 0.5f, 0f, across * 0.5f, across })
+                {
+                    float g = _t.RawHeight(e.X[i] - tz * o, e.Z[i] + tx * o);
+                    if (g < InfiniteTerrain.SeaLevel + 1f || Math.Abs(g - bed) > RailSplitRelief) { ok[i] = false; break; }
+                }
+            }
+            // ...and the arc ranges structures keep clear
+            var keepOff = new List<(double lo, double hi)>();
+            if (e.Plan != null) foreach (var pl in e.Plan) keepOff.Add((pl.AX - pl.Half, pl.AX + pl.Half));
+            if (e.TunnelSpans != null) foreach (var tn in e.TunnelSpans) keepOff.Add((tn.A0, tn.A1));
+            if (e.Raised != null) foreach (var st in e.Raised) keepOff.Add((arc[Math.Max(0, st.I0)], arc[Math.Min(n - 1, st.I1)]));
+            // every start (on a dense point) whose whole run fits
+            var starts = new List<double>();
+            int structure = 0, ground = 0;
+            for (int i0 = 0; i0 < n; i0++)
+            {
+                double a0 = arc[i0], a1 = a0 + len;
+                if (a0 < RailSplitEnd || a1 > total - RailSplitEnd) continue;
+                bool near = false;
+                foreach (var (lo, hi) in keepOff) if (lo <= a1 + RailSplitClear && hi >= a0 - RailSplitClear) { near = true; break; }
+                if (near) { structure++; continue; }
+                bool fits = true;
+                for (int i = i0; i < n && arc[i] <= a1 + 50; i++) if (arc[i] >= a0 - 50 && !ok[i]) { fits = false; break; }
+                for (int i = i0 - 1; i >= 0 && arc[i] >= a0 - 50; i--) if (!ok[i]) { fits = false; break; }
+                if (!fits) { ground++; continue; }
+                starts.Add(a0);
+            }
+            if (starts.Count == 0) { RailSplitMisses[(axis, band, k)] = structure + ground == 0 ? "too short" : $"no room: {structure} starts by a structure, {ground} on uneven ground or a curve"; return; }
+            {
+                double a0 = starts[(int)((h2 >> 16) % (uint)starts.Count)], a1 = a0 + len;
+                var off = new float[n];
+                for (int i = 0; i < n; i++)
+                {
+                    double a = arc[i], t = a <= a0 || a >= a1 ? 0 : a < a0 + RailSplitEase ? (a - a0) / RailSplitEase : a > a1 - RailSplitEase ? (a1 - a) / RailSplitEase : 1;
+                    off[i] = RailTrackOffset + (w - RailTrackOffset) * (float)(0.5 - 0.5 * Math.Cos(Math.PI * t));
+                }
+                e.TrackOffset = off;
+                e.Splits = new List<(double, double, float)> { (a0, a1, w) };
+                // a level-crossing SITE is only a place a main may choose (mains are built after rails): those in and near
+                // the split are struck off, so no road crosses the tracks while they are parted
+                e.Sites?.RemoveAll(st => st.A >= a0 - RailSplitClear && st.A <= a1 + RailSplitClear);
+            }
+        }
+        /// <summary>Why each rail segment that was offered a split has none (diagnostics).</summary>
+        public readonly ConcurrentDictionary<(int axis, long band, long k), string> RailSplitMisses = new();
 
         public const double RailTunnelClearOfSeparation = 150.0;
 
@@ -652,7 +942,7 @@ namespace SDG.Unturned
                 float ground = e.H[i] - Bed, f = float.MaxValue; bool w = false;
                 for (int s = -1; s <= 1; s++)
                 {
-                    float r = _t.RawHeight(e.X[i] - tz * s * RailHalfWidth, e.Z[i] + tx * s * RailHalfWidth);
+                    float r = _t.RawHeight(e.X[i] - tz * s * RailOuterHalf, e.Z[i] + tx * s * RailOuterHalf);
                     f = Math.Min(f, ground - r);
                     if (r < InfiniteTerrain.SeaLevel) w = true;
                 }
@@ -812,6 +1102,7 @@ namespace SDG.Unturned
                         var e = Rail(axis, band, k);
                         Take(e);
                         if (e.Branches != null) foreach (var br in e.Branches) Take(br);
+                        if (e.Chords != null) foreach (var ch in e.Chords) Take(ch);
                     }
                 }
             }
@@ -831,11 +1122,70 @@ namespace SDG.Unturned
             var have = e.Track;
             if (have != null) return have;
             int n = e.X.Length;
+            var all = new List<RailPiece>();
+            // a chord: one track on its centreline, running onto another line's track at both ends (nothing to close)
+            if (e.SingleTrack) { e.Track = TrackAlong(e.X, e.Z, e.H, false); return e.Track; }
+            bool closeEnd = !RailMeetsAnother(e, e.X[n - 1], e.Z[n - 1]);
+            // each track's centreline: the line's, offset along RibbonTangent's normal -- the definition the ribbon and
+            // the bridge walk use, so a deck and a tunnel see the tracks where the track is. At an end another line
+            // carries on from, BOTH take the mean of their two end headings: each one's own last segment differs from
+            // the other's first by up to a tenth of a degree, and 2.6 m out that was a 5 mm step in the track.
+            var tan = new (double x, double z)[n];
+            for (int i = 0; i < n; i++) tan[i] = RibbonTangent(e, i);
+            tan[0] = SharedEndTangent(e, false, tan[0]);
+            tan[n - 1] = SharedEndTangent(e, true, tan[n - 1]);
+            for (byte t = 0; t < 2; t++)
+            {
+                double o = t == 0 ? -RailTrackOffset : RailTrackOffset;
+                var xs = new double[n]; var zs = new double[n];
+                for (int i = 0; i < n; i++)
+                {
+                    var (tx, tz) = tan[i];
+                    double oi = e.TrackOffset == null ? o : Math.Sign(o) * e.TrackOffset[i];   // parted, where the line splits
+                    xs[i] = e.X[i] - tz * oi; zs[i] = e.Z[i] + tx * oi;
+                }
+                foreach (var p in TrackAlong(xs, zs, e.H, closeEnd)) { var q = p; q.Track = t; all.Add(q); }
+            }
+            e.Track = all;
+            return all;
+        }
+
+        /// <summary>The heading at one end of e (its last point if atEnd, else its first), as the line carrying on from there
+        /// sees it too: the mean of e's own end segment's and that line's adjoining one's, both taken along e's way. Its
+        /// own (`own`) where nothing carries on.</summary>
+        (double x, double z) SharedEndTangent(Line e, bool atEnd, (double x, double z) own)
+        {
+            int n = e.X.Length;
+            double x = atEnd ? e.X[n - 1] : e.X[0], z = atEnd ? e.Z[n - 1] : e.Z[0];
+            var near = new List<Line>();
+            TakeRails(x - 1, z - 1, x + 1, z + 1, near);
+            foreach (var o in near)
+            {
+                if (o == e || !o.Exists || o.X.Length < 2) continue;
+                int m = o.X.Length - 1;
+                double ox, oz;   // o's segment at the shared point, either way round (aligned with e's way below)
+                if ((o.X[0] - x) * (o.X[0] - x) + (o.Z[0] - z) * (o.Z[0] - z) < 0.25) { ox = o.X[1] - o.X[0]; oz = o.Z[1] - o.Z[0]; }
+                else if ((o.X[m] - x) * (o.X[m] - x) + (o.Z[m] - z) * (o.Z[m] - z) < 0.25) { ox = o.X[m] - o.X[m - 1]; oz = o.Z[m] - o.Z[m - 1]; }
+                else continue;
+                double ol = Math.Sqrt(ox * ox + oz * oz);
+                if (ol < 1e-9) continue;
+                ox /= ol; oz /= ol;
+                if (ox * own.x + oz * own.z < 0) { ox = -ox; oz = -oz; }   // a line meeting this one head-on runs the other way
+                double mx = own.x + ox, mz = own.z + oz, ml = Math.Sqrt(mx * mx + mz * mz);
+                return ml < 1e-9 ? own : (mx / ml, mz / ml);
+            }
+            return own;
+        }
+
+        /// <summary>One track's tiles along the centreline (xs, zs) at the line's profile hs (see TrackOf).</summary>
+        static List<RailPiece> TrackAlong(double[] xs, double[] zs, float[] hs, bool closeEnd)
+        {
+            int n = xs.Length;
             var ys = new double[n]; var a3 = new double[n];
-            for (int i = 0; i < n; i++) ys[i] = RailOriginY(e.H[i]);
+            for (int i = 0; i < n; i++) ys[i] = RailOriginY(hs[i]);
             for (int i = 1; i < n; i++)
             {
-                double dx = e.X[i] - e.X[i - 1], dy = ys[i] - ys[i - 1], dz = e.Z[i] - e.Z[i - 1];
+                double dx = xs[i] - xs[i - 1], dy = ys[i] - ys[i - 1], dz = zs[i] - zs[i - 1];
                 a3[i] = a3[i - 1] + Math.Sqrt(dx * dx + dy * dy + dz * dz);
             }
             double total = a3[n - 1];
@@ -847,7 +1197,7 @@ namespace SDG.Unturned
                 else if (s >= total) { lo = n - 2; hi = n - 1; }
                 else { lo = 0; hi = n - 1; while (hi - lo > 1) { int m = (lo + hi) >> 1; if (a3[m] <= s) lo = m; else hi = m; } }
                 double t = (s - a3[lo]) / Math.Max(1e-9, a3[hi] - a3[lo]);
-                return (e.X[lo] + (e.X[hi] - e.X[lo]) * t, ys[lo] + (ys[hi] - ys[lo]) * t, e.Z[lo] + (e.Z[hi] - e.Z[lo]) * t);
+                return (xs[lo] + (xs[hi] - xs[lo]) * t, ys[lo] + (ys[hi] - ys[lo]) * t, zs[lo] + (zs[hi] - zs[lo]) * t);
             }
             static (double x, double y, double z) Dir((double x, double y, double z) p, (double x, double y, double z) q)
             {
@@ -897,15 +1247,12 @@ namespace SDG.Unturned
                     }
                 }
             }
-            if (list.Count > 0)
+            if (list.Count > 0 && closeEnd)
             {
                 var lastU = list[list.Count - 1];
-                double ex = e.X[n - 1], ez = e.Z[n - 1];
-                if (!RailMeetsAnother(e, ex, ez))
-                    list.Add(new RailPiece { Kind = 1, X = lastU.X + lastU.DX * RailPitch * lastU.K, Y = lastU.Y + lastU.DY * RailPitch * lastU.K, Z = lastU.Z + lastU.DZ * RailPitch * lastU.K,
-                                             DX = lastU.DX, DY = lastU.DY, DZ = lastU.DZ, K = 1f });
+                list.Add(new RailPiece { Kind = 1, X = lastU.X + lastU.DX * RailPitch * lastU.K, Y = lastU.Y + lastU.DY * RailPitch * lastU.K, Z = lastU.Z + lastU.DZ * RailPitch * lastU.K,
+                                         DX = lastU.DX, DY = lastU.DY, DZ = lastU.DZ, K = 1f });
             }
-            e.Track = list;
             return list;
         }
 
@@ -981,6 +1328,8 @@ namespace SDG.Unturned
             if (e.Branches != null) foreach (var b in e.Branches) if (b.Exists) r.Add(b);
             return r;
         }
+        /// <summary>Test accessor: the chords a north-south segment laid.</summary>
+        public List<Line> ChordsOf(int axis, long band, long k) => Rail(axis, band, k).Chords ?? new List<Line>();
         public List<RailPiece> TrackOf(int axis, long band, long k)
         {
             var r = new List<RailPiece>();

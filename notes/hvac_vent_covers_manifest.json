@@ -1,0 +1,130 @@
+{
+  "Floor_Vent_0": {
+    "name": "Floor_Vent_0",
+    "guid": "10db56bd553a4989b723180bee5d9752",
+    "mount": "floor",
+    "target_dimensions": [
+      1.0,
+      0.5,
+      0.035
+    ],
+    "suggested_origin_height": 0,
+    "room_kinds": [
+      "Living",
+      "Hall",
+      "Kitchen",
+      "Bedroom",
+      "Office",
+      "Utility"
+    ],
+    "tags": [
+      "hvac",
+      "vent",
+      "metal",
+      "fixed"
+    ],
+    "bounds_native": [
+      [
+        -0.5,
+        -0.25,
+        0.0
+      ],
+      [
+        0.5,
+        0.25,
+        0.03500000014901161
+      ]
+    ],
+    "width_x": 1.0,
+    "height_z": 0.035,
+    "depth_y": 0.5,
+    "vertices": 84,
+    "triangles": 130,
+    "native_up": "+Z",
+    "units": "metres",
+    "origin": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": null,
+    "floor_plane": "Z=0",
+    "front": "+Z",
+    "texture": "Floor_Vent_0_tex.png",
+    "texture_filter": "nearest",
+    "palette_source": "Unmodified grey/black swatches from stock Chair_Metal_0 and Counter_2",
+    "features": {
+      "slats": 8,
+      "louver_tilt_degrees": 20,
+      "recess_z": 0.005,
+      "mount": "floor",
+      "notes": "Low-profile fixed cover above the floor; no cut through the floor slab or HVAC simulation."
+    },
+    "art_status": "REVIEW_ONLY",
+    "registered": false
+  },
+  "Wall_Vent_0": {
+    "name": "Wall_Vent_0",
+    "guid": "c9b9f7b2e26d42efb28da815eca5beb2",
+    "mount": "wall",
+    "target_dimensions": [
+      1.0,
+      0.6,
+      0.055
+    ],
+    "suggested_origin_height": 0.35,
+    "room_kinds": [
+      "Living",
+      "Hall",
+      "Kitchen",
+      "Bedroom",
+      "Office",
+      "Utility"
+    ],
+    "tags": [
+      "hvac",
+      "vent",
+      "metal",
+      "fixed"
+    ],
+    "bounds_native": [
+      [
+        -0.5,
+        0.0,
+        -0.30000001192092896
+      ],
+      [
+        0.5,
+        0.054999999701976776,
+        0.30000001192092896
+      ]
+    ],
+    "width_x": 1.0,
+    "height_z": 0.6,
+    "depth_y": 0.055,
+    "vertices": 60,
+    "triangles": 94,
+    "native_up": "+Z",
+    "units": "metres",
+    "origin": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "floor_plane": null,
+    "front": "+Y",
+    "texture": "Wall_Vent_0_tex.png",
+    "texture_filter": "nearest",
+    "palette_source": "Unmodified grey/black swatches from stock Chair_Metal_0 and Counter_2",
+    "features": {
+      "slats": 5,
+      "louver_tilt_degrees": 30,
+      "recess_y": 0.012,
+      "mount": "wall",
+      "notes": "Fixed shallow grille; no wall opening, duct, fan or airflow system."
+    },
+    "art_status": "REVIEW_ONLY",
+    "registered": false
+  }
+}

@@ -83,6 +83,20 @@ namespace UnturnedGodot
         public bool PowerOnFire => false;
         public uint PowerNetId => NetId;   // 0 = direct SP/local wire; a replica's server NetId routes wire requests over the wire (A3)
         public IReadOnlyList<ConnectionPort> PowerPorts => _ports;
+        /// <summary>One cap for all its outputs: an outlet's two receptacles share its Watts (PowerDevice.OutputBudget); a
+        /// breaker box's single port is capped at its own Watts either way.</summary>
+        public float PowerOutputBudget => _ports.Count > 1 ? Watts : 0f;
+
+        /// <summary>Another output port on this source, at `portLocal` in its frame, drawing on the same Watts as the first
+        /// (an outlet's lower receptacle: one 1500 W fixture with two sockets).</summary>
+        public ConnectionPort AddOutputPort(Vector3 portLocal, string label = "Grid Power")
+        {
+            var port = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Output, Pos = portLocal, Watts = Watts }, label);
+            AddChild(port);
+            _ports.Add(port);
+            PowerNet.MarkDirty();
+            return port;
+        }
         public bool IsPowered => Producing;   // convenience: the source is live only while the mains are on
 
         // Attach a grid source at a placed Circuit_0's transform (pos + basis from WorldBuilder.PlaceObject), owning
@@ -166,7 +180,8 @@ namespace UnturnedGodot
             if (!_focused || _info == null) return;   // only the looked-at box keeps its tooltip live
             _info.GlobalPosition = GlobalPosition + Vector3.Up * 2.4f;   // float above the box (Circuit_0 ~1.87m tall)
             _info.SetName(string.IsNullOrEmpty(GridName) ? "Grid Power" : $"Grid Power - {GridName}", GridColor);
-            float draw = (_output != null && GodotObject.IsInstanceValid(_output)) ? _output.Draw : 0f;
+            float draw = 0f;
+            foreach (var p in _ports) if (p != null && GodotObject.IsInstanceValid(p)) draw += p.Draw;   // every outlet socket's load against the one rating
             _info.SetBar(0, Watts > 0f ? Mathf.Clamp(draw / Watts, 0f, 1f) : 0f, GridColor);   // load / capacity (generator's usage bar)
             _info.SetPrompt(Producing ? $"{draw:0} / {Watts:0}W" : "mains OFF", GridColor);
         }

@@ -407,6 +407,11 @@ namespace UnturnedGodot
             new("garage",  4.05f, 3.80f,                          0f,  true),
             new("porch",   5.5f,  WallOpenings.DoorHeight,        0f,   true),
             new("vent",    1.0f,  1.0f,                           2.5f, false),
+            // a bathroom's: shallow and high, glazed -- light without a view in (strawberry: "change the
+            // bathrooms from using vent windows to small glass windows, horizontal slit windows", then "widen the
+            // bathroom windows horizontally", then "make the bathroom window slit 1/3 as wide"); BuildingGen.ArchSlit is
+            // this one
+            new("slit",    3.5f / 3f, 0.6f,                       2.6f, false, glazed: true),
         };
 
         // ---- glazing options applied to NEWLY placed openings ------------------------------------------
@@ -563,6 +568,12 @@ namespace UnturnedGodot
         void PositionGrid()
         {
             if (_grid != null) _grid.Position = new Vector3(0f, FloorY, 0f);
+            // UG_EDITNOGRID=1 hides the lattice for a capture. On the render box (llvmpipe, no GPU) this Lines mesh
+            // comes out as flat pale triangles, bars and staircases scattered over the stage -- 7,857 pixels in one
+            // frame, identical run to run, and 0 with the grid hidden (whether a real GPU does it too is unchecked).
+            // They were read as smashed-window shards left by a rebuild, so a capture that is going to be judged
+            // should not carry them.
+            if (_grid != null && System.Environment.GetEnvironmentVariable("UG_EDITNOGRID") == "1") _grid.Visible = false;
         }
 
         public void ChangeFloor(int delta)
@@ -1858,10 +1869,22 @@ namespace UnturnedGodot
             foreach (var w in _walls) if (IsInstanceValid(w)) n++;
             if (n == 0) return 0;
             var before = Snapshot();
+            var kindBefore = DesignatedKind;
+            var roomsBefore = new List<RoomDesignation>(Designations);
+            var marksBefore = new List<DoorDesignation>(DoorMarks);
+            var furnitureBefore = new List<PropDesignation>(Furniture);
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+            DesignatedKind = null; Designations.Clear(); DoorMarks.Clear();   // the rooms and doors they labelled are gone
+            Furniture.Clear(); ShowFurniture();                                  // and what stood in them
             _selWall = null; _selOpening = -1;
             PositionHandles();
-            _editor?.PushUndo("clear plot", () => RestoreAll(before));
+            _editor?.PushUndo("clear plot", () =>
+            {
+                RestoreAll(before);
+                DesignatedKind = kindBefore; Designations.Clear(); Designations.AddRange(roomsBefore);
+                DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
+                Furniture.Clear(); Furniture.AddRange(furnitureBefore); ShowFurniture();
+            });
             return n;
         }
 
@@ -2037,7 +2060,16 @@ namespace UnturnedGodot
                 off = new Vector3(0f, high, dist).Rotated(Vector3.Up, Mathf.DegToRad(yaw));
             }
             _cam.GlobalPosition = StageOrigin + off;
-            _cam.LookAt(StageOrigin + new Vector3(0f, 2f, -4.5f), Vector3.Up);
+            // UG_EDITLOOK=x,y,z aims it at that point over the stage instead, so a capture can stand IN a room (UG_EDITCAM
+            // puts the eye anywhere: yaw = atan2(x, z), dist = |(x, z)|) and look at one wall of it -- a picture on a wall
+            // that faces away from the stage's middle could otherwise only be seen through the wall in front of it.
+            var look = new Vector3(0f, 2f, -4.5f);
+            var lk = System.Environment.GetEnvironmentVariable("UG_EDITLOOK")?.Split(',');
+            if (lk is { Length: 3 } && float.TryParse(lk[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var lx)
+                && float.TryParse(lk[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ly)
+                && float.TryParse(lk[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var lz))
+                look = new Vector3(lx, ly, lz);
+            _cam.LookAt(StageOrigin + look, Vector3.Up);
         }
 
         void BuildStage()
@@ -2100,7 +2132,7 @@ namespace UnturnedGodot
             try
             {
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SavePath));
-                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans));
+                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans, DesignatedKind, Designations, DoorMarks, Furniture));
             }
             catch (System.Exception e) { Log.Err($"[editor-buildings] save failed: {e.Message}"); return 0; }
             Log.Print($"[editor-buildings] saved {plans.Count} walls -> {SavePath}");
@@ -2112,8 +2144,13 @@ namespace UnturnedGodot
         {
             if (!System.IO.File.Exists(SavePath)) return 0;
             List<WallPlan> plans;
-            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath)); }
+            BuildingKind kind; List<RoomDesignation> rooms; List<DoorDesignation> marks; List<PropDesignation> props;
+            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath), out kind, out rooms, out marks, out props); }
             catch (System.Exception e) { Log.Err($"[editor-buildings] load failed: {e.Message}"); return 0; }
+            Designations.Clear(); Designations.AddRange(rooms);
+            DoorMarks.Clear(); DoorMarks.AddRange(marks);
+            Furniture.Clear(); Furniture.AddRange(props); ShowFurniture();
+            DesignatedKind = rooms.Count > 0 ? kind : null;
 
             foreach (var w in _walls.ToArray()) RemoveWall(w);
             foreach (var pl in plans)
@@ -2594,8 +2631,20 @@ namespace UnturnedGodot
             // An import replaces the whole stage, so it gets a whole-stage undo. It is the single most
             // destructive button in the panel and it was the one thing Ctrl+Z could not walk back.
             var beforeImport = Snapshot();
-            _editor?.PushUndo($"import {buildingName}", () => RestoreAll(beforeImport));
+            var kindBefore = DesignatedKind;
+            var roomsBefore = new List<RoomDesignation>(Designations);
+            var marksBefore = new List<DoorDesignation>(DoorMarks);
+            var furnitureBefore = new List<PropDesignation>(Furniture);
+            _editor?.PushUndo($"import {buildingName}", () =>
+            {
+                RestoreAll(beforeImport);
+                DesignatedKind = kindBefore; Designations.Clear(); Designations.AddRange(roomsBefore);
+                DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
+                Furniture.Clear(); Furniture.AddRange(furnitureBefore); ShowFurniture();
+            });
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+            DesignatedKind = null; Designations.Clear(); DoorMarks.Clear();
+            Furniture.Clear(); ShowFurniture();
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y + GroundClearance, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
@@ -2643,6 +2692,323 @@ namespace UnturnedGodot
             Log.Print($"[editor-buildings] imported {buildingName}: {plans.Count} surfaces "
                      + $"({nw} wall, {nr} roof, {nfl} floor, {nf} foundation, {ngab} gabled) with {nop} openings");
             return plans.Count;
+        }
+
+        /// <summary>The building's kind and its rooms' designations, in the plan space PlanOfActiveFloor works in
+        /// (world X/Z) -- set by Generate, saved with the walls. Nothing draws or edits them yet; they are the
+        /// framework's data (RoomDesignation), carried so a generated building keeps knowing which room is which.</summary>
+        public BuildingKind? DesignatedKind;
+        public readonly List<RoomDesignation> Designations = new();
+        /// <summary>The marked front and back doors, in the same space (strawberry: "mark a front and back door").</summary>
+        public readonly List<DoorDesignation> DoorMarks = new();
+
+        /// <summary>Build a whole building from a seed (BuildingGen), REPLACING the stage the way an import does, as one
+        /// undo step. strawberry: "make the map editor buildings tool procgen. to make buildings from a seed."
+        ///
+        /// It spawns exactly what the generator planned -- walls with their openings, footings, a floor per storey,
+        /// the roofs (a house's gable with its raised ends, a business's flat slab), and the flights through the
+        /// editor's own stair path (treads, ramp, the hole in the floor above) -- in the palette the generator chose
+        /// for the kind. The gable is spawned as surfaces, not registered as a PlacedRoof, so the roof panel's
+        /// modify tools do not see it yet. The outside walls come corner-solved, and
+        /// SolveCorners is run anyway as a check: it must find nothing, because it lengthens a wall from its origin
+        /// without moving its openings, and every window on a solved wall would slide off its room.</summary>
+        /// <summary>The furniture on the stage: the data (saved as `prop` lines) and, rebuilt from it, a preview mesh per
+        /// piece -- a look, not yet a placed prop: placing through EditorObjects would put it in the MAP at the stage's
+        /// height, and the map's save would keep it there.</summary>
+        public readonly List<PropDesignation> Furniture = new();
+        readonly List<Node3D> _furnitureNodes = new();
+
+        /// <summary>For a capture: hide every surface but the stairs, and every piece of furniture, standing more than `y`
+        /// over the stage -- so a camera can look down into a storey. (By the piece's ORIGIN: a wall cabinet's is 3.15 over
+        /// the stage, so a cut at 3.0 takes every cabinet off a ground-floor cutaway; 3.5 keeps the décor.)</summary>
+        public void HideAbove(float y)
+        {
+            foreach (var w in _walls)
+                if (IsInstanceValid(w) && w.Kind != SurfaceKind.Stairs && w.GlobalPosition.Y - StageOrigin.Y > y) w.Visible = false;
+            foreach (var n in _furnitureNodes)
+                if (IsInstanceValid(n) && n.GlobalPosition.Y - StageOrigin.Y > y) n.Visible = false;
+        }
+
+        /// <summary>The stage's light switches (RoomLightSwitch), as ShowFurniture built them -- for a capture to flip, and a
+        /// test to press.</summary>
+        public IReadOnlyList<RoomLightSwitch> LightSwitches => _switches;
+        readonly List<RoomLightSwitch> _switches = new();
+        /// <summary>The stage's ceiling lights, in prop order -- RoomElectrical.Lights' ids.</summary>
+        public IReadOnlyList<LampLight> CeilingLights => _ceilingLights;
+        readonly List<LampLight> _ceilingLights = new();
+        /// <summary>The stage's outlets, each a mains-fed 1500 W power source (GridPowerSource), in prop order.</summary>
+        public IReadOnlyList<GridPowerSource> Outlets => _outlets;
+        readonly List<GridPowerSource> _outlets = new();
+
+        void ShowFurniture()
+        {
+            foreach (var n in _furnitureNodes) if (IsInstanceValid(n)) n.QueueFree();
+            _furnitureNodes.Clear();
+            _switches.Clear(); _ceilingLights.Clear(); _outlets.Clear();
+            var objects = _editor?.Objects;
+            // the switches and outlets by their place among the electrical props (ElectricalFixture.Id), the ceiling lights by
+            // theirs among the ceiling lights (RoomElectrical.Lights) -- a slot kept for one that built nothing, so the ids hold
+            var electrical = new List<Node3D>();
+            foreach (var m in Furniture)
+            {
+                bool lamp = m.Name != null && m.Name.StartsWith("Ceiling_Lamp"), plate = m.Name is "Light_Switch_0" or "Power_Outlet_0";
+                if (m.Name == "Light_Switch_0")
+                {
+                    var sw = BuildSwitch(m, objects);
+                    electrical.Add(sw);
+                    if (sw != null) { _switches.Add(sw); _furnitureNodes.Add(sw); }
+                    continue;
+                }
+                // a curtain, a rug: built from the inputs it was saved with -- no OBJ, so no object catalog either
+                if (m.Gen != null)
+                {
+                    var built = RuntimeDecorNode(m);
+                    if (built == null) continue;
+                    AddChild(built);
+                    built.GlobalTransform = RuntimeDecorTransform(m);
+                    _furnitureNodes.Add(built);
+                    continue;
+                }
+                var mesh = objects?.PreviewMesh(m.Name);
+                if (mesh == null)
+                {
+                    if (lamp) _ceilingLights.Add(null);
+                    if (plate) electrical.Add(null);
+                    // a kit doodad with no art of its own (the mug pair) is nothing but its stock children
+                    if (DoodadKitView.Has(m.Name))
+                    {
+                        var holder = new Node3D { Name = "Furniture_" + m.Name };
+                        AddChild(holder);
+                        holder.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
+                        DoodadKitView.Attach(holder, m.Name);
+                        _furnitureNodes.Add(holder);
+                    }
+                    continue;
+                }
+                var mi = new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, MaterialOverride = objects.PreviewMaterial(m.Name) };
+                AddChild(mi);
+                mi.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
+                DoodadKitView.Attach(mi, m.Name);   // a kit doodad's stock children (the knives in the block), in its native frame
+                _furnitureNodes.Add(mi);
+                if (lamp)
+                {
+                    // a ceiling lamp lights the room (LampLight: mains-fed, its manual switch the room's wall switch); the whole
+                    // fixture glows when lit -- these two have no separate lens in their palette
+                    var light = LampLight.Make(mi.GlobalTransform * mesh.GetAabb().GetCenter(), mi, LampLight.Kind.Generic);
+                    AddChild(light);
+                    _ceilingLights.Add(light);
+                    _furnitureNodes.Add(light);
+                }
+                else if (plate)
+                {
+                    var src = BuildOutlet(m, mi, mesh);
+                    electrical.Add(src);
+                    if (src != null) { _outlets.Add(src); _furnitureNodes.Add(src); }
+                }
+            }
+            // each room's switch to its record, and to the ceiling lights the record names: the record holds the state
+            foreach (var d in Designations)
+            {
+                var e = d.Electrical;
+                if (e == null) continue;
+                var sws = new List<(RoomLightSwitch Sw, int Index)>();
+                for (int i = 0; i < e.Switches.Count; i++)
+                {
+                    var f = e.Switches[i];
+                    if (f.Id >= 0 && f.Id < electrical.Count && electrical[f.Id] is RoomLightSwitch sw) sws.Add((sw, i));
+                }
+                var lamps = new List<LampLight>();
+                foreach (int k in e.Lights) if (k >= 0 && k < _ceilingLights.Count && _ceilingLights[k] != null) lamps.Add(_ceilingLights[k]);
+                var all = new List<RoomLightSwitch>(); foreach (var q in sws) all.Add(q.Sw);
+                foreach (var (sw, i) in sws) sw.Bind(e, i, lamps, all);
+            }
+        }
+
+        /// <summary>A room's light switch on the stage: astraclaw's base and rocker (RoomLightSwitch), placed as the prop is.</summary>
+        RoomLightSwitch BuildSwitch(PropDesignation m, EditorObjects objects)
+        {
+            var baseMesh = ContentProvider.ParseObj("res://content/objects/Light_Switch_0_Base.obj");
+            var rocker = ContentProvider.ParseObj("res://content/objects/Light_Switch_0_Rocker.obj");
+            if (baseMesh == null || rocker == null) return null;
+            var sw = RoomLightSwitch.Make(baseMesh, rocker, objects?.PreviewMaterial(m.Name));
+            AddChild(sw);
+            sw.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
+            return sw;
+        }
+
+        /// <summary>An outlet on the stage: a power I/O source of BuildingGen.OutletWatts fed by the mains (GridPowerSource,
+        /// the breaker box's own node at an outlet's rating: wires take power from it while the grid is live, and the solver
+        /// caps what they draw at its watts), a port before each receptacle sharing that one rating, and a small look-at body
+        /// so the look-ray focuses it as it does the breaker box.</summary>
+        GridPowerSource BuildOutlet(PropDesignation m, MeshInstance3D mi, Mesh mesh)
+        {
+            var basis = EditorObjects.Upright(m.Yaw);
+            var src = GridPowerSource.Attach(this, new Vector3(m.X, m.Y, m.Z), basis, OutletPort, BuildingGen.OutletWatts, "Outlet", mesh);
+            // and one before the lower receptacle (strawberry: "do both outlet holes have a wire io connection?"), on the same
+            // 1500 W: one budget for the fixture's two ports (GridPowerSource.PowerOutputBudget)
+            src.AddOutputPort(OutletPortLower, "Outlet");
+            src.GlobalTransform = new Transform3D(basis, new Vector3(m.X, m.Y, m.Z));
+            var body = new StaticBody3D { Name = "OutletLook", CollisionLayer = 1u << 6, CollisionMask = 0, Position = new Vector3(0f, 0.04f, 0f) };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.34f, 0.08f, 0.56f) } });
+            body.SetMeta("gridpower", src);
+            src.AddChild(body);
+            return src;
+        }
+        /// <summary>An outlet's power ports, in its native frame: before each receptacle (the handoff's socket points,
+        /// (0, 0.054, +-0.13)), clear of the plate.</summary>
+        static readonly Vector3 OutletPort = new Vector3(0f, 0.11f, 0.13f), OutletPortLower = new Vector3(0f, 0.11f, -0.13f);
+
+        /// <summary>The furniture's preview nodes as built, in Furniture's order but for any that built nothing -- with a ceiling
+        /// lamp's light, a switch (RoomLightSwitch) and an outlet's power source among them (the in-engine test reads the
+        /// meshes a generated building's curtains and rugs actually made).</summary>
+        public IReadOnlyList<Node3D> FurnitureNodes => _furnitureNodes;
+
+        /// <summary>A runtime-built piece (PropDesignation.Gen: a curtain, a rug) as a mesh, made by astraclaw's factories
+        /// (RuntimeDecorGenerators) from its saved inputs. The factories cache what they return, so it is used as given and
+        /// never changed. Null for inputs no factory builds (a kind or a style this build does not know is saved by name, and
+        /// a size the factory refuses), said in the log -- a missing curtain, not a missing building.</summary>
+        public static MeshInstance3D RuntimeDecorNode(PropDesignation m)
+        {
+            var g = m.Gen;
+            ArrayMesh mesh = null;
+            try
+            {
+                if (g.Kind == RuntimeDecorKind.Curtain) mesh = RuntimeDecorGenerators.CreateCurtainMesh(g.Width, g.Height, g.Open, CurtainTint(g.Style));
+                else if (g.Kind == RuntimeDecorKind.Rug && System.Enum.TryParse<RuntimeDecorGenerators.RugStyle>(g.Style, true, out var style))
+                    mesh = RuntimeDecorGenerators.CreateRugMesh(g.Width, g.Height, style);
+            }
+            catch (System.ArgumentOutOfRangeException e) { Log.Err($"[editor-buildings] {g.Kind} {g.Width} x {g.Height} not built: {e.Message}"); }
+            if (mesh == null) return null;
+            return new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, Transform = RuntimeDecorTransform(m) };
+        }
+
+        /// <summary>Where a runtime-built piece's mesh goes. The factories build it Godot Y-up, front -Z, already stood up, so it
+        /// is only turned -- about Up by the yaw, which takes -Z to the piece's Front (-sin, -cos), as Upright takes an OBJ's +Y
+        /// there. A rug's mesh lies on its origin, the floor. A curtain's is centred on its own middle; the piece's origin is
+        /// its back at the RAIL's height, so the mesh goes down by the factory's own CurtainRailY: the rail lands where the
+        /// generator put it over the window.</summary>
+        public static Transform3D RuntimeDecorTransform(PropDesignation m)
+        {
+            float y = m.Gen.Kind == RuntimeDecorKind.Curtain ? m.Y - RuntimeDecorGenerators.CurtainRailY(m.Gen.Width, m.Gen.Height) : m.Y;
+            return new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(m.Yaw)), new Vector3(m.X, y, m.Z));
+        }
+
+        /// <summary>A curtain tint by name (RuntimeDecor.CurtainTints): the factory's own linen, and three of the palette's
+        /// muted ones. Null (the factory's default) for any it does not know.</summary>
+        public static Color? CurtainTint(string name) => name switch
+        {
+            "Sage" => new Color(0.60f, 0.66f, 0.54f),
+            "Slate" => new Color(0.50f, 0.56f, 0.63f),
+            "Rust" => new Color(0.66f, 0.42f, 0.32f),
+            _ => null,
+        };
+
+        public BuildingGenResult Generate(BuildingGenSpec spec)
+        {
+            var trace = new List<string>();
+            if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_EDITDUMP"))) BuildingGen.FurnishTrace = trace.Add;
+            var res = BuildingGen.Generate(spec);
+            BuildingGen.FurnishTrace = null;
+            int mat = ActiveMaterial;
+            for (int i = 0; i < WallMaterials.Count; i++)
+                if (WallMaterials.At(i).Name == res.Palette) { mat = i; break; }
+            int roofTexel = WallMaterials.Count > 0 ? WallMaterials.At(Mathf.PosMod(mat, WallMaterials.Count)).RoofTexel : -1;
+            // centred on the stage, on the lattice
+            var at = StageOrigin + new Vector3(-Mathf.Floor(res.CellsX * 0.5f) * BuildingGen.Cell, GroundClearance,
+                                               -Mathf.Floor(res.CellsZ * 0.5f) * BuildingGen.Cell);
+
+            var before = Snapshot();
+            var kindBefore = DesignatedKind;
+            var roomsBefore = new List<RoomDesignation>(Designations);
+            var marksBefore = new List<DoorDesignation>(DoorMarks);
+            var furnitureBefore = new List<PropDesignation>(Furniture);
+            // The stage's old ramps go with its old stairs -- detached, not freed, so the undo can put them back.
+            var rampsBefore = new List<StaticBody3D>(_stairRamps);
+            foreach (var r in rampsBefore) if (IsInstanceValid(r)) RemoveChild(r);
+            _stairRamps.Clear();
+            foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+
+            foreach (var pl in res.Walls)
+                SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
+                          pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
+            foreach (var s in res.Stairs)
+            {
+                var o = at + new Vector3(s.X, s.Y, s.Z);
+                // a switchback's half flights climb half a storey each; the generator cut their floor's hole itself (it
+                // covers the landing too), so they only want their ramps
+                float rise = s.Rise > 0f ? s.Rise : StoreyHeight;
+                int steps = WallOpenings.StairSteps(rise);
+                foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
+                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs);
+                FitStairsToStructure(o, s.Yaw, s.Run, s.Width, rise, cutFloor: rise >= StoreyHeight - 0.01f);
+            }
+            var solved = SolveCorners();
+            if (solved.Count > 0) Log.Err($"[editor-buildings] generate: {solved.Count} walls were not corner-solved -- their openings have slid: "
+                                          + string.Join("; ", System.Linq.Enumerable.Select(solved, x => $"{x.W.Kind} at {x.W.Position - at} yaw {x.W.RotationDegrees.Y:0} {x.Len:0.00} -> {x.W.Length:0.00} m")));
+
+            // UG_EDITDOORSOPEN=1 (a render's, not a player's): every door the building hangs stands open, so a capture shows
+            // which way each one swings and what it swings over; =2, a door that swings both ways stands open the other way
+            string doorsOpen = System.Environment.GetEnvironmentVariable("UG_EDITDOORSOPEN");
+            if (doorsOpen is "1" or "2")
+            {
+                void Open(Node n)
+                {
+                    foreach (var c in n.GetChildren())
+                    {
+                        if (c is ObjectDoor d) { if (doorsOpen == "2" && d.DoubleActing) d.ApplyReplicatedOpen(true, reverse: true); d.SetInitialState(true); }
+                        Open(c);
+                    }
+                }
+                foreach (var w in _walls) Open(w);
+            }
+            DesignatedKind = res.Kind;
+            Designations.Clear();
+            foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor, d.Hvac?.Moved(at.X, at.Y, at.Z), d.Electrical?.Moved(at.X, at.Y, at.Z)));
+            DoorMarks.Clear();
+            foreach (var d in res.DoorMarks) DoorMarks.Add(new DoorDesignation(d.Role, at.X + d.X, at.Z + d.Z, d.Floor));
+            Furniture.Clear();
+            foreach (var m in res.Props) Furniture.Add(new PropDesignation(m.Name, at.X + m.X, at.Y + m.Y, at.Z + m.Z, m.Yaw, m.Gen));
+            ShowFurniture();
+            ActiveMaterial = mat;
+            _selWall = null; _selOpening = -1;
+            PositionHandles();
+
+            var rampsMade = new List<StaticBody3D>(_stairRamps);
+            _editor?.PushUndo($"generate {res.Kind} {spec.Seed}", () =>
+            {
+                foreach (var r in rampsMade) if (IsInstanceValid(r)) r.QueueFree();
+                _stairRamps.Clear();
+                RestoreAll(before);
+                foreach (var r in rampsBefore) if (IsInstanceValid(r)) { AddChild(r); _stairRamps.Add(r); }
+                DesignatedKind = kindBefore;
+                Designations.Clear(); Designations.AddRange(roomsBefore);
+                DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
+                Furniture.Clear(); Furniture.AddRange(furnitureBefore); ShowFurniture();
+            });
+            int rooms = 0;
+            foreach (var g in res.Layout) if (!g.Circulation) rooms++;
+            // UG_EDITDUMP=path writes what the generator placed, so a capture can be checked against the same seed's plan
+            var dump = System.Environment.GetEnvironmentVariable("UG_EDITDUMP");
+            if (!string.IsNullOrEmpty(dump))
+            {
+                // (the curtains and rugs after the props, each with what it is built from)
+                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(res.Furniture, res.RuntimeDecor), res.HvacVents), res.Electrical), res.Doodads), m => System.FormattableString.Invariant(
+                    $"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {(m.Room == null ? "Outside" : m.Room.Kind.ToString())}{(m.Gen == null ? "" : $" gen {m.Gen.Kind} {m.Gen.Width:0.00} x {m.Gen.Height:0.00} y {m.Y:0.00} {(m.Gen.Open ? "open" : "closed")} {m.Gen.Style}")}")));
+                System.IO.File.WriteAllLines(dump + ".walls", System.Linq.Enumerable.Select(res.Walls, w => System.FormattableString.Invariant($"{w.Kind} {w.X:R} {w.Y:R} {w.Z:R} {w.Yaw:R} {w.Length:R} {w.Height:R} {w.Thickness:R} {w.Openings.Count}")));
+                System.IO.File.WriteAllLines(dump + ".trace", trace);
+                // and every opening, so a capture can be checked against where the windows and doors actually are
+                var ops = new List<string>();
+                foreach (var w in res.Walls)
+                    foreach (var o in w.Openings)
+                        ops.Add(System.FormattableString.Invariant($"{w.Kind} {w.X:0.00} {w.Y:0.00} {w.Z:0.00} yaw {w.Yaw:0} | arch {o.Archetype} u {o.U:0.00}..{o.U1:0.00} v {o.V:0.00}..{o.V1:0.00}{(o.HasDoor ? $" door hinge {(o.DoorHingeAtStart ? "start" : "end")} opens {(o.DoorOpensFront ? "front" : "back")} {o.DoorAction}" : "")}{(o.Glazed ? " glazed" : "")}"));
+                System.IO.File.WriteAllLines(dump + ".openings", ops);
+            }
+            Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
+                     + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "
+                     + $"{res.Stairs.Count} flight(s), {res.Furniture.Count} pieces of furniture, {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}{(res.Business != UnturnedSim.Business.None ? $" ({res.Business})" : "")}"
+                     + (res.Notes.Count > 0 ? " -- " + string.Join("; ", res.Notes) : ""));
+            return res;
         }
 
         /// <summary>Measured retail roof pitches, area-weighted across the 52 buildings. Snap targets, not
@@ -2734,6 +3100,23 @@ namespace UnturnedGodot
             foreach (var w in new List<WallSurface>(_walls))
             {
                 if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                if (spec.Kind == RoofKind.Shed)
+                {
+                    // A shed closes against every wall whose head it sits on: a band up to its underside, and on a
+                    // wall running along the slope a right triangle on that (a tapered surface, apex at the high end).
+                    if (Mathf.Abs(w.Position.Y + w.Height - spec.TopY) > 0.05f) continue;
+                    var a = w.UVToWorld(0f, 0f); var b = w.UVToWorld(w.Length, 0f);
+                    var (shedBand, tri, highAtEnd) = RoofShapes.ShedInfill(spec, a.X, a.Z, b.X, b.Z);
+                    var head = w.Position + new Vector3(0f, w.Height, 0f);
+                    if (shedBand > 0.01f)
+                        roof.Members.Add(SpawnWall(head, w.RotationDegrees.Y, w.Length, w.Thickness, w.MaterialId, null, shedBand,
+                                                   w.RotationDegrees.X, SurfaceKind.Wall));
+                    if (tri > 0.01f)
+                        roof.Members.Add(SpawnWall(head + new Vector3(0f, shedBand, 0f), w.RotationDegrees.Y, w.Length, w.Thickness,
+                                                   w.MaterialId, null, tri, w.RotationDegrees.X, SurfaceKind.Wall, 0f, -1,
+                                                   0f, highAtEnd ? w.Length : 0f, 0f, highAtEnd ? 0f : w.Length));
+                    continue;
+                }
                 float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
                 bool runsAlongX = yaw < 45f || yaw > 135f;
                 if (!RoofShapes.WallGetsGable(spec, runsAlongX)) continue;
@@ -2841,7 +3224,7 @@ namespace UnturnedGodot
             {
                 Kind = kind, MinX = minX - grow, MaxX = maxX + grow, MinZ = minZ - grow, MaxZ = maxZ + grow,
                 TopY = topY, PitchDeg = ActiveRoofPitch, Thickness = SlabThickness,
-                Material = material, Texel = -1,
+                Material = material, Texel = -1, High = ActiveRoofHigh,
             };
             return true;
         }
@@ -2849,6 +3232,8 @@ namespace UnturnedGodot
         /// <summary>Which shape the roof buttons build. Flat is the default because it is what retail
         /// overwhelmingly is -- 80% of the sloped-and-flat roof area across 52 sampled buildings.</summary>
         public RoofKind ActiveRoofKind = RoofKind.Flat;
+        /// <summary>Which side a shed roof rises to (the Shed button turns it).</summary>
+        public RoofSide ActiveRoofHigh = RoofSide.North;
 
         /// <summary>Roof everything drawn, in the shape asked for.</summary>
         public PlacedRoof PlaceRoofOverWalls(RoofKind kind, float pitchDeg)
@@ -2886,10 +3271,12 @@ namespace UnturnedGodot
         /// CENTRELINES, and only walls -- slabs, foundations and stair treads are all WallSurfaces too, and
         /// feeding a floor in as a wall would have the floor you just placed enclose a "room" of its own.
         /// Source carries the index into _walls so a room can be mapped back to the surfaces bounding it.</summary>
-        public List<RoomEnclosure.PlanSegment> PlanOfActiveFloor()
+        public List<RoomEnclosure.PlanSegment> PlanOfActiveFloor() => PlanOfFloorAt(ActiveFloorY);
+
+        /// <summary>The wall centrelines of the storey whose walls stand at `y` (world), as PlanOfActiveFloor.</summary>
+        public List<RoomEnclosure.PlanSegment> PlanOfFloorAt(float y)
         {
             var plan = new List<RoomEnclosure.PlanSegment>();
-            float y = ActiveFloorY;
             for (int i = 0; i < _walls.Count; i++)
             {
                 var w = _walls[i];
@@ -2901,6 +3288,12 @@ namespace UnturnedGodot
             }
             return plan;
         }
+
+        /// <summary>The HVAC record of the room a stage point is in on storey `floor` (round 12: the hook a room temperature
+        /// system reads), or null: the storey's rooms found from its walls as they stand (RoomEnclosure), and the label
+        /// anchored in the same room (RoomDesignations.HvacAt) -- so it answers for a loaded layout as for a generated one.</summary>
+        public RoomHvac HvacAt(float x, float z, int floor)
+            => RoomDesignations.HvacAt(RoomEnclosure.Find(PlanOfFloorAt(StageOrigin.Y + GroundClearance + floor * StoreyHeight)), Designations, x, z, floor);
 
         /// <summary>Where the base of a wall on the active storey sits, in world space.</summary>
         public float ActiveFloorY => StageOrigin.Y + FloorY + GroundClearance;
@@ -3034,9 +3427,9 @@ namespace UnturnedGodot
         /// you get, which is precisely how the draw cursor came to sit on the ground while walls landed a
         /// storey up. Sharing the function is the guarantee; a second copy of the arithmetic is not.</summary>
         public static IEnumerable<Vector3> StairTreadOrigins(Vector3 origin, float yawDeg, float run = 0f,
-                                                             float width = 0f)
+                                                             float width = 0f, float rise = 0f)
         {
-            float rise = StoreyHeight;
+            if (rise <= 0f) rise = StoreyHeight;   // a flight climbs a storey unless it is half of a switchback
             int steps = WallOpenings.StairSteps(rise);
             if (run <= 0f) run = WallOpenings.StairDefaultRun(rise);
             float stepRise = WallOpenings.StairStepRise(rise);
@@ -3064,9 +3457,9 @@ namespace UnturnedGodot
         /// on the STAIRS layer so it moves and deletes with the flight rather than becoming loose furniture.
         /// strawberry: "add an invisible ramp to the staircase, to enable smoother movement".</summary>
         /// <returns>How many floors were cut.</returns>
-        public int FitStairsToStructure(Vector3 origin, float yawDeg, float run, float width)
+        public int FitStairsToStructure(Vector3 origin, float yawDeg, float run, float width, float rise = 0f, bool cutFloor = true)
         {
-            float rise = StoreyHeight;
+            if (rise <= 0f) rise = StoreyHeight;
             float yaw = Mathf.DegToRad(yawDeg);
             var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));
             var right = new Vector3(Mathf.Cos(yaw), 0f, -Mathf.Sin(yaw));
@@ -3089,12 +3482,13 @@ namespace UnturnedGodot
             // Pitch so the box lies along the flight: atan(rise/run) about the flight's lateral axis.
             ramp.GlobalRotation = new Vector3(Mathf.Atan2(rise, run), yaw, 0f);
             _stairRamps.Add(ramp);
+            if (!cutFloor) return 0;   // the caller cut the hole itself (a generated switchback's spans its landing)
 
             // ---- cut the floor above ------------------------------------------------------------------
             // The flight's plan footprint, grown slightly so the opening clears the treads rather than
             // touching them exactly (Aabb contact is a coin-flip and a hole flush with the tread reads as
             // a seam you can catch on).
-            const float Margin = 0.25f;
+            const float Margin = WallOpenings.StairHoleMargin;
             var a = origin;
             var b = origin + back * run + right * width;
             float minX = Mathf.Min(a.X, b.X) - Margin, maxX = Mathf.Max(a.X, b.X) + Margin;

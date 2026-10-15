@@ -31,7 +31,8 @@ namespace UnturnedGodot
         /// to these same textures, which lands one row low -- every building came back a shade of brown.</summary>
         public int MaterialId;
 
-        /// <summary>What this surface is for. Defaults and labels only -- Rebuild() never reads it. A floor is
+        /// <summary>What this surface is for. Mostly defaults and labels: Rebuild() reads it only for the paint and the frames
+        /// (by role), and for the plumb cut a pitched Roof gets where it meets the next slope (PlumbShift). A floor is
         /// this same rectangle pitched flat, which is why there is no FloorSurface: the partition, the
         /// collider, the reveal lining and the bake all work already, and a stairwell is an opening.</summary>
         public SurfaceKind Kind = SurfaceKind.Wall;
@@ -57,6 +58,9 @@ namespace UnturnedGodot
         }
         public Color TrimTint => WallMaterials.At(MaterialId).Reveal;
         public bool ShowTrim = true;
+        /// <summary>Frames line the openings of walls; a hole in a floor or a roof (a flight's stairwell) is just a hole
+        /// (strawberry: "remove the floor hole's border for the stairs").</summary>
+        bool Framed => ShowTrim && Kind != SurfaceKind.Floor && Kind != SurfaceKind.Roof;
 
         /// <summary>How far this wall's top rises to a central peak, for a gable end. 0 = a flat top.
         ///
@@ -156,9 +160,14 @@ namespace UnturnedGodot
                 back.Begin(Mesh.PrimitiveType.Triangles);
                 back.SetSmoothGroup(uint.MaxValue);
             }
-            foreach (var s in solids)
-                if (Tapered) AddTaperedSolid(st, s, t, back);
-                else AddWallBox(st, s, solids, t, back);
+            // A pitched roof's slabs are cut plumb where they meet (PlumbSolid); computed once, for the mesh and the collider.
+            var plumb = PlumbShift(out float psu, out float psv) ? new List<Vector3[]>() : null;
+            if (plumb != null)
+                foreach (var s in solids) plumb.Add(PlumbSolid(s, t, psu, psv));
+            for (int i = 0; i < solids.Count; i++)
+                if (plumb != null) AddHull(st, plumb[i], back);
+                else if (Tapered) AddTaperedSolid(st, solids[i], t, back);
+                else AddWallBox(st, solids[i], solids, t, back);
             // GenerateNormals BEFORE Index: indexing welds vertices, and welding before normals exist lights
             // the mesh as one smooth blob instead of crisp box faces.
             if (GableRise > WallOpenings.Eps) AddGableCap(st, t);
@@ -180,7 +189,7 @@ namespace UnturnedGodot
             }
             else _backMesh.Mesh = null;
 
-            if (ShowTrim && Openings.Count > 0)
+            if (Framed && Openings.Count > 0)
             {
                 var tt = new SurfaceTool();
                 tt.Begin(Mesh.PrimitiveType.Triangles);
@@ -220,6 +229,14 @@ namespace UnturnedGodot
             for (int i = 0; i < solids.Count; i++)
             {
                 var s = solids[i];
+                if (plumb != null)
+                {
+                    // the same points the mesh was hulled from
+                    if (plumb[i].Length < 4) _shapes[i].Shape = null;
+                    else SetHull(_shapes[i], plumb[i]);
+                    _shapes[i].Position = Vector3.Zero;
+                    continue;
+                }
                 if (!Tapered)
                 {
                     if (_shapes[i].Shape is not BoxShape3D box) _shapes[i].Shape = box = new BoxShape3D();
@@ -295,7 +312,7 @@ namespace UnturnedGodot
         /// <summary>What each live door was built from, so a Rebuild mid-drag can tell "still right, just move
         /// it" from "remake it". Rebuild runs on every mouse move; respawning a door per frame would leave a
         /// trail of them, and QueueFree defers so the stale ones stay hittable for the rest of the frame.</summary>
-        readonly List<(int Op, string Prop, float W, float H)> _doorSpec = new();
+        readonly List<(int Op, string Prop, float W, float H, bool Start, bool Front, DoorAction Action)> _doorSpec = new();
 
         // ---- a PRE-BARRICADE in an opening (master 2026-09-01) -----------------------------------------
         // Same owns-it-on-the-opening + pooled-so-a-per-mouse-move-Rebuild-doesn't-respawn shape as the doors above.
@@ -325,16 +342,33 @@ namespace UnturnedGodot
             for (int k = 0; k < want.Count; k++)
             {
                 var o = Openings[want[k]];
-                var spec = (want[k], o.DoorProp, o.Width, o.Height);
+                // (which way it swings is part of what it was built as: a door re-hung on its other jamb is a new leaf)
+                var spec = (want[k], o.DoorProp, o.Width, o.Height, o.DoorHingeAtStart, o.DoorOpensFront, o.DoorAction);
                 if (k < _doors.Count && _doorSpec[k] == spec) { PlaceDoor(_doors[k], o); continue; }
 
-                var made = DoorDeploy.SpawnProp(o.DoorProp, this, Vector3.Zero, 0f, ClearOpeningSize(o));
+                // The swing (WallOpening.DoorHingeAtStart / DoorOpensFront; the generator's layout chooses them). Door_Pine
+                // hinges at its mesh's +X end and opens toward -Z, so as built it hangs on the U1 jamb and opens out of the
+                // wall's back. Turned half round in PlaceDoor it hangs on the U jamb and opens out of the front; its angle
+                // negated, it opens the other way on the same jamb. Both together give the fourth. No mirroring: a negative
+                // scale on an ancestor of the leaf's collider is what physics does not do.
+                var made = DoorDeploy.SpawnProp(o.DoorProp, this, Vector3.Zero, 0f, ClearOpeningSize(o), reverse: o.DoorHingeAtStart != o.DoorOpensFront);
                 if (made == null)
                 {
                     // SAY SO rather than leaving an empty hole that looks like a design choice.
                     Log.Err($"[door] opening {want[k]}: '{o.DoorProp}' has no catalog entry -- no door built");
                     continue;
                 }
+                // How it moves (WallOpening.DoorAction, round 12b): a double-acting leaf swings either way about the same
+                // hinge, away from whoever opens it; a pocket door's leaf slides toward its hinge end, into the wall past that
+                // jamb -- the U one when DoorHingeAtStart, which PlaceDoor turns it to face -- its hitbox kept just proud of both
+                // faces so the slid-in leaf can still be looked at and shut.
+                if (o.DoorAction != DoorAction.Swing)
+                    foreach (var c in made.GetChildren())
+                        if (c is ObjectDoor od)
+                        {
+                            if (o.DoorAction == DoorAction.DoubleSwing) od.MakeDoubleActing();
+                            else od.MakePocket(Thickness + 0.02f);
+                        }
                 if (k < _doors.Count)
                 {
                     var old2 = _doors[k];
@@ -400,7 +434,9 @@ namespace UnturnedGodot
         void PlaceDoor(Node3D host, WallOpening o)
         {
             if (host == null || !IsInstanceValid(host)) return;
-            host.Transform = new Transform3D(Basis.Identity, new Vector3(o.U + o.Width * 0.5f, o.V, 0f));
+            // hung on the U jamb: the whole door turned half round about the vertical (see RebuildDoors). The measuring
+            // below is of the leaf's geometry in this wall's space, so it centres a turned door as it does a plain one.
+            host.Transform = new Transform3D(o.DoorHingeAtStart ? new Basis(Vector3.Up, Mathf.Pi) : Basis.Identity, new Vector3(o.U + o.Width * 0.5f, o.V, 0f));
 
             // Then align by MEASURING the leaf, on BOTH axes. These meshes are not centred on their own
             // origin: Door_Pine spans x -2.35..+0.10 (centre -1.12, it is anchored at the hinge) and
@@ -625,7 +661,7 @@ namespace UnturnedGodot
         void RebuildTrimCollision()
         {
             var boxes = new List<(Vector3 Min, Vector3 Max)>();
-            if (ShowTrim)
+            if (Framed)
                 foreach (var o in Openings)
                 {
                     float t = Thickness * 0.5f + TrimProud, w = TrimProfile;
@@ -702,10 +738,6 @@ namespace UnturnedGodot
                                Mathf.Max(0.01f, o.Height - TrimProfile * (sill ? 2f : 1f)));
         }
 
-        /// <summary>The left and right cut lines, as u for a given v.</summary>
-        float CutL(float v) => Mathf.Lerp(InsetL0, InsetL1, Height > WallOpenings.Eps ? v / Height : 0f);
-        float CutR(float v) => Length - Mathf.Lerp(InsetR0, InsetR1, Height > WallOpenings.Eps ? v / Height : 0f);
-
         /// <summary>One solid of the partition, clipped to the trapezoid and extruded.
         ///
         /// Kept entirely separate from AddWallBox rather than generalising it: the box path runs for every
@@ -716,20 +748,86 @@ namespace UnturnedGodot
             var poly = ClipToTaper(s);
             if (poly.Count < 3) return;
             var bt = backTool ?? st;
-            for (int i = 1; i + 1 < poly.Count; i++)          // +Z face
+            // Each face wound from its geometry against the way it must face, not from a fixed vertex order: Godot
+            // takes CLOCKWISE as front (AddBoxFaces reverses its table for the same reason), and a fixed order that
+            // is right for one polygon is back-facing for its mirror. Wound the other way, every face was culled from
+            // outside and the solid read as a hole -- strawberry, of the triangle closing a shed's side, "missing the
+            // gable end wall under it". (cow tools hit the same thing on the kerbs and fixed it this way.)
+            var c = Vector2.Zero;
+            foreach (var p in poly) c += p;
+            c /= poly.Count;
+            for (int i = 1; i + 1 < poly.Count; i++)
             {
-                Tri(st, new Vector3(poly[0].X, poly[0].Y, t), new Vector3(poly[i].X, poly[i].Y, t),
-                        new Vector3(poly[i + 1].X, poly[i + 1].Y, t));
-                Tri(bt, new Vector3(poly[0].X, poly[0].Y, -t), new Vector3(poly[i + 1].X, poly[i + 1].Y, -t),
-                        new Vector3(poly[i].X, poly[i].Y, -t));
+                Facing(st, new Vector3(poly[0].X, poly[0].Y, t), new Vector3(poly[i].X, poly[i].Y, t),
+                           new Vector3(poly[i + 1].X, poly[i + 1].Y, t), Vector3.Back);       // +Z face
+                Facing(bt, new Vector3(poly[0].X, poly[0].Y, -t), new Vector3(poly[i].X, poly[i].Y, -t),
+                           new Vector3(poly[i + 1].X, poly[i + 1].Y, -t), Vector3.Forward);   // -Z face
             }
-            for (int i = 0; i < poly.Count; i++)              // the rim
+            for (int i = 0; i < poly.Count; i++)              // the rim, facing away from the middle
             {
                 var a = poly[i];
                 var b = poly[(i + 1) % poly.Count];
-                Quad(st, new Vector3(a.X, a.Y, -t), new Vector3(b.X, b.Y, -t),
-                         new Vector3(b.X, b.Y, t), new Vector3(a.X, a.Y, t));
+                var out2 = (a + b) * 0.5f - c;
+                var outward = new Vector3(out2.X, out2.Y, 0f);
+                Facing(st, new Vector3(a.X, a.Y, -t), new Vector3(b.X, b.Y, -t), new Vector3(b.X, b.Y, t), outward);
+                Facing(st, new Vector3(a.X, a.Y, -t), new Vector3(b.X, b.Y, t), new Vector3(a.X, a.Y, t), outward);
             }
+        }
+
+        /// <summary>Is this a pitched ROOF slab, whose edges are cut plumb where it meets the next slope (RoofShapes.PlumbFaces)?
+        /// If so, the shift of the mid-plane point a point lies straight over, per metre of its depth into the slab: the
+        /// world's vertical in this surface's own frame, read off the transform it was actually given -- a slope read off
+        /// a retail mesh leans the opposite way to a generated one, and this is what keeps that from mattering.
+        ///
+        /// Not a wall (the vertical lies in its plane: there is no plumb cut across it) and not a flat slab (plumb IS
+        /// square there). A roof slope's edges other than its eave either meet something -- the slope across a ridge, a
+        /// hip or a valley, the wall a shed leans on -- or are a gable's verge, which runs up the slope and is plumb
+        /// already; only a free-standing shed's high edge changes look (squared off plumb, like a fascia). That is why
+        /// this keys on Kind rather than on a flag every spawn site, the save and the copy path would have to carry.</summary>
+        bool PlumbShift(out float su, out float sv)
+        {
+            su = sv = 0f;
+            if (Kind != SurfaceKind.Roof) return false;
+            var up = Basis.Inverse() * Vector3.Up;
+            if (Mathf.Abs(up.Z) < 0.05f) return false;                                      // stood on edge
+            if (Mathf.Abs(up.X) < 1e-4f && Mathf.Abs(up.Y) < 1e-4f) return false;           // flat
+            su = up.X / up.Z; sv = up.Y / up.Z;
+            return true;
+        }
+
+        /// <summary>One solid of a pitched roof, cut plumb (RoofShapes.PlumbFaces): its two faces' corners, in surface space.</summary>
+        Vector3[] PlumbSolid(WallSolid s, float t, float su, float sv)
+        {
+            var mid = RoofShapes.TaperPolygon(s.U0, s.V0, s.U1, s.V1, Length, Height, InsetL0, InsetL1, InsetR0, InsetR1);
+            var front = new List<(float U, float V)>();
+            var backFace = new List<(float U, float V)>();
+            RoofShapes.PlumbFaces(mid, Height, t, su, sv, front, backFace);
+            var pts = new Vector3[front.Count + backFace.Count];
+            for (int k = 0; k < front.Count; k++) pts[k] = new Vector3(front[k].U, front[k].V, t);
+            for (int k = 0; k < backFace.Count; k++) pts[front.Count + k] = new Vector3(backFace[k].U, backFace[k].V, -t);
+            return pts;
+        }
+
+        /// <summary>A convex solid given by its corners, as faces. The -Z face goes on the back tool when the surface is
+        /// two-sided, as AddTaperedSolid's does.</summary>
+        void AddHull(SurfaceTool st, Vector3[] pts, SurfaceTool backTool)
+        {
+            if (pts.Length < 4) return;
+            var np = new System.Numerics.Vector3[pts.Length];
+            for (int k = 0; k < pts.Length; k++) np[k] = new System.Numerics.Vector3(pts[k].X, pts[k].Y, pts[k].Z);
+            foreach (var f in ConvexHull.Faces(np))
+            {
+                var n = new Vector3(f.Normal.X, f.Normal.Y, f.Normal.Z);
+                var tool = backTool != null && n.Z < -0.99f ? backTool : st;
+                for (int k = 1; k + 1 < f.Loop.Length; k++)
+                    Facing(tool, pts[f.Loop[0]], pts[f.Loop[k]], pts[f.Loop[k + 1]], n);
+            }
+        }
+
+        /// <summary>A triangle wound so its front (Godot: clockwise as seen) faces `want`.</summary>
+        static void Facing(SurfaceTool st, Vector3 a, Vector3 b, Vector3 c, Vector3 want)
+        {
+            if ((c - a).Cross(b - a).Dot(want) >= 0f) Tri(st, a, b, c); else Tri(st, a, c, b);
         }
 
         /// <summary>A solid rectangle clipped by the two cut lines. Sutherland-Hodgman against two
@@ -751,33 +849,14 @@ namespace UnturnedGodot
             cs.Shape = new ConvexPolygonShape3D { Points = pts };
         }
 
+        /// <summary>The trapezoid's outline over one solid (RoofShapes.TaperPolygon: the one definition, which the L0
+        /// roof tests measure too).</summary>
         List<Vector2> ClipToTaper(WallSolid s)
         {
-            var poly = new List<Vector2>
-            {
-                new(s.U0, s.V0), new(s.U1, s.V0), new(s.U1, s.V1), new(s.U0, s.V1),
-            };
-            // keep u >= CutL(v), then u <= CutR(v)
-            poly = ClipHalfPlane(poly, p => p.X - CutL(p.Y));
-            poly = ClipHalfPlane(poly, p => CutR(p.Y) - p.X);
+            var poly = new List<Vector2>();
+            foreach (var (u, v) in RoofShapes.TaperPolygon(s.U0, s.V0, s.U1, s.V1, Length, Height, InsetL0, InsetL1, InsetR0, InsetR1))
+                poly.Add(new Vector2(u, v));
             return poly;
-        }
-
-        static List<Vector2> ClipHalfPlane(List<Vector2> poly, System.Func<Vector2, float> keep)
-        {
-            var outp = new List<Vector2>(poly.Count + 2);
-            for (int i = 0; i < poly.Count; i++)
-            {
-                Vector2 a = poly[i], b = poly[(i + 1) % poly.Count];
-                float da = keep(a), db = keep(b);
-                if (da >= 0f) outp.Add(a);
-                if ((da >= 0f) != (db >= 0f))
-                {
-                    float f = da / (da - db);
-                    if (float.IsFinite(f)) outp.Add(a.Lerp(b, Mathf.Clamp(f, 0f, 1f)));
-                }
-            }
-            return outp;
         }
 
         static void AddWallBox(SurfaceTool st, WallSolid s, List<WallSolid> all, float t,

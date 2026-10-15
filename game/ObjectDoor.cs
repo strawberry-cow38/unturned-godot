@@ -88,6 +88,64 @@ namespace UnturnedGodot
         Vector3 _leafColliderCenter;      // collider box's closed-pose centre (leaf AABB centre); ApplySwing re-places it about the pivot each frame
         bool _pendingSolid;   // at an endpoint but the collider is held OFF because a body stands in its volume (see TrySolidify)
 
+        // ---- how the leaf MOVES (strawberry, round 12b: "some may swing both ways, swinging away from the player when they
+        // open them", then "sliding pocket doors too"). A wall's door the building generator hangs may be DOUBLE-ACTING --
+        // it swings either way about its one hinge, away from whoever opens it, and shuts back to the middle -- or a POCKET
+        // door, whose leaf slides along the wall into its cavity instead of turning (WallSurface.RebuildDoors,
+        // WallOpening.DoorAction). Every other door swings its catalog way, as it always did.
+        bool _doubleActing;
+        /// <summary>Which way a double-acting leaf is out (+1 the catalog's way, -1 the other), and which way it has been
+        /// asked to go: they differ while it swings back through the middle to open the other way.</summary>
+        float _swingSign = 1f, _wantSign = 1f;
+        /// <summary>A pocket door's leaf, slid fully open, is here from shut (this door's own space); zero for a door that
+        /// turns on its hinge.</summary>
+        Vector3 _slide;
+        float _minThickness;
+
+        public bool DoubleActing => _doubleActing;
+        public bool Sliding => _slide != Vector3.Zero;
+        /// <summary>A double-acting door swung (or is swinging) the other way from as built.</summary>
+        public bool Reversed => _wantSign < 0f;
+
+        /// <summary>Make this a double-acting door. Before or after _Ready.</summary>
+        public void MakeDoubleActing() => _doubleActing = true;
+
+        /// <summary>Make this a pocket door: the leaf slides its own width toward its hinge end -- along the wall, into it,
+        /// so it rests in the wall past that jamb with its other edge at the jamb (strawberry: "sliding pocket doors too").
+        /// Measured off the leaf it was built with, so it slides the width of the door it is, fitted to whatever hole.
+        /// `minThickness`: the leaf's hitbox at least this thick -- the wall's thickness and a little -- so a leaf slid into
+        /// the wall stands just proud of both faces and can still be looked at and shut.</summary>
+        public void MakePocket(float minThickness)
+        {
+            _minThickness = minThickness;
+            if (_leafMesh == null) return;
+            var ab = _leafMesh.GetAabb();
+            // toward the hinge (Door_Pine's is its mesh's +X end): that end leads into the wall, the latch end with the handle
+            // stops at the jamb
+            float dir = _pivotLocal.X >= ab.GetCenter().X ? 1f : -1f;
+            _slide = new Vector3(dir * ab.Size.X, 0f, 0f);
+            if (_leafCollider?.Shape is BoxShape3D box && box.Size.Y < minThickness) box.Size = new Vector3(box.Size.X, minThickness, box.Size.Z);
+            ApplySwing(_swing);
+        }
+
+        /// <summary>Where the leaf goes when it swings as built, as a direction in world space across the door's plane (its
+        /// open middle less its shut middle): the side a double-acting door swings into unless it is opened from that side.
+        /// What the server is told at registration, so it decides the side the same way this node would.</summary>
+        public Vector3 SwingSideWorld
+        {
+            get
+            {
+                var c = _leafMesh != null ? _leafMesh.GetAabb().GetCenter() : _leafColliderCenter;
+                var turned = new Basis(_axis, Mathf.DegToRad(_angleDeg)) * (c - _pivotLocal) + _pivotLocal;
+                var d = GlobalTransform.Basis * (turned - c);
+                return new Vector3(d.X, 0f, d.Z);
+            }
+        }
+
+        /// <summary>Would a double-acting door opened by someone at `opener` (world) swing the other way from as built --
+        /// is that someone standing on the side it would otherwise swing into?</summary>
+        public bool OpensReversedFrom(Vector3 opener) => (opener - ClosedLeafCentreWorld).Dot(SwingSideWorld) > 0f;
+
         bool _isOpen;
         /// <summary>Setting this WAKES the physics callback. Doors spend almost all their life at rest, so the
         /// callback turns itself off when the swing finishes (see _PhysicsProcess) -- 449 doors were costing
@@ -155,8 +213,24 @@ namespace UnturnedGodot
 
         /// <summary>Adopt the server's open state. Distinct from SetOpen only in name -- the point of having
         /// it is that the replication path reads as an adoption at the call site rather than as another
-        /// caller deciding to swing a door.</summary>
-        public void ApplyReplicatedOpen(bool open) => SetOpen(open);
+        /// caller deciding to swing a door. (`reverse`, v61: which way the server swung a double-acting door; ignored by
+        /// one that swings one way.)</summary>
+        public void ApplyReplicatedOpen(bool open, bool reverse = false)
+        {
+            if (_doubleActing && open) Aim(reverse);
+            SetOpen(open);
+        }
+
+        /// <summary>A double-acting leaf will open the other way from as built (`reverse`) or as built. If it is out the other
+        /// way still, it swings back through the middle first.</summary>
+        void Aim(bool reverse)
+        {
+            float want = reverse ? -1f : 1f;
+            if (want == _wantSign) return;
+            _wantSign = want;
+            if (_swing <= 0.001f) _swingSign = want;
+            SetPhysicsProcess(true);
+        }
 
         /// <summary>Build a door on prop <paramref name="propXform"/> (the SAME placement Transform3D the
         /// prop's own body mesh uses -- pivot/leaf/collider are all expressed in that prop-local space, matching
@@ -238,7 +312,7 @@ namespace UnturnedGodot
                 _leafColliderCenter = aabb.GetCenter();
                 _leafCollider = new CollisionShape3D
                 {
-                    Shape = new BoxShape3D { Size = new Vector3(Mathf.Max(size.X, 0.15f), Mathf.Max(size.Y, 0.15f), Mathf.Max(size.Z, 0.15f)) },
+                    Shape = new BoxShape3D { Size = new Vector3(Mathf.Max(size.X, 0.15f), Mathf.Max(size.Y, Mathf.Max(0.15f, _minThickness)), Mathf.Max(size.Z, 0.15f)) },
                     Position = _leafColliderCenter,
                 };
                 AddChild(_leafCollider);
@@ -266,11 +340,16 @@ namespace UnturnedGodot
         /// <summary>Flip open/closed, gated by <see cref="CooldownSec"/>. Returns false (no-op) if still
         /// cooling down from the last toggle -- the caller (PlayerController) just drops a refused tap rather
         /// than queuing it, matching how a slow real appliance door ignores a second yank mid-swing.</summary>
-        public bool Toggle()
+        public bool Toggle() => ToggleFrom(null);
+
+        /// <summary>Toggle as someone standing at `opener` (world): a double-acting door opens away from them. Null: as
+        /// built. The direct path only -- in a networked game the server decides the side (RequestToggleObjectDoor).</summary>
+        public bool ToggleFrom(Vector3? opener)
         {
             double now = Time.GetTicksMsec() / 1000.0;
             if (now - _lastToggleSec < CooldownSec) return false;
             _lastToggleSec = now;
+            if (_doubleActing && !IsOpen && opener is Vector3 at) Aim(OpensReversedFrom(at));
             IsOpen = !IsOpen;
             SyncGroup();
             // Retail plays the door's AudioSource clip on every TOGGLE (open AND close, same clip) -- NOT on
@@ -316,13 +395,16 @@ namespace UnturnedGodot
         public void SetInitialState(bool open)
         {
             IsOpen = open;
+            _swingSign = _wantSign;
             _swing = open ? 1f : 0f;
             ApplySwing(_swing);
         }
 
         public override void _PhysicsProcess(double delta)
         {
-            float want = IsOpen ? 1f : 0f;
+            // a double-acting leaf out the other way from where it is asked to open goes back to the middle first
+            if (_swingSign != _wantSign && _swing <= 0f) _swingSign = _wantSign;
+            float want = IsOpen && _swingSign == _wantSign ? 1f : 0f;
             if (Mathf.IsEqualApprox(_swing, want))
             {
                 if (_pendingSolid) { TrySolidify(); return; }   // still work to do -> stay awake for it
@@ -342,8 +424,24 @@ namespace UnturnedGodot
         void ApplySwing(float t)
         {
             if (_pivot == null) return;
+            if (_slide != Vector3.Zero)
+            {
+                // A pocket door slides, eased in and out: the sampled curves are a hinge's, with a hinge's overshoot, and a
+                // leaf running on a track stops at its stop. Same duration as the swing -- its edge travels its width, less
+                // than the quarter circle a swinging edge does in that time.
+                float f = t * t * (3f - 2f * t);
+                _pivot.Basis = Basis.Identity;
+                _pivot.Position = _pivotLocal + _slide * f;
+                if (_leafCollider != null)
+                {
+                    _leafCollider.Transform = new Transform3D(Basis.Identity, _leafColliderCenter + _slide * f);
+                    if (t <= 0.001f || t >= 0.999f) TrySolidify();
+                    else { _leafCollider.Disabled = true; _pendingSolid = false; }
+                }
+                return;
+            }
             float frac = SampleEasing(t);
-            var swing = new Basis(_axis, Mathf.DegToRad(_angleDeg) * frac);
+            var swing = new Basis(_axis, Mathf.DegToRad(_angleDeg) * _swingSign * frac);
             _pivot.Basis = swing;
             // Track the leaf with the look-ray/solidity hitbox: it's a DIRECT child of this body (can't parent to
             // _pivot, see the ctor), so rotate its transform by the SAME hinge swing. A leaf point rotates about
@@ -392,7 +490,7 @@ namespace UnturnedGodot
         /// degradation, not a hard requirement that every door prop ships curve data).</summary>
         float SampleEasing(float swing)
         {
-            bool opening = IsOpen;
+            bool opening = IsOpen && _swingSign == _wantSign;
             var curve = opening ? _openCurve : _closeCurve;
             float sampleAt = opening ? swing : (1f - swing);
             if (curve == null || curve.Count == 0) return swing * swing * (3f - 2f * swing);

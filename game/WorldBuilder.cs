@@ -750,6 +750,8 @@ namespace UnturnedGodot
                             for (int i = 3; i < data.Length; i += 4) if (data[i] < 200) tr++;
                             if (tr > data.Length / 400) { mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mm.AlphaScissorThreshold = 0.5f; }
                         }
+                        // (the doodad kit's glass: its handoff's `"translucent": true`, the editor's own rule -- EditorObjects.MatFor)
+                        if (EditorObjects.WantsTranslucent(nm)) mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaDepthPrePass;
                         // Tiny PALETTE textures (billboards etc. use a 2x2/4x2 colour-key sampled by the mesh UVs): Linear
                         // filtering + mipmaps average the palette cells together -> the thin logo/text geometry minifies to
                         // black at distance (same class as the gun black-texture bug). Nearest + no mipmaps keeps each cell crisp.
@@ -957,8 +959,9 @@ namespace UnturnedGodot
             }
             void PlaceObjectInner(string[] p, string name, int destIndex)
             {
-                if (!cache.TryGetValue(name, out var mesh)) { long _m0 = System.Diagnostics.Stopwatch.GetTimestamp(); mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; _objMeshT += System.Diagnostics.Stopwatch.GetTimestamp() - _m0; _objMeshMiss++; }
-                if (mesh == null) return;
+                if (!cache.TryGetValue(name, out var mesh)) { long _m0 = System.Diagnostics.Stopwatch.GetTimestamp(); mesh = System.IO.File.Exists(dir + name + ".obj") ? ObjMesh.Load(dir + name + ".obj") : null; cache[name] = mesh; _objMeshT += System.Diagnostics.Stopwatch.GetTimestamp() - _m0; _objMeshMiss++; }
+                // (a kit doodad with no art of its own -- the mug pair -- is nothing but its stock children: it goes on below)
+                if (mesh == null && !DoodadKitView.Has(name)) return;
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
                 // MATERIAL-PALETTE variant: gen_placements rolls the per-instance material (LevelObject.GetMaterialOverride:
                 // materialIndexOverride=-1 -> InitState(instanceID);Range(0,count)) and writes the chosen variant's material
@@ -974,6 +977,15 @@ namespace UnturnedGodot
                 // term is identity), so the whole map except the handful of rolled props is byte-identical -- no regression.
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
+                // the doodad kit's stock children (the bowl under the fruit, DoodadKitView), on a node of their own beside the
+                // prop -- batched or not, the prop's own node never carries them
+                if (mode != WorldMode.Dedicated && DoodadKitView.Has(name))
+                {
+                    var kids = new Node3D { Name = "Stock_" + name, Transform = new Transform3D(basis, gpos) };
+                    DoodadKitView.Attach(kids, name);
+                    root.AddChild(kids);
+                }
+                if (mesh == null) return;
                 // ROOM LAMPS ARE THE DEPLOYABLE (master 2026-09-07: "change the world props to be the deployable").
                 // A desk or standing lamp standing in a house is the SAME object as one a player puts down -- same
                 // mesh, same health, same power ports -- instead of a static prop with a light bolted onto it. Spawn

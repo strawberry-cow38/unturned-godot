@@ -160,6 +160,18 @@ namespace SDG.Unturned
             public List<RailSite> Sites;
             /// <summary>Rails: the track as laid -- New_Rail_Units and any terminal sleeper (built on first ask).</summary>
             public List<RailPiece> Track;
+            /// <summary>Rails: each track's offset from the centreline at each dense point, where the line SPLITS (its two
+            /// tracks part and rejoin: InfiniteRails.MarkRailSplits); null where it never does (RailTrackOffset throughout).
+            /// The formation widens with it.</summary>
+            public float[] TrackOffset;
+            /// <summary>Rails: the splits, by horizontal arc (where the tracks start to part, where they are back) and the
+            /// offset each track holds between.</summary>
+            public List<(double A0, double A1, float W)> Splits;
+            /// <summary>Rails: ONE track on the centreline, not two (a chord: InfiniteRails.BuildChords); its formation is
+            /// a single track's. Its ends run onto another line's track (a turnout), so it closes neither.</summary>
+            public bool SingleTrack;
+            /// <summary>North-south rails: the single-track chords laid from this line onto the east-west lines it crosses.</summary>
+            public List<Line> Chords;
             /// <summary>Mains: where this main crosses a railway on the level.</summary>
             public List<LevelCrossing> LevelCrossings;
             /// <summary>Rails: the crossings stage 1 shaped (InfiniteRails.ShapeRail), for stage 2 to keep.</summary>
@@ -291,10 +303,12 @@ namespace SDG.Unturned
                 if (x <= BoreX[i + 1]) return BoreY[i] + (BoreY[i + 1] - BoreY[i]) * (x - BoreX[i]) / (BoreX[i + 1] - BoreX[i]);
             return BoreY[3];
         }
-        // ---- per class. A RAILWAY's tunnel is ONE bore on the track's centreline, the same Tunnel_Line_0 section scaled
-        // to it: RailTunnelLateral across (4.8 m to the walls; the train is 1.7 m to its side) and RailTunnelVertical up
+        // ---- per class. A RAILWAY's tunnel is ONE bore on the line's centreline, the same Tunnel_Line_0 section scaled
+        // to it: RailTunnelLateral across (it was 0.6, 4.8 m to the walls, for one track; the train is 1.7 m to its side) and RailTunnelVertical up
         // (the crown 8.1 m over the track's root, where the highway's 12.4 m would be a cathedral over a 4 m train).
-        public const float RailTunnelLateral = 0.6f, RailTunnelVertical = 0.65f;
+        // Double track (2026-10-11) widened it to 0.8: 6.4 m to the walls, the outer ballast's foot at 6.07 m and the outer
+        // train's shoulder (4.6 m out) with 6.2 m over the rails there.
+        public const float RailTunnelLateral = 0.8f, RailTunnelVertical = 0.65f;
         public static int TunnelTubes(RoadKind k) => k == RoadKind.Rail ? 1 : 2;
         /// <summary>Tube i's centreline offset from the route's (highway: the two carriageways; rail: the track).</summary>
         public static float TubeOffset(RoadKind k, int i) => k == RoadKind.Rail ? 0f : (i == 0 ? -1 : 1) * HighwayRibbonOffset;
@@ -328,13 +342,15 @@ namespace SDG.Unturned
         public static float TunnelBerm = EnvF("UG_INF_BERM", 4f);   // settable: a test runs its control with it off
         public const float BermSlope = 0.6f;          // the built-up cover's fall beside the shell, m per m
         /// <summary>How far short of the shell + TunnelCover the hill may be at lateral `lat`: the whole TunnelBerm over the
-        /// crown, nothing at the shell's foot -- in proportion to how high the shell stands there. The shell's FLANK drops
-        /// 5.7 m over its last 1.6 m, and cover built up against it was a near-vertical ridge down each side of the run; held
-        /// to the hill there, the built-up cover is only ever over the crown, where the shell slopes under 1 in 1.</summary>
+        /// crown, nothing where the shell's FLANK begins -- in proportion to how high the shell stands over that edge. The
+        /// flank drops 5.7 m over its last 1.6 m, and cover built up against it was a near-vertical ridge down each side of
+        /// the run; held to the hill there, the built-up cover is only ever over the crown, where the shell slopes under 1 in
+        /// 1. ⚠ It was in proportion to the height over the shell's FOOT, which still allowed 48% of the berm at the flank's
+        /// top edge: a rail bore widened for double track (2026-10-11) had cover built 2.1 in 1 up the start of a flank.</summary>
         public static float BermAllowed(RoadKind k, float lat)
         {
-            float foot = ShellTopOf(k, ShellReachOf(k)), crown = ShellTop(0f) * TunnelVerticalOf(k), top = ShellTopOf(k, lat);
-            return float.IsFinite(top) ? TunnelBerm * Math.Clamp((top - foot) / (crown - foot), 0f, 1f) : 0f;
+            float edge = ShellTop(ShellX[2]) * TunnelVerticalOf(k), crown = ShellTop(0f) * TunnelVerticalOf(k), top = ShellTopOf(k, lat);
+            return float.IsFinite(top) ? TunnelBerm * Math.Clamp((top - edge) / (crown - edge), 0f, 1f) : 0f;
         }
         public const float TunnelProbeStep = 4f;      // along-route sampling when looking for runs to bore
         public static float TunnelMinLength => 2f * TunnelSectionLength;   // two portals; any bore is extra
@@ -757,7 +773,8 @@ namespace SDG.Unturned
                     foreach (var h in under) if (h < InfiniteTerrain.SeaLevel + 1.2f) floods = true;
                     over = !bridged && (hwX.Kind == RoadKind.Rail || floods || ch[kX] > hwH);   // a rail has no decks to spare
                     if (floods && !over) return Gone("underpass below sea");   // under a highway bridge, by the sea
-                    if (over) { target = hwHi + OverRise; ShapeCrossing(ch, arcC, arcC[kX], target, true, CrossFlat); }
+                    // (over a rail whose tracks are parted the deck is longer, and the level stretch under it with it)
+                    if (over) { target = hwHi + OverRise; ShapeCrossing(ch, arcC, arcC[kX], target, true, CrossFlat + SplitWidening(hwX, hwF) / Math.Sin(60 * Math.PI / 180)); }
                     else { target = hwLo - UnderDepth; Array.Copy(under, ch, ch.Length); }
                     up = new Underpass { HwId = hwX.Id, X = xX, Z = zX, Over = over, Existing = bridged,
                                          HwSurface = SurfaceY(RoadKind.Highway, hwH), MainSurface = SurfaceY(RoadKind.Main, target) };
@@ -814,9 +831,10 @@ namespace SDG.Unturned
                 double aX = arcD[fk] + (arcD[fk + 1] - arcD[fk]) * (fMain - fk), spacing = 0;
                 for (int i = 0; i < line.Segments; i++)
                     if (Math.Abs(arcD[i] - aX) < CrossFlat + 60) spacing = Math.Max(spacing, arcD[i + 1] - arcD[i]);
-                ShapeCrossing(line.H, arcD, aX, target, over, CrossFlat + spacing);
+                float widen = SplitWidening(hwX, fHw);
+                ShapeCrossing(line.H, arcD, aX, target, over, CrossFlat + widen / Math.Max(0.5, sinX) + spacing);
                 if (!over) foreach (var h in line.H) if (h < InfiniteTerrain.SeaLevel + 1.2f) return Gone("underpass below sea");
-                if (!up.Existing && !(over ? LayOverpass(line, fMain, sinX, up, hwX.Kind) : LayUnderpass(line, hwX, up))) return Gone(over ? "overpass decks" : "underpass decks");
+                if (!up.Existing && !(over ? LayOverpass(line, fMain, sinX, up, hwX.Kind, widen) : LayUnderpass(line, hwX, up))) return Gone(over ? "overpass decks" : "underpass decks");
                 line.Underpasses = new List<Underpass> { up };
                 if (hwX.Kind == RoadKind.Highway) line.Ramps = BuildRamps(line, fMain, hwX, fHw);
             }
@@ -897,12 +915,23 @@ namespace SDG.Unturned
             return true;
         }
 
+        /// <summary>How much wider than usual a rail's formation is at fractional dense index f, where its tracks have
+        /// parted (Line.TrackOffset); 0 on a road or where they have not.</summary>
+        public static float SplitWidening(Line rail, double f)
+        {
+            if (rail.TrackOffset == null) return 0f;
+            int k = Math.Clamp((int)Math.Floor(f), 0, rail.Segments - 1);
+            float t = (float)Math.Clamp(f - k, 0.0, 1.0);
+            return rail.TrackOffset[k] + (rail.TrackOffset[k + 1] - rail.TrackOffset[k]) * t - RailTrackOffset;
+        }
+
         /// <summary>The main's own decks over a highway: whole units centred where it crosses, reaching UnderMargin past
         /// the highway's asphalt either side (longer for a skewed crossing), widened to the main (DeckScale), no piers --
-        /// the gap is the highway's. The main's ribbon is cut and its embankment stopped under exactly that span.</summary>
-        bool LayOverpass(Line main, double fX, double sin, Underpass up, RoadKind under = RoadKind.Highway)
+        /// the gap is the highway's. The main's ribbon is cut and its embankment stopped under exactly that span. Over a
+        /// railway whose tracks are parted there, `widen` more each side (SplitWidening).</summary>
+        bool LayOverpass(Line main, double fX, double sin, Underpass up, RoadKind under = RoadKind.Highway, float widen = 0f)
         {
-            double need = 2.0 * (PavedHalf(under) + UnderMargin) / Math.Max(0.5, sin);
+            double need = 2.0 * (PavedHalf(under) + widen + UnderMargin) / Math.Max(0.5, sin);
             double half = Math.Ceiling(need / BridgePitch) * BridgePitch * 0.5;
             int reach = main.Kind == RoadKind.Rail ? (int)Math.Ceiling(half / 8.0) + 2 : 4;   // a rail's dense points are closer
             int i0 = Math.Max(0, (int)Math.Floor(fX) - reach), i1 = Math.Min(main.X.Length - 1, (int)Math.Ceiling(fX) + reach);
@@ -1984,7 +2013,9 @@ namespace SDG.Unturned
         static void Rebox(Line e)
         {
             int P = e.Segments;
-            float Reach(int i) => PavedHalf(e.Kind) + Flat(e.Kind) + (e.Shoulders != null ? e.Shoulders[i] : Shoulder(e.Kind));
+            // (a split rail's formation is wider by its tracks' extra offset: Influence widens it, and the boxes must too)
+            float Reach(int i) => PavedHalf(e.Kind) + Flat(e.Kind) + (e.Shoulders != null ? e.Shoulders[i] : Shoulder(e.Kind))
+                                + (e.TrackOffset != null ? Math.Max(0f, e.TrackOffset[i] - RailTrackOffset) : 0f);
             int chunks = (P + Chunk - 1) / Chunk;
             e.CMinX = new double[chunks]; e.CMaxX = new double[chunks]; e.CMinZ = new double[chunks]; e.CMaxZ = new double[chunks];
             e.MinX = e.MinZ = double.MaxValue; e.MaxX = e.MaxZ = double.MinValue;
@@ -2134,12 +2165,21 @@ namespace SDG.Unturned
                 }
                 if (best == float.MaxValue) continue;
                 float half = PavedHalf(e.Kind), sh = e.Shoulders == null ? Shoulder(e.Kind) : e.Shoulders[bestK] + (e.Shoulders[bestK + 1] - e.Shoulders[bestK]) * (float)bestT;
+                // A SPLIT RAIL: its formation widens with its tracks' offset (one flat bench under both), but what is
+                // CLEAR of it is measured from the nearer track -- the ground between them is grass, not ballast
+                float trackO = float.NaN;
+                if (e.SingleTrack) half -= RailTrackOffset;   // one track: its formation reaches a track's offset less far
+                if (e.TrackOffset != null)
+                {
+                    trackO = e.TrackOffset[bestK] + (e.TrackOffset[bestK + 1] - e.TrackOffset[bestK]) * (float)bestT;
+                    half += trackO - RailTrackOffset;
+                }
                 // OVER A TUNNEL'S RUN the road is underground and the hill is the surface: it wears no verge and keeps
                 // nothing from growing (strawberry 2026-10-10: "the ground above a tunnel (the surface terrain) shouldnt
                 // be dirt-ified. around the entrance should be a bit ... shouldnt kill foliage above. should act just like
                 // normal terrain"). The asphalt's clearance grows PortalWearRate per metre in from the nearer facade past
                 // PortalWearIn, so the wear fans out of the portal and is gone a dozen metres into the hill.
-                float clear = best - half;
+                float clear = float.IsNaN(trackO) ? best - half : Math.Abs(best - trackO) - (PavedHalf(e.Kind) - RailTrackOffset);
                 if (Tunnels && e.TunnelSpans != null && bestK >= 0 && clear < 64f)
                 {
                     double csx = e.X[bestK + 1] - e.X[bestK], csz = e.Z[bestK + 1] - e.Z[bestK];
@@ -2241,18 +2281,22 @@ namespace SDG.Unturned
         /// pieces are cut back to the junction, widened (a taper) or left without their edge bevel (a tee's mouth), and no
         /// end ramp is built at a joined end.</summary>
         public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches) =>
-            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out _);
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out _, out _);
 
         /// <summary>...and the paint laid at those junctions (RoadMark), anchored in the rectangle.</summary>
         public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches, out List<RoadMark> marks) =>
-            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out marks);
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out marks, out _);
+
+        /// <summary>...and the stop signs standing at their stop lines (StopSign), whose feet are in the rectangle.</summary>
+        public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches, out List<RoadMark> marks, out List<StopSign> signs) =>
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out marks, out signs);
 
         /// <summary>Test accessor: the ribbons as they would be laid with no junction cut into them -- the ground a junction
         /// must keep paved.</summary>
         public List<RoadPiece> PiecesInUnjoined(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece) =>
-            PiecesIn(lines, x0, z0, x1, z1, maxPiece, false, out _, out _);
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, false, out _, out _, out _);
 
-        List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, bool junctions, out List<RoadPatch> patches, out List<RoadMark> marks)
+        List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, bool junctions, out List<RoadPatch> patches, out List<RoadMark> marks, out List<StopSign> signs)
         {
             var list = new List<RoadPiece>();
             var plan = junctions ? PlanJunctions(x0, z0, x1, z1, maxPiece) : null;
@@ -2267,6 +2311,11 @@ namespace SDG.Unturned
             foreach (var m in marks)
                 if (m.On != null)
                     for (int i = 0; i < m.X.Count; i++) { float y = m.On.HeightAt(m.X[i], m.Z[i]); if (!float.IsNaN(y)) m.Y[i] = y; }
+            // a sign stands on the drawn ground, as a roadside pole and a crossbuck do
+            signs = new List<StopSign>();
+            if (plan != null)
+                foreach (var sg in plan.Signs)
+                    if (sg.X >= x0 && sg.X < x1 && sg.Z >= z0 && sg.Z < z1) { var t = sg; t.Y = _t.GroundAt(t.X, t.Z); signs.Add(t); }
             List<Underpass> ups = null;
             if (Bridges) foreach (var m in lines) if (m.Underpasses != null) foreach (var u in m.Underpasses) if (!u.Existing && !u.Over) (ups ??= new List<Underpass>()).Add(u);
             foreach (var e in lines)

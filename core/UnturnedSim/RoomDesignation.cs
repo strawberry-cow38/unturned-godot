@@ -1,13 +1,18 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace UnturnedSim
 {
     /// <summary>What a whole building is FOR. One per building, and the volume it applies to is DERIVED from
     /// the walls rather than drawn -- strawberry_cow: "volume(s) that perfectly encompass the building, not
     /// stretching past". Deriving it is not a shortcut: a hand-drawn box goes stale the moment a wall moves,
-    /// and "perfectly encompasses" is a property nothing but the walls can answer.</summary>
-    public enum BuildingKind { Residential, Commercial, Industrial, Misc }
+    /// and "perfectly encompasses" is a property nothing but the walls can answer.
+    ///
+    /// Apartment: a block of flats (strawberry: "apartments should function differently from houses, no staircase
+    /// inside the apartment, shared corridor and staircases"). On the END, as RoomKind's new members are: kinds persist
+    /// by NAME, but nothing should renumber.</summary>
+    public enum BuildingKind { Residential, Commercial, Industrial, Misc, Apartment }
 
     /// <summary>What one ROOM is for. Extending this is a one-line change and safe: designations persist by
     /// NAME, never by ordinal, so adding or reordering members cannot silently re-label existing saves.
@@ -22,6 +27,8 @@ namespace UnturnedSim
         Hall, Stairwell, Closet,
         Garage, Workshop, Storage,
         Office, Shop, Warehouse,
+        // (new kinds go on the END: saves hold names, but nothing should renumber)
+        BreakRoom,
     }
 
     /// <summary>A room designation as it is STORED: a kind plus a point inside the room it labels.
@@ -39,8 +46,163 @@ namespace UnturnedSim
         public RoomKind Kind;
         /// <summary>A point inside the room, in the same plan space RoomEnclosure works in.</summary>
         public float X, Z;
+        /// <summary>Which storey: 0 the ground. The plan point alone cannot say, and a generated building has a
+        /// bedroom right over its living room -- two anchors at the same X, Z.</summary>
+        public int Floor;
+        /// <summary>The room's heating and ventilation (round 12, strawberry: "rooms that get vents must be marked internally
+        /// as HVAC rooms, so room temperature and then player temperature can hook into it later"): null for a room with none.
+        /// Saved with the label, on its line.</summary>
+        public RoomHvac Hvac;
+        /// <summary>The room's light switch, outlets and ceiling lights (round 12, strawberry: "light switches should function
+        /// to switch on/off the ceiling lights within a room"; "the outlets should act as power io outlets 1500w each"):
+        /// null for a room with neither fixture. Saved with the label, on its line -- the switch's state with it.</summary>
+        public RoomElectrical Electrical;
 
-        public RoomDesignation(RoomKind kind, float x, float z) { Kind = kind; X = x; Z = z; }
+        public RoomDesignation(RoomKind kind, float x, float z, int floor = 0, RoomHvac hvac = null, RoomElectrical electrical = null)
+        { Kind = kind; X = x; Z = z; Floor = floor; Hvac = hvac; Electrical = electrical; }
+    }
+
+    /// <summary>Which electrical fixture: a light switch by the door, an outlet on the wall.</summary>
+    public enum ElectricalKind { Switch, Outlet }
+
+    /// <summary>One switch or outlet: its kind; its Id -- its place among the building's switches and outlets, which is their
+    /// order among its pieces (BuildingGenResult.Electrical, and the Light_Switch_0/Power_Outlet_0 props of a saved layout in
+    /// the order they were saved); where its prop's origin stands and which way it is turned; and, for an outlet, what it
+    /// supplies (BuildingGen.OutletWatts).</summary>
+    public readonly record struct ElectricalFixture(ElectricalKind Kind, int Id, float X, float Y, float Z, float Yaw, float Watts = 0f);
+
+    /// <summary>A room's electrical record: its switches and outlets apart, the ceiling lights its switches work (each by its
+    /// place among the building's ceiling-light props, Ceiling_Lamp_*, in prop order -- this room's only, never a lamp on a
+    /// table or the next room's), and each switch's rocker. What the stage's switches toggle and a power net reads.
+    ///
+    /// Two-way switching (strawberry, round 12: "add support for two switches controlling one rooms light"): each switch's
+    /// rocker is down (its bottom pressed in) or up, a press flips that switch's own, and the lights are on while an ODD
+    /// number of the room's rockers are down -- so one switch alone reads down = on, and either of two works the light
+    /// from wherever it was left. A room with no switch has its lights on.</summary>
+    public sealed class RoomElectrical
+    {
+        public readonly List<ElectricalFixture> Switches = new List<ElectricalFixture>();
+        /// <summary>Each switch's rocker, by its place in Switches: down (bottom pressed in) or up.</summary>
+        public readonly List<bool> Down = new List<bool>();
+        public readonly List<ElectricalFixture> Outlets = new List<ElectricalFixture>();
+        public readonly List<int> Lights = new List<int>();
+        /// <summary>The room's ceiling lights are on: an odd number of its rockers down (or no switch at all).</summary>
+        public bool LightsOn => Switches.Count == 0 || Down.Count(d => d) % 2 == 1;
+        public bool HasElectrical => Switches.Count + Outlets.Count > 0;
+        public IEnumerable<ElectricalFixture> Fixtures { get { foreach (var v in Switches) yield return v; foreach (var v in Outlets) yield return v; } }
+        /// <summary>Add a fixture; a switch with its rocker `down`.</summary>
+        public void Add(ElectricalFixture v, bool down = false)
+        {
+            if (v.Kind == ElectricalKind.Switch) { Switches.Add(v); Down.Add(down); }
+            else Outlets.Add(v);
+        }
+        /// <summary>Press switch `k` (its place in Switches): its rocker flips, and with it the lights.</summary>
+        public void Flip(int k) { if (k >= 0 && k < Down.Count) Down[k] = !Down[k]; }
+        /// <summary>The same record with every fixture moved, or turned (x, z) -> (W - x, D - z) and half round.</summary>
+        public RoomElectrical Map(Func<ElectricalFixture, ElectricalFixture> f)
+        {
+            var r = new RoomElectrical();
+            for (int k = 0; k < Switches.Count; k++) r.Add(f(Switches[k]), Down[k]);
+            foreach (var v in Outlets) r.Add(f(v));
+            r.Lights.AddRange(Lights);
+            return r;
+        }
+        public RoomElectrical Moved(float dx, float dy, float dz) => Map(v => v with { X = v.X + dx, Y = v.Y + dy, Z = v.Z + dz });
+        public override string ToString() => $"electrical: {Switches.Count} switch(es) [{string.Join(" ", Down.Select(d => d ? "down" : "up"))}] for {Lights.Count} ceiling light(s) {(LightsOn ? "on" : "off")}, {Outlets.Count} outlet(s)";
+    }
+
+    /// <summary>Which kind of HVAC vent a room has: a register on the floor, a grille high on a wall.</summary>
+    public enum HvacVentKind { FloorRegister, WallGrille }
+
+    /// <summary>One vent: its kind; its Id -- its place among the building's vents, which is their order among its pieces
+    /// (BuildingGenResult.HvacVents, and the vent props of a saved layout in the order they were saved); and where its prop's
+    /// origin stands (building-local, or the stage's once the editor has placed the building) and which way it is turned.</summary>
+    public readonly record struct HvacVent(HvacVentKind Kind, int Id, float X, float Y, float Z, float Yaw);
+
+    /// <summary>A room's HVAC record: whether it is an HVAC room, and its vents, floor registers and wall grilles apart. What
+    /// a temperature system reads -- BuildingGenResult.HvacAt, RoomDesignations.HvacAt -- rather than scanning the décor.
+    /// No temperature logic here: the record is the hook.</summary>
+    public sealed class RoomHvac
+    {
+        public readonly List<HvacVent> FloorRegisters = new List<HvacVent>();
+        public readonly List<HvacVent> WallGrilles = new List<HvacVent>();
+        /// <summary>An HVAC room: one with a vent of either kind.</summary>
+        public bool HasHvac => FloorRegisters.Count + WallGrilles.Count > 0;
+        public IEnumerable<HvacVent> Vents { get { foreach (var v in FloorRegisters) yield return v; foreach (var v in WallGrilles) yield return v; } }
+        public void Add(HvacVent v) => (v.Kind == HvacVentKind.FloorRegister ? FloorRegisters : WallGrilles).Add(v);
+        /// <summary>The same record with every vent moved, or turned (x, z) -> (W - x, D - z) and half round.</summary>
+        public RoomHvac Map(Func<HvacVent, HvacVent> f)
+        {
+            var r = new RoomHvac();
+            foreach (var v in Vents) r.Add(f(v));
+            return r;
+        }
+        public RoomHvac Moved(float dx, float dy, float dz) => Map(v => v with { X = v.X + dx, Y = v.Y + dy, Z = v.Z + dz });
+        public override string ToString() => $"HVAC: {FloorRegisters.Count} floor register(s), {WallGrilles.Count} wall grille(s)";
+    }
+
+    /// <summary>What a door to outside is for: the way in, or the way out the back. Inside doors are not marked.</summary>
+    public enum DoorRole { Inside, Front, Back }
+
+    /// <summary>A marked door as it is STORED: its role and the middle of its opening in plan (the same space a room
+    /// designation's anchor is in), on a storey. strawberry: "mark a front and back door of the house".</summary>
+    public struct DoorDesignation
+    {
+        public DoorRole Role;
+        public float X, Z;
+        public int Floor;
+        public DoorDesignation(DoorRole role, float x, float z, int floor = 0) { Role = role; X = x; Z = z; Floor = floor; }
+    }
+
+    /// <summary>A piece of furniture in a building: a prop by name (game/content/objects), its OBJ origin at (X, Y, Z),
+    /// stood up and turned as EditorObjects.Upright(Yaw) does it (BuildingGen's FurniturePlan, saved) -- or, with Gen, a
+    /// piece built at load from those inputs (a curtain, a rug), which has no OBJ to read.</summary>
+    public struct PropDesignation
+    {
+        public string Name;
+        public float X, Y, Z, Yaw;
+        public RuntimeDecor Gen;
+        public PropDesignation(string name, float x, float y, float z, float yaw, RuntimeDecor gen = null) { Name = name; X = x; Y = y; Z = z; Yaw = yaw; Gen = gen; }
+    }
+
+    /// <summary>What builds a runtime piece: game/RuntimeDecorGenerators' factory of that name. Saved BY NAME, never
+    /// ordinal, as every other kind in a save is.</summary>
+    public enum RuntimeDecorKind { Curtain, Rug }
+
+    /// <summary>The inputs a runtime-built piece is made from (astraclaw's decor_expansion_handoff: "FurniturePlan should save
+    /// generator type/version, the two dimensions, state and any selected style/tint. Rebuild on loading"): there is no mesh
+    /// on disk, so these ARE the piece, and a save that dropped one would load a piece of nothing.
+    /// A curtain: Width its fabric's coverage (the rail runs CurtainRailOver past it each side), Height its cloth's drop, Open
+    /// whether it is drawn back to the sides, Style its cloth's tint (RuntimeDecor.CurtainTints). Its piece's origin is the
+    /// middle of its back, where the rail's supports meet the wall, at the rail's height; its front faces the piece's Front.
+    /// A rug: Width along its piece's Right, Height along its Front -- the floor's two ways, not a thickness -- and Style its
+    /// pattern (RugStyles); its piece's origin is its middle, on the floor. Version is the generator's, for a factory that
+    /// one day builds the same inputs differently.</summary>
+    public sealed record RuntimeDecor(RuntimeDecorKind Kind, int Version, float Width, float Height, bool Open = false, string Style = "")
+    {
+        /// <summary>The factory version this generator writes.</summary>
+        public const int CurrentVersion = 1;
+        /// <summary>The curtain's rail and its fittings past each end of the fabric (RuntimeDecorGenerators: "rail adds 0.28 m"),
+        /// how far the rail's middle stands over the cloth's top, its end caps' top over that, and how far the curtain stands
+        /// out of the wall at most (an open one's tieback). The factory's own geometry, at its full scale -- it scales
+        /// fittings down only for a curtain under 1 m either way, which the generator never asks for (CurtainMin) -- read
+        /// off RuntimeDecorGenerators.CreateCurtainMesh and held to the built mesh by the in-engine test
+        /// (decor.runtime_curtains_and_rugs).</summary>
+        public const float CurtainRailOver = 0.14f, CurtainRailOverCloth = 0.09f, CurtainCapOverRail = 0.04f, CurtainDepth = 0.25f;
+        /// <summary>No curtain narrower or shorter than this: the factory's fittings stay full size from 1 m up.</summary>
+        public const float CurtainMin = 1f;
+        /// <summary>A rug's quad lies this far over its floor (RuntimeDecorGenerators.CreateRugMesh).</summary>
+        public const float RugLift = 0.015f;
+        /// <summary>The cloth tints a room's curtains are drawn from (the game maps each name to a colour; the first is the
+        /// factory's own default) and the rug patterns (RuntimeDecorGenerators.RugStyle, by name).</summary>
+        public static readonly string[] CurtainTints = { "Linen", "Sage", "Slate", "Rust" };
+        public static readonly string[] RugStyles = { "Bordered", "Diamond", "Striped", "Checker" };
+
+        /// <summary>Its extents about its piece's origin, as FurnitureCatalog's (x across, y out of the front, H the top): a
+        /// curtain from the wall to its tieback, its rail's ends across, its drop and fittings up; a rug flat, centred.</summary>
+        public FurnitureCatalog.Size Size => Kind == RuntimeDecorKind.Curtain
+            ? new(-Width * 0.5f - CurtainRailOver, Width * 0.5f + CurtainRailOver, 0f, CurtainDepth, CurtainCapOverRail)
+            : new(-Width * 0.5f, Width * 0.5f, -Height * 0.5f, Height * 0.5f, RugLift);
     }
 
     /// <summary>Framework for building/room designation. NO placement logic -- strawberry_cow: "we dont have
@@ -100,6 +262,41 @@ namespace UnturnedSim
                 byRoom[hit] = d.Kind;
             }
         }
+
+        /// <summary>The HVAC record of the room a plan point is in, or null (no room there, no label for it on that storey, or
+        /// a room with no vents): the room the point is in among `rooms` (RoomEnclosure.Find of that storey's walls), and the
+        /// label on that storey anchored in the same room. A temperature system asks this, not the décor.</summary>
+        public static RoomHvac HvacAt(IReadOnlyList<RoomEnclosure.Room> rooms, IReadOnlyList<RoomDesignation> stored, float x, float z, int floor = 0)
+        {
+            if (rooms == null || stored == null) return null;
+            foreach (var r in rooms)
+            {
+                if (!Contains(r.Outline, x, z)) continue;
+                foreach (var d in stored)
+                    if (d.Floor == floor && Contains(r.Outline, d.X, d.Z)) return d.Hvac != null && d.Hvac.HasHvac ? d.Hvac : null;
+                return null;
+            }
+            return null;
+        }
+
+        /// <summary>The electrical record of the room a plan point is in, or null (no room there, no label for it, or a room
+        /// with no switch or outlet), as HvacAt.</summary>
+        public static RoomElectrical ElectricalAt(IReadOnlyList<RoomEnclosure.Room> rooms, IReadOnlyList<RoomDesignation> stored, float x, float z, int floor = 0)
+        {
+            if (rooms == null || stored == null) return null;
+            foreach (var r in rooms)
+            {
+                if (!Contains(r.Outline, x, z)) continue;
+                foreach (var d in stored)
+                    if (d.Floor == floor && Contains(r.Outline, d.X, d.Z)) return d.Electrical != null && d.Electrical.HasElectrical ? d.Electrical : null;
+                return null;
+            }
+            return null;
+        }
+
+        /// <summary>Does the room a plan point is in have HVAC (HvacAt)?</summary>
+        public static bool HasHvacAt(IReadOnlyList<RoomEnclosure.Room> rooms, IReadOnlyList<RoomDesignation> stored, float x, float z, int floor = 0)
+            => HvacAt(rooms, stored, x, z, floor) != null;
 
         /// <summary>Where to anchor a NEW designation for a room: its centroid, nudged onto the room if the
         /// centroid falls outside.

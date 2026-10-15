@@ -10,6 +10,7 @@ namespace UnturnedGodot
         bool PowerOnFire { get; }      // a burning/wrecked device stops conducting
         bool PowerConducting => true;  // default: conducts (relay/passthrough works). A SWITCH toggled OFF returns false -> its passthrough dies.
         float PowerScale => 1f;        // output-capacity multiplier: a GENERATOR ramps this 0..1 with its engine spin-up/cooldown (master); everything else = full
+        float PowerOutputBudget => 0f; // one cap for ALL its output ports (PowerDevice.OutputBudget: an outlet's two receptacles); 0 = each port its own
         uint PowerNetId { get; }       // MP replica id (0 = SP / local / world fixture)
         System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts { get; }
     }

@@ -7763,8 +7763,60 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop]]]]]]]]] (sides
+                // as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
+                // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...) generates a building from a seed instead
+                // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
+                string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
+                else if (!string.IsNullOrEmpty(gen))
+                {
+                    var g = gen.Split(',');
+                    int Arg(int i, int dflt) => g.Length > i && int.TryParse(g[i], out var v) ? v : dflt;
+                    // sides as compass letters, any of NESW ("-" for none)
+                    UnturnedSim.Sides SidesArg(int i)
+                    {
+                        var sd = UnturnedSim.Sides.None;
+                        if (g.Length > i) foreach (char ch in g[i].ToUpperInvariant())
+                            sd |= ch switch { 'N' => UnturnedSim.Sides.North, 'E' => UnturnedSim.Sides.East, 'S' => UnturnedSim.Sides.South, 'W' => UnturnedSim.Sides.West, _ => UnturnedSim.Sides.None };
+                        return sd;
+                    }
+                    buildings.Generate(new UnturnedSim.BuildingGenSpec
+                    {
+                        Kind = UnturnedSim.RoomDesignations.ParseBuilding(g[0]), Seed = Arg(1, 0), MinRooms = Arg(2, 0),
+                        MaxFloors = Arg(3, 2), MaxRoomsPerFloor = Arg(4, 6), Width = Arg(5, 0), Depth = Arg(6, 0),
+                        FrontSide = SidesArg(7), BackSide = SidesArg(8), NoWindows = SidesArg(9),
+                        Shape = g.Length > 10 ? g[10].ToUpperInvariant() switch
+                        {
+                            "R" => UnturnedSim.FootprintShape.Rect, "L" => UnturnedSim.FootprintShape.L, "T" => UnturnedSim.FootprintShape.T,
+                            _ => UnturnedSim.FootprintShape.Auto,
+                        } : UnturnedSim.FootprintShape.Auto,
+                        Porches = g.Length > 11 ? g[11].ToUpperInvariant() switch
+                        {
+                            "N" => UnturnedSim.PorchChoice.None, "F" => UnturnedSim.PorchChoice.Front, "B" => UnturnedSim.PorchChoice.Back,
+                            "FB" or "BF" => UnturnedSim.PorchChoice.Both, _ => UnturnedSim.PorchChoice.Auto,
+                        } : UnturnedSim.PorchChoice.Auto,
+                        Chimney = g.Length > 12 ? g[12].ToUpperInvariant() switch
+                        {
+                            "N" => UnturnedSim.ChimneyChoice.None, "Y" => UnturnedSim.ChimneyChoice.Yes, _ => UnturnedSim.ChimneyChoice.Auto,
+                        } : UnturnedSim.ChimneyChoice.Auto,
+                        FitPlot = g.Length > 13 && g[13].ToUpperInvariant() == "F",
+                        Business = g.Length > 14 && System.Enum.TryParse<UnturnedSim.Business>(g[14], true, out var shop) ? shop : UnturnedSim.Business.None,
+                    });
+                }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
+                // UG_EDITLIGHTS=off flips every room's light switch off after the building is up, so a capture can show the
+                // same room with its ceiling lights on and off (RoomLightSwitch: the rocker turns with them)
+                if (System.Environment.GetEnvironmentVariable("UG_EDITLIGHTS") == "off")
+                    foreach (var sw in buildings.LightSwitches) if (sw.On) sw.Press();
+                // UG_EDITCUT=y hides every surface but the stairs whose origin stands more than y over the stage, so a
+                // capture can look down into a building -- at its stairs, which nothing else shows from outside
+                // ⚠ it hides FURNITURE by its origin too: at 3.0 every wall cabinet (origin 2.9 over the floor + the stage's
+                // 0.25 = 3.15) and the antlers (the same) vanish from a ground-floor cutaway. Use 3.5 for a décor shot -- it
+                // still hides the roof, the floor above and the ceiling lamps (4.5).
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_EDITCUT"), System.Globalization.NumberStyles.Float,
+                                   System.Globalization.CultureInfo.InvariantCulture, out float editCut))
+                    buildings.HideAbove(editCut);
                 if (System.Environment.GetEnvironmentVariable("UG_EDITBAKE") == "1")
                 {
                     // Name the bake after what it came from. It used to always bake "Demo_House", so baking

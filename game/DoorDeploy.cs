@@ -44,7 +44,10 @@ namespace UnturnedGodot
         /// PIVOT rather than set on a node: a non-uniform Scale on an ancestor of the hinge shears the leaf
         /// as it swings, because the rotation would then happen in scaled space. Scaling the geometry keeps
         /// the swing rigid.</summary>
-        public static Node3D SpawnProp(string prop, Node parent, Vector3 pos, float yawDeg, Vector2? fit = null)
+        /// (`reverse`: the leaf swings the other way about the same hinge -- its catalog angle negated. The angle's SIGN is
+        /// which way a door swings (WoodenLeaves keeps it for that reason); a wall's door that opens out of the other face
+        /// of its wall flips it: WallSurface.RebuildDoors.)
+        public static Node3D SpawnProp(string prop, Node parent, Vector3 pos, float yawDeg, Vector2? fit = null, bool reverse = false)
         {
             if (string.IsNullOrEmpty(prop) || parent == null) return null;
             var def = new DeployableDef { DoorProp = prop };
@@ -107,7 +110,7 @@ namespace UnturnedGodot
                 string curveBase = e.MeshFile.EndsWith("_door.obj")
                     ? e.MeshFile.Substring(0, e.MeshFile.Length - "_door.obj".Length)
                     : def.DoorProp;
-                made.Add(ObjectDoor.Spawn(host, xform, pivotL, e.Axis, e.AngleDeg, e.DurationSec, leaf, mat,
+                made.Add(ObjectDoor.Spawn(host, xform, pivotL, e.Axis, reverse ? -e.AngleDeg : e.AngleDeg, e.DurationSec, leaf, mat,
                     startOpen: false,
                     openCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "open"),
                     closeCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "close"),

@@ -2141,7 +2141,7 @@ namespace UnturnedGodot.Testing
 
         // Openings that are holes on purpose. A porch is an open bay; the window family takes glass, which is
         // generated TO the opening instead of being a fixed-size prop.
-        static readonly string[] NoFill = { "porch", "window", "tall win", "vent" };
+        static readonly string[] NoFill = { "porch", "window", "tall win", "slit", "vent" };   // slit: a glazed window
 
         const float Slack = 0.20f;        // generous -- the doorway missed by 0.95 and the garage by 3.95
         const float MaxStretch = 1.08f;

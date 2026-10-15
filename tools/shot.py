@@ -101,6 +101,10 @@ SCENES = {
     "editbuild":(["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings"}, True, 400, "the Buildings editor: a drawn building on the stage"),
     "editbake": (["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings", "UG_EDITBAKE": "1"}, True, 400,
                  "build -> bake -> placed back on the map as a prop"),
+    # a seeded building (BuildingGen). GEN=kind,seed[,minRooms,maxFloors,perFloor]; frame it with UG_EDITCAM=yaw,dist,height
+    "editgen": (["--editor", "--shot={OUT}"],
+                {"UG_EDITTOOL": "buildings", "UG_EDITGEN": os.environ.get("GEN", "Residential,1")}, True, 400,
+                "a building generated from a seed in the Buildings editor (GEN=kind,seed,...; UG_EDITCAM=yaw,dist,height)"),
     # the translator, looked at rather than trusted. IMPORT=House_03 tools/shot.py editimport
     "editimport": (["--editor", "--shot={OUT}"],
                    {"UG_EDITTOOL": "buildings", "UG_EDITIMPORT": os.environ.get("IMPORT", "House_00")}, True, 400,

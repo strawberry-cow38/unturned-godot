@@ -108,7 +108,10 @@ namespace UnturnedGodot
                     od.NetId = objDoorId++;
                     _objectDoors.Add((od.NetId, od));
                     var p = od.GlobalPosition;
-                    _server.Interactables.RegisterObjectDoor(od.NetId, new UVector3(p.X, p.Y, p.Z), od.IsOpen);
+                    // (v61: a double-acting one with the way it swings as built, so the server can swing it away from its opener)
+                    var side = od.SwingSideWorld;
+                    _server.Interactables.RegisterObjectDoor(od.NetId, new UVector3(p.X, p.Y, p.Z), od.IsOpen,
+                                                             od.DoubleActing ? new UVector3(side.X, side.Y, side.Z) : (UVector3?)null);
                 }
                 else if (node is PropSeat ps)
                 {
@@ -201,8 +204,8 @@ namespace UnturnedGodot
                     _objectDoors.RemoveAt(i);
                     continue;
                 }
-                bool open = _server.Interactables.IsObjectDoorOpen(netId);
-                if (node.IsOpen != open) node.ApplyReplicatedOpen(open);
+                bool open = _server.Interactables.IsObjectDoorOpen(netId), reverse = _server.Interactables.IsObjectDoorReversed(netId);
+                if (node.IsOpen != open || (open && node.Reversed != reverse)) node.ApplyReplicatedOpen(open, reverse);
             }
         }
     }

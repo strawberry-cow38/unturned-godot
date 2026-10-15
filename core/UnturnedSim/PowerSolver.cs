@@ -31,6 +31,10 @@ namespace SDG.Unturned
         public bool Producing;     // a generator whose engine is effectively running (on + fuelled + not on fire)
         public bool OnFire;        // a burning/wrecked device stops conducting (its passthrough dies with it)
         public bool Conducting = true;   // a SWITCH toggled OFF stops conducting too (its passthrough dies) -- default true = normal relay
+        // One budget for ALL of the device's outputs (an outlet's two receptacles: one 1500 W fixture, not two). 0 = none:
+        // each output is capped at its own Watts, as every device before the outlets. The OUTPUT CAP pass charges the
+        // device's outputs, in port order, against this one pool.
+        public float OutputBudget;
         public readonly List<PowerPort> Ports = new List<PowerPort>();
         public PowerPort AddPort(PowerPortKind kind, float watts)
         {
@@ -100,10 +104,13 @@ namespace SDG.Unturned
             // ~4000w of devices that stay lit -- master's "stop powering NEW devices above the threshold".
             var starved = new HashSet<PowerPort>();
             foreach (var d in devices)
+            {
+                // a pooled device (OutputBudget) carries what its earlier outputs left over into the next
+                float pool = d.OutputBudget;
                 foreach (var o in d.Ports)
                 {
                     if (o.Kind != PowerPortKind.Output || o.Live <= 0f) continue;
-                    float remaining = o.Watts;
+                    float remaining = d.OutputBudget > 0f ? pool : o.Watts;
                     var seen = new HashSet<PowerPort>();
                     var stack = new Stack<(PowerPort port, float share)>();
                     stack.Push((o, 1f));
@@ -129,7 +136,9 @@ namespace SDG.Unturned
                             foreach (var pp in owner.Ports)
                                 if (pp.Kind == PowerPortKind.Passthrough) stack.Push((pp, subShare));
                     }
+                    if (d.OutputBudget > 0f) pool = remaining;
                 }
+            }
             // PASS 2 (only if something starved): re-walk the live sources, stopping at starved consumers, and switch
             // off any powered consumer no longer reachable (the starved loads + everything downstream of them).
             if (starved.Count > 0)

@@ -1,0 +1,357 @@
+{
+  "_source": {
+    "review": "836625e",
+    "lane-trash": "9db46cf"
+  },
+  "_schema": "item rip (x,y,z) -> (x,-z,y); then scale, Rz Ry Rx (rotation_deg, XYZ), then position; all in the doodad's native frame (Z-up, front +Y). game/DoodadKitView.cs composes them.",
+  "Fruit_Bowl_0": [
+    {
+      "item": 1930,
+      "name": "Ceramic Bowl",
+      "position": [
+        0.0,
+        0.0,
+        0.100147
+      ],
+      "rotation_deg": [
+        90,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ],
+  "Knife_Block_0": [
+    {
+      "item": 120,
+      "name": "Kitchen Knife",
+      "position": [
+        -0.148459547,
+        0.112571976,
+        0.460982476
+      ],
+      "rotation_deg": [
+        25,
+        180,
+        0
+      ],
+      "scale": 0.55
+    },
+    {
+      "item": 120,
+      "name": "Kitchen Knife",
+      "position": [
+        0.013232363,
+        0.110209362,
+        0.455915835
+      ],
+      "rotation_deg": [
+        25,
+        180,
+        0
+      ],
+      "scale": 0.44
+    },
+    {
+      "item": 120,
+      "name": "Kitchen Knife",
+      "position": [
+        0.154770464,
+        0.108061532,
+        0.451309798
+      ],
+      "rotation_deg": [
+        25,
+        180,
+        0
+      ],
+      "scale": 0.34
+    }
+  ],
+  "Dish_Rack_0": [
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0,
+        -0.17625,
+        0.38
+      ],
+      "rotation_deg": [
+        -90,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0,
+        -0.02625,
+        0.38
+      ],
+      "rotation_deg": [
+        -90,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0,
+        0.12375,
+        0.38
+      ],
+      "rotation_deg": [
+        -90,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ],
+  "Mug_Pair_0": [
+    {
+      "item": 9300,
+      "name": "Cup",
+      "position": [
+        -0.163125,
+        0.0,
+        0.0
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        180
+      ],
+      "scale": 1
+    },
+    {
+      "item": 9300,
+      "name": "Cup",
+      "position": [
+        0.163125,
+        0.0,
+        0.0
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ],
+  "Plate_Stack_0": [
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0,
+        0,
+        0.023332869
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        12
+      ],
+      "scale": 1
+    },
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0,
+        0,
+        0.046665738
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        24
+      ],
+      "scale": 1
+    },
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0,
+        0,
+        0.069998607
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        36
+      ],
+      "scale": 1
+    }
+  ],
+  "Desk_Organizer_0": [
+    {
+      "item": 9321,
+      "name": "Eraser",
+      "position": [
+        -0.12,
+        0.0,
+        0.054999999
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ],
+  "Toothbrush_Cup_0": [
+    {
+      "item": 9300,
+      "name": "Cup",
+      "position": [
+        -0.036875,
+        0.0,
+        0.0
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ],
+  "Crayon_Cup_0": [
+    {
+      "item": 9300,
+      "name": "Cup",
+      "position": [
+        -0.036875,
+        0.0,
+        0.0
+      ],
+      "rotation_deg": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ],
+  "Wall_Plate_Rack_0": [
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        -0.7,
+        0.20749999000000002,
+        -2.6000000000192536e-08
+      ],
+      "rotation_deg": [
+        -90,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0,
+        0.20749999000000002,
+        -2.6000000000192536e-08
+      ],
+      "rotation_deg": [
+        -90,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "item": 9302,
+      "name": "Plate",
+      "position": [
+        0.7,
+        0.20749999000000002,
+        -2.6000000000192536e-08
+      ],
+      "rotation_deg": [
+        -90,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ],
+  "Leaning_Garden_Tools_0": [
+    {
+      "item": 1031,
+      "name": "Shovel",
+      "position": [
+        -0.45653525,
+        0.097665069,
+        0.733785994
+      ],
+      "rotation_deg": [
+        -8,
+        180,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "item": 1034,
+      "name": "Pitchfork",
+      "position": [
+        0.01346475,
+        0.0901727,
+        0.731761861
+      ],
+      "rotation_deg": [
+        -8,
+        180,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "item": 142,
+      "name": "Rake",
+      "position": [
+        0.39583925,
+        0.141281833,
+        0.526510596
+      ],
+      "rotation_deg": [
+        -8,
+        180,
+        0
+      ],
+      "scale": 1
+    }
+  ]
+}

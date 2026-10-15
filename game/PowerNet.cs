@@ -128,7 +128,7 @@ namespace UnturnedGodot
             foreach (var n in tree.GetNodesInGroup("deployables"))
                 if (n is IPowerDevice d)   // a Deployable OR a powered world fixture (gas pump)
                 {
-                    var dev = new PowerDevice { Producing = d.PowerProducing, OnFire = d.PowerOnFire, Conducting = d.PowerConducting };
+                    var dev = new PowerDevice { Producing = d.PowerProducing, OnFire = d.PowerOnFire, Conducting = d.PowerConducting, OutputBudget = d.PowerOutputBudget * d.PowerScale };
                     foreach (var p in d.PowerPorts)
                     {
                         if (p == null || !GodotObject.IsInstanceValid(p)) continue;

@@ -82,8 +82,10 @@ namespace UnturnedSim
             // trapezoids, and sheltering out to their bounding box would put a dry strip in mid-air beside
             // every hip roof in the game.
             float f = s.Height > 1e-4f ? v / s.Height : 0f;
-            float left = s.InsetL0 + (s.InsetL1 - s.InsetL0) * f;
-            float right = s.Length - (s.InsetR0 + (s.InsetR1 - s.InsetR0) * f);
+            // ...and never past the surface's own ends: a cut line can run outside it (a cross gable's valley carried
+            // on past the arm's ridge), where the rectangle, not the line, is the edge -- as WallSurface clips it.
+            float left = Math.Max(0f, s.InsetL0 + (s.InsetL1 - s.InsetL0) * f);
+            float right = Math.Min(s.Length, s.Length - (s.InsetR0 + (s.InsetR1 - s.InsetR0) * f));
             if (u < left - WallOpenings.Eps || u > right + WallOpenings.Eps) return false;
 
             // A hole is a hole: rain comes through a stairwell or a skylight. But an opening is only a hole
