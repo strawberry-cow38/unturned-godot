@@ -17,6 +17,7 @@ mod recoil;
 mod rig;
 mod settings;
 mod sound;
+mod footsteps;
 mod ui;
 mod use_items;
 mod vehicle;
@@ -142,6 +143,7 @@ fn main() -> Result<()> {
             zombie::ZombiePlugin,
             bullets::BulletPlugin,
             avatar::AvatarPlugin,
+            footsteps::FootstepPlugin,
         ))
         .add_systems(Update, capture_frame.after(entities::CollectInteractions))
         .run();

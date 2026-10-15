@@ -1,7 +1,7 @@
 //! RainAudio / RainMaterialAudio / ShelterProbe. Cosmetic playback only: these
 //! sources never enter the authority's zombie-hearing path.
 mod filter;
-use super::{RainState, RainUpdate, roof};
+use super::{RainState, RainUpdate};
 use crate::{
     player::{PlayerCamera, WorldSessionEpoch},
     settings::Settings,
@@ -9,7 +9,6 @@ use crate::{
     vehicle::{Occupancy, VehicleBody},
     world::{WorldConfig, WorldFoliage, WorldObject, WorldResource},
 };
-use bevy::ecs::system::SystemParam;
 use bevy::{
     audio::{AddAudioSource, AudioSinkPlayback, SpatialScale, Volume},
     prelude::*,
@@ -224,12 +223,6 @@ fn levels(intensity: f32, shelter: f32) -> [f32; 3] {
         if r > 0.02 { light - 4. } else { -80. },
     ]
 }
-#[derive(SystemParam)]
-struct ShelterQueries<'w, 's> {
-    context: ReadRapierContext<'w, 's>,
-    colliders: Query<'w, 's, (&'static Collider, &'static GlobalTransform)>,
-    hierarchy: Query<'w, 's, (Option<&'static ChildOf>, Option<&'static WorldObject>)>,
-}
 fn update(
     mut commands: Commands,
     mut audio: ResMut<RainAudio>,
@@ -242,7 +235,7 @@ fn update(
     cameras: Query<&Transform, With<PlayerCamera>>,
     occupancy: Res<Occupancy>,
     vehicles: Query<&VehicleBody>,
-    shelter_queries: ShelterQueries,
+    shelter: crate::sound::shelter::Shelter,
     sources: Res<Assets<AudioSource>>,
     mut clips: ResMut<Assets<FilteredClip>>,
     mut voices: Query<
@@ -282,47 +275,7 @@ fn update(
             .and_then(VehicleBody::cabin_openness)
             // The source probes the roof again after every cabin pane is gone.
             .filter(|openness| *openness < 1.);
-        audio.target = cabin.unwrap_or_else(|| {
-            let Ok(physics) = shelter_queries.context.single() else {
-                return 1.;
-            };
-            let predicate = |entity: Entity, _: &bevy_rapier3d::rapier::geometry::Collider| {
-                let mut parent = entity;
-                for _ in 0..16 {
-                    let Ok((relation, object)) = shelter_queries.hierarchy.get(parent) else {
-                        break;
-                    };
-                    if object.is_some_and(|o| roof::lamp_fixture(&o.asset_name)) {
-                        return false;
-                    }
-                    let Some(relation) = relation else { break };
-                    parent = relation.parent();
-                }
-                let Ok((collider, global)) = shelter_queries.colliders.get(entity) else {
-                    return true;
-                };
-                let pose = global.compute_transform();
-                let aabb = collider.aabb(pose.translation, pose.rotation);
-                let size = aabb.max - aabb.min;
-                // ShelterProbe.IsTooSmallForCover uses footprint ONLY. A thin
-                // ceiling is cover even though a top-down rain-mask skips it.
-                size.x * size.z > 1.5
-            };
-            let hit = physics.cast_ray_and_get_normal(
-                at,
-                Vec3::Y,
-                60.,
-                false,
-                QueryFilter::only_fixed()
-                    .exclude_sensors()
-                    .predicate(&predicate),
-            );
-            if hit.is_some_and(|(_, hit)| hit.normal.y.abs() > 0.001) {
-                0.
-            } else {
-                1.
-            }
-        });
+        audio.target = cabin.unwrap_or_else(|| if shelter.covered(at) { 0. } else { 1. });
     }
     audio.shelter += (audio.target - audio.shelter).clamp(-dt / 0.35, dt / 0.35);
     let shelter = audio.shelter.min(0.7 + 0.3 * targets.canopy_shelter);

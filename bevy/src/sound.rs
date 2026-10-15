@@ -1,4 +1,5 @@
 //! Original GameAudio variation banks. Exact clips should be loaded directly.
+pub(crate) mod shelter;
 use std::path::Path;
 #[derive(Default)]
 pub struct Bank {

@@ -28,6 +28,8 @@ pub struct PlayerUpdate;
 pub struct PlayerCameraUpdate;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PublishPlayer;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SimulatePlayer;
 #[derive(Resource, Default)]
 pub struct WorldSessionEpoch(pub u64);
 impl Plugin for PlayerPlugin {
@@ -70,7 +72,10 @@ impl Plugin for PlayerPlugin {
                 Update,
                 lean::ease.after(PlayerUpdate).before(PlayerCameraUpdate),
             )
-            .add_systems(FixedUpdate, simulate.before(PhysicsSet::SyncBackend))
+            .add_systems(
+                FixedUpdate,
+                simulate.in_set(SimulatePlayer).before(PhysicsSet::SyncBackend),
+            )
             .add_systems(
                 FixedUpdate,
                 publish_body
@@ -167,6 +172,16 @@ pub(crate) struct PlayerInput {
 }
 
 impl PlayerInput {
+    pub(crate) fn moving(&self) -> bool {
+        self.movement.length_squared() > 0.
+    }
+    #[cfg(test)]
+    pub(crate) fn with_movement(movement: Vec2) -> Self {
+        Self {
+            movement,
+            ..default()
+        }
+    }
     pub(crate) fn yaw(&self) -> f32 {
         self.yaw
     }
@@ -184,6 +199,17 @@ pub struct PlayerBody {
     locomotion: crate::locomotion::Locomotion,
 }
 impl PlayerBody {
+    #[cfg(test)]
+    pub(crate) fn for_motion_test(velocity: Vec3, grounded: bool, stance: &str) -> Self {
+        Self {
+            velocity,
+            grounded,
+            stance: stance.into(),
+            height: 2.,
+            eye_height: 1.75,
+            locomotion: default(),
+        }
+    }
     pub(crate) fn velocity(&self) -> Vec3 {
         self.velocity
     }

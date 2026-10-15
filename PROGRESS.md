@@ -1233,3 +1233,16 @@ light tests also pass. Opened corrected images return the same grass sample
 from mean green1.327 to30.210 ON and1.326 OFF, versus the previous1.33→53.61→30.70.
 Root independently reviewed the final trio. Optional UG_LIGHT_DIAGNOSTICS=1
 sidecars retain actual derived light visibility for future capture diagnosis.
+
+### Bevy local and remote footstep audio (2026-10-15)
+
+Native footsteps now share source stride/stance volume, material-first gait fallback,
+landing threshold/volume and puddle-field rules; local swim strokes use the original
+wading banks. Remote airborne, seated, dead and teleported players stay silent and
+reset landing state. Rain and footsteps share the exact shelter query; review fixed
+an inherited fixed-body-only filter so world-layer dynamic roofs also count. Original
+clips decode, and seven focused physics/audio lifecycle tests pass alongside all349
+native tests (one manual visual fixture ignored) against frozen probe-tests-26.
+Source inverse-distance/max-range gain is applied once; Bevy stereo panning remains
+an adapter and source distance high-shelf filtering is pending. Audio hardware is
+absent, so listening parity is not claimed. See bevy/docs/FOOTSTEPS_PORT.md.

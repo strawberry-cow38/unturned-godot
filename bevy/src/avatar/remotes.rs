@@ -18,6 +18,8 @@ mod actions;
 mod held;
 
 pub(super) struct RemotePlayersPlugin;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct RemotePlayersUpdate;
 impl Plugin for RemotePlayersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Roster>()
@@ -29,6 +31,7 @@ impl Plugin for RemotePlayersPlugin {
                 Update,
                 (sync, update, held::sync, actions::receive)
                     .chain()
+                    .in_set(RemotePlayersUpdate)
                     .after(PlayerUpdate)
                     .before(RigAnimation),
             )
@@ -48,6 +51,29 @@ pub(crate) struct RemotePlayer {
     hull: Entity,
     height: f32,
     seated: bool,
+    pub(crate) foot_motion: FootMotion,
+}
+#[derive(Clone, Copy, Default)]
+pub(crate) struct FootMotion {
+    pub speed: f32,
+    pub vertical_speed: f32,
+    pub stance: &'static str,
+    pub seated: bool,
+    pub snap: bool,
+}
+#[cfg(test)]
+impl RemotePlayer {
+    pub(crate) fn for_footstep_test(foot_motion: FootMotion) -> Self {
+        Self {
+            id: 2,
+            alive: true,
+            speed: foot_motion.speed,
+            hull: Entity::PLACEHOLDER,
+            height: 2.,
+            seated: foot_motion.seated,
+            foot_motion,
+        }
+    }
 }
 #[derive(Resource, Default)]
 pub(crate) struct Roster {
@@ -148,6 +174,7 @@ fn sync(
                 hull,
                 height,
                 seated: false,
+                foot_motion: default(),
             },
             RigidBody::KinematicPositionBased,
             held::Held::default(),
@@ -234,6 +261,17 @@ fn update(
         player.alive = row["alive"].as_bool().unwrap_or(true);
         let stance = stance(row);
         let is_seated = stance == "sitting" || seated.contains(&player.id);
+        player.foot_motion = FootMotion {
+            speed: player.speed,
+            vertical_speed: if dt > 0. {
+                (transform.translation.y - previous.y) / dt
+            } else {
+                0.
+            },
+            stance,
+            seated: is_seated,
+            snap,
+        };
         let height = StanceHeights::default().for_stance(stance);
         if (height - player.height).abs() > 0.001 {
             commands
