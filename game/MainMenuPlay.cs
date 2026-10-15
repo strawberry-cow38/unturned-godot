@@ -35,7 +35,12 @@ namespace UnturnedGodot
         bool _generateSelected;
         bool _playgroundSelected;   // Playground picked in the map list -> PLAY runs the gun range, not a survival map
         bool _infiniteSelected;     // Infinite World picked -> PLAY streams an endless procgen world (seed from the generate row)
+        bool _townSelected;         // Generate Town picked -> PLAY builds a town map from the seed and drops you into it
         public System.Action<int> OnInfinite;
+        /// <summary>Generate Town (strawberry 2026-10-15: "add a way to play a town map like this, with a seed"): the seed.</summary>
+        public System.Action<int> OnGenerateTown;
+        const string GenerateTownName = "Generate Town";
+        const string GenerateTownDesc = "A procedurally generated town on open ground: a street grid crossed by a diagonal avenue, pavements and parking, back lanes, fenced yards and pocket parks -- and every plot built on by the building generator, shops, houses and apartments. The same seed always builds the same town, so it is not saved to the map list: play the seed again to come back to it.";
         // ⚠ ROLLED, NOT 1234 (strawberry 2026-09-16: "make the default seed NOT 1234, but a random one"). A
         // constant default means the island everybody sees first is the same island, and "procedurally
         // generated" is a claim the front door was quietly contradicting. The dice button beside the field
@@ -264,6 +269,11 @@ namespace UnturnedGodot
             genBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
             genBtn.Pressed += () => SelectGenerated();
             list.AddChild(genBtn);
+            var townBtn = new Button { Text = "  \u2302  " + GenerateTownName, CustomMinimumSize = new Vector2(400f, 46f), Alignment = HorizontalAlignment.Left };
+            townBtn.AddThemeFontSizeOverride("font_size", 16);
+            townBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
+            townBtn.Pressed += () => SelectTown();
+            list.AddChild(townBtn);
             var pgBtn = new Button { Text = "  \u25ce  Playground", CustomMinimumSize = new Vector2(400f, 46f), Alignment = HorizontalAlignment.Left };
             pgBtn.AddThemeFontSizeOverride("font_size", 16);
             pgBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
@@ -426,6 +436,7 @@ namespace UnturnedGodot
         void SelectGenerated()
         {
             _generateSelected = true;
+            _townSelected = false;
             _playgroundSelected = false;
             _infiniteSelected = false;
             if (_genLakes != null) _genLakes.Visible = true;
@@ -438,6 +449,24 @@ namespace UnturnedGodot
             DisarmReset();
         }
 
+        // Generate Town -- the town generator's grid, plots and buildings on a flat map, from the generate row's seed (the
+        // lakes box is the island's, so it hides).
+        void SelectTown()
+        {
+            _townSelected = true;
+            _generateSelected = false;
+            _playgroundSelected = false;
+            _infiniteSelected = false;
+            _selectedMap = GenerateTownName;
+            _selectedPlayable = true;
+            if (_previewName != null) _previewName.Text = GenerateTownName;
+            if (_descLabel != null) _descLabel.Text = GenerateTownDesc;
+            if (_previewImage != null) _previewImage.Texture = null;
+            if (_genRow != null) _genRow.Visible = true;
+            if (_genLakes != null) _genLakes.Visible = false;
+            DisarmReset();
+        }
+
         // Infinite World (strawberry 2026-10-09) -- endless procgen terrain, streamed. Shares the generate row's seed
         // field (the lakes box means nothing here, so it hides).
         void SelectInfinite()
@@ -445,6 +474,7 @@ namespace UnturnedGodot
             _infiniteSelected = true;
             _playgroundSelected = false;
             _generateSelected = false;
+            _townSelected = false;
             _selectedMap = "Infinite World";
             _selectedPlayable = true;
             if (_previewName != null) _previewName.Text = "Infinite World";
@@ -461,6 +491,7 @@ namespace UnturnedGodot
             _playgroundSelected = true;
             _infiniteSelected = false;
             _generateSelected = false;
+            _townSelected = false;
             _selectedMap = "Playground";
             _selectedPlayable = true;
             if (_previewName != null) _previewName.Text = "Playground";
@@ -473,6 +504,7 @@ namespace UnturnedGodot
         void SelectMap(string name, string key, bool playable, string desc)
         {
             _generateSelected = false;
+            _townSelected = false;
             _playgroundSelected = false;
             _infiniteSelected = false;
             if (_genRow != null) _genRow.Visible = false;
@@ -597,6 +629,16 @@ namespace UnturnedGodot
             // so this has to be set before the build, not after.
             WorldBuilder.ZombiesOverride = _optZombies == 1;
             if (_playgroundSelected) { OnPlayground?.Invoke(); return; }   // the gun range, not a survival map
+            if (_townSelected)
+            {
+                if (_genSeedEdit != null && !int.TryParse(_genSeedEdit.Text, out _genSeed))
+                {
+                    if (_descLabel != null) _descLabel.Text = "Seed must be a whole number.";
+                    return;
+                }
+                OnGenerateTown?.Invoke(_genSeed);
+                return;
+            }
             if (_infiniteSelected)
             {
                 if (_genSeedEdit != null && !int.TryParse(_genSeedEdit.Text, out _genSeed))

@@ -3418,6 +3418,9 @@ namespace UnturnedGodot
         public static bool NoCornerFill = System.Environment.GetEnvironmentVariable("UG_TOWNNOCORNERFILL") == "1";
         /// <summary>UG_TOWNPROBES=1 also runs the diagnostic passes nobody needs on every render.</summary>
         public static bool ProbeEverything = System.Environment.GetEnvironmentVariable("UG_TOWNPROBES") == "1";
+        /// <summary>The measurements a stage takes of its own work as it goes (the corner fill's 800,000-point check of itself):
+        /// on for the renders and the tests, off for a town built to PLAY, where they were half a minute of a load.</summary>
+        public bool Probes = true;
 
 
         /// <summary>Lay the corner asphalt LaySidewalkCorners collected: one mesh, the slab's own material and
@@ -3487,6 +3490,7 @@ namespace UnturnedGodot
             Log.Print($"[towngrid] corner asphalt: {split} triangles split where their middle came up through the paving");
             Log.Print($"[towngrid] corner asphalt: {pulled}/{points} points pulled under the paving over them, by up to {pulledMost * 100f:0.0} cm");
             // ...and between its points: a triangle can still come up through paving its corners are all under
+            if (Probes)
             {
                 float worstUp = float.NegativeInfinity; var upAt = Vector3.Zero; int upN = 0, tested = 0; string upTri = "";
                 foreach (var (fa, fb, fc) in _cornerFill)
@@ -4252,9 +4256,12 @@ namespace UnturnedGodot
         {
             if (roads == null) return 0;
             if (plan) PlanPlots(roads);
-            if (parent != null) { BuildPlotMarks(parent); BuildParking(parent, roads); BuildParkingLots(parent, roads); }
+            if (parent != null) { if (MarkLots) BuildPlotMarks(parent); BuildParking(parent, roads); BuildParkingLots(parent, roads); }
             return Plots.Count;
         }
+        /// <summary>The plan drawn on the ground -- each lot outlined in its kind's colour, its yard tinted, its building zone
+        /// and building line -- for the renders. Off for a town to PLAY: there the buildings and the fences are the lots.</summary>
+        public bool MarkLots = true;
 
         /// <summary>Lay out the plots, the alleys, the lanes down them and the parking bays without building anything;
         /// returns how many plots. `walkWidth` is the pavement the plots stand behind (LaySidewalkCorners sets it too).</summary>
@@ -4263,6 +4270,9 @@ namespace UnturnedGodot
             if (walkWidth > 0f) _walkWidth = walkWidth;
             Plots.Clear(); Alleys.Clear(); Bays.Clear();
             if (roads == null) return 0;
+            // (where the time goes, as one line of laps -- the plan was 15.7 s of a 101 s Generate Town)
+            var planLaps = new System.Text.StringBuilder(); var planWatch = System.Diagnostics.Stopwatch.StartNew();
+            void Lap(string what) { planLaps.Append($" {what} {planWatch.Elapsed.TotalSeconds:0.0},"); planWatch.Restart(); }
             float Front(int r) => roads.RoadHalfWidth(r) + PavementGap + _walkWidth + PlotSetback;
 
             // ⭐⭐ A LANE ONLY WHERE A BUILDING ASKS FOR ONE (strawberry 2026-10-14: "alleys should only be placed at the request
@@ -4581,20 +4591,32 @@ namespace UnturnedGodot
                 again |= parkingAsks.Count > 0;
                 if (!again) break;                // nobody asked: the first layout stands
             }
+            Lap("layout");
             TrimAlleysToRequests(roads);
             PlanLanes(roads);
+            Lap("lanes");
             int stepped = LayParkingBays(roads);
+            Lap("bays");
             GrowPlots(roads);
+            Lap("grow");
             MeetPlots(roads);     // ...and the slivers growth left between neighbours, closed: no dead grass with a fence down each side
+            Lap("meet");
             // the parking lots over whatever room the plots' yards left beside them, and only then their ways in -- a lot laid
             // again may come in somewhere else (TownParking)
             StretchLots(roads);
             PlanParkingEntrances(roads);
+            Lap("lots");
             PlaceTriangleLots(roads);
+            Lap("triangles");
             PlanFences(roads);
+            Lap("fences");
             CensusZoning(roads);
+            Lap("zoning");
             PlanGreens(roads);
+            Lap("greens");
             BuildContext(roads);   // what each plot knows of what is round it, now everything round it is planned
+            Lap("context");
+            Log.Print($"[towngrid] plan timing (s):{planLaps.ToString().TrimEnd(',')}");
             var counts = new System.Text.StringBuilder();
             foreach (var ps in PlotSizes)
             {
@@ -6296,28 +6318,45 @@ namespace UnturnedGodot
                     }
                     if (tris.Count > 0) cand.Add((x0, x1, z0, z1, tris));
                 }
+            // ⚡ BUCKETED, NOT WALKED (a whole town's corner asphalt asks this a million and a half times, and each ask walked
+            // every top triangle of every road whose box it fell in -- most of 16 s). The same triangles in a 4 m grid, each
+            // cell's list in the walk's own order (road by road, triangle by triangle), so the first one a point is in, road by
+            // road, is the one the walk found: the same answer.
+            const float Cell = 4f;
+            var grid = new Dictionary<(int, int), List<(int road, Vector3 a, Vector3 b, Vector3 c)>>();
+            for (int ci = 0; ci < cand.Count; ci++)
+                foreach (var (a, b, c) in cand[ci].tris)
+                {
+                    int gx0 = Mathf.FloorToInt(Mathf.Min(a.X, Mathf.Min(b.X, c.X)) / Cell), gx1 = Mathf.FloorToInt(Mathf.Max(a.X, Mathf.Max(b.X, c.X)) / Cell);
+                    int gz0 = Mathf.FloorToInt(Mathf.Min(a.Z, Mathf.Min(b.Z, c.Z)) / Cell), gz1 = Mathf.FloorToInt(Mathf.Max(a.Z, Mathf.Max(b.Z, c.Z)) / Cell);
+                    for (int gx = gx0; gx <= gx1; gx++)
+                        for (int gz = gz0; gz <= gz1; gz++)
+                        {
+                            if (!grid.TryGetValue((gx, gz), out var l)) grid[(gx, gz)] = l = new List<(int, Vector3, Vector3, Vector3)>();
+                            l.Add((ci, a, b, c));
+                        }
+                }
             return v =>
             {
                 float lo = slabTop(v.X, v.Z), hi = lo, roadHi = float.NaN;
-                foreach (var c in cand)
+                if (!grid.TryGetValue((Mathf.FloorToInt(v.X / Cell), Mathf.FloorToInt(v.Z / Cell)), out var inCell)) return (lo, hi, roadHi);
+                int done = -1;                        // the road a point was last found on: its other triangles are passed over
+                foreach (var (ci, a, b, cc) in inCell)
                 {
-                    if (v.X < c.x0 || v.X > c.x1 || v.Z < c.z0 || v.Z > c.z1) continue;
-                    foreach (var (a, b, cc) in c.tris)
-                    {
-                        if (v.X < Mathf.Min(a.X, Mathf.Min(b.X, cc.X)) || v.X > Mathf.Max(a.X, Mathf.Max(b.X, cc.X))
-                            || v.Z < Mathf.Min(a.Z, Mathf.Min(b.Z, cc.Z)) || v.Z > Mathf.Max(a.Z, Mathf.Max(b.Z, cc.Z))) continue;
-                        float d = (b.Z - cc.Z) * (a.X - cc.X) + (cc.X - b.X) * (a.Z - cc.Z);
-                        if (Mathf.Abs(d) < 1e-9f) continue;
-                        float w0 = ((b.Z - cc.Z) * (v.X - cc.X) + (cc.X - b.X) * (v.Z - cc.Z)) / d;
-                        float w1 = ((cc.Z - a.Z) * (v.X - cc.X) + (a.X - cc.X) * (v.Z - cc.Z)) / d;
-                        float w2 = 1f - w0 - w1;
-                        if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
-                        float top = w0 * a.Y + w1 * b.Y + w2 * cc.Y;
-                        lo = float.IsNaN(lo) ? top : Mathf.Min(lo, top);
-                        hi = float.IsNaN(hi) ? top : Mathf.Max(hi, top);
-                        roadHi = float.IsNaN(roadHi) ? top : Mathf.Max(roadHi, top);
-                        break;
-                    }
+                    if (ci == done) continue;
+                    if (v.X < Mathf.Min(a.X, Mathf.Min(b.X, cc.X)) || v.X > Mathf.Max(a.X, Mathf.Max(b.X, cc.X))
+                        || v.Z < Mathf.Min(a.Z, Mathf.Min(b.Z, cc.Z)) || v.Z > Mathf.Max(a.Z, Mathf.Max(b.Z, cc.Z))) continue;
+                    float d = (b.Z - cc.Z) * (a.X - cc.X) + (cc.X - b.X) * (a.Z - cc.Z);
+                    if (Mathf.Abs(d) < 1e-9f) continue;
+                    float w0 = ((b.Z - cc.Z) * (v.X - cc.X) + (cc.X - b.X) * (v.Z - cc.Z)) / d;
+                    float w1 = ((cc.Z - a.Z) * (v.X - cc.X) + (a.X - cc.X) * (v.Z - cc.Z)) / d;
+                    float w2 = 1f - w0 - w1;
+                    if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
+                    float top = w0 * a.Y + w1 * b.Y + w2 * cc.Y;
+                    lo = float.IsNaN(lo) ? top : Mathf.Min(lo, top);
+                    hi = float.IsNaN(hi) ? top : Mathf.Max(hi, top);
+                    roadHi = float.IsNaN(roadHi) ? top : Mathf.Max(roadHi, top);
+                    done = ci;
                 }
                 return (lo, hi, roadHi);
             };

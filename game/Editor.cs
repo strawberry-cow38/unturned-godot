@@ -75,6 +75,11 @@ namespace UnturnedGodot
         public double SecondsSinceSave { get; private set; }
         public const double AutosaveEvery = 120.0;         // 2 min of unsaved work is the most this can cost you
         public string LastSaveLabel { get; private set; } = "not saved yet";
+        /// <summary>Set: this map is never written -- Save only says so, with this as the reason. A generated town (the menu's
+        /// Generate Town): its seed rebuilds the whole of it, and a save could not -- the roads and props would go to disk but
+        /// the buildings, pavements and parking lots the town builds round them are not editor things, so the map would come
+        /// back off the list as a town with nothing standing in it.</summary>
+        public string NotSaved;
         double _autosaveTimer;
 
         /// <summary>Mark the session as having unsaved changes. Called from PushUndo so every reversible action
@@ -148,6 +153,12 @@ namespace UnturnedGodot
         // wired per-phase as the sub-editors land; Phase 1 has nothing persistent yet.
         public void Save(bool autosave = false)   // source Editor.save() -> fans out to the sub-editors
         {
+            if (NotSaved != null)
+            {
+                IsDirty = false; SecondsSinceSave = 0.0; LastSaveLabel = NotSaved;
+                if (!autosave) Log.Print($"[editor] not saving '{MapName}': {NotSaved}");
+                return;
+            }
             int n = Objects?.Save() ?? 0;
             int s = Spawns?.Save() ?? 0;
             int e = Environment?.Save() ?? 0;

@@ -227,28 +227,50 @@ namespace UnturnedGodot
             for (int i = 0; i < Plots.Count; i++) index[Plots[i]] = i;
             var clock = System.Diagnostics.Stopwatch.StartNew();
             double genMs = 0; FrontRetried = 0; OnPavingDropped = 0;
-            foreach (var pl in pick)
+            // ⚡ THE GENERATOR ON EVERY CORE (a whole town spent 11 s here, 115 buildings at 96 ms one after the other). BuildingGen
+            // is the core's -- no Godot in it, its switches [ThreadStatic], its tables read-only -- so a plot's tries are a function
+            // of their specs alone. The specs are made here on this thread (they read the plan), and everything after the generator
+            // -- the pads, which cut the terrain -- stays on it, in plot order: the same town whatever the scheduling.
+            var tries = new BuildingGenSpec[pick.Count, FrontTries];
+            for (int i = 0; i < pick.Count; i++)
             {
-                var b = new TownBuilding { Plot = pl, Spec = SpecFor(pl, index[pl]) };
+                int firstSeed = SpecFor(pick[i], index[pick[i]]).Seed;
+                for (int tryN = 0; tryN < FrontTries; tryN++)
+                {
+                    var spec = SpecFor(pick[i], index[pick[i]]); spec.Seed = firstSeed + tryN * 7919;     // (BuildingGenSpec.Copy is internal to the core)
+                    tries[i, tryN] = spec;
+                }
+            }
+            var gens = new (BuildingGenResult Res, int Try, BuildingGenResult First, string Err, double Ms)[pick.Count];
+            var genClock = System.Diagnostics.Stopwatch.StartNew();
+            System.Threading.Tasks.Parallel.For(0, pick.Count, i =>
+            {
                 var t0 = System.Diagnostics.Stopwatch.StartNew();
                 // ⚠ THE FRONT DOOR ON THE STREET. FitPlot may give up the side asked for ("no layout put the front door on the
                 // South side: it went where it could") -- 7 of 115 in the first whole town. So another seed, up to FrontTries;
                 // and failing those, a door on the plan's NORTH side is turned to the street with the whole building (same
                 // rectangle, half round).
-                BuildingGenResult first = null; int firstSeed = b.Spec.Seed;
+                BuildingGenResult first = null; string err = null;
                 for (int tryN = 0; tryN < FrontTries; tryN++)
                 {
-                    var spec = SpecFor(pl, index[pl]); spec.Seed = firstSeed + tryN * 7919;     // (BuildingGenSpec.Copy is internal to the core)
                     BuildingGenResult res = null;
-                    try { res = BuildingGen.Generate(spec); }
-                    catch (System.Exception e) { b.Failed ??= e.Message; }
+                    try { res = BuildingGen.Generate(tries[i, tryN]); }
+                    catch (System.Exception e) { err ??= e.Message; }
                     if (res == null) continue;
                     first ??= res;
-                    if (FrontEdge(res) == spec.FrontSide) { b.Result = res; b.Spec = spec; if (tryN > 0) FrontRetried++; break; }
+                    if (FrontEdge(res) == tries[i, tryN].FrontSide) { gens[i] = (res, tryN, first, err, t0.Elapsed.TotalMilliseconds); return; }
                 }
-                if (b.Result == null && first != null) { b.Result = first; if (b.Spec.FrontSide == Sides.South && FrontEdge(first) == Sides.North) b.TurnedRound = true; }
+                gens[i] = (null, -1, first, err, t0.Elapsed.TotalMilliseconds);
+            });
+            double genWall = genClock.Elapsed.TotalMilliseconds;
+            for (int i = 0; i < pick.Count; i++)
+            {
+                var pl = pick[i]; var gr = gens[i];
+                var b = new TownBuilding { Plot = pl, Spec = tries[i, 0], Failed = gr.Err };
+                if (gr.Res != null) { b.Result = gr.Res; b.Spec = tries[i, gr.Try]; if (gr.Try > 0) FrontRetried++; }
+                if (b.Result == null && gr.First != null) { b.Result = gr.First; if (b.Spec.FrontSide == Sides.South && FrontEdge(gr.First) == Sides.North) b.TurnedRound = true; }
                 if (b.Result != null) b.Failed = null;
-                b.Ms = t0.Elapsed.TotalMilliseconds; genMs += b.Ms;
+                b.Ms = gr.Ms; genMs += b.Ms;
                 if (b.Result == null) { Buildings.Add(b); continue; }
                 // the pad: the building zone's ground, averaged, levelled -- cut and filled inside, only cut outside
                 float sum = 0f; int n = 0;
@@ -383,9 +405,39 @@ namespace UnturnedGodot
             int failed = Buildings.Count - ok;
             Log.Print($"[towngrid] buildings ({BuildingsMode}): {ok} generated on {pick.Count} plots{(failed > 0 ? $", {failed} not built (first: {Buildings.Find(x => x.Failed != null)?.Failed}; {OnPavingDropped} would have stood on the paving)" : "")}, "
                     + $"{fronted} with the front door where it was asked ({FrontRetried} on another seed, {Buildings.FindAll(x => x.TurnedRound).Count} turned round, "
-                    + $"{Buildings.FindAll(x => x.Result != null && x.Spec.FrontSide != Sides.South).Count} toward their parking lot), {partied} with a party wall; generator {genMs:0} ms ({genMs / Mathf.Max(1, pick.Count):0} ms a building), "
+                    + $"{Buildings.FindAll(x => x.Result != null && x.Spec.FrontSide != Sides.South).Count} toward their parking lot), {partied} with a party wall; generator {genWall:0} ms on {System.Environment.ProcessorCount} threads ({genMs / Mathf.Max(1, pick.Count):0} ms a building), "
                     + $"pads included {clock.ElapsedMilliseconds} ms -- {string.Join(", ", System.Linq.Enumerable.Select(kinds, kv => $"{kv.Value} {kv.Key}"))}");
             return ok;
+        }
+
+        /// <summary>Player spawns on the town's pavements, for Generate Town: one at the middle of each street long enough, on
+        /// alternate sides, standing along it, up to `max`. Returns how many.</summary>
+        public int PlaceSpawns(RoadField roads, EditorSpawns spawns, int max = 12)
+        {
+            if (roads == null || spawns == null) return 0;
+            // (into the category showing, which on a fresh map is Player -- as ProcIslandSpawn.PlacePlayerSpawns relies on.
+            // ⚠ NOT SetCategoryTo(0): that saves the category it leaves, which writes this map's spawn file to disk)
+            int n = 0;
+            var terr = Terrain.Active;
+            int stride = Mathf.Max(1, Built.Count / Mathf.Max(1, max));     // spread over the town, not the first streets laid
+            for (int i = 0; i < Built.Count && n < max; i += stride)
+            {
+                int r = Built[i];
+                float L = roads.RoadLength(r);
+                if (L < 30f) continue;
+                float d = L * 0.5f;
+                if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) continue;
+                var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
+                int side = n % 2 == 0 ? 1 : -1;
+                if (MouthAt(r, side, d - 3f, d + 3f) != null || EntranceAt(r, side, d - 3f, d + 3f) != null) side = -side;
+                var at = pos + right * (side * (roads.RoadHalfWidth(r) + BayExtra(r, side, d) + PavementGap + _walkWidth * 0.5f));
+                at.Y = (terr != null ? Mathf.Max(terr.SampleHeight(at.X, at.Z), pos.Y) : pos.Y) + PavementKerb + 0.1f;
+                // facing along the street (the spawn's yaw: 0 looks down +Z, 180 down -Z -- MapShowcase's)
+                spawns.AddSpawn(at, Mathf.RadToDeg(Mathf.Atan2(tan.X, tan.Z)));
+                n++;
+            }
+            Log.Print($"[towngrid] player spawns: {n} on the town's pavements");
+            return n;
         }
 
         /// <summary>UG_TOWNMASSING=1: the buildings as their massing (a box per floor cell, a red post at the front door) -- the

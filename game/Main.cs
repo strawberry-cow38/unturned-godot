@@ -549,7 +549,11 @@ namespace UnturnedGodot
                 // UG_GENPLAY=1 takes the whole menu path: generate, then drop into play exactly as pressing
                 // PLAY on the Generate Island entry does. Without it the shot only proves the EDITOR builds the
                 // world -- and "you can walk around in it" is the actual request.
-                if (!string.IsNullOrEmpty(genSeedEnv) && int.TryParse(genSeedEnv, out int genSeedArg))
+                // UG_TOWNPLAY=<seed>: the menu's Generate Town from a flag -- that seed's town, straight into play, so a shot is
+                // taken from where a player starts in it. Ahead of UG_OPENMAP, which the town renders always set.
+                if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNPLAY"), out int townPlayArg))
+                    BuildEditorNew(EditorMaps.Unique($"Town {townPlayArg}"), autoPlay: true, townSeed: townPlayArg);
+                else if (!string.IsNullOrEmpty(genSeedEnv) && int.TryParse(genSeedEnv, out int genSeedArg))
                     // A UNIQUE name, exactly as the menu does. Passing null meant every generated render opened
                     // the map "NewMap" -- and EditorObjects' ctor calls LoadSaved(), which reads
                     // editor_<map>.txt. So once a playtest had SAVED NewMap, every later render loaded those
@@ -1141,6 +1145,9 @@ namespace UnturnedGodot
                     // Generate Map -> a brand new map whose terrain is a generated island, played immediately.
                     // The name carries the seed so two generated maps do not overwrite each other's save.
                     menu.OnGenerateMap = (seed, lakes) => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true, genLakes: lakes); };
+                    // Generate Town (strawberry 2026-10-15: "add a way to play a town map like this, with a seed"): a flat map with
+                    // the town grid laid on it from the seed -- buildings and all -- and straight into play
+                    menu.OnGenerateTown = seed => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Town {seed}"), autoPlay: true, townSeed: seed); };
                     // A SAVED generated island: open the map that is on disk, do NOT regenerate. Re-rolling the
                     // seed would rebuild the terrain and then load the saved props on top of it, which is two of
                     // everything the moment the generator changes -- the same trap the "NewMap" name once sprang.
@@ -6764,7 +6771,7 @@ namespace UnturnedGodot
         /// frozen menu instead, which is exactly what generating an island did.
         /// ⚠ Callers do not await it (it is fire-and-forget from _Ready and from the menu buttons), so the
         /// --shot harness is gated on _worldReady instead -- the same flag the objects/peidrive path uses.</summary>
-        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false, bool genLakes = false)
+        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false, bool genLakes = false, int? townSeed = null)
         {
             mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
             // ⚠ A GENERATED ISLAND REOPENED IS NOT A BLANK CUSTOM MAP, and treating it as one is what
@@ -7156,8 +7163,34 @@ namespace UnturnedGodot
             // 3x3 plain has no gates firing, so what the render shows is the GRID -- on PEI the flattest
             // 400 m box still has 34 m of relief and half the spans were refused, so the picture was mostly
             // of the terrain gates working.
-            if (System.Environment.GetEnvironmentVariable("UG_TOWNGRID") == "1" && rf != null)
-                BuildTownGrid(rf, terr, editor);
+            if ((System.Environment.GetEnvironmentVariable("UG_TOWNGRID") == "1" || townSeed.HasValue) && rf != null)
+            {
+                // Generate Town: planning it and putting up its buildings is ~13 s on this thread -- under a cover that says
+                // so, not on a menu that has simply stopped answering. And it is never written (Editor.NotSaved): the seed is
+                // the town, so playing the seed again is how you come back to it.
+                LoadingScreen townCover = null;
+                if (townSeed.HasValue)
+                {
+                    editor.NotSaved = $"generated town, seed {townSeed.Value} (not saved: the seed rebuilds it)";
+                    _worldReady = false;
+                    LoadingScreen.NextMode = "map";
+                    townCover = new LoadingScreen();
+                    AddChild(townCover);
+                    townCover.SetTotal(2);
+                    townCover.SetStatus($"Building the town (seed {townSeed.Value})");
+                    townCover.Advance();
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                }
+                var townWatch = System.Diagnostics.Stopwatch.StartNew();
+                BuildTownGrid(rf, terr, editor, townSeed);
+                if (townCover != null)
+                {
+                    townCover.SetStatus("Ready");
+                    townCover.Advance();
+                    townCover.Finish(new System.Collections.Generic.Dictionary<string, double> { ["town"] = townWatch.Elapsed.TotalMilliseconds });
+                }
+            }
             DiscordPresence.SetEditor(mapName);
             if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;
@@ -10587,9 +10620,13 @@ namespace UnturnedGodot
         /// <summary>UG_TOWNGRID: lay a town's street grid and frame it. Shared by the PEI editor path and the
         /// flat custom-map path -- the same code must build both, or "it looks right on the flat map" would
         /// say nothing about the one the game ships.</summary>
-        void BuildTownGrid(RoadField rf, Terrain terrain, Editor editor)
+        /// <param name="playSeed">The menu's Generate Town: build THIS seed's town, every plot built on, with player spawns on its
+        /// pavements -- a town to play rather than to render (the UG_TOWN* switches still apply over it).</param>
+        void BuildTownGrid(RoadField rf, Terrain terrain, Editor editor, int? playSeed = null)
         {
             if (rf == null || terrain == null) return;
+            if (playSeed.HasValue && string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_TOWNBUILDINGS")))
+                TownRoadGrid.BuildingsMode = "all";
             // UG_TOWNHILLS=<metres>: roll gentle hills under the town before it is laid (strawberry 2026-10-13: "add support
             // for the grid to follow gentle hills and slopes") -- two long swells crossing, a few hundred metres from crest
             // to crest, so the steepest of it is a gentle 1-in-10 at 5 m. Everything the town builds has only ever met flat
@@ -10678,6 +10715,7 @@ namespace UnturnedGodot
             // 2-lane roads?" is a run rather than an opinion. 0 = Highway_0 (18.4 m), 1 = Highway_1 (13.8 m).
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNMAT"), out int tmat) && tmat >= 0)
             { town.MainMaterial = tmat; town.StreetMaterial = tmat; }
+            if (playSeed.HasValue) town.Seed = playSeed.Value;
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
             // UG_TOWNDIAG=0 takes the 45-degree avenue back out (strawberry 2026-10-12: "work on 45° intersections").
             town.Diagonal = System.Environment.GetEnvironmentVariable("UG_TOWNDIAG") != "0";
@@ -10693,12 +10731,23 @@ namespace UnturnedGodot
                 Log.Print($"[towngrid] material half-widths (m):{wsb}");
             }
             int before = rf.RoadCount;
+            // ⚠ WHERE THE TIME GOES, as one line of laps at the end (Generate Town took 101 s from PLAY to the street on seed 7,
+            // and the buildings -- the only stage that said -- were 14 of it)
+            var lapWatch = System.Diagnostics.Stopwatch.StartNew();
+            var laps = new System.Text.StringBuilder();
+            void Lap(string what) { laps.Append($" {what} {lapWatch.Elapsed.TotalSeconds:0.0},"); lapWatch.Restart(); }
             var rep = town.Generate(rf, HeightAt);
+            Lap("streets");
             Log.Print($"[towngrid] site ({site.X:0},{site.Y:0.0},{site.Z:0}) relief {flattest:0.0} m ACROSS THE FOOTPRINT -- {rep}");
             // UG_TOWNNOWALK=1: no pavements at all. An ABLATION, because five measured explanations for the
             // dark wedges at every mouth have now missed and the only honest next question is which mesh the
             // pixels belong to.
             bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
+            // the measurements (coverage, kerbs, ground under the paving -- a minute and more of a whole town) are for the
+            // renders; a town to PLAY skips them unless UG_TOWNPROBES=1 asks
+            bool probes = !playSeed.HasValue || TownRoadGrid.ProbeEverything;
+            town.Probes = probes;
+            if (playSeed.HasValue) town.MarkLots = false;
             var walkProto = new EditorSidewalk { Width = town.PavementWidth }; editor.AddChild(walkProto);
             // ⭐ THE PLOTS AND THEIR PARKING ARE LAID OUT BEFORE THE PAVEMENT (strawberry 2026-10-12: "widened
             // sections of road, with dotted lines for parking"). A parking bay moves the kerb, the pavement and the
@@ -10710,7 +10759,9 @@ namespace UnturnedGodot
             // its two streets instead, one ran under a crest and out of sight. The grading then cuts under lanes and streets
             // alike.
             if (!noWalk) town.PlanPlots(rf, walkProto.Width);
+            Lap("plots");
             bool graded = town.GradeTerrain(terrain, rf);     // ⚠ BEFORE the pavement: its skirt is cut to the ground it finds
+            Lap("grade");
             // ⚠ MEASURE THE WIGGLE. These streets are straight BY CONSTRUCTION (one offset per grid line), so
             // any lateral deviation from the chord between a road's two ends is spline wobble and nothing
             // else -- a number, where "seems to wiggle" is an impression. UG_TOWNNORESPACE=1 is the control.
@@ -10735,11 +10786,13 @@ namespace UnturnedGodot
                 Log.Print($"[towngrid] straightness: worst bow off the chord {worstBow * 100f:0.0} cm over {bowRoads} streets"
                         + " -- these are straight by construction, so any bow is spline wobble");
             }
+            Lap("bow probe");
             int patches = town.BuildPatchMeshes(editor, rf);   // the asphalt paving each node, now the arms stop short of it
             // the boulevard's median, once its crossings are known: it stops short of each one
             town.BuildMedians(editor, rf);
             // the roads' own lines, painted over plain tarmac -- after the bays, which break the edge lines they open off
             town.BuildRoadLines(editor, rf);
+            Lap("paving");
             int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
             int corners = noWalk ? 0 : town.LaySidewalkCorners(editor, rf, walkProto);
             // the back lanes down the alleys PlanPlots marked (strawberry 2026-10-13: "replace placeholder alleys with
@@ -10748,9 +10801,11 @@ namespace UnturnedGodot
             if (!noWalk) town.BuildLanes(editor, rf);
             // the asphalt under each kerb corner, from the same fillet the kerb was laid on -- then the
             // coverage probes again, because what the player sees is the slab PLUS this
+            Lap("pavements");
             int cornerFill = town.BuildCornerFill(editor, rf);
             Log.Print($"[towngrid] corner asphalt: {cornerFill} triangles under {corners} kerb corners");
-            town.ProbeCoverage(rf, "with corner asphalt");
+            if (probes) town.ProbeCoverage(rf, "with corner asphalt");
+            Lap("corner fill");
             int lights = town.PlaceLights(rf, editor.Objects);
             town.PlantMedians(rf, editor.Objects);     // hedges and trees down the grass medians
             // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
@@ -10758,23 +10813,32 @@ namespace UnturnedGodot
             int plots = noWalk ? 0 : town.MarkPlots(editor, rf, plan: false);
             // the dirt the paving leaves in the terrain paint (strawberry 2026-10-15: "work on the roads/sidewalks leaving terrain
             // paint dirt footprints") -- after the plots, whose parking lots are paving too
+            Lap("lights+plots");
             if (!noWalk) town.PaintFootprints(rf, terrain);
+            Lap("footprints");
             // the buildings on the plots (strawberry 2026-10-15: "shove the building gen into town gen" -- one block first,
             // UG_TOWNBUILDINGS=block|all): generated, framed to face their street, their pads levelled -- before anything
             // else stands on the ground the pads change
             if (!noWalk) town.PlanBuildings(rf, terrain);
+            Lap("plan buildings");
             // the dead space the plots left, filled (strawberry 2026-10-14: "procedural filling for dead space / empty lots /
             // parks. using hedges as splines"): hedgerows down the strips, pocket parks in the bigger pieces
             if (!noWalk) town.PlantGreens(rf, editor.Objects);
+            Lap("greens");
             // the yard fences PlanPlots designated, laid as fences (strawberry 2026-10-14: "work on getting fences as splines")
             if (!noWalk) town.BuildFences(editor, editor.Objects);
+            Lap("fences");
             if (!noWalk) town.BuildBuildings(editor, editor.Objects);     // built by the generator's runtime builder (UG_TOWNMASSING=1: massing)
+            Lap("buildings");
             // the parking lots' street lights, and blocks if they have any (strawberry 2026-10-14: "add streetlight support for
             // parking lots too")
             if (!noWalk) town.PlaceParkingProps(editor.Objects);
             // ...and no meter left under anything put up after the meters were (strawberry 2026-10-15: "prevent street lights or
             // hydrants being placed on top of parking meters")
             if (!noWalk) town.ClearMeterClashes(editor.Objects);
+            // a town to PLAY (Generate Town): somewhere on its pavements to start, and to come back to
+            if (!noWalk && playSeed.HasValue) town.PlaceSpawns(rf, editor.Spawns);
+            Lap("props");
             // UG_TOWNPARKED=1: a car in every parking space -- the game's own cars, dropped in and left to settle on
             // their wheels -- so a render SHOWS whether the bays fit them (strawberry 2026-10-12: "make sure they're
             // scaled to fit the vehicles in game"). Against the kerb, nosed the way the lane beside them runs:
@@ -10804,6 +10868,7 @@ namespace UnturnedGodot
             // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
             // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
             // the sharpest turn between consecutive segments of every corner piece, and where it is.
+            if (probes)
             {
                 float worstKink = 0f; var kinkAt = Vector3.Zero; int segs = 0;
                 foreach (var (cnode, cpts) in town.LastCorners)
@@ -10844,6 +10909,7 @@ namespace UnturnedGodot
                     }
                 Log.Print($"[towngrid] kerb join: worst straight-to-curve step {worstJoin * 100f:0.0} cm over {joins} ends at {joinAt}");
             }
+            Lap("kerb probes");
             Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches ({town.PaintPieces} painted, {town.CrossingPieces} crossings), {walks} pavement ribbons + {corners} corners, {lights} lights, site {(graded ? "GRADED" : "draped")}");
             // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
             // surface on them, and from 250 m up "I cannot see it" and "it is not there" look identical.
@@ -10861,6 +10927,7 @@ namespace UnturnedGodot
                 }
                 Log.Print($"[towngrid] {meshes} mesh children under the road field;{sb}");
             }
+            if (probes)
             {   // ...and does the ground stay under it? (strawberry 2026-10-13, "follow gentle hills and slopes")
                 var gp = town.GroundPokes(rf, (x, z) => terrain.SampleHeight(x, z));
                 Log.Print($"[towngrid] ground under the paving: {gp.pokes}/{gp.samples} points within 3 cm of the surface or through it; "
@@ -10889,6 +10956,9 @@ namespace UnturnedGodot
                     Log.Print($"[towngrid] paint {m.kind}: {m.buried}/{m.samples} top vertices under the paving they are painted on; "
                             + $"worst {m.worst * 100f:0.0} cm under at {m.at}");
             }
+            Lap("ground probes");
+            Log.Print($"[towngrid] timing (s):{laps.ToString().TrimEnd(',')}");
+            if (playSeed.HasValue) goto noTown;     // ...and no render camera: the player's own is about to take over
             // A GRID READS FROM THE AIR. Unlike the kerb, whose whole subject is 0.4 m tall, the claim here
             // is the LAYOUT -- junctions, blocks, where the gates refused to build -- and none of that is
             // legible at eye height.

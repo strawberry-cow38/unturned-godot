@@ -491,15 +491,25 @@ namespace UnturnedGodot
                 // the half width cannot be inside the road: skipping it changes no answer, only the cost
                 if (p.X < c.MinX - half || p.X > c.MaxX + half || p.Z < c.MinZ - half || p.Z > c.MaxZ + half) continue;
                 float best = float.MaxValue;
-                var P = c.P;
-                for (int k = 0; k + 1 < P.Length; k++)
+                var P = c.P; var B = c.Chunks;
+                // ...and the same of each joint's own run of samples: a run whose box, grown by the half width, misses the
+                // point has no chord within it -- passing it over can only skip a distance that was never going to be under
+                // `half`, so whether the point is in, and how deep, come out the same (a whole town's plots asked this
+                // several hundred thousand times, every chord of every road whose box they fell in)
+                for (int j = 0; j < B.Length; j++)
                 {
-                    float ax = P[k].X, az = P[k].Y, ex = P[k + 1].X - ax, ez = P[k + 1].Y - az;
-                    float len2 = ex * ex + ez * ez;
-                    float t = len2 > 1e-6f ? Mathf.Clamp(((p.X - ax) * ex + (p.Z - az) * ez) / len2, 0f, 1f) : 0f;
-                    float dx = p.X - (ax + ex * t), dz = p.Z - (az + ez * t);
-                    float d = dx * dx + dz * dz;
-                    if (d < best) best = d;
+                    var bx = B[j];
+                    if (p.X < bx.X - half || p.X > bx.Y + half || p.Z < bx.Z - half || p.Z > bx.W + half) continue;
+                    int k1 = Mathf.Min(P.Length - 1, (j + 1) * OverlapRun);
+                    for (int k = j * OverlapRun; k < k1; k++)
+                    {
+                        float ax = P[k].X, az = P[k].Y, ex = P[k + 1].X - ax, ez = P[k + 1].Y - az;
+                        float len2 = ex * ex + ez * ez;
+                        float t = len2 > 1e-6f ? Mathf.Clamp(((p.X - ax) * ex + (p.Z - az) * ez) / len2, 0f, 1f) : 0f;
+                        float dx = p.X - (ax + ex * t), dz = p.Z - (az + ez * t);
+                        float d = dx * dx + dz * dz;
+                        if (d < best) best = d;
+                    }
                 }
                 best = Mathf.Sqrt(best);
                 if (best < half && half - best > depth) { depth = half - best; road = ri; }
@@ -514,9 +524,9 @@ namespace UnturnedGodot
         /// call re-evaluated every segment of every road from the Bezier: a town render went from 2.5 to more
         /// than 10 minutes of CPU once a 45-degree avenue and 2 m-spaced corners added roads and joints.
         /// Same samples, same answer; BuildRoadNode drops the entry whenever a road is rebuilt.</summary>
-        (Vector2[] P, float MinX, float MaxX, float MinZ, float MaxZ) OverlapSamples(RoadData r)
+        (Vector2[] P, float MinX, float MaxX, float MinZ, float MaxZ, Vector4[] Chunks) OverlapSamples(RoadData r)
         {
-            const int Steps = 16;
+            const int Steps = OverlapRun;
             var pts = new System.Collections.Generic.List<Vector2>();
             int last = r.IsLoop ? r.Joints.Count - 1 : r.Joints.Count - 2;
             for (int si = 0; si <= last; si++)
@@ -527,9 +537,19 @@ namespace UnturnedGodot
                 }
             float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
             foreach (var q in pts) { minX = Mathf.Min(minX, q.X); maxX = Mathf.Max(maxX, q.X); minZ = Mathf.Min(minZ, q.Y); maxZ = Mathf.Max(maxZ, q.Y); }
-            return (pts.ToArray(), minX, maxX, minZ, maxZ);
+            // each run of OverlapRun chords (a joint's worth) boxed: x = min X, y = max X, z = min Z, w = max Z
+            var chunks = new Vector4[Mathf.Max(0, (pts.Count - 1 + OverlapRun - 1) / OverlapRun)];
+            for (int j = 0; j < chunks.Length; j++)
+            {
+                var bx = new Vector4(float.MaxValue, float.MinValue, float.MaxValue, float.MinValue);
+                for (int k = j * OverlapRun; k <= Mathf.Min(pts.Count - 1, (j + 1) * OverlapRun); k++)
+                    bx = new Vector4(Mathf.Min(bx.X, pts[k].X), Mathf.Max(bx.Y, pts[k].X), Mathf.Min(bx.Z, pts[k].Y), Mathf.Max(bx.W, pts[k].Y));
+                chunks[j] = bx;
+            }
+            return (pts.ToArray(), minX, maxX, minZ, maxZ, chunks);
         }
-        readonly System.Collections.Generic.Dictionary<RoadData, (Vector2[] P, float MinX, float MaxX, float MinZ, float MaxZ)> _overlapCache = new();
+        const int OverlapRun = 16;
+        readonly System.Collections.Generic.Dictionary<RoadData, (Vector2[] P, float MinX, float MaxX, float MinZ, float MaxZ, Vector4[] Chunks)> _overlapCache = new();
 
         /// <summary>Insert a joint at a point on a segment, so the curve can be split exactly there. Returns
         /// the new joint's index. Tangents are re-fitted across the road afterwards, which keeps the shape
