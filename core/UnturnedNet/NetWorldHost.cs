@@ -19,7 +19,7 @@ namespace UnturnedGodot.Net
     /// Snapshots go out every SnapshotDivisorTicks-th tick (2 = the plan's 25 Hz default). Zombie state is
     /// published INTO ZombieReplication by the game-side ZombieNetSync at 12.5 Hz (§2.5 cadence table).
     /// </summary>
-    public sealed class NetWorldServer
+    public sealed partial class NetWorldServer
     {
         public readonly NetServerSession Session;
 
@@ -142,7 +142,7 @@ namespace UnturnedGodot.Net
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources,
                                                                       Vitals, Containers, Animals, Destructibles,
-                                                                      InteractableState, Profiles });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) last, ascending
+                                                                      InteractableState, Profiles, Equipment });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) last, ascending
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
@@ -341,6 +341,7 @@ namespace UnturnedGodot.Net
                 });
 
             Transactions.Register(Commands);
+            RegisterEquipmentCommands();
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
             // the content table. One hook rather than each growing a copy of the other's half.
@@ -645,6 +646,7 @@ namespace UnturnedGodot.Net
                 Skills.ServerRemove(peer.PlayerId);
                 BlueprintKnowledge.ServerRemove(peer.PlayerId);   // a recycled playerId must not inherit what they knew
                 Profiles.ServerRemove(peer.PlayerId);
+                Equipment.ServerRemove(peer.PlayerId);
                 Profiles.ServerForgetPeer(peer.PlayerId);   // player ids are RECYCLED: a new peer must not inherit "already has these pictures"
                 Vitals.ServerRemove(peer.PlayerId);   // B5: the leaving peer's vitals sim dies with it
                 // REFUND BEFORE THE INVENTORY GOES. Ingredients are spent at enqueue, so a player who leaves
@@ -1048,7 +1050,8 @@ namespace UnturnedGodot.Net
                                                                     Skills, Deployables, Inventories, WorldItems,
                                                                     Vehicles, Clock, Crops, Resources,
                                                                     Vitals, Containers, Animals, Destructibles,
-                                                                    InteractableState, Profiles });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
+                                                                    InteractableState, Profiles, Equipment });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
+            RegisterEquipmentEvents();
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {

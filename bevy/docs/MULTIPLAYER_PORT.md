@@ -41,8 +41,7 @@ Commands retain connection identity and original validators; no local console or
 damage shortcuts run in this mode.
 
 Host-only registration, save/load, damage and rebasing are refused. Unknown
-host enrichments remain absent and `network.wireGaps` enumerates them: exact held
-instance identity, weapon timers, attachment transactions, repair, explicit
+host enrichments remain absent and `network.wireGaps` enumerates them: repair, explicit
 respawn, weather/absolute day, cosmetic flights, detailed impact/warhead/stuck-pose
 facts, projectile expiry, vehicle part health, host wildlife/zombie data,
 password authentication and accepted shot tick. Authored map bindings now use the
@@ -64,6 +63,20 @@ passwords. The frozen executable also passes all121 existing bridge tests. A
 separate two-process JSONL smoke verifies join, authoritative spawn, accepted
 inventory, port reuse after host disconnect and clean remote process shutdown.
 These checks establish the managed boundary, not complete remote gameplay.
+
+## Authoritative remote owner equipment
+
+Protocol62 adds atomic owner-inventory identity tokens, exact held selection and
+source weapon timers, plus bounded owner-only attachment menus and transactions.
+The bridge sends intents against server item tokens and selection versions; it
+never changes client ammunition or inventory. Older protocol peers are explicitly
+refused. Raw legacy gun-state/unload assertions are disabled only when the host's
+source equipment adapter is installed. Same-ID replacements, moved identical
+items and another owner's token cannot satisfy a stale request. The original
+magazine/chamber, shell, reload and attachment rules remain shared with integrated
+play. Remote `attachmentOptions` returns `pending:true` until its matching reply.
+See [EQUIPMENT_PROTOCOL.md](EQUIPMENT_PROTOCOL.md) for field bounds, IDs, compatibility
+and verification; native interactive fitting remains a separate checkpoint.
 
 ## Asynchronous status and initial-join retry
 

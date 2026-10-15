@@ -34,7 +34,7 @@ public sealed partial class BridgeHost
         : ["movement", "memSession", "udpListen", "inventory", "vitals", "combat", "crafting", "save", "terrain", "catalog", "worldGeometry", "worldLoot", "worldWildlife", "worldZombies", "worldClock", "weather", "eventAck", "rebase"];
 
     static readonly string[] RemoteWireGaps = [
-        "exactHeldInstance", "weaponTimers", "attachmentTransactions", "repairTool",
+        "repairTool",
         "explicitRespawn", "weather", "dayNumber", "cosmeticBullets", "acceptedImpactDetails",
         "warheadEffects", "stuckProjectilePose", "projectileLifetime", "vehiclePartHealth",
         "wildlifeHostState", "zombieHostState", "password", "acceptedShotTick",
@@ -44,7 +44,7 @@ public sealed partial class BridgeHost
     {
         if (!IsRemote || operation is "init" or "disconnect" or "shutdown" or "simulate" or "tick" or "snapshot"
             or "catalog" or "npcCatalog" or "diagnostics" or "action" or "terrain" or "reconnect"
-            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel" or "mapBindings" or "profileAvatar" or "profileRules") return;
+            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel" or "mapBindings" or "profileAvatar" or "profileRules" or "attachmentOptions") return;
         throw new InvalidOperationException($"{operation} requires world authority; this session is a remote client");
     }
 
@@ -105,18 +105,18 @@ public sealed partial class BridgeHost
         if (name == "requestGesture") return RequestGesture(args);
         if (name == "holdItem")
         {
-            ushort selected = _remoteWeapon.Select(Int(args, "page", -1), Int(args, "x", -1), Int(args, "y", -1));
-            if (selected != 0) _held = selected;
-            return new { queued = selected != 0, heldItemId = _held };
+            bool queued = _remoteWeapon.RequestSelect(Int(args, "page", -1), Int(args, "x", -1), Int(args, "y", -1), false);
+            return new { queued, pending = queued, heldItemId = _held };
         }
         if (name == "equipAndHold")
         {
-            var choice = _remoteWeapon.EquipAndHold(Int(args, "page", -1), Int(args, "x", -1), Int(args, "y", -1));
-            if (choice.queued && !choice.pending) _held = choice.heldItemId;
-            return new { choice.queued, choice.pending, heldItemId = _held };
+            bool queued = _remoteWeapon.RequestSelect(Int(args, "page", -1), Int(args, "x", -1), Int(args, "y", -1), true);
+            return new { queued, pending = queued, heldItemId = _held };
         }
         if (name == "setFiremode") return new { queued = _remoteWeapon.SetFiremode(Int(args, "mode", -1)) };
-        if (name is "respawn" or "installAttachment" or "removeAttachment" or "chooseShellType" or "unloadShells" or "rackGun" or "toolUse")
+        if (name is "installAttachment" or "removeAttachment" or "chooseShellType" or "unloadShells" or "rackGun")
+            return new { queued = _remoteWeapon.RequestAttachment(name,args) };
+        if (name is "respawn" or "toolUse")
         {
             string reason = $"{name} has no corresponding complete remote request in the current protocol";
             Emit("actionRejected", new { text = reason });

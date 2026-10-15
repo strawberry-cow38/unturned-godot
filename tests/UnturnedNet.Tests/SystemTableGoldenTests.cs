@@ -44,6 +44,7 @@ namespace UnturnedNet.Tests
             ["SystemWorldClock"] = 10,   ["SystemCrops"] = 11,        ["SystemResources"] = 12,
             ["SystemVitals"] = 13,       ["SystemContainers"] = 14,   ["SystemAnimals"] = 15,
             ["SystemDestructibles"] = 16, ["SystemInteractables"] = 17, ["SystemProfiles"] = 18,
+            ["SystemOwnerEquipment"] = 19, // v62 owner-only selected instance and weapon clocks
             ["SystemSyncCheck"] = 255,
         };
 
@@ -126,6 +127,7 @@ namespace UnturnedNet.Tests
             "DestructibleReplication = 16 (SystemDestructibles)",
             "InteractableStateReplication = 17 (SystemInteractables)",
             "InventoryReplication = 7 (SystemInventory)",
+            "OwnerEquipmentReplication = 19 (SystemOwnerEquipment)",
             "PlayerCombatReplication = 2 (SystemPlayerCombat)",
             "PlayerProfileReplication = 18 (SystemProfiles)",
             "PlayerReplication = 1 (SystemPlayers)",

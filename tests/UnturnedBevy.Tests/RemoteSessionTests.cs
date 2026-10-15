@@ -12,6 +12,7 @@ namespace UnturnedBevyTests;
 [TestFixture, NonParallelizable]
 public sealed class RemoteSessionTests
 {
+    NetWorldClient RemoteClient => (NetWorldClient)typeof(BridgeHost).GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_remote);
     BridgeHost _host, _remote;
     ushort _port;
     static readonly JsonSerializerOptions JsonOptions = new() {
@@ -61,6 +62,170 @@ public sealed class RemoteSessionTests
             foreach (var i in p.GetProperty("items").EnumerateArray())
                 if (i.GetProperty("id").GetInt32() == id) return (p.GetProperty("index").GetInt32(), i.GetProperty("x").GetInt32(), i.GetProperty("y").GetInt32());
         throw new AssertionException($"No item{id}");
+    }
+
+    void EquipRemote()
+    {
+        Listen(); Join(); Pump();
+        Action(_remote,"console",new{text="give 4"});Pump();
+        var at=Address(State(_remote),4);Action(_remote,"equipAndHold",new{page=at.Page,x=at.X,y=at.Y});Pump(24);
+        Assert.That(State(_remote).GetProperty("weapon").GetProperty("held").GetProperty("id").GetInt32(),Is.EqualTo(4));
+    }
+    JsonElement Options()
+    {
+        for(int n=0;n<40;n++)
+        {
+            var result=Call(_remote,"attachmentOptions");
+            if(!result.TryGetProperty("pending",out var pending)||!pending.GetBoolean())return result;
+            Pump(2);
+        }
+        throw new AssertionException("Authoritative attachment options did not arrive");
+    }
+    static JsonElement Barrel(JsonElement options)=>options.GetProperty("slots").EnumerateArray().Single(s=>s.GetProperty("name").GetString()=="Barrel");
+    object FitArgs(JsonElement options,JsonElement choice)=>new {slot="Barrel",gunToken=options.GetProperty("gunToken").GetUInt64(),
+        selectionVersion=options.GetProperty("selectionVersion").GetUInt64(),page=choice.GetProperty("page").GetByte(),
+        x=choice.GetProperty("x").GetByte(),y=choice.GetProperty("y").GetByte(),instanceToken=choice.GetProperty("instanceToken").GetUInt64()};
+
+    [Test]
+    public void RemoteAttachmentSpendsActualOwnedInstanceAndEchoesAcceptedSourceFacts()
+    {
+        EquipRemote();Action(_remote,"console",new{text="give 7"});Pump();
+        var options=Options();var choice=Barrel(options).GetProperty("choices").EnumerateArray().Single(c=>c.GetProperty("id").GetInt32()==7);
+        Assert.That(Action(_remote,"installAttachment",FitArgs(options,choice)).GetProperty("queued").GetBoolean(),Is.True);
+        Assert.That(Count(State(_remote),7),Is.EqualTo(1),"A request cannot remove the client item before acceptance");
+        Pump(20);var state=State(_remote);
+        Assert.That(Count(state,7),Is.Zero);
+        Assert.That(state.GetProperty("weapon").GetProperty("attachments").GetProperty("barrelId").GetInt32(),Is.EqualTo(7));
+        Assert.That(state.GetProperty("events").EnumerateArray().Count(e=>e.GetProperty("kind").GetString()=="attachmentChanged"),Is.EqualTo(1));
+        // Same request cannot spend a moved/replaced item or generate another fitted copy.
+        Action(_remote,"installAttachment",FitArgs(options,choice));Pump();
+        Assert.That(State(_remote).GetProperty("events").EnumerateArray().Any(e=>e.GetProperty("kind").GetString()=="attachmentRejected"),Is.True);
+        Assert.That(Count(State(_remote),7),Is.Zero);
+    }
+
+    [Test]
+    public void SameAddressSameIdReplacementAndMovedItemCannotSatisfyStaleAttachmentTokens()
+    {
+        EquipRemote();Action(_remote,"console",new{text="give 7"});Pump();
+        var options=Options();var choice=Barrel(options).GetProperty("choices").EnumerateArray().Single(c=>c.GetProperty("id").GetInt32()==7);
+        Server.Inventories.TryGet(RemoteClient.PlayerId,out var bag);
+        byte page=choice.GetProperty("page").GetByte(),x=choice.GetProperty("x").GetByte(),y=choice.GetProperty("y").GetByte();
+        var grid=bag.Inventory.items[page];byte index=grid.getIndex(x,y);var original=grid.getItem(index).item;
+        grid.removeItem(index);grid.addItem(x,y,0,original.Clone());
+        Action(_remote,"installAttachment",FitArgs(options,choice));Pump();
+        Assert.That(Count(State(_remote),7),Is.EqualTo(1));
+        Assert.That(State(_remote).GetProperty("weapon").GetProperty("attachments").GetProperty("barrelId").GetInt32(),Is.Not.EqualTo(7));
+        // Query again only after the new inventory has invalidated the previous menu.
+        Call(_remote,"attachmentOptions");Pump(8);options=Options();choice=Barrel(options).GetProperty("choices").EnumerateArray().Single(c=>c.GetProperty("id").GetInt32()==7);
+        ulong replacement=choice.GetProperty("instanceToken").GetUInt64();
+        Assert.That(replacement,Is.Not.EqualTo(WeaponState.ItemIdentity(original)));
+        Assert.That(bag.Inventory.TryDrag(page,x,y,page,3,2,0),Is.True);
+        Action(_remote,"installAttachment",FitArgs(options,choice));Pump();
+        Assert.That(Count(State(_remote),7),Is.EqualTo(1),"Moving preserves identity but invalidates the old address");
+        Call(_remote,"attachmentOptions");Pump(8);options=Options();choice=Barrel(options).GetProperty("choices").EnumerateArray().Single(c=>c.GetProperty("id").GetInt32()==7);
+        Assert.That(choice.GetProperty("instanceToken").GetUInt64(),Is.EqualTo(replacement));
+        Assert.That(choice.GetProperty("x").GetInt32(),Is.EqualTo(3));
+        Action(_remote,"installAttachment",FitArgs(options,choice));Pump();Assert.That(Count(State(_remote),7),Is.Zero);
+    }
+
+    [Test]
+    public void SwappingIdenticalAttachmentsMovesTokensAndCannotFitTheOtherInstance()
+    {
+        EquipRemote();Action(_remote,"console",new{text="give 7"});Action(_remote,"console",new{text="give 7"});Pump();
+        var options=Options();var choices=Barrel(options).GetProperty("choices").EnumerateArray().Where(c=>c.GetProperty("id").GetInt32()==7).ToArray();
+        Assert.That(choices.Length,Is.EqualTo(2));
+        var first=choices[0];var twin=choices[1];
+        Server.Inventories.TryGet(RemoteClient.PlayerId,out var bag);
+        Assert.That(bag.Inventory.TryDrag(first.GetProperty("page").GetByte(),first.GetProperty("x").GetByte(),first.GetProperty("y").GetByte(),
+            twin.GetProperty("page").GetByte(),twin.GetProperty("x").GetByte(),twin.GetProperty("y").GetByte(),0),Is.True);
+        Action(_remote,"installAttachment",FitArgs(options,first));Pump();
+        Assert.That(Count(State(_remote),7),Is.EqualTo(2),"The identical item now occupying the old cell is not the requested instance");
+        Call(_remote,"attachmentOptions");Pump(8);options=Options();
+        var moved=Barrel(options).GetProperty("choices").EnumerateArray().Single(c=>c.GetProperty("instanceToken").GetUInt64()==first.GetProperty("instanceToken").GetUInt64());
+        Assert.That(moved.GetProperty("x").GetByte(),Is.EqualTo(twin.GetProperty("x").GetByte()));
+        Assert.That(moved.GetProperty("y").GetByte(),Is.EqualTo(twin.GetProperty("y").GetByte()));
+        Action(_remote,"installAttachment",FitArgs(options,moved));Pump();
+        Assert.That(Count(State(_remote),7),Is.EqualTo(1));
+        Assert.That(RemoteClient.Inventories.TryGetItemToken(RemoteClient.PlayerId,first.GetProperty("page").GetByte(),first.GetProperty("x").GetByte(),first.GetProperty("y").GetByte(),out var remaining),Is.True);
+        Assert.That(remaining,Is.EqualTo(twin.GetProperty("instanceToken").GetUInt64()));
+    }
+
+    [Test]
+    public void AnotherOwnersValidAttachmentTokenCannotSpendTheLocalTwin()
+    {
+        EquipRemote();Action(_remote,"console",new{text="give 7"});Action(_host,"console",new{text="give 7"});Pump();
+        var options=Options();var choice=Barrel(options).GetProperty("choices").EnumerateArray().Single(c=>c.GetProperty("id").GetInt32()==7);
+        var hostClient=(NetWorldClient)typeof(BridgeHost).GetField("_client",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(_host);
+        Server.Inventories.TryGet(hostClient.PlayerId,out var hostBag);
+        var foreign=hostBag.Inventory.items.SelectMany(p=>p.items).Single(j=>j.item.id==7).item;
+        Action(_remote,"installAttachment",new{slot="Barrel",gunToken=options.GetProperty("gunToken").GetUInt64(),
+            selectionVersion=options.GetProperty("selectionVersion").GetUInt64(),page=choice.GetProperty("page").GetByte(),
+            x=choice.GetProperty("x").GetByte(),y=choice.GetProperty("y").GetByte(),instanceToken=WeaponState.ItemIdentity(foreign)});
+        Pump();Assert.That(Count(State(_remote),7),Is.EqualTo(1));Assert.That(Count(State(_host),7),Is.EqualTo(1));
+        Assert.That(State(_remote).GetProperty("weapon").GetProperty("attachments").GetProperty("barrelId").GetInt32(),Is.Not.EqualTo(7));
+    }
+
+    [Test]
+    public void SelectedTwinReplacementChangesEpochAndRejectsDelayedOldGunIntent()
+    {
+        EquipRemote();Action(_remote,"console",new{text="give 7"});Pump();
+        var options=Options();var choice=Barrel(options).GetProperty("choices").EnumerateArray().Single(c=>c.GetProperty("id").GetInt32()==7);
+        ulong oldSelection=options.GetProperty("selectionVersion").GetUInt64(),oldGun=options.GetProperty("gunToken").GetUInt64();
+        Server.Inventories.TryGet(RemoteClient.PlayerId,out var bag);var grid=bag.Inventory.items[0];var gun=grid.getItem(0).item;
+        grid.removeItem(0);grid.addItem(0,0,0,gun.Clone());
+        Action(_remote,"installAttachment",FitArgs(options,choice));Pump(20);
+        Assert.That(Count(State(_remote),7),Is.EqualTo(1));
+        Action(_remote,"holdItem",new{page=0,x=0,y=0});Pump(20);
+        Call(_remote,"attachmentOptions");Pump(8);var next=Options();
+        Assert.That(next.GetProperty("gunToken").GetUInt64(),Is.Not.EqualTo(oldGun));
+        Assert.That(next.GetProperty("selectionVersion").GetUInt64(),Is.GreaterThan(oldSelection));
+        Action(_remote,"installAttachment",FitArgs(options,choice));Pump();
+        Assert.That(Count(State(_remote),7),Is.EqualTo(1),"Old selection cannot act on its identical replacement");
+    }
+
+    [Test]
+    public void RemoteAttachmentMenuRefreshesWhenOnlyWeaponClockChanges()
+    {
+        EquipRemote();var options=Options();
+        Action(_remote,"removeAttachment",new{slot="Magazine",gunToken=options.GetProperty("gunToken").GetUInt64(),selectionVersion=options.GetProperty("selectionVersion").GetUInt64()});
+        Pump(8);Call(_remote,"attachmentOptions");Pump(8);
+        Assert.That(Options().GetProperty("busy").GetBoolean(),Is.True);
+        Pump(160);Assert.That(State(_remote).GetProperty("weapon").GetProperty("reloading").GetBoolean(),Is.False);
+        Call(_remote,"attachmentOptions");Pump(8);
+        Assert.That(Options().GetProperty("busy").GetBoolean(),Is.False,"An unchanged inventory cannot pin the previous source animation state");
+    }
+
+    [Test]
+    public void SafetySelectionAcceptedBeforeTheSameTickShotCannotSpendAmmunition()
+    {
+        EquipRemote();
+        Assert.That(Action(_remote,"setFiremode",new{mode=0}).GetProperty("queued").GetBoolean(),Is.True);
+        Action(_remote,"fire",new{origin=new[]{35,9,-22},dir=new[]{0,0,-1}});
+        Pump(12);var state=State(_remote);
+        Assert.That(state.GetProperty("weapon").GetProperty("firemode").GetInt32(),Is.Zero);
+        Assert.That(state.GetProperty("weapon").GetProperty("ammo").GetInt32(),Is.EqualTo(30),"The earlier accepted selector intent applies before combat in that tick");
+    }
+
+    [Test]
+    public void OldClientGunAssertionsCannotRestoreAmmoAndNewSelectorPreservesIt()
+    {
+        EquipRemote();Server.Inventories.TryGet(RemoteClient.PlayerId,out var bag);var gun=bag.Inventory.items[0].getItem(0).item;
+        var before=gun.Clone();Action(_remote,"fire",new{origin=new[]{35,9,-22},dir=new[]{0,0,-1}});Pump(12);
+        Assert.That(State(_remote).GetProperty("weapon").GetProperty("ammo").GetInt32(),Is.EqualTo(29));
+        RemoteClient.SendGunState(0,0,0,gun.id,30,before.gunChambered,1,before.gunMagId,before.gunAttach,
+            before.gunSightId,149,before.gunGripId,before.gunTacticalId,true);Pump();
+        Assert.That(gun.gunAmmo,Is.EqualTo(29));Assert.That(gun.gunBarrelId,Is.EqualTo(before.gunBarrelId));
+        RemoteClient.SendGunUnload(0,0,0,5004,10);Pump();
+        Assert.That(gun.gunAmmo,Is.EqualTo(29),"Legacy unload must not bypass the selected-instance service");
+        Assert.That(Count(State(_remote),5004),Is.Zero);
+        var options=Options();Action(_remote,"removeAttachment",new{slot="Magazine",gunToken=options.GetProperty("gunToken").GetUInt64(),selectionVersion=options.GetProperty("selectionVersion").GetUInt64()});Pump();
+        Assert.That(State(_remote).GetProperty("weapon").GetProperty("ammo").GetInt32(),Is.EqualTo(1),"Source magazine removal retains the chambered round");
+        Assert.That(Count(State(_remote),6),Is.EqualTo(28),"The actual removed magazine preserves its remaining ammunition");
+        RemoteClient.SendGunUnload(0,0,0,5004,1);Pump();
+        Assert.That(gun.gunAmmo,Is.EqualTo(1));Assert.That(Count(State(_remote),5004),Is.Zero);
+        Assert.That(Action(_remote,"setFiremode",new{mode=0}).GetProperty("queued").GetBoolean(),Is.True);Pump();
+        var state=State(_remote);Assert.That(state.GetProperty("weapon").GetProperty("firemode").GetInt32(),Is.Zero);
+        Assert.That(state.GetProperty("weapon").GetProperty("ammo").GetInt32(),Is.EqualTo(1));
     }
 
     [Test]

@@ -119,6 +119,9 @@ namespace UnturnedNet.Tests
             [67] = "CommandWeaponUse",              // v56 durability: uses of the held weapon; the server rolls the wear (v56 is not released, so no bump)
             [68] = "CommandOpenVehicleStorage",     // v58 car storage: open a vehicle's trunk or cabin by VEHICLE id
             [69] = "CommandDrinkFluid",             // v59: drink the held bottle on the server's copy
+            [71] = "CommandSelectHeld",             // v62: authoritative instance selection
+            [72] = "CommandWeaponIntent",           // v62: atomic source attachment/selector requests
+            [73] = "CommandAttachmentOptions",      // v62: owner-only source menu query
             [70] = "CommandFillAtTap",              // v59: fill a bottle with clean water at a sink / bathtub
         };
 

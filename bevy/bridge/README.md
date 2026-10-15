@@ -40,6 +40,11 @@ the actual outcome appears in subsequent replicated state.
   The historical operation name remains compatible.
 - `action`: `name` and `args`, as below. Commands go through `NetWorldClient` and
   the existing server command validators. Most effects appear within 2–4 ticks.
+- `attachmentOptions`: integrated source menu immediately, or `{pending:true}`
+  while a remote owner-only query is in flight. Its eventual exact item tokens
+  and selection version authorize the existing fitting actions. Remote held
+  selection and weapon clocks now come from protocol62 owner state; old protocol
+  peers are explicitly refused. See [EQUIPMENT_PROTOCOL](../docs/EQUIPMENT_PROTOCOL.md).
 - `save` / `load`: `path`, using original versioned `WorldSave` format and map gate.
   An optional `BevyBridge` extension preserves world seed and retail loot point
   provenance while leaving the original v2 data readable by the old game.

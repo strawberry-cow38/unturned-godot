@@ -792,7 +792,18 @@ namespace UnturnedGodot.Net
             public PlayerInventory Inventory = new PlayerInventory();
             public uint OpenCrateId;      // 0 = none (server-side arbitration state)
             public long LastChangedTick;
+            public readonly Dictionary<(byte Page, byte X, byte Y), ulong> ItemTokens = new();
             internal bool Dirty;          // set by the model's onStateUpdated; stamped to a tick by ServerCommitDirty
+        }
+
+        /// <summary>Optional authoritative instance identity, assigned by the
+        /// owning host service. Tokens share the exact owner inventory frame;
+        /// null preserves the no-service source path.</summary>
+        public System.Func<Item, ulong> ItemIdentityProvider;
+        public bool TryGetItemToken(ushort owner, byte page, byte x, byte y, out ulong token)
+        {
+            token = 0;
+            return _byOwner.TryGetValue(owner, out var entry) && entry.ItemTokens.TryGetValue((page, x, y), out token) && token != 0;
         }
 
         public sealed class CrateEntry
@@ -1273,6 +1284,15 @@ namespace UnturnedGodot.Net
             }
             WriteWorn(w, inv.wornHat); WriteWorn(w, inv.wornGlasses); WriteWorn(w, inv.wornMask);
             WriteWorn(w, inv.wornShirt); WriteWorn(w, inv.wornVest); WriteWorn(w, inv.wornBackpack); WriteWorn(w, inv.wornPants);
+            w.WriteBit(ItemIdentityProvider != null);
+            if (ItemIdentityProvider != null)
+                for (byte p = 0; p < PlayerInventory.OWNPAGES; p++)
+                    foreach (var jar in inv.items[p].items)
+                    {
+                        ulong token = ItemIdentityProvider(jar.item);
+                        if (token == 0) throw new System.InvalidOperationException("An owned item requires a nonzero identity");
+                        w.WriteUInt64(token);
+                    }
         }
 
         public void ReadSnapshot(NetPakReader r, bool full)
@@ -1298,12 +1318,27 @@ namespace UnturnedGodot.Net
             inv.wornHat = hat; inv.wornGlasses = glasses; inv.wornMask = mask;
             inv.wornShirt = shirt; inv.wornVest = vest; inv.wornBackpack = backpack; inv.wornPants = pants;
 
+            // Parse the complete tail into temporary storage before replacing
+            // either accepted view. Truncation never installs a new grid with
+            // stale tokens from the preceding snapshot.
+            if (!r.ReadBit(out bool hasTokens)) return;
+            var tokens = new Dictionary<(byte Page, byte X, byte Y), ulong>();
+            var seen = new HashSet<ulong>();
+            if (hasTokens)
+                for (byte p = 0; p < PlayerInventory.OWNPAGES; p++)
+                    foreach (var jar in inv.items[p].items)
+                    {
+                        if (!r.ReadUInt64(out ulong token) || token == 0 || !seen.Add(token)) return;
+                        if (!tokens.TryAdd((p, jar.x, jar.y), token)) return;
+                    }
+
             if (!_byOwner.TryGetValue(owner, out var e))
             {
                 e = new PlayerEntry { OwnerPlayerId = owner };
                 _byOwner[owner] = e;
             }
             e.Inventory = inv;
+            e.ItemTokens.Clear(); foreach (var token in tokens) e.ItemTokens.Add(token.Key, token.Value);
             ReplicaUpdated?.Invoke(owner);
         }
 

@@ -1,115 +1,118 @@
+using System.Text.Json;
 using SDG.Unturned;
 using UnturnedGodot;
 using UnturnedGodot.Net;
 
 namespace UnturnedBevy;
 
-/// <summary>Client-local hand selection over the real owned inventory replica.
-/// This class never changes an Item, inventory, combat state or weapon timer.</summary>
+/// <summary>Read-only owner equipment view. Selection and attachment requests
+/// identify real server Item tokens; no client inventory or weapon state writes.</summary>
 sealed class RemoteWeaponView
 {
     readonly NetWorldClient _client;
     readonly Catalog _catalog;
     readonly Action<string, object> _emit;
-    record Address(byte Page, byte X, byte Y, ushort Id);
-    Address _selected, _pending;
-    byte _pendingSlot;
-    string _pendingSignature;
-    PlayerInventory _pendingInventory;
-    long _pendingUntil, _selectionVersion;
+    ulong? _observedSelection;
     ushort? _selectionChange;
+    uint _nextOptions, _pendingOptions;
+    long _optionsAt;
+    AttachmentOptionsEvent? _options;
+    PlayerInventory _queriedInventory;
+    OwnerEquipmentState _queriedEquipment;
     PlayerInventory Inventory => _client.Inventories.TryGet(_client.PlayerId, out var bag) ? bag.Inventory : null;
+    OwnerEquipmentState Equipment => _client.Equipment.TryGet(_client.PlayerId,out var state)?state:null;
     bool Alive => _client.CombatState.TryGet(_client.PlayerId, out var player) && player.Alive;
-    Item Selected => _selected == null ? null : At(_selected.Page, _selected.X, _selected.Y) is Item i && i.id == _selected.Id ? i : null;
-    GunDef Gun => Selected is Item i ? _catalog.GunDefs.GetValueOrDefault(i.id) : null;
-    public int Ammo => Gun == null ? 0 : Selected.gunAmmo < 0 ? Gun.AmmoMax : Selected.gunAmmo;
+    public int Ammo => Equipment?.Ammo??0;
 
     public RemoteWeaponView(NetWorldClient client, Catalog catalog, Action<string, object> emit)
-    { _client = client; _catalog = catalog; _emit = emit; }
-
-    Item At(int page, int x, int y)
     {
-        if (Inventory == null || page < 0 || page >= PlayerInventory.OWNPAGES || x < 0 || x > 255 || y < 0 || y > 255) return null;
-        var p = Inventory.items[page]; byte index = p.getIndex((byte)x, (byte)y);
-        return index == byte.MaxValue ? null : p.getItem(index)?.item;
+        _client=client;_catalog=catalog;_emit=emit;
+        client.AttachmentOptionsReceived+=value=>{
+            if(value.RequestId!=_pendingOptions)return;
+            _options=value;_pendingOptions=0;
+        };
     }
-
-    public ushort Select(int page, int x, int y)
+    Item At(int page,int x,int y)
     {
-        var item = At(page, x, y); var asset = item == null ? null : Assets.find(item.id);
-        if (!Alive || !HandRules.CanEquipItemAsset(asset) || !asset.slot.CanEquipInPage((byte)page)) return 0;
-        var next = new Address((byte)page, (byte)x, (byte)y, item.id);
-        if (next != _selected) _selectionVersion++;
-        _selected = next; _pending = null; return item.id;
+        if(Inventory==null||page<0||page>=PlayerInventory.OWNPAGES||x<0||x>255||y<0||y>255)return null;
+        var p=Inventory.items[page];byte index=p.getIndex((byte)x,(byte)y);
+        return index==byte.MaxValue?null:p.getItem(index)?.item;
     }
-
-    static string Signature(Item i) => i == null ? null : string.Join(':', i.id, i.amount, i.quality,
-        i.gunAmmo, i.gunFiremode, i.gunMagId, i.gunChambered, i.gunAttach,
-        i.gunSightId, i.gunBarrelId, i.gunGripId, i.gunTacticalId, i.gunAttachSeeded);
-
-    public (bool queued, ushort heldItemId, bool pending) EquipAndHold(int page, int x, int y)
+    Item Selected
     {
-        var item = At(page, x, y); var asset = item == null ? null : Assets.find(item.id);
-        if (!Alive || !HandRules.CanEquipItemAsset(asset)) return (false, 0, false);
-        if (asset.slot.CanEquipInPage((byte)page)) return (true, Select(page, x, y), false);
-        int slot = asset.slot.PreferredSlot();
-        if (slot < 0 || !_client.SendEquipItem((byte)page, (byte)x, (byte)y, (byte)slot)) return (false, 0, false);
-        _pending = new((byte)page, (byte)x, (byte)y, item.id); _pendingSlot = (byte)slot;
-        _pendingSignature = Signature(item); _pendingInventory = Inventory;
-        _pendingUntil = _client.Session.CurrentTick + NetProtocol.TicksPerSecond * 3;
-        return (true, 0, true);
+        get {
+            var state=Equipment;if(state==null||state.Token==0)return null;
+            var a=state.Held;var item=At(a.Page,a.X,a.Y);
+            return item?.id==a.Id&&_client.Inventories.TryGetItemToken(_client.PlayerId,a.Page,a.X,a.Y,out var token)&&token==state.Token?item:null;
+        }
     }
-
+    public bool RequestSelect(int page,int x,int y,bool equip)
+    {
+        var item=At(page,x,y);var asset=item==null?null:Assets.find(item.id);
+        if(!Alive||!HandRules.CanEquipItemAsset(asset)||Equipment==null
+            ||!_client.Inventories.TryGetItemToken(_client.PlayerId,(byte)page,(byte)x,(byte)y,out var token))return false;
+        return _client.SendSelectHeld((byte)page,(byte)x,(byte)y,item.id,token,equip);
+    }
     public void Step(ushort held)
     {
-        if (_pending != null)
+        var state=Equipment;if(state==null)return;
+        if(_observedSelection!=state.SelectionVersion)
         {
-            // InventoryReplication rebuilds Item objects, so reference identity
-            // cannot cross this wire. Require a new replica and both sides of
-            // the requested move. Indistinguishable twins cannot be proven and
-            // deliberately time out instead of selecting an unrelated weapon.
-            var slot = Inventory?.items[_pendingSlot].items.FirstOrDefault();
-            if (!ReferenceEquals(_pendingInventory, Inventory) && slot != null
-                && Signature(slot.item) == _pendingSignature
-                && Signature(At(_pending.Page, _pending.X, _pending.Y)) != _pendingSignature)
-                _selectionChange = Select(_pendingSlot, slot.x, slot.y);
-            else if (_client.Session.CurrentTick >= _pendingUntil)
-            { _pending = null; _emit("equipRefused", new { text = "Equipment move was not confirmed by the server" }); }
+            _observedSelection=state.SelectionVersion;_selectionChange=state.Held.Id;
+            if(_options?.SelectionVersion!=state.SelectionVersion)_options=null;
         }
-        if (_selected != null && (_selected.Id != held && _selectionChange == null || Selected == null || !Alive))
-        { _selected = null; _selectionVersion++; _selectionChange = 0; }
     }
-
-    public ushort? TakeSelectionChange() { var next = _selectionChange; _selectionChange = null; return next; }
-
+    public ushort? TakeSelectionChange(){var value=_selectionChange;_selectionChange=null;return value;}
     public bool SetFiremode(int mode)
     {
-        var gun = Gun; var item = Selected;
-        bool valid = gun != null && (mode == 0 && gun.HasSafety || mode == 1 && gun.HasSemi
-            || mode == 2 && gun.HasAuto || mode == 3 && gun.BurstCount > 0);
-        if (!Alive || !valid) return false;
-        return _client.SendGunState(_selected.Page, _selected.X, _selected.Y, item.id,
-            checked((short)item.gunAmmo), item.gunChambered, checked((sbyte)mode), item.gunMagId,
-            item.gunAttach, item.gunSightId, item.gunBarrelId, item.gunGripId, item.gunTacticalId, item.gunAttachSeeded);
+        var state=Equipment;var gun=state==null?null:_catalog.GunDefs.GetValueOrDefault(state.Held.Id);
+        bool valid=gun!=null&&(mode==0&&gun.HasSafety||mode==1&&gun.HasSemi||mode==2&&gun.HasAuto||mode==3&&gun.BurstCount>0);
+        return Alive&&valid&&_client.SendWeaponIntent(new(){Action=EquipmentAction.Firemode,GunToken=state.Token,
+            SelectionVersion=state.SelectionVersion,Firemode=(byte)mode});
     }
-
+    public bool RequestAttachment(string action,JsonElement args)
+    {
+        if(!Alive||Equipment==null)return false;
+        try
+        {
+            if(!Enum.TryParse<EquipmentSlot>(BridgeHost.Text(args,"slot","Sight"),out var slot)||!Enum.IsDefined(slot))return false;
+            var command=new WeaponIntentCommand {
+                Action=EquipmentJson.Action(action),Slot=slot,GunToken=args.GetProperty("gunToken").GetUInt64(),
+                SelectionVersion=args.GetProperty("selectionVersion").GetUInt64(),ShellId=checked((ushort)BridgeHost.Int(args,"itemId")),
+            };
+            if(command.Action==EquipmentAction.Install)
+            {
+                command.IncomingToken=args.GetProperty("instanceToken").GetUInt64();
+                command.Incoming=new(checked((byte)BridgeHost.Int(args,"page")),checked((byte)BridgeHost.Int(args,"x")),checked((byte)BridgeHost.Int(args,"y")),0);
+                if(command.Incoming.Page>=PlayerInventory.OWNPAGES)return false;
+            }
+            return _client.SendWeaponIntent(command);
+        }
+        catch(Exception error) when(error is InvalidOperationException or KeyNotFoundException or OverflowException or FormatException)
+        { _emit("attachmentRejected",new{playerId=_client.PlayerId,text="That attachment request is no longer valid"});return false; }
+    }
+    public object AttachmentOptions()
+    {
+        var state=Equipment;long now=_client.Session.CurrentTick;
+        bool stale=_options==null||_queriedEquipment!=state||!ReferenceEquals(_queriedInventory,Inventory);
+        if(stale&&(_pendingOptions==0||now-_optionsAt>=NetProtocol.TicksPerSecond)&&now-_optionsAt>=5)
+        {
+            _pendingOptions=++_nextOptions;_optionsAt=now;_queriedInventory=Inventory;_queriedEquipment=state;
+            if(!_client.SendAttachmentOptions(_pendingOptions))_pendingOptions=0;
+        }
+        return _options is AttachmentOptionsEvent options&&(!options.Supported||options.SelectionVersion==state?.SelectionVersion)
+            ?EquipmentJson.Options(options):new{pending=true};
+    }
     public object Snapshot()
     {
-        var item = Selected; var gun = Gun;
-        int magazine = item == null ? 0 : item.gunMagId < 0 ? gun?.MagazineId ?? 0 : item.gunMagId;
-        var mag = magazine is > 0 and <= ushort.MaxValue ? Assets.find((ushort)magazine) : null;
+        var state=Equipment;if(state==null)return null;
+        var item=Selected;var gun=item==null?null:_catalog.GunDefs.GetValueOrDefault(item.id);
         return new {
-            held = item == null ? null : new { id = item.id, page = _selected.Page, x = _selected.X, y = _selected.Y,
-                kind = HandRules.KindOf(Assets.find(item.id)).ToString().ToLowerInvariant() },
-            selectionVersion = _selectionVersion, broken = item?.quality == 0,
-            canFire = Alive && gun != null && item.quality > 0 && item.gunFiremode != 0,
-            ammo = Ammo, capacity = mag?.magCapacity ?? gun?.AmmoMax ?? 0,
-            chambered = item?.gunChambered ?? false, firemode = item?.gunFiremode ?? -1, magazineId = magazine,
-            attachments = gun == null ? null : new { sightId = item.gunSightId, barrelId = item.gunBarrelId,
-                gripId = item.gunGripId, tacticalId = item.gunTacticalId, magazineId = item.gunMagId,
-                mask = item.gunAttach, seeded = item.gunAttachSeeded },
-            // Reload/rechamber clocks are server-only in the original wire.
-            // Omit them rather than presenting a fabricated accepted timer.
+            held=state.Token==0?null:EquipmentJson.Address(state.Held),selectionVersion=state.SelectionVersion,
+            state.Reloading,state.Unloading,state.Rechambering,state.Broken,state.CanFire,state.Ammo,state.Capacity,
+            state.Chambered,state.Firemode,magazineId=state.MagazineId,shellItemId=state.ShellItemId,state.Silenced,
+            attachments=gun==null?null:new {sightId=item.gunSightId,barrelId=item.gunBarrelId,gripId=item.gunGripId,
+                tacticalId=item.gunTacticalId,magazineId=item.gunMagId,mask=item.gunAttach,seeded=item.gunAttachSeeded},
         };
     }
 }

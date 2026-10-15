@@ -18,8 +18,8 @@ class WarheadTests(unittest.TestCase):
     ground = test_wildlife.WildlifeTests.ground
     fauna = test_wildlife.WildlifeTests.fauna
 
-    def wall(self, z=-3, x=0):
-        return dict(vertices=[[x-100,-10,z],[x+100,-10,z],[x+100,2,z],[x-100,2,z]],indices=[0,1,2,0,2,3])
+    def wall(self, z=-3, x=0, top=2):
+        return dict(vertices=[[x-100,-10,z],[x+100,-10,z],[x+100,top,z],[x-100,top,z]],indices=[0,1,2,0,2,3])
 
     def fire(self, origin=(0,1.5,0), direction=(0,0,-1)):
         self.call('action',name='fire',args=dict(origin=origin,dir=direction))
@@ -27,7 +27,10 @@ class WarheadTests(unittest.TestCase):
     def test_warhead_is_captured_before_switch_and_blast_has_real_vehicle_falloff(self):
         self.configure(gun=dict(Id=519,GunAmmo=1,GunMagId=520,GunBarrelId=-1))
         vehicle=self.call('worldVehicles',vehicles=[dict(typeId=1,key='blast-neighbor',position=[2,0,-30],health=1000,healthMax=1000,fuel=0,seatOffsets=[[0,0,0]])])['result']['vehicles'][0]['netId']
-        self.call('worldGeometry',meshes=[self.wall(-30)])
+        # This test verifies capture/falloff, not a narrow aim target. The
+        # original accepted scatter can cross y2 at30m; a taller wall keeps
+        # every valid source ray in the fixture without changing the shot.
+        self.call('worldGeometry',meshes=[self.wall(-30,top=10)])
         self.fire(origin=(100,1.5,0));state=self.pump()
         self.assertFalse(any(e['kind']=='bulletExplosion' for e in state['events']))
         self.fire()

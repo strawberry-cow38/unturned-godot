@@ -6,7 +6,7 @@ namespace UnturnedBevy;
 
 /// <summary>Original gun inventory rules hosted beside ServerCombat. Every choice
 /// uses the server's owned item, never the client's count or a cloned grid.</summary>
-public sealed class WeaponServices
+public sealed partial class WeaponServices
 {
     readonly NetWorldServer _server;
     readonly Catalog _catalog;
@@ -23,7 +23,8 @@ public sealed class WeaponServices
         int BarrelId,bool Silenced,bool BarrelSilenced,string ShootClip,float ShotVolume,float MuzzleVelocity,bool BarrelBroken);
     public WeaponServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
     {
-        _server = server; _catalog = catalog; _emit = emit;
+        _server = server; _catalog = catalog; _emit = (kind, data) => { emit(kind, data); ForwardEquipmentFact(kind, data); };
+        InstallEquipmentAuthority();
         server.Combat.ResolveHeldGunProfile = owner => State(owner).Profile;
         server.Combat.HeldCondition = owner => State(owner).Condition;
         server.Combat.CanFire = owner => State(owner).CanFire();
@@ -88,7 +89,7 @@ public sealed class WeaponServices
     public ushort? TakeSelectionChange(ushort owner) => State(owner).TakeSelectionChange();
     public ushort Select(ushort owner, int page, int x, int y) => State(owner).Select(page, x, y);
     public bool SetFiremode(ushort owner, NetWorldClient client, int mode) => State(owner).SetFiremode(client, mode);
-    public void Step() { foreach (var player in _server.CombatState.All) State(player.OwnerPlayerId).Step(); }
+    public void Step() { foreach (var player in _server.CombatState.All) { var state = State(player.OwnerPlayerId); state.Step(); _server.Equipment.ServerSet(player.OwnerPlayerId, state.EquipmentReplica(), _server.Session.CurrentTick); } }
     public object Snapshot(ushort owner) => State(owner).Snapshot();
     public WarheadServices.Payload CaptureWarhead(ushort owner) => State(owner).CaptureWarhead();
     public float RepairRate(ushort owner) => State(owner).RepairRate;
@@ -108,6 +109,7 @@ public sealed partial class WeaponState
     long _selectionVersion;
     ushort _selectedId;
     bool _selectionPending;
+    bool _emptySelectionPending;
     Item _pendingEquip;
     byte _pendingSlot;
     long _pendingUntil;
@@ -140,7 +142,9 @@ public sealed partial class WeaponState
         if (_selected != null && heldId == _selectedId) _selectionPending = false;
         if (_selected != null && heldId != _selectedId && !_selectionPending) { _selected = null; _selectedId = 0; }
         _ownedHeld = null;
-        for (byte page = 0; page < PlayerInventory.OWNPAGES && _ownedHeld == null; page++)
+        bool explicitEmpty = _emptySelectionPending;
+        if (_emptySelectionPending && heldId == 0) _emptySelectionPending = false;
+        for (byte page = 0; page < PlayerInventory.OWNPAGES && _ownedHeld == null && !explicitEmpty; page++)
             foreach (var jar in Inventory.items[page].items)
             {
                 bool chosen = _selected != null ? ReferenceEquals(jar.item, _selected) : jar.item.id == heldId;
@@ -209,7 +213,7 @@ public sealed partial class WeaponState
         var item = At(page, x, y);
         var asset = item == null ? null : Assets.find(item.id);
         if (!HandRules.CanEquipItemAsset(asset) || !asset.slot.CanEquipInPage((byte)page)) return 0;
-        _pendingEquip = null; _selected = item; _selectedId = item.id; _selectionPending = true;
+        _pendingEquip = null; _selected = item; _selectedId = item.id; _selectionPending = true; _emptySelectionPending = false;
         Bind(); return item.id;
     }
     object HeldAddress()
@@ -247,16 +251,8 @@ public sealed partial class WeaponState
     public bool SetFiremode(NetWorldClient client, int mode)
     {
         if (_heldItem == null || Gun == null || !AvailableModes().Contains(mode) || _combat?.Alive != true) return false;
-        for (byte page = 0; page < PlayerInventory.OWNPAGES; page++)
-            foreach (var jar in Inventory.items[page].items) if (ReferenceEquals(jar.item, _heldItem))
-            {
-                var i = _heldItem;
-                // Existing request/validation/owner-echo path. Only the selector is
-                // changed; every other field comes from current authoritative state.
-                return client.SendGunState(page, jar.x, jar.y, i.id, checked((short)Ammo), _chambered,
-                    checked((sbyte)mode), _loadedMagId, i.gunAttach, i.gunSightId, i.gunBarrelId, i.gunGripId, i.gunTacticalId, i.gunAttachSeeded);
-            }
-        return false;
+        return client.SendWeaponIntent(new WeaponIntentCommand { Action = EquipmentAction.Firemode,
+            GunToken = ItemIdentity(_heldItem), SelectionVersion = (ulong)_selectionVersion, Firemode = checked((byte)mode) });
     }
     public bool CanFire()
     {

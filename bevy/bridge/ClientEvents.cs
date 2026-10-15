@@ -30,6 +30,9 @@ public sealed partial class BridgeHost
         };
         _client.PlayerGestured += e => Emit("gesture", e);
         _client.AvatarArrived += hash => Emit("profileAvatar", new { avatarHash = hash });
+        _client.EquipmentFactReceived += e => {
+            if (_server == null) _events.Add(new(++_eventSequence, EquipmentJson.FactName(e.Kind), EquipmentJson.Fact(_client.PlayerId,e), e.Tick));
+        };
         _client.StorageClosed += e => Emit("storageClosed", e);
         _client.VehicleEntered += e => Emit("vehicleEntered", e);
         _client.VehicleExited += e => {

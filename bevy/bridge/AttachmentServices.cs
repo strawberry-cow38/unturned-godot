@@ -13,7 +13,8 @@ public sealed partial class WeaponState
     static long _nextToken;
     static readonly ConditionalWeakTable<Item, ItemToken> Tokens = new();
     static long Token(Item item) => item == null ? 0 : Tokens.GetValue(item, _ => new(Interlocked.Increment(ref _nextToken))).Value;
-    sealed record AttachmentIntent(string Action, string Slot, Item Gun, long Selection, Item Incoming, ushort ShellId);
+    public static ulong ItemIdentity(Item item) => (ulong)Token(item);
+    sealed record AttachmentIntent(string Action, string Slot, Item Gun, long Selection, Item Incoming, ushort ShellId, int Firemode);
     readonly Queue<AttachmentIntent> _attachmentIntents = new();
     long Tick => _server.Session.CurrentTick;
     bool _unloading, _magSwapAutoRack;
@@ -80,10 +81,15 @@ public sealed partial class WeaponState
             if(incoming==null||Long(args,"instanceToken")!=Token(incoming))return RefuseAttachment(action,slot,"That inventory item changed");
         }
         ushort shell=(ushort)Math.Clamp(BridgeHost.Int(args,"itemId"),0,ushort.MaxValue);
-        var intent=new AttachmentIntent(action,slot,_heldItem,version,incoming,shell);
+        var intent=new AttachmentIntent(action,slot,_heldItem,version,incoming,shell,BridgeHost.Int(args,"mode",-1));
         string refusal=ValidateAttachment(intent);
         if(refusal!=null)return RefuseAttachment(action,slot,refusal);
-        _attachmentIntents.Enqueue(intent);return new{queued=true,reason=(string)null};
+        // The original selector command mutates during command dispatch, before
+        // combat. Deferring it to the post-combat attachment step would allow a
+        // later shot in the same tick to spend ammo after safety was accepted.
+        if(action=="setFiremode")ApplyAttachmentAndPublish(intent);
+        else _attachmentIntents.Enqueue(intent);
+        return new{queued=true,reason=(string)null};
     }
     object RefuseAttachment(string action,string slot,string reason)
     {
@@ -94,6 +100,7 @@ public sealed partial class WeaponState
     {
         if(_combat?.Alive!=true||!ReferenceEquals(intent.Gun,_heldItem)||intent.Selection!=_selectionVersion)
             return "The selected weapon changed";
+        if(intent.Action=="setFiremode")return AvailableModes().Contains(intent.Firemode)?null:"This weapon does not support that fire mode";
         if(AttachmentBusy)return "The weapon is busy";
         if(intent.Action=="rackGun")return UsesMagItem&&HasChamber&&Ammo>0?null:"No chambered round";
         if(intent.Action is "chooseShellType" or "unloadShells")
@@ -127,6 +134,7 @@ public sealed partial class WeaponState
     string ApplyAttachment(AttachmentIntent intent)
     {
         string refusal=ValidateAttachment(intent);if(refusal!=null)return refusal;
+        if(intent.Action=="setFiremode"){_heldItem.gunFiremode=intent.Firemode;return null;}
         if(intent.Action=="rackGun"){RackGun();return null;}
         if(intent.Action=="chooseShellType"){ChooseShellType(intent.ShellId);return null;}
         if(intent.Action=="unloadShells"||(intent.Action=="removeAttachment"&&intent.Slot=="Magazine"&&UsesShells))
@@ -164,15 +172,16 @@ public sealed partial class WeaponState
         }
         return null;
     }
+    void ApplyAttachmentAndPublish(AttachmentIntent intent)
+    {
+        string refusal=ApplyAttachment(intent);
+        if(refusal!=null){_emit("attachmentRejected",new{playerId=_owner,action=intent.Action,slot=intent.Slot,reason=refusal,text=refusal});return;}
+        RefreshAttachmentMask();SaveGunState();UpdateProfile();
+        _emit("attachmentChanged",new{playerId=_owner,action=intent.Action,itemId=_heldItem.id,slot=intent.Slot,selectionVersion=_selectionVersion});
+    }
     void StepAttachmentActions()
     {
-        while(_attachmentIntents.TryDequeue(out var intent))
-        {
-            string refusal=ApplyAttachment(intent);
-            if(refusal!=null){_emit("attachmentRejected",new{playerId=_owner,action=intent.Action,slot=intent.Slot,reason=refusal,text=refusal});continue;}
-            RefreshAttachmentMask();SaveGunState();UpdateProfile();
-            _emit("attachmentChanged",new{playerId=_owner,action=intent.Action,itemId=_heldItem.id,slot=intent.Slot,selectionVersion=_selectionVersion});
-        }
+        while(_attachmentIntents.TryDequeue(out var intent))ApplyAttachmentAndPublish(intent);
         if(_magSwapUntil>0&&Tick>=_magSwapUntil)
         {
             _magSwapUntil=0;_emit("reloadComplete",new{playerId=_owner,ammo=Ammo});

@@ -63,6 +63,10 @@ namespace UnturnedGodot.Net
     /// </summary>
     public sealed class ServerTransactions
     {
+        /// <summary>Installed source weapon authority owns ammunition,
+        /// attachments and wear. Legacy client-state/grid-half commands must
+        /// not overwrite that truth. False preserves hosts without the service.</summary>
+        public bool AuthoritativeEquipment;
         /// <summary>Optional host presentation fact, invoked only after the exact
         /// validated inventory instance was spent and its effects applied.</summary>
         public Action<ushort, ConsumeCommand, ushort> ConsumeApplied;
@@ -629,23 +633,23 @@ namespace UnturnedGodot.Net
 
             commands.Register<GunStateCommand>(ReplicationIds.CommandGunState, GunStateCommand.TryRead,
                 OnGunState,
-                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+                validate: (sender, cmd) => !AuthoritativeEquipment && _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
             commands.Register<WeaponUseCommand>(ReplicationIds.CommandWeaponUse, WeaponUseCommand.TryRead,
                 OnWeaponUse,
-                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES && cmd.Uses > 0);
+                validate: (sender, cmd) => !AuthoritativeEquipment && _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES && cmd.Uses > 0);
 
             commands.Register<FitAttachmentCommand>(ReplicationIds.CommandFitAttachment, FitAttachmentCommand.TryRead,
                 OnFitAttachment,
-                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+                validate: (sender, cmd) => !AuthoritativeEquipment && _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
             commands.Register<ReloadSwapCommand>(ReplicationIds.CommandReloadSwap, ReloadSwapCommand.TryRead,
                 OnReloadSwap,
-                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+                validate: (sender, cmd) => !AuthoritativeEquipment && _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
             commands.Register<GunUnloadCommand>(ReplicationIds.CommandGunUnload, GunUnloadCommand.TryRead,
                 OnGunUnload,
-                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+                validate: (sender, cmd) => !AuthoritativeEquipment && _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
             commands.Register<WearClothingCommand>(ReplicationIds.CommandWearClothing, WearClothingCommand.TryRead,
                 OnWearClothing,

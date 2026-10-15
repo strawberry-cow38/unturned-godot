@@ -546,13 +546,13 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.call('action', name='equipAndHold', args=dict(page=beans[0], x=beans[1]['x'], y=beans[1]['y']))['result']['queued'])
         self.assertEqual('consumable', self.pump()['weapon']['held']['kind'])
 
-    def test_unloading_held_gun_updates_combat_and_does_not_restore_rounds(self):
+    def test_legacy_unload_cannot_bypass_weapon_authority_or_restore_rounds(self):
         self.call('action', name='gunUnload', args=dict(page=0, x=0, y=0, roundId=5004, count=10))
-        self.assertEqual(20, self.pump()['weapon']['ammo'])
+        self.assertEqual(30, self.pump()['weapon']['ammo'])
         self.call('action', name='fire', args={})
         state = self.pump()
-        self.assertEqual(19, state['weapon']['ammo'])
-        self.assertEqual(10, sum(i['amount'] for p in state['inventory']['pages'] for i in p['items'] if i['id'] == 5004))
+        self.assertEqual(29, state['weapon']['ammo'])
+        self.assertEqual(0, sum(i['amount'] for p in state['inventory']['pages'] for i in p['items'] if i['id'] == 5004))
 
     def test_interactables_authority_reach_occupancy_claim_and_save(self):
         self.call('worldServices', objectDoors=[dict(netId=1, position=[0, 0, -1], open=False, swingSide=[0, 0, 1]),
