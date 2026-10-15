@@ -173,6 +173,13 @@ namespace UnturnedGodot
         public int Count => _taken.Count;
         public void Clear() => _taken.Clear();
         public void GrantForTest(string id) => _taken.Add(id);
+        /// <summary>Adopt an already validated authority/save set without purchasing it again.
+        /// The networking adapter filters unknown ids before calling this; UI never calls it.</summary>
+        public void NetSetTaken(System.Collections.Generic.IEnumerable<string> ids)
+        {
+            _taken.Clear();
+            foreach (var id in ids) _taken.Add(id);
+        }
 
         /// <summary>An advanced pillar is closed until every node that opens it is taken. Main pillars are always
         /// open. Returns true for an unknown pillar so a typo shows as an open column rather than a silent gap.</summary>

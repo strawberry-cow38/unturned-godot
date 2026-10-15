@@ -9,6 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Engine-free source graph and rules are shared verbatim with both presentation hosts. -->
+    <Compile Include="../../game/SkillTree.cs" Link="Source/SkillTree.cs" />
     <!-- UnityEngine.Vector2/3 shims for the movement model (same types the ported game code uses). -->
     <ProjectReference Include="..\SDG.Compat\SDG.Compat.csproj" />
     <!-- DatParser/IDatDictionary for BlueprintDef + ItemAsset.ParseSize (the inventory model layer moved

@@ -124,9 +124,11 @@ namespace UnturnedNet.Tests
             var bytes = composer.Compose(serverTick: 100, clientPlayerId: 9, Vector3.zero);
 
             // serverTick:32 + baseline:32(0=full) + systemId:8(5) + byteLen:16 + count:8(1) + owner:16(9)
-            // + experience:32(20) + 22 level bytes (OVERKILL=1, rest 0)
+            // + experience:32(20) + 22 level bytes (OVERKILL=1, rest 0).
+            // v70 appends learned-count:8(0), so byteLen grows 0x1D->0x1E
+            // and exactly one trailing zero byte is added to the old literal.
             Assert.That(ToHex(bytes), Is.EqualTo(
-                "6400000000000000051D000109001400000001000000000000000000000000000000000000000000"));
+                "6400000000000000051E00010900140000000100000000000000000000000000000000000000000000"));
         }
     }
 }

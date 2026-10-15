@@ -52,12 +52,13 @@ namespace UnturnedGodot.Net
     /// side holds exactly one replica (its own). All mutation flows through Server* methods driven by the
     /// command plane -- ReadSnapshot is the only writer on a client.
     /// </summary>
-    public sealed class SkillsReplication : IReplicatedSystem
+    public sealed partial class SkillsReplication : IReplicatedSystem
     {
         public sealed class SkillsEntry
         {
             public ushort OwnerPlayerId;
             public PlayerSkills Skills = new PlayerSkills();
+            public SkillProgress Progress = new SkillProgress();
             public long LastChangedTick;
         }
 
@@ -139,14 +140,29 @@ namespace UnturnedGodot.Net
                 var row = e.Skills.skills[s];
                 for (int i = 0; i < row.Length; i++) w.WriteUInt8(row[i].level);
             }
+            WriteLearned(w, e.Progress);
         }
 
         public void ReadSnapshot(NetPakReader r, bool full)
         {
             if (!r.ReadUInt8(out byte count)) return;
             if (count == 0) return;   // owner-only: full snapshots simply re-state my entry; nothing to clear
+            if (count != 1) return;
             if (!r.ReadUInt16(out ushort owner)) return;
             if (!r.ReadUInt32(out uint experience)) return;
+            // Parse the complete owner block first: a truncated graph tail must
+            // not apply a new XP pool with the previous learned-node set.
+            var parsed = new PlayerSkills();
+            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
+            {
+                var row = parsed.skills[s];
+                for (int i = 0; i < row.Length; i++)
+                {
+                    if (!r.ReadUInt8(out byte level)) return;
+                    row[i].level = level;
+                }
+            }
+            if (!ReadLearned(r, out var learned)) return;
             if (!_byOwner.TryGetValue(owner, out var e))
             {
                 e = new SkillsEntry { OwnerPlayerId = owner };
@@ -154,14 +170,9 @@ namespace UnturnedGodot.Net
             }
             e.Skills.NetSetExperience(experience);
             for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
-            {
-                var row = e.Skills.skills[s];
-                for (int i = 0; i < row.Length; i++)
-                {
-                    if (!r.ReadUInt8(out byte level)) return;
-                    row[i].level = level;
-                }
-            }
+                for (int i = 0; i < parsed.skills[s].Length; i++)
+                    e.Skills.skills[s][i].level = parsed.skills[s][i].level;
+            e.Progress.NetSetTaken(learned);
         }
 
         public ulong StateHash()
@@ -190,6 +201,11 @@ namespace UnturnedGodot.Net
             {
                 var row = e.Skills.skills[s];
                 for (int i = 0; i < row.Length; i++) h = NetHash.MixByte(h, row[i].level);
+            }
+            foreach (string id in SortedLearned(e.Progress))
+            {
+                foreach (char c in id) h = NetHash.MixByte(h, (byte)c);
+                h = NetHash.MixByte(h, 0);
             }
             return h;
         }

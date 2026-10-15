@@ -42,6 +42,7 @@ Rules of the road:
 | bind authored map interactions on a remote client | `BridgeHost.ReadMapBindings` / `RemoteMapBindings` (`bevy/bridge/RemoteMapBindings.cs`), native `entities::map_bindings::adopt` / `ServiceManifest::adopt` | accepted server holiday and full manifest counters; minted IDs require unique actual replica kind/wire-pose matches; never register local authority |
 | send exact held/attachment intents over UDP | `EquipmentSession`, `EquipmentServices`, `RemoteWeaponView` (`core/UnturnedNet`, `bevy/bridge`) | introduced in protocol62; owner inventory and identity tokens adopt atomically; source transaction helper rechecks token/version/ownership; old gun assertions disabled only with authority adapter |
 | render accepted NPC conversation/trade/quest choices | `BridgeHost.ReadNpcView` / `NpcMetadata.Character` (`bevy/bridge/NpcView.cs`) | original core rules over accepted events and inventory/skills; preserve response/vendor row indices; never duplicate gating in Rust or key characters by nonunique numeric IDs |
+| learn an original graph node without optimistic XP spending | `SkillsReplication.CanLearn/ServerTryLearn`, `BridgeHost.ReadSkillTree` (`SkillTreeReplication.cs`, `bevy/bridge/SkillTreeView.cs`) | unchanged source prerequisites; command77 uses authenticated owner, atomic owner-only XP/legacy/learned tail; saved IDs adopt without replaying grants |
 | build native dialogue/vendor/quest panels | `ui::npc::NpcUiPlugin` (`bevy/src/ui/npc.rs`) | consume `npcView`, retain original response/vendor indices and accepted revisions; emit intents, retain scroll, and clear panels on session changes; pinning is presentation only |
 | show the original Information map and accepted quest/roster dashboard | `ui::map::MapPlugin`, `map::geometry`, shared `ui::npc::quest_panel` | source 1920m X/Z extent; cursor zoom and normalized local markers; original overview/tiles only, accepted profile/quest data; infinite mode has no MapUI |
 | render an original human NPC and its focused nameplate | `entities::npcs::NpcPlugin`, shared `character::Appearance` / `NameplateEnabled` | source catalog/key identity, posed headwear bounds, original static capsule and `npc` console; accepted dialogue remains managed; normal maps have no fabricated placements |
@@ -241,6 +242,7 @@ listed so you can *read* a packet, not so you can retune one.
 | vehicle fuel / hull health | `ClampedFloat(20,1)` / `(17,1)` | protocol69 max 524287.5 mL / 65535.5 HP; original fleet requires 300000 mL / 40000 HP |
 | vitals (food/water/stamina/infection) | `UnsignedNormalized(8)` | 0..1 |
 | time of day | `UnsignedNormalized(16)` | ~1.3 s of a PEI day |
+| learned Skills graph (protocol70) | byte count ≤64, each ID presence bit + 6-bit byte length + ASCII | IDs 1–63 lowercase letters/digits/underscore; sorted unique source-known IDs, whole owner block validated before adoption |
 | string | 1 bit null/empty + 11 bit len + UTF-8 | max 2048 **bytes**; oversized writes as EMPTY; **not thread-safe** (shared static buffer) |
 
 Three special paths inside `WriteClampedFloat` are load-bearing and regression-guarded

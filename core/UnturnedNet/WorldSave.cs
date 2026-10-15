@@ -299,6 +299,8 @@ namespace UnturnedGodot.Net
             // grows a skill does not silently shift every level along by one.
             public uint Experience { get; set; }
             public List<List<byte>> SkillLevels { get; set; } = new List<List<byte>>();
+            /// <summary>Original graph node ids. Old saves have an empty set; restored without spending XP again.</summary>
+            public List<string> LearnedSkillNodes { get; set; } = new List<string>();
 
             /// <summary>v55: the LOCKED recipes this player has learned, by recipe Key (never by skill -- see
             /// ServerBlueprints). An old save has no such property and loads as empty: nobody knew anything locked,
@@ -603,6 +605,8 @@ namespace UnturnedGodot.Net
             if (host.Skills.TryGet(pe.OwnerPlayerId, out var se) && se.Skills != null)
             {
                 p.Experience = se.Skills.experience;
+                p.LearnedSkillNodes.AddRange(se.Progress.Taken);
+                p.LearnedSkillNodes.Sort(StringComparer.Ordinal);
                 var all = se.Skills.skills;
                 if (all != null)
                     foreach (var spec in all)
@@ -730,6 +734,7 @@ namespace UnturnedGodot.Net
                             if (spec[i] != null) spec[i].level = Math.Min(row[i], spec[i].max);
                     }
                 se.LastChangedTick = tick;
+                host.Skills.ServerRestoreLearned(playerId, p.LearnedSkillNodes, tick);
             }
 
             host.BlueprintKnowledge.Restore(playerId, p.KnownBlueprints);   // PeerConnected sends the set once this returns

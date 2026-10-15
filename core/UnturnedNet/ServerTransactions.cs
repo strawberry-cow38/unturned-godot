@@ -311,6 +311,11 @@ namespace UnturnedGodot.Net
 
         public void Register(CommandRegistry commands)
         {
+            commands.Register<LearnSkillNodeCommand>(ReplicationIds.CommandLearnSkillNode, LearnSkillNodeCommand.TryRead,
+                (sender, cmd) => _skills.ServerTryLearn(sender, cmd.NodeId, _tick()),
+                validate: (sender, cmd) => _players.TryGetByOwner(sender, out _)
+                    && _skills.CanLearn(sender, cmd.NodeId));
+
             commands.Register<UpgradeSkillCommand>(ReplicationIds.CommandUpgradeSkill, UpgradeSkillCommand.TryRead,
                 (sender, cmd) => _skills.ServerTryUpgrade(sender, cmd.Speciality, cmd.Index, _tick()),
                 validate: (sender, cmd) => _skills.TryGet(sender, out _) && cmd.Speciality < PlayerSkills.SPECIALITIES);

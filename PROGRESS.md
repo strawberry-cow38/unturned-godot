@@ -2305,3 +2305,21 @@ named pockets remain reachable through the last Row5 seat and Nearby while the
 left Hands grid stays fixed. The current native40px dashboard scale is retained;
 this does not claim the wider original paperdoll/layout port. Source/code review
 passed. See `bevy/docs/VEHICLE_STORAGE_PORT.md`.
+
+### Original Skills graph authority, owner replication and persistence
+
+The original fifteen-node Skills graph now uses its unchanged CanTake/Take rules
+on the authority tick. Protocol 70 command 77 requests a bounded node ID; the live
+owner XP pool, pillar openers and all prerequisite nodes are rechecked before
+spending. XP, legacy levels and sorted learned IDs adopt atomically through the
+existing private owner block. Learned nodes save and restore without spending
+again. The source graph has no gameplay grant consumers, so descriptions remain
+descriptive and no old-skill mapping or new bonus is invented.
+
+All 701 core and 136 managed tests pass, including enhanced actual UDP save/load/
+rejoin, privacy, malformed-tail and cross-column prerequisite coverage. Removing
+only command 77 registration fails the actual UDP learning test. Godot C# builds
+with the shared source graph. The broad 127 JSONL run passes 124; only the three
+separately tracked world-round slug/condition/falloff regressions fail on this
+earlier immutable candidate. Native graph UI remains the next checkpoint. See
+`bevy/docs/SKILLS_PORT.md`.

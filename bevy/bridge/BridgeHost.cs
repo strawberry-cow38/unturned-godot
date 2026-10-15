@@ -557,7 +557,7 @@ public sealed partial class BridgeHost : IDisposable
                 wornQuality = new { hat = inv?.wornHat?.quality ?? 0, glasses = inv?.wornGlasses?.quality ?? 0, mask = inv?.wornMask?.quality ?? 0,
                     shirt = inv?.wornShirt?.quality ?? 0, vest = inv?.wornVest?.quality ?? 0, backpack = inv?.wornBackpack?.quality ?? 0, pants = inv?.wornPants?.quality ?? 0 } },
             recipes = Recipes(inv, skills?.Skills, includeRecipes),
-            skills = new { experience = skills?.Skills.experience ?? 0, groups = skills?.Skills.skills },
+            skills = new { experience = skills?.Skills.experience ?? 0, groups = skills?.Skills.skills, tree = ReadSkillTree() },
             worldItems = _client.WorldItems.All.Select(e => new { netId = e.NetIdValue, itemId = e.ItemId, amount = e.Amount,
                 quality = e.Quality, position = Array(e.Pos), settled = e.Settled,
                 stuckDirection = _warheads?.PoseOf(e.NetIdValue)?.Direction, stuckNormal = _warheads?.PoseOf(e.NetIdValue)?.Normal,

@@ -245,6 +245,7 @@ namespace UnturnedGodot.Net
         public const byte CommandWeaponIntent = 72;
         public const byte CommandAttachmentOptions = 73;
         public const byte CommandVehicleMaintenance = 76; // v69: indexed source mechanics repairs and manual horn
+        public const byte CommandLearnSkillNode = 77; // v70: owner-only original skill graph purchase
         public const byte CommandVehicleLighting = 75; // v68: source light switches and lamp repair intents
         public const byte CommandMountedInput = 74; // v64: accepted operator aim/trigger intent
 
