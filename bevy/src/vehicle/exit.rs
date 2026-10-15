@@ -66,6 +66,7 @@ pub fn doors(
 }
 pub fn probe(
     context: &RapierContext,
+    parents: &Query<&ChildOf>,
     vehicle: Entity,
     player: Entity,
     pose: &Transform,
@@ -73,8 +74,22 @@ pub fn probe(
     doors: &[Vec3],
 ) -> (bool, Vec3) {
     let from = pose.transform_point(seat) + Vec3::Y * 0.9;
-    let exclude = |e, _: &bevy_rapier3d::rapier::geometry::Collider| e != vehicle && e != player;
-    let filter = QueryFilter::default().predicate(&exclude);
+    // VehicleExit.AddOwnBodyRids includes every descendant body, including
+    // separately articulated hitboxes. Excluding only the root collider leaves
+    // the source HitMesh / GlassHit children trapping their own seated rider.
+    let exclude = |e, _: &bevy_rapier3d::rapier::geometry::Collider| {
+        e != vehicle && e != player && !parents.iter_ancestors(e).any(|p| p == vehicle)
+    };
+    let surfaces = Group::GROUP_1 | Group::GROUP_4;
+    let path = QueryFilter::default()
+        .groups(CollisionGroups::new(Group::GROUP_2, surfaces))
+        .predicate(&exclude);
+    let room = QueryFilter::default()
+        .groups(CollisionGroups::new(
+            Group::GROUP_2,
+            surfaces | Group::GROUP_15,
+        ))
+        .predicate(&exclude);
     let mut first = pose.transform_point(doors[0]);
     for (i, local) in doors.iter().enumerate() {
         let at = pose.transform_point(*local);
@@ -82,7 +97,7 @@ pub fn probe(
         let length = delta.length();
         if length > 1e-5
             && context
-                .cast_ray(from, delta / length, length, true, filter)
+                .cast_ray(from, delta / length, length, true, path)
                 .is_some()
         {
             continue;
@@ -93,7 +108,11 @@ pub fn probe(
             Vec3::NEG_Y,
             2.2,
             true,
-            QueryFilter::default().exclude_collider(player),
+            // Deliberately retain our own vehicle here: its deck or rolled
+            // flank supports the exit. Other players never supply the floor.
+            QueryFilter::default()
+                .groups(CollisionGroups::new(Group::GROUP_2, surfaces))
+                .exclude_collider(player),
         ) {
             stand.y = at.y + 1. - hit + 0.05;
         }
@@ -102,7 +121,7 @@ pub fn probe(
         }
         let capsule = Collider::capsule(Vec3::Y * (0.25 + 0.35), Vec3::Y * (2. - 0.35), 0.35);
         let mut blocked = false;
-        context.intersect_shape(stand, Quat::IDENTITY, &capsule, filter, |_, _| {
+        context.intersect_shape(stand, Quat::IDENTITY, &capsule, room, |_, _| {
             blocked = true;
             false
         });

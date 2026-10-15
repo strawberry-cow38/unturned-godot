@@ -38,6 +38,8 @@ pub(crate) fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
                 engine_health: s.health * 10. * 0.4,
                 engine_drowned: false,
                 popped_tire_mask: 0,
+                glass_mask: 0,
+                broken_glass_mask: 0,
                 on_fire: false,
                 burn_seconds: 0.,
                 wreck_salvageable: false,
@@ -453,11 +455,12 @@ fn native_own_door_probe_rejects_wall_and_standing_person() {
         .id();
     ticks(&mut app, 3);
     let probe = |app: &mut App| {
-        let mut state = SystemState::<ReadRapierContext>::new(app.world_mut());
-        let read = state.get(app.world()).unwrap();
+        let mut state = SystemState::<(ReadRapierContext, Query<&ChildOf>)>::new(app.world_mut());
+        let (read, parents) = state.get(app.world()).unwrap();
         let ctx = read.single().unwrap();
         exit::probe(
             &ctx,
+            &parents,
             vehicle,
             player,
             &Transform::default(),

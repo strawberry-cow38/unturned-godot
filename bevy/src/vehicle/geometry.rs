@@ -9,13 +9,20 @@ struct Stamp {
     articulation: [f32; 4],
     damage: u16,
     mounts: Vec<f32>,
+    glass: Vec<f32>,
 }
 impl Stamp {
-    fn of(body: &VehicleBody, pose: &Transform, mounts: Option<&turrets::Mounts>) -> Self {
+    fn of(
+        body: &VehicleBody,
+        pose: &Transform,
+        mounts: Option<&turrets::Mounts>,
+        glazing: Option<&glazing::Glazing>,
+    ) -> Self {
         Self {
             position: pose.translation,
             rotation: pose.rotation,
             mounts: mounts.map_or_else(Vec::new, turrets::Mounts::signature),
+            glass: glazing.map_or_else(Vec::new, |g| g.signature.clone()),
             damage: (body.popped_tire_mask as u16) | ((body.flags as u16) << 8),
             articulation: [
                 body.flight.main_phase,
@@ -28,6 +35,12 @@ impl Stamp {
     fn changed(&self, other: &Self) -> bool {
         self.damage != other.damage
             || self.mounts != other.mounts
+            || self.glass.len() != other.glass.len()
+            || self
+                .glass
+                .iter()
+                .zip(&other.glass)
+                .any(|(a, b)| (a - b).abs() > 0.00001)
             || self.position.distance_squared(other.position) > 0.000001
             || self.rotation.angle_between(other.rotation).abs() > 0.001
             || self
@@ -58,7 +71,13 @@ pub fn upload(
     world: Res<WorldState>,
     config: Res<WorldConfig>,
     geometry: Res<WorldGeometry>,
-    bodies: Query<(Entity, &VehicleBody, &Transform, Option<&turrets::Mounts>)>,
+    bodies: Query<(
+        Entity,
+        &VehicleBody,
+        &Transform,
+        Option<&turrets::Mounts>,
+        Option<&glazing::Glazing>,
+    )>,
     hierarchy: Query<(
         Option<&ChildOf>,
         Option<&Visibility>,
@@ -72,6 +91,7 @@ pub fn upload(
             &Visibility,
             Option<&render::WheelVisual>,
             Option<&tires::TireVisual>,
+            Option<&glazing::Pane>,
         ),
         Without<crate::particles::Emitter>,
     >,
@@ -99,9 +119,9 @@ pub fn upload(
     let mut live = HashSet::new();
     let roots: HashMap<_, _> = bodies
         .iter()
-        .map(|(entity, body, pose, mounts)| {
+        .map(|(entity, body, pose, mounts, glazing)| {
             live.insert(body.net_id);
-            let stamp = Stamp::of(body, pose, mounts);
+            let stamp = Stamp::of(body, pose, mounts, glazing);
             if uploaded
                 .previous
                 .get(&body.net_id)
@@ -129,8 +149,13 @@ pub fn upload(
             uploaded.previous.remove(&id);
         }
     }
-    for (entity, mesh, pose, visibility, wheel, tire) in &parts {
+    for (entity, mesh, pose, visibility, wheel, tire, pane) in &parts {
         if *visibility == Visibility::Hidden {
+            continue;
+        }
+        // Source fallback canopy is visual-only: no standalone ray shape.
+        // Its registered bounds may still classify a nearby real hull contact.
+        if pane.is_some_and(|p| !p.has_triangles()) {
             continue;
         }
         // Mirror Vehicle.Owning's bounded ancestry lookup; a child pivot is still one vehicle.
@@ -165,10 +190,12 @@ pub fn upload(
         };
         // Rotor bullets resolve against the tiny source hub regions, not the entire blade.
         // Aircraft/tracked wheels likewise have no separately shootable tire in the source.
-        let part = if let Some(tire) = tire {
+        let part = if let Some(pane) = pane {
+            format!("glass:{}", pane.index)
+        } else if let Some(tire) = tire {
             format!("tire:{}", tire.index)
         } else if let Some(wheel) = wheel.filter(|wheel| {
-            bodies.get(wheel.body).is_ok_and(|(_, body, _, _)| {
+            bodies.get(wheel.body).is_ok_and(|(_, body, _, _, _)| {
                 let spec = &data::definition(body.type_id).unwrap().spec;
                 !spec.plane && !spec.tracked
             })

@@ -2113,6 +2113,27 @@ also passed; root will capture actual Inventory/Crafting/Information on the next
 application build. Source MenuSwoop transitions remain the next separate slice.
 See `bevy/docs/MODAL_BACKDROP_PORT.md` and `bevy-dashboard-backdrop-*` artifacts.
 
+### Bevy original glazing geometry and accepted break/repair round trip
+
+Native panes now use original ordered files and canonical labels, with source
+fallback canopy/tint and actual split-rubber availability. Protocol69 receives
+current local bounds/transforms; accepted masks control the same visible pane and
+player collider. Normal shots emit original glass shards and sound without
+replaying late snapshots. The companion source body mesh makes broken panes real
+apertures while preserving the driving hull's terrain/vehicle contacts.
+
+Ten focused tests and the actual UDP Vulkan journey pass; all four intact/burst/
+broken/repaired images were opened and independently reviewed by root. One normal
+Eaglefire round changes ammo30→29 and remote mask0→1 without changing hull6000;
+remote free repair restores the original pane and collision. Real police exit
+regressions exposed/fixed own-child obstruction, including living-player refusal
+and intentional own-deck ground support. Aircraft sensing likewise ignores its own
+player-only mesh. Original RainGlass shader and bus hinge motion remain next;
+a rebuilt fullgame PEI journey also confirms F-entry/exit outside the police left
+door (frames905/938). Parked slope contact damage observed during that journey
+remains a separate investigation.
+See `bevy/docs/VEHICLE_GLAZING_PORT.md` and `bevy-vehicle-glass-*` artifacts.
+
 
 ### Native source player clearance and mounted aim masks (2026-10-15)
 

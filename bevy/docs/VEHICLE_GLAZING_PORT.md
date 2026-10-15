@@ -1,0 +1,31 @@
+# Original vehicle glazing — native geometry and accepted lifecycle
+
+This checkpoint ports `Vehicle.BuildGlassPanes`, `AddPaneCollider`, `BreakGlass`, `RepairGlass`, and the companion `HitMesh` collision branch. Protocol 69 owns pane damage and repair; the renderer never assigns those facts. The original RainGlass shader and bus hinge motion remain the next slice.
+
+## Geometry and authority boundary
+
+`vehicle/glazing.rs` materializes existing pane files in the source label order. Canonical bits are stable despite missing files: windshield/rear, paired front/rear/mid1–4, and roof/front/rear occupy 0–16. Only when none of those files exists does the original whole canopy become bit17. That fallback remains display-only: no native player collider or uploaded pane triangles. Its registered box can classify an actual hull contact, as in the source.
+
+The source fallback tint is the original golden `(0.78, 0.62, 0.30, 0.40)`, with metallic0.35, roughness0.1, and no cast shadow. `UG_GLASSDEBUG=1` uses the source colors in materialized order. Current normal materials are plain translucent tint; refraction, rain beads/runners and the original dominant-face shader mapping are still pending.
+
+Host-only `worldVehicleGlazing` sends the transformed hull-local AABB center, raw mesh-local size, rotation and scale. Per-pane inverse contact mapping, original0.28m tolerance/first tie and damage live in the managed authority. Native `TireVisual` entries supply the actual repairable tire mask; wheel count cannot invent rubber that failed the source radial split. Content parsing and rubber/pane creation are synchronous within one render build, before the first registration.
+
+Normal panes upload `glass:<canonicalIndex>` triangles. The authority excludes accepted broken tags immediately, before a new native upload. Native masks then hide the same pane and disable its player collider. Transform and damage signatures invalidate stationary dynamic geometry as well as moving bodies; re-registration preserves accepted break state. The original shader cast falls back to pale blue glass chips: six flat shards, white35% blend, alpha0.5, original timing/velocity and audio. Only `vehicleGlassBroken` facts emit them; late damaged snapshots and repair do not replay the burst.
+
+## Player collision and dependent queries
+
+The original body triangle collider replaces the convex chassis only for the source body-mesh branch; ship bands/boxes retain their fallback collision. `Vehicle.cs7407` explicitly uses `(v._bodyMesh?.Mesh ?? bodyMesh)`, so the collision uses the rendered shell after source lens splitting. There is no unsplit-body substitution. Native shapes are zero-mass children attached to the existing rigid body, with player-only contacts, avoiding a second dynamic body or self-contact.
+
+Accepted glass masks also supply `CabinOpenness`: broken existing panes / all existing panes, zero when no panes exist. The original cabin predicate is unchanged.
+
+Two integration regressions guard the new collision surfaces. Aircraft ground sensing uses the existing wheel query groups so its own player-only mesh cannot ground an airborne plane. Vehicle exit path/standing probes recursively exclude every own descendant collision body, matching `VehicleExit.AddOwnBodyRids`; the downward ray deliberately retains the own ship deck or rolled hull as support. Remote players are excluded from path/ground rays but still block the standing capsule.
+
+## Verification
+
+Focused native checks cover original sedan/police/fighter assets, tilted pane collision, a broken windshield becoming a real opening, repair on the same entity, fallback canopy exclusion, source normal ties, cabin fraction, actual tire availability, accepted event deduplication, and aircraft/exit self-collision negative controls. The police exit test first proves that the previous root-only filter hits the original body/pane child, then verifies a clear exit and refusal when another living capsule occupies the doorway.
+
+The actual UDP integration uses immutable `vehicle-maintenance-v69-final`: production native metadata/triangle upload, a normal host Eaglefire shot, remote accepted mask, native pane hiding/collision removal, and a free remote `RepairGlass` intent. It verifies one round consumed, unchanged hull health, immediate authoritative triangle filtering, one six-chip emitter, complete initial six-pane/four-tire registration, and repair restoring the original pane collider. No trusted direct damage or renderer-owned mask change is used.
+
+All ten focused native tests pass, plus the existing door/wall/person exit test. The ignored Vulkan fixture also passed and all four images were opened and independently reviewed by root, world and gameplay: `bevy-vehicle-glass-{intact,break-burst,broken,repaired}.png` and matching JSON. The burst frame shows five already-born flat chips; the original six-particle emitter reaches36 mesh vertices later. Ammo changes30→29, hull remains6000 and remote broken mask changes0→1→0. The restored pane frame matches the intact frame.
+
+The pane fixture is stationary and does not validate driving, bus articulation or rain-glass shading. A separate fullgame PEI journey on the rebuilt application verified normal F-key entry into police driver seat0 and F-key exit outside the left door: `bevy-access-driver-entered.png`/JSON (frame905) and `bevy-access-driver-exited.png`/JSON (frame938), opened by root and interfaces. Contact damage while the parked car shifted on the slope was observed in that journey and remains a separate investigation; the exit result does not establish collision-damage parity.

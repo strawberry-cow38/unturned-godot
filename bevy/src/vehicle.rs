@@ -10,6 +10,7 @@ mod effects;
 mod exit;
 mod flight;
 mod geometry;
+mod glazing;
 mod hearing;
 pub(crate) mod lighting;
 mod npc;
@@ -85,6 +86,8 @@ pub struct VehicleBody {
     pub engine_health: f32,
     pub engine_drowned: bool,
     pub popped_tire_mask: u8,
+    pub glass_mask: u32,
+    pub broken_glass_mask: u32,
     pub on_fire: bool,
     pub burn_seconds: f32,
     pub wreck_salvageable: bool,
@@ -112,8 +115,7 @@ impl VehicleBody {
         })
     }
 
-    /// Original closed passenger cell; intact native panes have zero openness.
-    /// Glass fracture adoption will supply broken/total here when ported.
+    /// Original closed passenger cell; accepted broken panes open the cabin.
     pub fn cabin_openness(&self) -> Option<f32> {
         let definition = data::definition(self.type_id)?;
         let spec = &definition.spec;
@@ -121,7 +123,14 @@ impl VehicleBody {
             || spec.tracked
             || spec.plane
             || (spec.heli && spec.frame == "Pod"))
-            .then_some(0.)
+            .then(|| {
+                let total = self.glass_mask.count_ones();
+                if total == 0 {
+                    0.
+                } else {
+                    (self.broken_glass_mask & self.glass_mask).count_ones() as f32 / total as f32
+                }
+            })
     }
     /// The original interior wheel pivot/axis and its 1:1 road-wheel angle, in radians.
     /// Used by both the rendered wheel and the source seated hand anchors.
@@ -176,6 +185,7 @@ impl Plugin for VehiclePlugin {
             .add_plugins(npc::NpcFlightPlugin)
             .add_plugins(turrets::crew::CrewPlugin)
             .add_plugins(lighting::LightingPlugin)
+            .add_plugins(glazing::GlazingPlugin)
             .init_resource::<turrets::Operator>()
             .init_resource::<Vehicles>()
             .init_resource::<collision::Hulls>()
@@ -553,6 +563,8 @@ fn sync_vehicles(
                     engine_health: row.engine_health.unwrap_or(spec.health * 10. * 0.4),
                     engine_drowned: row.engine_drowned,
                     popped_tire_mask: row.popped_tire_mask,
+                    glass_mask: 0,
+                    broken_glass_mask: 0,
                     on_fire: row.on_fire,
                     burn_seconds: row.burn_seconds,
                     wreck_salvageable: row.wreck_salvageable,
@@ -696,7 +708,7 @@ fn read_controls(
     camera: Query<&Transform, With<PlayerCamera>>,
     mut query: Query<(Entity, &mut VehicleBody, &Transform)>,
     mut focus: ResMut<crate::entities::InteractionFocus>,
-    context: ReadRapierContext,
+    context: (ReadRapierContext, Query<&ChildOf>),
     players: Query<Entity, With<crate::player::PlayerBody>>,
     cache: Res<ContentCache>,
     config: Res<WorldConfig>,
@@ -717,13 +729,14 @@ fn read_controls(
     }
     if let Some(seat) = occupancy.seat {
         if edge(GameAction::Interact) {
-            if let (Ok((_, body, pose)), Ok(context), Ok(player)) =
-                (query.get(seat.vehicle), context.single(), players.single())
+            if let (Ok((_, body, pose)), Ok(physics), Ok(player)) =
+                (query.get(seat.vehicle), context.0.single(), players.single())
             {
                 let d = data::definition(body.type_id).unwrap();
                 let doors = exit::doors(d, seat.seat as usize, pose, &cache, &config.content_root);
                 let (clear, position) = exit::probe(
-                    &context,
+                    &physics,
+                    &context.1,
                     seat.vehicle,
                     player,
                     pose,
@@ -1023,7 +1036,10 @@ fn step_bodies(
                         Vec3::NEG_Y,
                         spec.ground_clearance() + 0.45,
                         true,
-                        QueryFilter::default().exclude_collider(entity),
+                        QueryFilter {
+                            groups: wheels.filter_groups,
+                            ..QueryFilter::default().exclude_collider(entity)
+                        },
                     )
                     .is_some();
                 if spec.heli {

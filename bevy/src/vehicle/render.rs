@@ -17,37 +17,6 @@ pub struct WheelVisual {
 }
 #[derive(Component)]
 pub struct SteeringWheel(pub Entity);
-fn glass_panes(name: &str, root: &Path) -> Vec<String> {
-    let stem = name.strip_suffix(".txt").unwrap_or(name);
-    let mut panes: Vec<_> = [
-        "windshield",
-        "rear",
-        "l_front",
-        "r_front",
-        "l_rear",
-        "r_rear",
-        "l_mid1",
-        "r_mid1",
-        "l_mid2",
-        "r_mid2",
-        "l_mid3",
-        "r_mid3",
-        "l_mid4",
-        "r_mid4",
-        "roof",
-        "roof_front",
-        "roof_rear",
-    ]
-    .into_iter()
-    .map(|label| format!("{stem}_{label}.txt"))
-    .filter(|p| root.join(p).is_file())
-    .collect();
-    if panes.is_empty() && root.join(name).is_file() {
-        panes.push(name.to_owned());
-    }
-    panes
-}
-
 pub fn build(
     commands: &mut Commands,
     entity: Entity,
@@ -210,31 +179,7 @@ pub fn build(
             );
         }
     }
-    if let Some(glass) = &s.glass_mesh {
-        let c = s.glass_tint.unwrap_or([0.2, 0.28, 0.3, 0.35]);
-        let m = materials.add(StandardMaterial {
-            base_color: Color::srgba(c[0], c[1], c[2], c[3]),
-            alpha_mode: AlphaMode::Blend,
-            perceptual_roughness: 0.1,
-            metallic: 0.35,
-            cull_mode: None,
-            ..default()
-        });
-        for pane in glass_panes(glass, root) {
-            if let Some(child) = spawn_mesh(
-                commands,
-                entity,
-                &pane,
-                root,
-                cache,
-                meshes,
-                m.clone(),
-                Transform::default(),
-            ) {
-                commands.entity(child).insert(bevy::light::NotShadowCaster);
-            }
-        }
-    }
+    super::glazing::build(commands, entity, d, root, cache, meshes, materials);
     let wheel_mat = cache.material(s.wheel_tex.as_deref(), false, assets, materials);
     if let Some(name) = &s.wheel {
         let split = if !s.tracked && !s.plane {
@@ -346,21 +291,6 @@ pub fn build(
     ));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn original_per_pane_car_files_and_single_jet_canopy_are_resolved() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/content");
-        let sedan = glass_panes("sedan_glass.txt", &root);
-        assert_eq!(sedan.len(), 6);
-        assert!(sedan.contains(&"sedan_glass_windshield.txt".into()));
-        assert_eq!(
-            glass_panes("fighterjet_canopy.txt", &root),
-            vec!["fighterjet_canopy.txt"]
-        );
-    }
-}
 pub(super) fn spawn_mesh(
     commands: &mut Commands,
     parent: Entity,
