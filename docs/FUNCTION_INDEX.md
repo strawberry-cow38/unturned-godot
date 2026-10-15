@@ -424,3 +424,9 @@ Companion documents:
 | Render the native original Crafting dashboard or retain its text editing state | `ui::crafting::CraftingPlugin`, `crafting::render`, `crafting::search` | read-only `craftingView`; accepted queue only, simulation-time progress, original font/icons, retained TextInput/IME/history through refresh; commands remain intents |
 | Read source inventory tile/food/fluid/money facts without seeding replicas | `InventoryTiles.Read` (`bevy/bridge/InventoryTiles.cs`), `inventoryView.tiles` | owns a temporary clone for source ActiveAutoDrink; original denomination and worn-slot order; raw accepted values, no UI mutation |
 | Complete one exact owned magazine round with an explicit result | `MagazineTransferCommand`81, `ServerTransactions.OnMagazineTransfer`/`ApplyMagazineTransfer`, `MagazineTransferEvent`60 | protocol71; owned origin/token+alive; original MagRules mutation; owner-only applied/refused result; request IDs monotonic through UI reopen; legacy39 unchanged |
+
+### Bevy accepted deployable bodies
+
+| Need | Reuse | Notes |
+| --- | --- | --- |
+| Materialize an ordinary accepted deployable with source seating and collision | `deployables::DeployablePlugin`, `deployables::geometry::{Bounds,seat,authority}` | original rotated mesh AABB, yaw/stand-up and Ceiling/Wall/Container seating; fixed native box and same host geometry keyed by accepted ID; session/revision retirement, no remote authority upload; specialized fluid/storage/fixture/turbine and utility flows remain separate |

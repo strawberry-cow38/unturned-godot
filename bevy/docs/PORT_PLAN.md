@@ -103,3 +103,7 @@ vehicle specializations, dynamic deployables and utility networks, NPC/animal
 presentation, multiplayer connection/replica flows, the editor and authoring UI.
 Procedural infinite terrain and the separate finite island/building generators
 are distinct systems; porting the former does not complete the latter.
+
+Ordinary accepted deployable body rendering is now integrated; source seating,
+bounds and host collision are tracked in [DEPLOYABLES_PORT.md](DEPLOYABLES_PORT.md).
+The specialized bodies, placement tools and utility networks remain unfinished.

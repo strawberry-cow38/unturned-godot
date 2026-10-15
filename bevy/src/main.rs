@@ -4,6 +4,7 @@ mod bullets;
 mod character;
 mod cli;
 mod content;
+mod deployables;
 mod entities;
 mod environment;
 mod hdr;
@@ -131,6 +132,7 @@ fn main() -> Result<()> {
             particles::ParticlePlugin,
             projectiles::ProjectilePlugin,
             entities::EntityPlugin,
+            deployables::DeployablePlugin,
             environment::EnvironmentPlugin,
             world::WorldPlugin,
             rig::RigPlugin,
