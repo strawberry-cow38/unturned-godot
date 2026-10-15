@@ -71,6 +71,8 @@ public sealed partial class BridgeHost : IDisposable
             case "serverProbeStart": return _serverProbe.Start(Text(r, "host"), Int(r, "port", 47872));
             case "serverProbePoll": return _serverProbe.Poll(r.GetProperty("token").GetInt64());
             case "serverProbeCancel": return _serverProbe.Cancel(r.GetProperty("token").GetInt64());
+            case "localProfile": return ReadLocalProfile(r);
+            case "setLocalFace": return SetLocalFace(r);
             case "profileRules": return ReadProfileRules(r);
             case "profileAvatar": RequireSession(); return ReadProfileAvatar(r);
             case "reconnect": return ReconnectRemote();
@@ -78,7 +80,7 @@ public sealed partial class BridgeHost : IDisposable
                 Dispose(); _geometry.Clear(); _serviceSpecs.Clear(); _originX = _originZ = 0; _originEpoch = 0;
                 ConfigureNetwork(r);
                 _catalog.Load(Text(r, "contentRoot", Path.GetFullPath("game/content")));
-                _name = Text(r, "name", "Survivor"); _map = Text(r, "mapId", "bevy");
+                ConfigureLocalProfile(r); _map = Text(r, "mapId", "bevy");
                 _seed = Int(r, "seed", 1337);
                 _allowCheats = Bool(r, "allowCheats", _listenPort == 0 && Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1");
                 if (r.TryGetProperty("origin", out var initialOrigin))
@@ -293,7 +295,7 @@ public sealed partial class BridgeHost : IDisposable
 
     void StartSession(WorldSave save)
     {
-        _scopeSteady.Reset(); _wantsSteady = false;
+        _scopeSteady.Reset(); _wantsSteady = false; _localProfileSent = false;
         _worldChanged = false; _geometry.ClearDynamic();
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         if (IsRemote) { StartRemote(); return; }
@@ -376,6 +378,7 @@ public sealed partial class BridgeHost : IDisposable
     {
         if (IsRemote) { TickRemote(); return; }
         StepSteady();
+        PublishLocalProfile();
         // Automatic death timer and explicit respawn use the same source target.
         // Make that target representable before core emits its bounded recovery packet.
         if (_server.CombatState.TryGet(_client.PlayerId, out var life) && !life.Alive

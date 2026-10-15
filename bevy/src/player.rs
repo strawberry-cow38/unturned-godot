@@ -22,6 +22,8 @@ pub(crate) mod lean;
 mod network_tests;
 #[cfg(test)]
 mod seated_tests;
+#[cfg(test)]
+mod menu_tests;
 
 pub struct PlayerPlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -295,6 +297,7 @@ fn initialize_session(
     origin: Res<crate::world::origin::WorldOrigin>,
     bridge: Res<CoreBridge>,
     options: Res<LaunchOptions>,
+    profile: Option<Res<crate::profile::LocalProfile>>,
     world: Res<WorldState>,
     mut session: ResMut<Session>,
     mut model: ResMut<UiModel>,
@@ -315,6 +318,7 @@ fn initialize_session(
     model.map_name = options.0.map.clone();
     ui.map = options.0.map.clone();
     let mut request = json!({"contentRoot":options.0.content,"name":options.0.player_name,"mapId":options.0.map,"spawn":world.spawn.to_array(),"origin":[origin.offset.x,origin.offset.y],"yaw":world.spawn_yaw,"seed":options.0.seed});
+    request["useLocalProfile"] = json!(profile.is_some_and(|profile| profile.ready));
     options.0.network.configure(&mut request);
     match bridge.request("init", request) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
@@ -1381,9 +1385,7 @@ fn camera_follow(
             );
             continue;
         }
-        if ui.screen != Screen::MainMenu
-            && !(ui.screen == Screen::Settings && ui.settings_return == Screen::MainMenu)
-        {
+        if !ui.menu_camera() {
             if !perspective.first_person {
                 if let Some(pose) = occupancy
                     .as_ref()
@@ -1444,7 +1446,7 @@ fn camera_follow(
 
 pub(crate) fn simulation_paused(ui: &UiState) -> bool {
     !ui.networked
-        && (matches!(ui.screen, Screen::MainMenu | Screen::Paused)
+        && (ui.menu_camera() || ui.screen == Screen::Paused
             || (ui.screen == Screen::Settings
                 && matches!(ui.settings_return, Screen::MainMenu | Screen::Paused)))
 }

@@ -1349,3 +1349,26 @@ journey remain separate work. See bevy/docs/NAMEPLATE_PORT.md.
 Protocol 62 appends owner equipment system 19, exact selection/weapon/options commands 71–73 and owner-only options/fact events 52–53. Inventory tokens travel atomically with the original owned grid; same-ID replacement, moved/swapped twins, another owner's token and stale gun selection cannot authorize an action. The existing source attachment, chamber, magazine, shell and timing helper performs every transaction. The optional host authority gate rejects legacy gun-state/wear/fit/swap/unload assertions while bare core/source hosts retain their previous paths. Remote JSON options are asynchronous and refresh on inventory, selection and accepted weapon-clock changes; no native inventory/ammo mutation.
 
 Validation: 651 core networking tests, 41 managed OS-UDP/status/profile/equipment tests and 121 Python authority journeys pass. New negative controls reproduce both selector ordering (safety accepted before a same-tick shot still spent a round) and stale menu busy state after an unchanged-inventory animation; source command-dispatch timing and equipment-state cache invalidation fix them. Raw unload rejection is checked beside canonical magazine removal/chamber conservation. Final full Python run also exposed an older stochastic fixture: a valid rocket crossed y 2.1577 at z −29.991 above its wall's top 2. Only that capture/falloff fixture is taller now; gameplay and source spread are unchanged. Root reviewed the wire, ownership, unload and selector paths. Frozen equipment-v62-final41 excludes concurrent profile UI hooks; its last remote-only cache change is covered by the 41-test suite (the full 121 ran on final40). See `bevy/docs/EQUIPMENT_PROTOCOL.md`; actual native remote-menu interaction/render validation is the next checkpoint, with remaining shot/impact/repair metadata still explicit protocol gaps.
+
+
+### Bevy — original profile configuration and Appearance
+
+Ported PlayerProfile's sanitized UG_USERNAME, bounded/validated UG_PROFILE_PNG,
+UG_FACE precedence and persisted free-face/selection rules into a renderer-free
+local-preference adapter. Native profile.cfg imports the existing Godot face
+once and preserves unrelated keys; UG_BEVY_PROFILE overrides its path. Both
+integrated and UDP clients publish the configured picture/face via the original
+accepted SetProfile command, including reconnects. Legacy non-opt-in harness
+profiles remain face0/no-picture. The native Appearance menu uses all32 original
+face PNGs and source button geometry/tint; it never edits accepted character data.
+
+Validation:8 focused profile tests,49 all managed tests,121 JSONL tests pass on
+immutable profile-config-49. Native actual-button/config persistence and original
+32-button grid tests pass; combined383 native tests passed before the final
+menu-camera fix, whose actual camera-system regression then passed separately.
+Real native menu mouse selection1→30, accepted server face/name/avatar hash,
+third-person heart-eye body, persisted restart and fixed town-menu background
+were rendered/opened and peer-reviewed. The visual journey caught a pregame
+camera jump, fixed for Appearance/browser/direct/host subpanels with the same
+regression. Both processes quit cleanly. Evidence and remaining launcher/menu-
+diorama scope are recorded in bevy/docs/PROFILE_PORT.md.

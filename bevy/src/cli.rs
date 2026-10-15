@@ -30,7 +30,7 @@ impl Default for Options {
             map: "PEI".into(),
             seed: 1337,
             network: crate::network::Target::Local,
-            player_name: "Survivor".into(),
+            player_name: std::env::var("UG_USERNAME").unwrap_or_else(|_| "Survivor".into()),
             network_ready: false,
             vehicle: None,
             play: false,

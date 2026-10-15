@@ -12,6 +12,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 
 mod attachments;
+mod appearance;
 mod clothing;
 mod crosshair;
 mod network_menu;
@@ -217,6 +218,7 @@ pub enum Screen {
     DirectConnect,
     Servers,
     Host,
+    Appearance,
     Playing,
     Paused,
     Dead,
@@ -266,6 +268,20 @@ impl Default for UiState {
 }
 
 impl UiState {
+    /// Pregame subpanels retain the source menu camera instead of jumping to an
+    /// uninitialized player body. Settings inherits the screen it came from.
+    pub fn menu_camera(&self) -> bool {
+        let screen = if self.screen == Screen::Settings {
+            self.settings_return
+        } else {
+            self.screen
+        };
+        matches!(
+            screen,
+            Screen::MainMenu | Screen::Appearance | Screen::DirectConnect | Screen::Servers | Screen::Host
+        )
+    }
+
     pub fn captures_input(&self) -> bool {
         self.screen != Screen::Playing
     }
@@ -274,6 +290,7 @@ impl UiState {
         self.screen = match self.screen {
             Screen::Settings => self.settings_return,
             Screen::MainMenu => Screen::MainMenu,
+            Screen::Appearance => Screen::MainMenu,
             Screen::Connecting => Screen::Connecting,
             Screen::DirectConnect | Screen::Servers | Screen::Host => {
                 self.network_menu.cancel();
@@ -341,6 +358,7 @@ pub struct GameUiPlugin;
 impl Plugin for GameUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiState>()
+            .init_resource::<crate::profile::LocalProfile>()
             .init_resource::<UiModel>()
             .init_resource::<Settings>()
             .add_message::<UiIntent>()
@@ -872,6 +890,7 @@ fn rebuild_overlay(
     catalog: Res<crate::entities::ItemCatalog>,
     settings: Res<Settings>,
     assets: Res<AssetServer>,
+    profile: Res<crate::profile::LocalProfile>,
     mut cache: Local<String>,
 ) {
     // Do not destroy and rebuild the widgets for every 50 Hz player snapshot.
@@ -880,6 +899,7 @@ fn rebuild_overlay(
         Screen::Crafting => format!("{:?}", model.recipes),
         Screen::Console | Screen::Chat => format!("{:?}", model.notices),
         Screen::MainMenu | Screen::Connecting => model.status.clone(),
+        Screen::Appearance => format!("{profile:?}"),
         _ => String::new(),
     };
     let signature = format!("{state:?}|{settings:?}|{detail}");
@@ -939,6 +959,7 @@ fn rebuild_overlay(
             ))
             .with_children(|panel| match state.screen {
                 Screen::MainMenu => menu_panel(panel, &state, &model, &assets),
+                Screen::Appearance => appearance::panel(panel, &profile, &assets),
                 Screen::DirectConnect | Screen::Servers | Screen::Host => {
                     network_menu::panel(panel, &state)
                 }
@@ -998,6 +1019,7 @@ fn menu_panel(
     panel.spawn(text(&model.status, 13.0, DIM));
     panel.spawn(row()).with_children(|p| {
         button(p, "Play", UiButton::Play);
+        button(p, "Appearance", UiButton::Open(Screen::Appearance));
         button(p, "Settings", UiButton::Open(Screen::Settings));
         button(p, "Quit", UiButton::Quit);
     });

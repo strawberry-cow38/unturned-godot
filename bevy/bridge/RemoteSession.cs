@@ -44,7 +44,7 @@ public sealed partial class BridgeHost
     {
         if (!IsRemote || operation is "init" or "disconnect" or "shutdown" or "simulate" or "tick" or "snapshot"
             or "catalog" or "npcCatalog" or "diagnostics" or "action" or "terrain" or "reconnect"
-            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel" or "mapBindings" or "profileAvatar" or "profileRules" or "attachmentOptions") return;
+            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel" or "mapBindings" or "profileAvatar" or "profileRules" or "localProfile" or "setLocalFace" or "attachmentOptions") return;
         throw new InvalidOperationException($"{operation} requires world authority; this session is a remote client");
     }
 
@@ -80,7 +80,7 @@ public sealed partial class BridgeHost
         if (_client.State != NetSessionState.Connected) return;
         if (!_remoteProfileSent)
         {
-            _client.SendSetProfile(_name, null, 0);
+            SendConfiguredProfile();
             _remoteProfileSent = true;
         }
         if (!_remoteSpawnAdopted)

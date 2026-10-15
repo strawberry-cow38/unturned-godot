@@ -676,3 +676,24 @@ original cache cannot be queried as current players. No PNG rides normal state.
 byte cap, and face count. Pre-session `profileRules {name}` returns those `rules`
 plus the original `ProfileRules.SanitizeName` output and `changed`; it initializes
 no session. Server and receiving-client validation remain the original code.
+
+
+### Local profile preferences
+
+Before starting a native session, `localProfile {path,legacyPath?,name?}` loads
+original `PlayerProfile.cs` preferences and returns `name`, `face`, `faceCount`,
+`freeFaceCount`, `hasAvatar`, and optional `avatarNotice`/`saveNotice`. The original
+`UG_USERNAME`, `UG_PROFILE_PNG`, `UG_FACE` rules, bounded image validator and
+saved-face precedence apply. `legacyPath` is imported only if `path` does not
+exist. No player, network authority or PNG snapshot payload is created.
+
+`setLocalFace {face}` persists the local preference and returns `{queued,profile}`.
+If a session using these preferences is connected it sends the original
+`SetProfile` command; `queued` never means the server accepted a changed face.
+Native Appearance is a pregame screen and never edits live character replicas.
+
+`init {useLocalProfile:true,...}` opts into the previously loaded name/picture/face.
+An explicit `name` overrides the configured default and is sanitized before the
+handshake. Both local and UDP clients publish once connected, and rejoining
+publishes again. Omit the opt-in to retain the existing test harness defaults.
+See `docs/PROFILE_PORT.md` for native paths, legacy import and validation.
