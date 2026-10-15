@@ -2264,6 +2264,23 @@ suite also passes79 tests,
 including accepted UDP hurt presentation; seven renderer cases remain opt-in.
 Source/code review passed. Immutable managed output: `.local/player-damage-v69`.
 
+### Accepted loaded-round damage at original world contacts
+
+World contacts now retain the same accepted loaded shell as living targets.
+Tree damage uses that captured round, launch condition once, and distance from
+the accepted muzzle; vehicle/deployable/object/barricade damage uses its separate
+source channel with launch condition and no invented travel falloff. The legacy
+replicated-zombie contact also follows the source living-target wear/falloff.
+Mounted condition remains1 and ore still accepts only its original pickaxe path.
+
+Three actual bridge/UDP tree regressions failed before the fix (slug40 became12,
+25%-condition rifle15 became20, and a160m hit ignored falloff). Six delayed core
+contacts also failed before, including five distinct world target channels and
+the replicated zombie. All now pass; mutations to the next held profile/condition
+cannot change the shot in flight. The full707 core,136 managed and127 JSONL
+tests pass. Independent source/code review passed. Frozen bridge:
+`.local/world-round-v70`; logs `/tmp/unturned-world-round-{core,managed,jsonl}-after.log`.
+
 ### Native original low-health feedback and pre-HUD canvas boundary
 
 The original LowHealthOverlay now consumes accepted owner HP, smoothing below

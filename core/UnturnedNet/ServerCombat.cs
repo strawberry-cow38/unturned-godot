@@ -690,7 +690,7 @@ namespace UnturnedGodot.Net
                         case 2:
                         {
                             bool head = hitRelY > hitTop * ZombieHeadFrac;
-                            float dmg = b.Gun.ZombieDamage * b.DamageScale * (b.Mounted ? b.FalloffAt(point) : 1f);
+                            float dmg = b.Gun.ZombieDamage * b.Condition * b.FalloffAt(point) * b.DamageScale;
                             bool killed = ZombieHost.DamageZombie(hitZombie.NetIdValue, dmg, point, dir, b.Shooter, head);
                             var hitEvt = new ZombieHitEvent { NetId = hitZombie.NetIdValue, Damage = dmg, Shooter = b.Shooter };
                             _broadcast(NetMessagePak.Pack(ReplicationIds.EventZombieHit, hitEvt.Write));
@@ -718,17 +718,17 @@ namespace UnturnedGodot.Net
                             else if (bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0)
                                 DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.AnimalDamage * b.Condition * b.FalloffAt(point) * b.DamageScale, false, dir, tick, b.Origin));
                             else if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
-                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage * b.DamageScale, false, dir, tick, b.Origin));
+                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage * b.Condition * b.DamageScale, false, dir, tick, b.Origin));
                             else if (hitResource >= 0) DamageResource?.Invoke(new CombatResourceHit(hitResource, b.Shooter,
-                                b.Gun.ResourceDamage * b.DamageScale * (b.Mounted ? b.FalloffAt(point) : 1f), b.Gun.ResourceDamage * b.DamageScale, false, b.Gun.AssetName, point, dir, tick));
-                            else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage * b.DamageScale, tick);
+                                b.Gun.ResourceDamage * b.Condition * b.FalloffAt(point) * b.DamageScale, b.Gun.ResourceDamage * b.Condition * b.DamageScale, false, b.Gun.AssetName, point, dir, tick));
+                            else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage * b.Condition * b.DamageScale, tick);
                             // ...or a barricade (door/bed), which is not in that index space. Same segment,
                             // so a shot that stopped at a door is the shot that damages it.
                             else if (!bodyHit.Water)
                             {
                                 if (b.FiringVehicle != 0 && DamageMountedBarricadeAlong != null)
-                                    DamageMountedBarricadeAlong(b.FiringVehicle, b.Pos, next, b.Gun.VehicleDamage * b.DamageScale, tick);
-                                else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage * b.DamageScale, tick);
+                                    DamageMountedBarricadeAlong(b.FiringVehicle, b.Pos, next, b.Gun.VehicleDamage * b.Condition * b.DamageScale, tick);
+                                else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage * b.Condition * b.DamageScale, tick);
                             }
                             BroadcastImpact(point, bodyHit.CrewSlot != 0 || bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0 ? ImpactSurface.Flesh : ImpactSurface.World);
                             Diag.BulletHitsWorld++;

@@ -821,5 +821,66 @@ namespace UnturnedNet.Tests
             Assert.That(life.HealthExact, Is.EqualTo(75).Within(.001));
         }
 
+        [TestCase("resource", 37.5f)]
+        [TestCase("vehicle", 30f)]
+        [TestCase("deployable", 30f)]
+        [TestCase("object", 18f)]
+        [TestCase("barricade", 30f)]
+        public void WorldFlight_UsesLaunchConditionAndOnlySourceChannelsHaveFalloff(string target, float expected)
+        {
+            var h = new Harness(50912).Connected("shooter"); var c = h.Clients[0];
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            var origin = Eye(player.Pos); var point = origin + Vector3.forward * 10;
+            var profile = new ServerGunProfile {
+                ResourceDamage = 80, VehicleDamage = 40, ObjectDamage = 24,
+                MuzzleVelocity = 100, GravityMultiplier = 0,
+                FalloffStart = 5, FalloffEnd = 15, FalloffMin = .25f,
+            };
+            byte condition = 25;
+            h.Server.Combat.SetGunProfile(c.PlayerId, profile);
+            h.Server.Combat.HeldCondition = _ => condition;
+            h.Server.Combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => {
+                hit = new CombatWorldHit(point, resourceIndex: target == "resource" ? 4 : -1,
+                    destructibleIndex: target == "object" ? 8 : -1,
+                    vehicleNetId: target == "vehicle" ? 12u : 0,
+                    deployableNetId: target == "deployable" ? 16u : 0);
+                return from.z <= point.z && to.z >= point.z;
+            };
+            int contacts = 0; float damage = 0, toolDamage = 0;
+            h.Server.Combat.DamageResource = hit => { contacts++; damage = hit.Damage; toolDamage = hit.ToolDamage; };
+            h.Server.Combat.DamageBody = hit => { contacts++; damage = hit.Damage; };
+            h.Server.Combat.DamageObject = (_, amount, _) => { contacts++; damage = amount; return false; };
+            h.Server.Combat.DamageBarricadeAlong = (_, _, amount, _) => { contacts++; damage = amount; return false; };
+            c.SendFire(origin, Vector3.forward); h.Step(2);
+            Assert.That(contacts, Is.Zero, "the round is still in flight");
+            condition = 100;
+            profile.ResourceDamage = profile.VehicleDamage = profile.ObjectDamage = 999;
+            h.Step(10);
+            Assert.That(contacts, Is.EqualTo(1));
+            Assert.That(damage, Is.EqualTo(expected).Within(.001), "launch wear is applied once; only tree damage has source travel falloff");
+            if (target == "resource") Assert.That(toolDamage, Is.EqualTo(60).Within(.001));
+            Assert.That(h.Server.Combat.AmmoOf(c.PlayerId), Is.EqualTo(29));
+        }
+
+        [Test]
+        public void ReplicatedZombieFlight_UsesLaunchConditionAndTravelFalloff()
+        {
+            var h = new Harness(50913).Connected("shooter"); var c = h.Clients[0];
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            var origin = Eye(player.Pos); var point = player.Pos + Vector3.forward * 10;
+            var id = h.Server.Ids.Mint(); var host = new MockZombieHost(); host.Hp[id.Value] = 100;
+            h.Server.Combat.ZombieHost = host;
+            h.Server.Zombies.ServerSpawn(id, 0, point, h.Server.Session.CurrentTick);
+            h.Server.Combat.SetGunProfile(c.PlayerId, new ServerGunProfile {
+                ZombieDamage = 80, MuzzleVelocity = 100, GravityMultiplier = 0,
+                FalloffStart = 5, FalloffEnd = 15, FalloffMin = .25f,
+            });
+            h.Server.Combat.HeldCondition = _ => 25;
+            c.SendFire(origin, Vector3.forward); h.Step(12);
+            Assert.That(host.Hits, Is.EqualTo(1));
+            // The analytic cylinder meets the round at its center projection.
+            Assert.That(host.Hp[id.Value], Is.EqualTo(62.5).Within(.001));
+        }
+
     }
 }

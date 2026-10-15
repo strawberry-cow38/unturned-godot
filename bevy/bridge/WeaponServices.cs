@@ -228,12 +228,13 @@ public sealed partial class WeaponState
     {
         if (Profile == null) return;
         Profile.MagCapacity = ChamberedCap; Profile.Pellets = PelletsPerShot;
-        // Original Fire sends the effective loaded round to both SpawnBullet
-        // damage channels. Condition remains the combat launcher's responsibility.
+        // Original Fire sends the effective loaded round to the living-target
+        // and tree channels. Condition remains the combat launcher's responsibility.
         float damage = ShotDamage();
         Profile.PlayerDamage = Profile.ZombieDamage = damage;
         Profile.AnimalDamage = damage;
         Profile.HumanoidDamage = damage;
+        Profile.ResourceDamage = damage;
         Profile.MuzzleVelocity = Gun.MuzzleVelocity*(Suppressed?AttachmentNoise.SilencedVelocityMultiplier:1);
     }
     void SaveGunState()
