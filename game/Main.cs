@@ -10745,11 +10745,16 @@ namespace UnturnedGodot
             // the dirt the paving leaves in the terrain paint (strawberry 2026-10-15: "work on the roads/sidewalks leaving terrain
             // paint dirt footprints") -- after the plots, whose parking lots are paving too
             if (!noWalk) town.PaintFootprints(rf, terrain);
+            // the buildings on the plots (strawberry 2026-10-15: "shove the building gen into town gen" -- one block first,
+            // UG_TOWNBUILDINGS=block|all): generated, framed to face their street, their pads levelled -- before anything
+            // else stands on the ground the pads change
+            if (!noWalk) town.PlanBuildings(rf, terrain);
             // the dead space the plots left, filled (strawberry 2026-10-14: "procedural filling for dead space / empty lots /
             // parks. using hedges as splines"): hedgerows down the strips, pocket parks in the bigger pieces
             if (!noWalk) town.PlantGreens(rf, editor.Objects);
             // the yard fences PlanPlots designated, laid as fences (strawberry 2026-10-14: "work on getting fences as splines")
             if (!noWalk) town.BuildFences(editor, editor.Objects);
+            if (!noWalk) town.BuildBuildingMassing(editor);     // (their massing, until the generator's runtime builder lands)
             // the parking lots' street lights, and blocks if they have any (strawberry 2026-10-14: "add streetlight support for
             // parking lots too")
             if (!noWalk) town.PlaceParkingProps(editor.Objects);
@@ -11034,6 +11039,30 @@ namespace UnturnedGodot
                     tcam.Fov = 60f;
                     tcam.LookAt(fmid + Vector3.Up * 1f, Vector3.Up);
                     Log.Print($"[towngrid] fence camera on run {fk} of {fruns.Count}: {flen:0.0} m {fr.Edge} of a {fr.Plot.Kind} lot, {fr.A} -> {fr.B}");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=bla: every building, from above at an angle; bl[:k]: the k-th building, from its street, a little up
+                if (closeEnv == "bla" && town.Buildings.Count > 0)
+                {
+                    var bc = Vector3.Zero; int bn = 0;
+                    foreach (var b in town.Buildings) if (b.Result != null) { bc += b.Frame * new Vector3(b.Result.CellsX * 1.5f, 0f, b.Result.CellsZ * 1.5f); bn++; }
+                    bc /= Mathf.Max(1, bn);
+                    tcam.GlobalPosition = bc + new Vector3(35f, 55f, 55f);
+                    tcam.Fov = 55f;
+                    tcam.LookAt(bc, Vector3.Up);
+                    Log.Print($"[towngrid] building camera over {bn} buildings at {bc}");
+                    goto noTown;
+                }
+                if (closeEnv != null && closeEnv.StartsWith("bl") && town.Buildings.Count > 0)
+                {
+                    int bk = 0;
+                    if (closeEnv.Length > 3 && closeEnv[2] == ':') int.TryParse(closeEnv.Substring(3), out bk);
+                    var tb = town.Buildings[Mathf.Clamp(bk, 0, town.Buildings.Count - 1)];
+                    var bmid = tb.Frame * new Vector3((tb.Result?.CellsX ?? 4) * 1.5f, 3f, (tb.Result?.CellsZ ?? 4) * 1.5f);
+                    tcam.GlobalPosition = bmid - tb.Frame.Basis.Z * 30f + tb.Frame.Basis.X * 10f + Vector3.Up * 14f;
+                    tcam.Fov = 60f;
+                    tcam.LookAt(bmid, Vector3.Up);
+                    Log.Print($"[towngrid] building camera on building {bk} of {town.Buildings.Count} ({tb.Plot.Kind})");
                     goto noTown;
                 }
                 // UG_TOWNCLOSE=view:<x>,<z>,<dist>,<yaw>[,<pitch>]: orbit a point -- yaw 0 is from the south looking north, 90 from
