@@ -129,7 +129,7 @@ public static void Main() {
         topClosed=TankTopHatchClosedDeg, driverClosed=TankDriverHatchClosedDeg, driverLift=TankDriverHatchLift, driverSlide=TankDriverHatchSlide,
         swingSeconds=TankHatchSwingSeconds, rearDepressionScale=RearArcDepressionScale,
         turretSize=ConvertValue(TankTurretColSize), turretCenter=ConvertValue(TankTurretColCenter), barrelSize=ConvertValue(TankBarrelColSize), barrelCenter=ConvertValue(TankBarrelColCenter),
-        sightEye=ConvertValue(TankSightEye), cupolaEye=ConvertValue(TankCupolaEye), gunnerSeat=ConvertValue(TankGunnerSeatDown), gunnerRise=TankGunnerRise,
+        periscopeEye=ConvertValue(TankPeriscopeEye), sightEye=ConvertValue(TankSightEye), cupolaEye=ConvertValue(TankCupolaEye), gunnerSeat=ConvertValue(TankGunnerSeatDown), gunnerRise=TankGunnerRise,
     };
     Console.WriteLine(JsonSerializer.Serialize(new {vehicles,tank}));
 }

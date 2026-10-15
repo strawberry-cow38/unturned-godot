@@ -31,8 +31,9 @@ replacement has evidence of parity.
 Measured source: 187 engine-independent C# files / 60,586 lines, 342 gameplay
 files / 146,706 lines, 319 in-engine test files / 62,166 lines, and 194 core test
 files / 45,176 lines. Historical repository summaries are stale. The current
-source protocol is version61; the port is now version63 for accepted equipment
-and resource contact replication. Inventory has22 pages including vehicle compartments.
+source protocol is version61; the port is now version66 for accepted equipment,
+resource contacts, mounted weapons, occupant rise and remote mounted flight
+effects. Inventory has22 pages including vehicle compartments.
 
 ## Milestones
 
@@ -48,7 +49,7 @@ not make its features playable.
 | 3 | Player stances, water/ladders, vitals, death/respawn, skills, appearance | In progress; remaining parity below |
 | 4 | Inventory, equipment, loot, attachments, weapons/ballistics/melee/grenades, viewmodels | In progress; remaining parity below |
 | 5 | World saves, UDP multiplayer, replicas, reconnection, server browser and moderation | In progress; remaining parity below |
-| 6 | All vehicle types, suspension, seats/storage, tow/hitch, crane/turrets, damage | In progress; original armed-fleet mount meshes, tank hatches and moving collision validated in `TURRET_PORT.md`; mount input/fire/crew integration remains unfinished |
+| 6 | All vehicle types, suspension, seats/storage, tow/hitch, crane/turrets, damage | In progress; original fleet/mount geometry in `TURRET_PORT.md`, accepted mounted authority in `MOUNTED_WEAPONS.md`, local playable tank controls/effects in `MOUNTED_NATIVE_PORT.md`; crew/NPC flight and complete fleet/remote journeys remain unfinished |
 | 7 | Deployables, building, power, fluids, appliances, crops, resource interactions | In progress; remaining parity below |
 | 8 | Terrain/foliage/roads, procedural worlds/buildings, streaming, weather/water/audio | In progress; remaining parity below |
 | 9 | NPCs, quests, trading, animals and remaining current gameplay | In progress; human rigs/focus/console, host capsule collision, accepted dialogue/trade/quest UI validated in `NPC_CHARACTER_PORT.md` / `NPC_UI_PORT.md`; remaining parity below |

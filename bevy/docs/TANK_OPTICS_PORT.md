@@ -12,9 +12,13 @@ it. Third person, other seats, non-tanks and the outside-camera diagnostic suppr
 the overlay. Modal UI blocks zoom input while preserving the optic underneath.
 
 The shared resource exposes `look_sensitivity()` as 1/zoom for the gunsight and
-1 otherwise. Its input stage follows the Perspective toggle before PlayerUpdate.
-It reads a newly accepted hatch directly from the snapshot, so the later native
-vehicle-component adoption cannot delay the input gate. The visual stage runs
+1 otherwise. Its logical `gunsight_active()` preserves the original distinction
+from a diagnostic-hidden optic image: hiding the viewmodel does not enable a
+second generic aiming crosshair. Its input stage follows the Perspective toggle before PlayerUpdate.
+It reads newly accepted seating and hatch state directly from the snapshot, so
+later native vehicle-component adoption cannot delay sensitivity or the Aim
+cycle edge. The player input reader uses the accepted seat for driver/passenger
+head limits, aircraft controls and exit gates as well. The visual stage runs
 after PlayerCameraUpdate, reconciles late seat materialization and divides the
 captured base FOV once. Exit restores that baseline; camera replacement captures
 the new camera's base rather than inheriting a stale optic value.
@@ -28,10 +32,14 @@ the first-person composite and stays below HUD/menu layers; it ignores picking.
 
 ## Verification
 
-Five focused native tests pass. They exercise real tank occupancy and source
+Seven focused optics tests and three actual mounted-input tests pass. They exercise real tank occupancy and source
 Aim input, 8→12→4 and baseline restoration, repeated camera-base writes without
 compounding zoom, UI/death/third-person/session transitions, missing bodies,
 viewport resizing, camera replacement, and same-frame accepted head-out state.
+The receiving-frame regression places accepted seat/exit facts before input and
+native occupancy adoption afterward, then checks actual look sensitivity, seat
+limits and Aim cycling. The late visual stage already reconciled final FOV; this
+regression fixes input timing, not a newly observed delayed optic image.
 
 Six explicit Vulkan/lavapipe fixtures passed and all PNGs were opened:
 
@@ -45,7 +53,9 @@ and the diagnostic HUD remains above the black housing. There were no shader
 validation failures. Independent source review and three independently opened
 aspect/reticle captures found no blocker.
 
-These are optics presentation fixtures, with injected accepted seating. Playable
-tank camera/body anchors, mounted trigger behavior, ammunition/effects and real
-SP/UDP firing require the separate mounted-weapon integration journey. The
-existing generic HUD's cannon-aim exception also belongs to that integration.
+These are optics presentation fixtures, with injected accepted seating. The
+subsequent playable PEI tank journey and separate actual UDP observer capture
+are recorded in `MOUNTED_NATIVE_PORT.md`. The generic HUD cannon-aim exception consumes the accepted mounted operator,
+configured Aim binding and logical gunsight state. Its integration regression
+covers driver first/third person, gunner priority, head-out, optic suppression,
+modal input and death. Complete armed-fleet multiplayer journeys remain pending.

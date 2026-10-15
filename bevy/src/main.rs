@@ -170,6 +170,12 @@ fn capture_frame(
     particles: Query<(&particles::Emitter, &GlobalTransform)>,
     mut events: MessageReader<entities::CoreEvent>,
     mut pending_event: Local<Option<entities::CoreEvent>>,
+    mounted: (
+        Res<vehicle::turrets::Operator>,
+        Res<ui::tank_optics::TankOptics>,
+        Res<player::flinch::Flinch>,
+        Query<&Transform, With<player::PlayerCamera>>,
+    ),
 ) {
     if !world.ready {
         return;
@@ -207,6 +213,18 @@ fn capture_frame(
         .collect();
     let event = event.map(|e| json!({"seq":e.sequence,"kind":e.kind,"data":e.data}));
     let evidence = json!({"map":options.0.map,"fixedFps":options.0.fixed_fps,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0,"profilePreference":{"ready":profile.ready,"name":profile.name,"face":profile.face,"hasAvatar":profile.has_avatar},"presentation":{"held":viewmodel.held,"ready":viewmodel.ready,"aiming":viewmodel.aiming,"inspecting":viewmodel.inspecting,"aimAlpha":viewmodel.aim_alpha,"scopeZoom":viewmodel.scope_zoom,"lean":{"angleRadians":lean.angle,"eyeHeight":lean.eye_height},"lights":{"tacticalId":lights.tactical_id,"tactical":lights.tactical_lit,"held":lights.held_lit,"head":lights.head_lit,"nightvision":lights.nightvision,"military":lights.military}},"information":information.0,"lastCompletedFrameLights":light_facts.0,"particles":effects,"captureEvent":event});
+    let mut evidence = evidence;
+    evidence["mountedPresentation"] = json!({
+        "vehicle": mounted.0.seat.map(|s| s.net_id),
+        "seat": mounted.0.seat.map(|s| s.seat),
+        "slot": mounted.0.slot,
+        "ammo": mounted.0.active().and_then(|m| m.ammo),
+        "headOut": mounted.0.head_out,
+        "optic": format!("{:?}", mounted.1.mode),
+        "zoom": mounted.1.zoom(),
+        "flinchDegrees": mounted.2.angle_degrees(),
+        "camera": mounted.3.single().ok().map(|t| json!({"position":t.translation.to_array(),"rotation":t.rotation.to_array()})),
+    });
     if let Err(error) = std::fs::write(path.with_extension("json"), evidence.to_string()) {
         warn!("Cannot write capture state: {error}");
     }

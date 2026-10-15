@@ -375,6 +375,7 @@ impl Plugin for GameUiPlugin {
             .init_resource::<Settings>()
             .add_message::<UiIntent>()
             .add_plugins((
+                HudPlugin,
                 attachments::AttachmentMenuPlugin,
                 vitals::VitalsPlugin,
                 crosshair::CrosshairPlugin,
@@ -384,7 +385,6 @@ impl Plugin for GameUiPlugin {
                 tank_optics::TankOpticsPlugin,
             ))
             .add_systems(Startup, spawn_ui_camera)
-            .add_systems(Startup, spawn_hud)
             .add_systems(
                 PreUpdate,
                 suppress_repeat_edges.after(bevy::input::InputSystems),
@@ -395,13 +395,25 @@ impl Plugin for GameUiPlugin {
                     follow_life_state,
                     keyboard_ui,
                     rebuild_overlay,
-                    update_hud,
                     button_appearance,
                 )
                     .chain()
                     .in_set(UiUpdate),
             )
             .add_observer(activate_button);
+    }
+}
+
+// Presentation follows accepted player/Operator adoption and input selection.
+// Keeping this separate from UiUpdate avoids delaying input while ensuring the
+// label rendered this frame matches the accepted shot/slot captured this frame.
+struct HudPlugin;
+impl Plugin for HudPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, spawn_hud).add_systems(
+            PostUpdate,
+            update_hud.before(bevy::ui::UiSystems::Layout),
+        );
     }
 }
 
@@ -516,6 +528,7 @@ fn update_hud(
     state: Res<UiState>,
     model: Res<UiModel>,
     catalog: Res<crate::entities::ItemCatalog>,
+    mounted: Option<Res<crate::vehicle::turrets::Operator>>,
     mut roots: Query<&mut Visibility, With<HudRoot>>,
     mut labels: ParamSet<(
         Query<&mut Text, With<WeaponText>>,
@@ -531,7 +544,10 @@ fn update_hud(
         };
     }
     for mut t in &mut labels.p0() {
-        **t = if let Some(item) = catalog.items.get(&model.held_item_id) {
+        **t = if let Some(mount) = mounted.as_ref().and_then(|m| m.active()) {
+            format!("{}  /  {}", mount.definition.display_name,
+                mount.ammo.map_or_else(|| "…".into(), |n| n.to_string()))
+        } else if let Some(item) = catalog.items.get(&model.held_item_id) {
             if item.item_type == "gun" && model.ammo >= 0 {
                 format!("{}  /  {}", item.name, model.ammo)
             } else {
@@ -595,6 +611,7 @@ fn keyboard_ui(
     mut characters: MessageReader<KeyboardInput>,
     mut intents: MessageWriter<UiIntent>,
     world: Option<Res<crate::world::WorldConfig>>,
+    occupancy: Option<Res<crate::vehicle::Occupancy>>,
 ) {
     if matches!(
         state.screen,
@@ -695,6 +712,13 @@ fn keyboard_ui(
         return;
     }
     characters.clear();
+    // Source seat keys precede the vehicle input allow-list. F1 must not open
+    // its on-foot console alias before the accepted seat request is dispatched.
+    let seated = occupancy.as_ref().is_some_and(|o| o.seat.is_some());
+    if state.screen == Screen::Playing && seated
+        && crate::vehicle::seats::pressed(&keys).is_some()
+        && !keys.just_pressed(KeyCode::Backquote)
+    { return; }
     if matches!(
         state.screen,
         Screen::Playing | Screen::Inventory | Screen::Crafting | Screen::Information
@@ -724,7 +748,8 @@ fn keyboard_ui(
             state.rotation = (state.rotation + 1) % 2;
         } else if state.screen == Screen::Playing {
             if settings.just_pressed(GameAction::Console, &keys, &mouse)
-                || keys.just_pressed(KeyCode::F1)
+                || keys.just_pressed(KeyCode::Backquote)
+                || (!seated && keys.just_pressed(KeyCode::F1))
             {
                 state.screen = Screen::Console;
             } else if settings.just_pressed(GameAction::Chat, &keys, &mouse) {
@@ -1498,6 +1523,92 @@ fn button_appearance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn production_hud_renders_accepted_mount_ammo_and_slot_on_the_same_frame() {
+        use crate::{player::{GameSnapshot, PlayerUpdate}, vehicle::turrets::Operator};
+        #[derive(Resource, Default)]
+        struct Selection(usize);
+        #[derive(Resource, Default)]
+        struct AtLayout(String);
+        fn adopt(
+            snapshot: Res<GameSnapshot>, selection: Res<Selection>,
+            mut operator: ResMut<Operator>, mut model: ResMut<UiModel>,
+        ) {
+            model.adopt_snapshot(&snapshot.0);
+            operator.refresh(&snapshot.0, 0);
+            operator.select(selection.0);
+        }
+        fn observe_at_layout(label: Query<&Text, With<WeaponText>>, mut seen: ResMut<AtLayout>) {
+            seen.0 = label.single().unwrap().0.clone();
+        }
+        let tank = crate::vehicle::data::named("tank").unwrap();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, HudPlugin))
+            .insert_resource(UiState {screen:Screen::Playing,..default()})
+            .init_resource::<UiModel>()
+            .init_resource::<crate::entities::ItemCatalog>()
+            .init_resource::<Operator>()
+            .init_resource::<Selection>()
+            .init_resource::<AtLayout>()
+            .insert_resource(GameSnapshot(serde_json::json!({
+                "connected":true,"playerId":1,"player":{"alive":true,"heldItemId":4,"ammo":30},
+                "vehicles":[{"netId":7,"typeId":tank.type_id,"driverPlayerId":1,"passengers":[0]}],
+                "vehicleMounts":[{"vehicleNetId":7,"headOut":false,"mounts":[
+                    {"index":0,"yaw":0.,"pitch":0.,"ammo":60,"cooldownSeconds":0.,"crewAlive":true},
+                    {"index":1,"yaw":0.,"pitch":0.,"ammo":400,"cooldownSeconds":0.,"crewAlive":true}
+                ]}]
+            })))
+            .configure_sets(Update, PlayerUpdate.after(UiUpdate))
+            .add_systems(Update, adopt.in_set(PlayerUpdate))
+            .add_systems(PostUpdate, observe_at_layout.in_set(bevy::ui::UiSystems::Layout));
+        app.world_mut().resource_mut::<crate::entities::ItemCatalog>().items.insert(
+            4,serde_json::from_value(serde_json::json!({"id":4,"name":"Rifle","type":"gun"})).unwrap());
+        app.update();
+        assert_eq!(app.world().resource::<AtLayout>().0, "Tank Cannon  /  60");
+        app.world_mut().resource_mut::<GameSnapshot>().0["vehicleMounts"][0]["mounts"][0]["ammo"] = serde_json::json!(59);
+        app.update();
+        assert_eq!(app.world().resource::<AtLayout>().0, "Tank Cannon  /  59",
+            "accepted shot must update before this frame's text layout");
+        app.world_mut().resource_mut::<Selection>().0 = 1;
+        app.world_mut().resource_mut::<GameSnapshot>().0["vehicleMounts"][0]["mounts"][1]["ammo"] = serde_json::json!(399);
+        app.update();
+        assert_eq!(app.world().resource::<AtLayout>().0, "HMG  /  399",
+            "new slot and accepted belt must appear together without a stale frame");
+        app.world_mut().resource_mut::<GameSnapshot>().0["vehicles"] = serde_json::json!([]);
+        app.update();
+        assert_eq!(app.world().resource::<AtLayout>().0, "Rifle  /  30",
+            "accepted exit must restore held equipment without the prior mount label");
+    }
+
+    #[test]
+    fn vehicle_function_keys_reserve_seats_while_backquote_and_onfoot_alias_open_console() {
+        let mut app=App::new();
+        app.init_resource::<Settings>().init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .insert_resource(UiState {screen:Screen::Playing,..default()})
+            .init_resource::<crate::vehicle::Occupancy>()
+            .add_message::<KeyboardInput>().add_message::<UiIntent>()
+            .add_systems(Update,keyboard_ui);
+        app.world_mut().resource_mut::<crate::vehicle::Occupancy>().seat=Some(crate::vehicle::OccupiedSeat {
+            vehicle:Entity::PLACEHOLDER,net_id:71,seat:1,driver:false,aircraft:false,
+            velocity:Vec3::ZERO,eye_pose:default(),body_pose:default(),
+        });
+        for key in [KeyCode::F1,KeyCode::F2,KeyCode::F12] {
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset_all();
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+            app.update();
+            assert_eq!(app.world().resource::<UiState>().screen,Screen::Playing);
+        }
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset_all();
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Backquote);
+        app.update();assert_eq!(app.world().resource::<UiState>().screen,Screen::Console);
+        app.world_mut().resource_mut::<UiState>().screen=Screen::Playing;
+        app.world_mut().resource_mut::<crate::vehicle::Occupancy>().seat=None;
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset_all();
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::F1);
+        app.update();assert_eq!(app.world().resource::<UiState>().screen,Screen::Console);
+    }
 
     #[test]
     fn console_keeps_named_space_keys_in_real_command_messages() {

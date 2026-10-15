@@ -19,6 +19,11 @@ pub(super) struct Data {
     turret_center: [f32; 3],
     barrel_size: [f32; 3],
     barrel_center: [f32; 3],
+    pub(super) periscope_eye: [f32; 3],
+    pub(super) sight_eye: [f32; 3],
+    pub(super) cupola_eye: [f32; 3],
+    pub(super) gunner_seat: [f32; 3],
+    pub(super) gunner_rise: f32,
 }
 pub(super) static DATA: LazyLock<Data> = LazyLock::new(|| {
     #[derive(Deserialize)]
@@ -41,6 +46,12 @@ pub(super) struct Hatches {
     close_curve: Vec<[f32; 2]>,
 }
 impl Hatches {
+    pub(super) fn has_top(&self) -> bool {
+        self.top.is_some()
+    }
+    pub(super) fn has_driver(&self) -> bool {
+        self.driver.is_some()
+    }
     pub fn animate(
         &mut self,
         driver_closed: bool,

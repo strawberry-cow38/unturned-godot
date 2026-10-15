@@ -170,6 +170,7 @@ struct ViewmodelState {
     hands_off: bool,
     hammer_delay: Option<(f32, f32)>,
     driving: bool,
+    mounted: bool,
     seated: bool,
     attaching: bool,
     tool_active: bool,
@@ -291,11 +292,13 @@ fn build_viewmodel(
     hand_use: Res<crate::use_items::HandUse>,
     occupancy: Res<crate::vehicle::Occupancy>,
     perspective: Option<Res<crate::avatar::Perspective>>,
+    mounted: Option<Res<crate::vehicle::turrets::Operator>>,
 ) {
+    state.mounted = mounted.as_ref().is_some_and(|m| m.active().is_some());
     let body_enabled = !matches!(ui.screen, Screen::MainMenu | Screen::Dead)
         && snapshot.0["connected"].as_bool().unwrap_or(false)
         && snapshot.0["player"]["alive"].as_bool().unwrap_or(true);
-    let visible = body_enabled && occupancy.seat.is_none_or(|s| !s.driver || !s.aircraft);
+    let visible = body_enabled && !state.mounted && occupancy.seat.is_none_or(|s| !s.driver || !s.aircraft);
     for mut camera in &mut active_cameras {
         camera.is_active = visible && perspective.as_ref().is_none_or(|p| p.first_person);
     }
@@ -675,9 +678,9 @@ fn animate_viewmodel(
     };
     rig.paused = crate::player::simulation_paused(&ui);
     let dt = if rig.paused { 0. } else { time.delta_secs() };
-    if let Some(seat) = occupancy.seat.filter(|seat| seat.driver) {
+    if let Some(seat) = occupancy.seat.filter(|seat| seat.driver || state.mounted) {
         state.seated = true;
-        let driving = seat.driver && !seat.aircraft;
+        let driving = seat.driver && !seat.aircraft && !state.mounted;
         if driving && (!state.driving || rig.clip != "Idle_Drive") {
             rig.play("Idle_Drive", true);
         }
@@ -1053,7 +1056,7 @@ fn project_muzzle(
     viewport: Option<Res<crate::hdr::viewport::ViewmodelViewport>>,
 ) {
     status.muzzle_offset = None;
-    if !state.is_gun || state.hands_off || state.driving {
+    if !state.is_gun || state.hands_off || state.driving || state.mounted {
         return;
     }
     let Some(visual) = state.visuals.get(&state.asset) else {
@@ -1308,7 +1311,8 @@ mod tests {
     #[test]
     fn real_rig_enters_driving_then_restores_visible_ready_weapon_in_passenger_seat() {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins,TransformPlugin,AssetPlugin::default()))
+        app.add_plugins((MinimalPlugins,TransformPlugin,AssetPlugin::default(),
+            bevy::camera::visibility::VisibilityPlugin))
             .init_asset::<Mesh>().init_asset::<Image>().init_asset::<StandardMaterial>()
             .init_asset::<SkinnedMeshInverseBindposes>()
             .init_resource::<WorldConfig>().init_resource::<ContentCache>().init_resource::<ItemCatalog>()
@@ -1316,10 +1320,17 @@ mod tests {
             .init_resource::<crate::player::WorldSessionEpoch>().init_asset::<AudioSource>()
             .init_resource::<Settings>().init_resource::<crate::use_items::HandUse>()
             .init_resource::<crate::vehicle::Occupancy>().init_resource::<crate::recoil::Recoil>()
+            .init_resource::<crate::vehicle::turrets::Operator>()
             .init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>()
             .add_message::<CoreEvent>().add_message::<crate::use_items::HandEvent>()
             .insert_resource(UiState{screen:Screen::Playing,..default()})
             .insert_resource(GameSnapshot(serde_json::json!({"connected":true,"playerId":1,"player":{"alive":true,"heldItemId":0,"stance":"stand"}})))
+            .add_systems(Update, (
+                |snapshot: Res<GameSnapshot>, epoch: Res<crate::player::WorldSessionEpoch>,
+                 mut operator: ResMut<crate::vehicle::turrets::Operator>| {
+                    operator.refresh(&snapshot.0, epoch.0);
+                }
+            ).in_set(PlayerUpdate))
             .add_plugins((crate::rig::RigPlugin,ViewmodelPlugin));
         app.world_mut().spawn((
             PlayerCamera,
@@ -1448,6 +1459,66 @@ mod tests {
             app.world().resource::<ViewmodelStatus>().aiming,
             "armed passenger can aim the held gun"
         );
+        let rifle_root = app.world().resource::<ViewmodelState>().arms.unwrap();
+        let rifle = app.world().resource::<ViewmodelState>().gun.unwrap();
+        let seat = |app: &mut App, key: &str, net_id: u32, driver: u32, gunner: u32, local_seat: u8| {
+            let definition = crate::vehicle::data::named(key).unwrap();
+            let mut snapshot = app.world_mut().resource_mut::<GameSnapshot>();
+            snapshot.0["vehicles"] = serde_json::json!([{
+                "netId":net_id,"typeId":definition.type_id,
+                "driverPlayerId":driver,"passengers":[gunner]
+            }]);
+            snapshot.0["vehicleMounts"] = serde_json::json!([{
+                "vehicleNetId":net_id,"headOut":false,"mounts":[
+                    {"index":0,"yaw":0.,"pitch":0.,"ammo":60,"cooldownSeconds":0.,"crewAlive":true},
+                    {"index":1,"yaw":0.,"pitch":0.,"ammo":400,"cooldownSeconds":0.,"crewAlive":true}
+                ]
+            }]);
+            let mut occupancy = app.world_mut().resource_mut::<crate::vehicle::Occupancy>();
+            let seat = occupancy.seat.as_mut().unwrap();
+            seat.net_id = net_id;
+            seat.seat = local_seat;
+            seat.driver = local_seat == 0;
+        };
+        // An accepted empty gunner seat hands both mounts to the driver. The
+        // real camera must disappear, and held rifle state must survive.
+        seat(&mut app, "tank", 7, 1, 0, 0);
+        app.update();
+        assert!(app.world().resource::<crate::vehicle::turrets::Operator>().active().is_some());
+        assert!(!app.world().get::<Camera>(camera).unwrap().is_active);
+        assert!(!app.world().resource::<ViewmodelStatus>().ready);
+        assert!(!app.world().resource::<ViewmodelStatus>().aiming);
+        assert_eq!(app.world().resource::<ViewmodelStatus>().muzzle_offset, None);
+        assert_eq!(app.world().resource::<ViewmodelState>().arms, Some(rifle_root));
+        assert_eq!(app.world().resource::<ViewmodelState>().gun, Some(rifle));
+        assert_eq!(app.world().resource::<ViewmodelState>().held, Some(4));
+        // A different player taking the gunner seat removes the driver's mount
+        // immediately and restores source driving arms, not the held gun.
+        seat(&mut app, "tank", 7, 1, 2, 0);
+        app.update();
+        assert!(app.world().resource::<crate::vehicle::turrets::Operator>().active().is_none());
+        assert!(app.world().get::<Camera>(camera).unwrap().is_active);
+        assert_eq!(app.world().get::<RigPlayback>(rifle_root).unwrap().clip, "Idle_Drive");
+        assert_eq!(*app.world().get::<Visibility>(rifle).unwrap(), Visibility::Hidden);
+        // Becoming the gunner hides that camera again without replacing the rig.
+        seat(&mut app, "tank", 7, 2, 1, 1);
+        app.update();
+        assert!(!app.world().get::<Camera>(camera).unwrap().is_active);
+        assert!(!app.world().resource::<ViewmodelStatus>().ready);
+        // An ordinary passenger can use the same rifle immediately: no exit,
+        // re-equip command, new rig, stale drive clip or inherited mount state.
+        seat(&mut app, "jeep", 8, 2, 1, 1);
+        app.update();
+        assert!(app.world().resource::<crate::vehicle::turrets::Operator>().active().is_none());
+        assert!(app.world().get::<Camera>(camera).unwrap().is_active);
+        assert_eq!(app.world().resource::<ViewmodelState>().arms, Some(rifle_root));
+        assert_eq!(app.world().resource::<ViewmodelState>().gun, Some(rifle));
+        assert_eq!(*app.world().get::<Visibility>(rifle).unwrap(), Visibility::Inherited);
+        assert_eq!(app.world().get::<RigPlayback>(rifle_root).unwrap().clip,
+            app.world().resource::<ViewmodelState>().hold_clip);
+        let status = app.world().resource::<ViewmodelStatus>();
+        assert!(status.ready && status.aiming);
+        assert_eq!(status.held, 4);
     }
     #[test]
     fn aim_ease_and_consumable_hand_clips_match_source() {

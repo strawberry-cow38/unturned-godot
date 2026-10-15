@@ -2,9 +2,10 @@
 
 Reference: `game/Vehicle.cs` at the migration source commit, especially
 `Build`, `BuildTankExtras`, `UpdateHatches`, and the four armed vehicle specs.
-This checkpoint builds their native geometry. Mounted aiming, firing, ammunition
-authority, crew characters, and NPC helicopter behavior are separate unfinished
-integration work; rendered guns do not establish playable weapon parity.
+This document describes the geometry checkpoint. Mounted input, ammunition
+authority, accepted effects and the playable tank journey are now documented in
+`MOUNTED_NATIVE_PORT.md` and `MOUNTED_WEAPONS.md`. Crew characters and NPC
+helicopter behavior remain separate integration work.
 
 ## Source data and frames
 
@@ -19,7 +20,7 @@ roof HMG inherits cannon traverse but never cannon elevation. Original mesh
 Euler rotations use Godot's YXZ order and do not rotate the shot frame. The
 Hind chin mesh is present at spawn; the source door guns remain hidden until
 their crew is present. The native `Mounts` component has presentation angles in
-degrees, crew visibility, and head-out state for the forthcoming replica adapter.
+degrees, crew visibility, and head-out state adopted from accepted replicas.
 No native component consumes ammunition or decides that a shot is accepted.
 
 The tank's turret mesh is split into the original main body, HMG housing,
@@ -61,16 +62,15 @@ production VisibilityPlugin; its managed vehicle is registered through the real
 The opt-in `vehicle::turrets::tests::visual::render_original_mounts` fixture uses
 the production builder and Vulkan renderer. It accepts `UG_TURRET_VEHICLE`,
 `UG_TURRET_OCCUPIED` and `UG_TURRET_SHOT`. Fixture mount angles and occupants are
-injected diagnostic state, not a claim that player input or weapon authority is
-already integrated. Validation results and reviewed captures are recorded in
-`PROGRESS.md`.
+injected diagnostic state. The separate playable PEI journey uses actual input
+and accepted weapon authority, as recorded in `MOUNTED_NATIVE_PORT.md`.
+Validation results and reviewed captures are recorded in `PROGRESS.md`.
 
 ## Remaining integration
 
-- Accepted mount input, seat/slot priority, yaw/pitch limits, slew rates, belts,
-  cooldowns and shared SP/UDP replicas; actual muzzle/barrel firing and effects.
-- Tank gunner body/camera following the turret, sight/cupola cameras, rising body,
-  and player head-out input.
+- Rendered multiplayer journeys across the complete armed fleet; accepted
+  authority/UDP tests and the local playable tank journey cover part of this.
+- Per-view muzzle billboarding for secondary scope and reflection cameras.
 - Original door-gunner characters, damage and gun disappearance.
 - Original NPC helicopter flight/targeting/burst/flee behavior using the same
   vehicle dynamics and mounted-weapon authority.

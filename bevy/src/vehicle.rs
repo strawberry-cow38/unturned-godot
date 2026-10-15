@@ -13,6 +13,7 @@ mod geometry;
 mod hearing;
 mod remote;
 mod render;
+pub(crate) mod seats;
 mod spawns;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -169,6 +170,8 @@ pub struct VehiclePlugin;
 impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Occupancy>()
+            .add_plugins(turrets::fx::MountedEffectsPlugin)
+            .init_resource::<turrets::Operator>()
             .init_resource::<Vehicles>()
             .init_resource::<collision::Hulls>()
             .init_resource::<geometry::GeometryUploads>()
@@ -178,16 +181,18 @@ impl Plugin for VehiclePlugin {
             .init_resource::<effects::Effects>()
             .add_message::<contacts::DamageRequest>()
             .add_message::<contacts::Feedback>()
+            .add_systems(Update, seats::input.after(crate::ui::UiUpdate).before(PlayerUpdate))
             .add_systems(
                 Update,
                 (
                     register_spawns,
                     sync_vehicles,
                     remote::update,
-                    adopt_occupancy,
                     render::animate_wheels,
                     render::animate_steering,
+                    turrets::input::adopt,
                     turrets::animate,
+                    adopt_occupancy,
                     tires::update,
                     render::aircraft::animate,
                     collision::update,
@@ -202,6 +207,12 @@ impl Plugin for VehiclePlugin {
                 read_controls
                     .in_set(crate::entities::CollectInteractions)
                     .after(crate::player::PlayerCameraUpdate),
+            )
+            .add_systems(
+                FixedUpdate,
+                turrets::input::send
+                    .after(VehiclePublish)
+                    .before(crate::player::PublishPlayer),
             )
             .add_systems(
                 FixedUpdate,
@@ -616,7 +627,7 @@ fn mass_properties(spec: &data::VehicleSpec) -> AdditionalMassProperties {
 }
 fn adopt_occupancy(
     snapshot: Res<GameSnapshot>,
-    query: Query<(Entity, &VehicleBody, &Transform, &Velocity)>,
+    query: Query<(Entity, &VehicleBody, &Transform, &Velocity, Option<&turrets::Mounts>)>,
     mut occupancy: ResMut<Occupancy>,
 ) {
     let player = snapshot.0["playerId"].as_u64().unwrap_or(0) as u32;
@@ -624,7 +635,7 @@ fn adopt_occupancy(
     if player == 0 {
         return;
     }
-    for (entity, body, pose, velocity) in &query {
+    for (entity, body, pose, velocity, mounts) in &query {
         let seat = if body.driver_player_id == player {
             Some(0)
         } else {
@@ -643,7 +654,7 @@ fn adopt_occupancy(
         let body_offset = d.body_seats.get(seat).unwrap_or(seat_offset);
         // Prefab seat empties are seat-pan height. Preserve PlayerController's
         // explicit fallback until the native seated skull pose is available.
-        let eye = if seat == 0 {
+        let eye_fallback = if seat == 0 {
             if d.spec.driver_eye != [0.; 3] {
                 Vec3::from_array(d.spec.driver_eye)
             } else {
@@ -652,6 +663,9 @@ fn adopt_occupancy(
         } else {
             Vec3::from_array(*seat_offset) + Vec3::Y * 1.05
         };
+        let eye = mounts.and_then(|m| m.seat_eye(d, seat)).unwrap_or(eye_fallback);
+        let local_body = mounts.and_then(|m| m.seat_body(d, seat))
+            .unwrap_or_else(|| Transform::from_translation(Vec3::from_array(*body_offset)));
         occupancy.seat = Some(OccupiedSeat {
             vehicle: entity,
             net_id: body.net_id,
@@ -661,10 +675,7 @@ fn adopt_occupancy(
             velocity: velocity.linear,
             eye_pose: Transform::from_translation(pose.transform_point(eye))
                 .with_rotation(pose.rotation),
-            body_pose: Transform::from_translation(
-                pose.transform_point(Vec3::from_array(*body_offset)),
-            )
-            .with_rotation(pose.rotation),
+            body_pose: pose.mul_transform(local_body),
         });
         break;
     }
@@ -684,7 +695,7 @@ fn read_controls(
     players: Query<Entity, With<crate::player::PlayerBody>>,
     cache: Res<ContentCache>,
     config: Res<WorldConfig>,
-    motion: Res<AccumulatedMouseMotion>,
+    motion: (Res<AccumulatedMouseMotion>, Res<turrets::Operator>),
     time: Res<Time>,
 ) {
     let active = ui.screen == crate::ui::Screen::Playing && model.alive;
@@ -749,7 +760,8 @@ fn read_controls(
                 if edge(GameAction::VehicleLights) {
                     body.flags ^= 2;
                 }
-                if mouse.just_pressed(MouseButton::Left)
+                if edge(GameAction::Fire)
+                    && !motion.1.trigger_live(pressed(GameAction::Aim))
                     && body.battery > 0.
                     && body.flags & 128 == 0
                 {
@@ -760,7 +772,7 @@ fn read_controls(
                     let delta = if pressed(GameAction::FreeLook) {
                         Vec2::ZERO
                     } else {
-                        motion.delta
+                        motion.0.delta
                     };
                     let arrows = Vec2::new(
                         keys.pressed(KeyCode::ArrowDown) as u8 as f32

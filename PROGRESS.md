@@ -1775,6 +1775,14 @@ Playable mounted firing remains a separate integration journey. Pain/directional
 hurt HUD and unported SAM blast call sites remain in the ledger. See
 bevy/docs/CAMERA_FLINCH_PORT.md.
 
+### Bevy: mounted crosshair integration
+
+The source generic mounted crosshair now consumes accepted operator priority and
+the configured Aim binding, while logical gunsight state suppresses it even when
+diagnostics hide the optic image. Six optics ECS tests pass. Both mounted-FX
+tests pass against frozen provider-v65. These checks do not replace the separate
+playable mounted firing/seat journey. See bevy/docs/TANK_OPTICS_PORT.md.
+
 ### Bevy: accepted mounted flight and blast presentation over UDP
 
 Protocol66 appends Event56 for source mounted-flight continuation, retirement and
@@ -1817,6 +1825,27 @@ review passed. Native F1–F12 dispatch, gaze/slot retention, source tank rise/b
 and optic anchors remain grouped with the ongoing playable mounted checkpoint.
 See bevy/docs/VEHICLE_SEATS_PORT.md.
 
+### Bevy: native source tank body and optic anchors
+
+Native occupancy now adopts current mount yaw and accepted gunnerRise before
+placing the body and camera. The source gunner seat rises0.7m in its yaw frame;
+cannon pitch never moves the seat, and the optic camera keeps hull-relative
+orientation. The driver uses an explicit exported periscope override, avoiding
+the original static initializer's zero Spec.DriverEye field. Ordinary body seats
+retain their prior behavior and the existing passenger skull-camera gap stays
+documented. F1–F12 now dispatches accepted seat intents, reserving F1 for the
+driver while seated and keeping Backquote available for the console.
+
+Five focused anchor tests pass, including actual bridge accepted partial rise
+and player replica comparison. Three native input/UI dispatch tests pass.
+Original tank/rig Vulkan fixtures were opened for gunner raised/lowered, driver
+eye, gunner sight and cupola; parent independently reviewed the body frames and
+both parent/gameplay reviewed the source transforms. These controlled fixture
+images are distinct from the later playable PEI journey, which accepted F2 into
+the gunner's original optics/cupola and F1 back to driver while preserving HMG
+slot1 and accepted ammo395. Final mounted HUD ordering validation remains tracked
+with the combined native checkpoint.
+
 ### Bevy: prevent a mounted round from hitting its own moving barrel
 
 A playable tilted tank shot detonated at its muzzle and killed its operator.
@@ -1841,3 +1870,33 @@ seat-switch fix and excludes the unhooked NPC-controller draft. All96 managed,
 679 networking and121 JSONL tests pass; root and world independently reviewed the
 change. The parent is running the playable mounted visual journey against this
 same candidate. See bevy/docs/MOUNTED_WEAPONS.md for fixture provenance and scope.
+
+### Bevy: playable mounted controls and accepted native effects
+
+Original mounted seat/slot priority now drives actual input, HUD, held-rig
+visibility and 50Hz command refresh. Driver fallback yields to the occupied
+source gunner seat; hotkeys preserve held inventory, same-vehicle seat changes
+retain gaze/slot, and original optics supply sensitivity. Accepted seat/hatch
+facts gate input before native occupancy adoption, avoiding stale receiving-frame
+head limits and missed Aim-cycle edges. The generic crosshair respects the
+original gunsight. Only accepted shots produce the original 50ms muzzle star,
+source light/report, cannon smoke/reload cue and local operator camera kick.
+
+The final frozen v4 suite passes62 vehicle and30 player cases, alongside
+original-rig transitions and source optics. Further production-schedule regressions pass for
+same-frame HUD ammunition/selection/exit,7 optics and3 mounted player inputs.
+The complete PEI input journey used the frozen mounted-muzzle-v66-final bridge:
+actual door boarding, cannon fire60→59, F2 gunner,8x→12x, hatch/rise, HMG399→395
+under held Fire, and F1 driver return preserving slot1/ammo395. The operator
+remained alive at100health after the self-barrel collision fix. Opened v3 shot
+capture now shows HUD399 beside accepted399 in the same flash frame, correcting
+the v2 one-frame label lag. Independent source and image reviews passed.
+
+A separate actual UDP host/client check renders the accepted cannon flash on
+the full native observer. Its sidecar confirms client ownership=false, accepted
+tick627/ammo59,12 smoke particles and zero local operator flinch. The managed
+host fixture holds a stationary original tank; it does not establish two native
+players driving. Offscreen remote flight/blast rendering, secondary-view flash
+billboarding, original crew and NPC controllers remain separate work. Detailed
+capture names, fixture boundaries and source corrections are in
+bevy/docs/MOUNTED_NATIVE_PORT.md.

@@ -28,16 +28,22 @@ pub(crate) enum Mode {
 #[derive(Resource, Default)]
 pub(crate) struct TankOptics {
     pub mode: Mode,
+    source_mode: Mode,
     index: usize,
     epoch: u64,
 }
 impl TankOptics {
     pub fn zoom(&self) -> f32 {
-        if self.mode == Mode::Gunsight {
+        if self.source_mode == Mode::Gunsight {
             [8., 12., 4.][self.index]
         } else {
             1.
         }
+    }
+    /// Original GunsightActive excludes HideViewmodelDebug: diagnostics hide
+    /// the optic image but must not gain a second generic crosshair.
+    pub fn gunsight_active(&self) -> bool {
+        self.source_mode == Mode::Gunsight
     }
     pub fn look_sensitivity(&self) -> f32 {
         1. / self.zoom()
@@ -78,17 +84,23 @@ impl Plugin for TankOpticsPlugin {
         app.init_resource::<TankOptics>()
             .init_resource::<CameraState>()
             .add_plugins(UiMaterialPlugin::<OpticsMaterial>::default())
-            .add_systems(Startup, spawn)
-            .add_systems(
-                Update,
-                input
-                    .in_set(TankOpticsInput)
-                    .after(UiUpdate)
-                    .after(crate::avatar::PerspectiveInput)
-                    .before(PlayerUpdate),
-            )
-            .add_systems(Update, apply.in_set(OpticsUpdate).after(PlayerCameraUpdate));
+            .add_systems(Startup, spawn);
+        install_update_systems(app);
     }
+}
+fn install_update_systems(app: &mut App) {
+    install_input_system(app);
+    app.add_systems(Update, apply.in_set(OpticsUpdate).after(PlayerCameraUpdate));
+}
+pub(crate) fn install_input_system(app: &mut App) {
+    app.add_systems(
+        Update,
+        input
+            .in_set(TankOpticsInput)
+            .after(UiUpdate)
+            .after(crate::avatar::PerspectiveInput)
+            .before(PlayerUpdate),
+    );
 }
 fn spawn(
     mut commands: Commands,
@@ -153,31 +165,62 @@ struct Facts<'w, 's> {
     config: Res<'w, WorldConfig>,
 }
 impl Facts<'_, '_> {
+    fn seat(&self) -> Option<(u32, u8)> {
+        let state = &self.snapshot.0;
+        if state["player"].get("vehicleNetId").is_some() {
+            // BridgeHost derives these fields from the accepted vehicle replica
+            // for both loopback and UDP. Zero is an explicit exit, never a reason
+            // to reuse the previous frame's native seat.
+            let net_id = u32::try_from(state["player"]["vehicleNetId"].as_u64()?).ok()?;
+            let seat = u8::try_from(state["player"]["vehicleSeat"].as_u64()?).ok()?;
+            return (net_id != 0).then_some((net_id, seat));
+        }
+        if let Some(vehicles) = state["vehicles"].as_array() {
+            let owner = state["playerId"].as_u64().filter(|id| *id != 0)?;
+            return vehicles.iter().find_map(|row| {
+                let seat = if row["driverPlayerId"].as_u64() == Some(owner) {
+                    0
+                } else {
+                    let index = row["passengers"]
+                        .as_array()?
+                        .iter()
+                        .position(|id| id.as_u64() == Some(owner))?;
+                    u8::try_from(index + 1).ok()?
+                };
+                Some((u32::try_from(row["netId"].as_u64()?).ok()?, seat))
+            });
+        }
+        // Direct render fixtures have no authority replica. Regular gameplay
+        // always takes one of the accepted paths above, including empty fleets.
+        self.occupancy.seat.map(|seat| (seat.net_id, seat.seat))
+    }
     fn mode(&self) -> Mode {
-        self.occupancy
-            .seat
-            .and_then(|seat| {
-                self.vehicles.get(seat.vehicle).ok().map(|(body, mounts)| {
-                    // Mount adoption follows PlayerUpdate. Read the same accepted fact
-                    // now so sensitivity/zoom sees a hatch change on its receiving frame.
-                    let head_out = self.snapshot.0["vehicleMounts"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .find(|row| row["vehicleNetId"].as_u64() == Some(body.net_id as u64))
-                        .and_then(|row| row["headOut"].as_bool())
-                        .unwrap_or_else(|| mounts.is_some_and(|m| m.head_out));
-                    selected_mode(
-                        self.snapshot.0["connected"] == true
-                            && self.snapshot.0["player"]["alive"] != false,
-                        self.view.first_person,
-                        self.config.fixed_camera.is_some(),
-                        data::definition(body.type_id)
-                            .is_some_and(|d| d.spec.turret_meshes.is_some()),
-                        seat.seat,
-                        head_out,
-                    )
-                })
+        self.seat()
+            .and_then(|(net_id, seat)| {
+                self.vehicles
+                    .iter()
+                    .find(|(body, _)| body.net_id == net_id)
+                    .map(|(body, mounts)| {
+                        // Mount adoption follows PlayerUpdate. Read the same accepted fact
+                        // now so sensitivity/zoom sees a hatch change on its receiving frame.
+                        let head_out = self.snapshot.0["vehicleMounts"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|row| row["vehicleNetId"].as_u64() == Some(body.net_id as u64))
+                            .and_then(|row| row["headOut"].as_bool())
+                            .unwrap_or_else(|| mounts.is_some_and(|m| m.head_out));
+                        selected_mode(
+                            self.snapshot.0["connected"] == true
+                                && self.snapshot.0["player"]["alive"] != false,
+                            self.view.first_person,
+                            false,
+                            data::definition(body.type_id)
+                                .is_some_and(|d| d.spec.turret_meshes.is_some()),
+                            seat,
+                            head_out,
+                        )
+                    })
             })
             .unwrap_or(Mode::None)
     }
@@ -197,8 +240,13 @@ fn input(
             ..default()
         };
     }
-    optics.mode = facts.mode();
-    if optics.mode == Mode::Gunsight
+    optics.source_mode = facts.mode();
+    optics.mode = if facts.config.fixed_camera.is_some() {
+        Mode::None
+    } else {
+        optics.source_mode
+    };
+    if optics.gunsight_active()
         && !ui.captures_input()
         && settings.just_pressed(GameAction::Aim, &keys, &mouse)
     {
@@ -206,6 +254,11 @@ fn input(
         // original PlayerController. A new accepted session creates a new player.
         optics.index = (optics.index + 1) % 3;
     }
+}
+#[cfg(test)]
+pub(crate) fn run_input_system(world: &mut World) {
+    use bevy::ecs::system::RunSystemOnce;
+    world.run_system_once(input).unwrap();
 }
 fn apply(
     mut optics: ResMut<TankOptics>,
@@ -218,7 +271,12 @@ fn apply(
 ) {
     // Seat materialization can complete later in VehicleUpdate. Reconcile its
     // visual gate after that stage without consuming the input edge twice.
-    optics.mode = facts.mode();
+    optics.source_mode = facts.mode();
+    optics.mode = if facts.config.fixed_camera.is_some() {
+        Mode::None
+    } else {
+        optics.source_mode
+    };
     let active = optics.mode != Mode::None;
     let mut shown = false;
     if let Ok((entity, mut projection)) = cameras.single_mut() {

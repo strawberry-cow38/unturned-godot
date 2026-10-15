@@ -134,4 +134,12 @@ snapshot-clock pacing, active-round disconnect and session replacement. Three co
 variant round trips/truncated tails, malformed values, ordered once-only delivery,
 absence of client health/combat mutations, late join and version65 refusal.
 
-Native articulated models were rendered in the preceding vehicle checkpoint. Playable mounted input, accepted belt HUD, firing effects and camera-anchor presentation are still pending their native integration and live visual verification. The host occupant anchor and rise are covered by managed/real-UDP regressions above. The remote flight/blast adapter now feeds the existing native consumers; its playable mounted GPU journey remains pending. NPC helicopter navigation, targeting and live damageable crew are subsequent source-controller work, not implied by this launch seam.
+Native articulated models were rendered in the preceding vehicle checkpoint.
+The subsequent local PEI tank journey now covers actual driver/gunner input,
+cannon and sustained HMG fire, accepted belts, optics, head-out/rise and returning
+to the driver; see `MOUNTED_NATIVE_PORT.md` for exact captures and remaining
+presentation checks. The host occupant anchor and rise are also covered by
+managed/real-UDP regressions above. The remote flight/blast adapter feeds the
+existing native consumers; a rendered remote mounted journey remains pending.
+NPC helicopter navigation, targeting and live damageable crew are subsequent
+source-controller work, not implied by this launch seam.

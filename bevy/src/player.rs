@@ -24,6 +24,8 @@ mod network_tests;
 #[cfg(test)]
 mod seated_tests;
 #[cfg(test)]
+mod mounted_tests;
+#[cfg(test)]
 mod menu_tests;
 
 pub struct PlayerPlugin;
@@ -181,6 +183,7 @@ pub(crate) struct PlayerInput {
     stance: String,
     held_item_id: u16,
     in_seat: bool,
+    vehicle_seat: Option<(u32, u8)>,
     seat_yaw: f32,
     prop_exit: Option<(Vec3, Vec3)>,
 }
@@ -643,7 +646,21 @@ fn read_input(
         Res<WorldSessionEpoch>,
         Res<Time>,
     ),
+    mut mounted: Option<ResMut<crate::vehicle::turrets::Operator>>,
+    optics: Option<Res<crate::ui::tank_optics::TankOptics>>,
 ) {
+    if let Some(mounts) = &mut mounted { mounts.refresh(&recoil.1.0, recoil.3.0); }
+    // VehicleUpdate adopts physical seat poses later this frame. Use the already
+    // accepted seat for input gates now, including an explicit accepted exit.
+    let ride = if let Some(mounts) = &mounted {
+        mounts.seat.map(|seat| {
+            let aircraft = crate::vehicle::data::definition(seat.type_id)
+                .is_some_and(|d| d.spec.heli || d.spec.plane);
+            (seat.seat == 0, aircraft)
+        })
+    } else {
+        occupancy.as_ref().and_then(|o| o.seat).map(|seat| (seat.driver, seat.aircraft))
+    };
     let playing = !ui.captures_input() && model.connected;
     viewmodel.look_delta = Vec2::ZERO;
     let sway_delta = viewmodel.scope_sway - input.applied_sway;
@@ -695,10 +712,11 @@ fn read_input(
     input.jump |= pressed(GameAction::Jump);
     input.jump_held = held(GameAction::Jump);
     input.free_look =
-        held(GameAction::FreeLook) && occupancy.as_ref().is_none_or(|o| o.seat.is_none());
+        held(GameAction::FreeLook) && ride.is_none();
     input.fire = held(GameAction::Fire) && !input.free_look;
     input.fire_pressed = !input.free_look && (input.fire_pressed || pressed(GameAction::Fire));
-    if !input.free_look && pressed(GameAction::Fire) && viewmodel.cancel_inspect_from_fire() {
+    if mounted.as_ref().is_none_or(|m| m.active().is_none())
+        && !input.free_look && pressed(GameAction::Fire) && viewmodel.cancel_inspect_from_fire() {
         // Keep the cancelling click out of every fixed tick before the next
         // input frame. Auto fire may resume on the following held-input frame.
         input.fire = false;
@@ -708,6 +726,9 @@ fn read_input(
         !input.free_look && (input.secondary_pressed || pressed(GameAction::Aim));
     input.selector |= pressed(GameAction::Firemode);
     input.reload |= pressed(GameAction::Reload);
+    if pressed(GameAction::VehicleDoor) {
+        if let Some(mounts) = &mut mounted { mounts.toggle_head_out(); }
+    }
     if pressed(GameAction::CrouchToggle) {
         input.crouch_toggle = !input.crouch_toggle;
         input.prone = false;
@@ -726,17 +747,18 @@ fn read_input(
         "stand"
     }
     .into();
-    let aircraft_controls = occupancy
-        .as_ref()
-        .and_then(|o| o.seat)
-        .is_some_and(|seat| seat.driver && seat.aircraft)
+    let aircraft_controls = ride.is_some_and(|(driver, aircraft)| driver && aircraft)
         && !held(GameAction::FreeLook);
     if !aircraft_controls
         && !input.free_look
-        && !(occupancy.as_ref().is_some_and(|o| o.seat.is_some())
+        && !(ride.is_some()
             && perspective.as_ref().is_some_and(|p| !p.first_person))
     {
-        let sensitivity = settings.mouse_sensitivity * viewmodel.look_sensitivity();
+        let sensitivity = settings.mouse_sensitivity * if ride.is_some() {
+            optics.as_ref().map_or(1., |o| o.look_sensitivity())
+        } else {
+            viewmodel.look_sensitivity()
+        };
         if !input.in_seat {
             // Original AddLookDelta receives mouse deltas after sensitivity,
             // not changed camera angles (which also contain recoil and sway).
@@ -745,9 +767,25 @@ fn read_input(
         input.yaw = (input.yaw - motion.delta.x * sensitivity).rem_euclid(360.0);
         let sign = if settings.invert_look_y { 1.0 } else { -1.0 };
         input.pitch = (input.pitch + motion.delta.y * sensitivity * sign).clamp(-89.0, 89.0);
+        if let Some((driver, _)) = ride {
+            // Source ride look wraps before the mount's traverse limit. Ordinary
+            // passengers and a crosshair-mount driver retain seated head limits.
+            input.yaw = (input.yaw + 180.).rem_euclid(360.) - 180.;
+            if mounted.as_ref().is_none_or(|m| !m.look_unlimited()) {
+                let limit = if driver { 160. } else { 90. };
+                input.yaw = input.yaw.clamp(-limit, limit);
+                input.pitch = input.pitch.clamp(-30., 30.);
+            }
+        }
     }
     for (action, slot) in [(GameAction::Hotbar1, 0), (GameAction::Hotbar2, 1)] {
         if pressed(action) {
+            if let Some(mounts) = &mut mounted {
+                if mounts.consumes_slot(slot as usize) {
+                    mounts.select(slot as usize);
+                    continue;
+                }
+            }
             let held = model
                 .pages
                 .iter()
@@ -806,6 +844,7 @@ fn simulate(
         &mut Collider,
         &mut KinematicCharacterController,
     )>,
+    mounted: Option<Res<crate::vehicle::turrets::Operator>>,
 ) {
     if !session.initialized || session.failed || !model.connected || simulation_paused(&ui) {
         return;
@@ -1032,6 +1071,7 @@ fn simulate(
         &snapshot.0["weapon"],
         buttons,
         allowed
+            && mounted.as_ref().is_none_or(|m| m.active().is_none())
             && seated_weapon_allowed(
                 vehicle_seat,
                 hands.2.first_person,
@@ -1245,6 +1285,7 @@ fn sync_seated_body(
     context: ReadRapierContext,
     snapshot: Res<GameSnapshot>,
     mut input: ResMut<PlayerInput>,
+    vehicles: Query<&crate::vehicle::VehicleBody>,
     mut bodies: Query<(
         Entity,
         &mut Transform,
@@ -1253,6 +1294,8 @@ fn sync_seated_body(
         Option<&ColliderDisabled>,
     )>,
 ) {
+    let vehicle_seat = occupancy.as_ref().and_then(|o| o.seat);
+    let vehicle_key = vehicle_seat.map(|s| (s.net_id, s.seat));
     let seat = occupancy
         .as_ref()
         .and_then(|o| o.seat)
@@ -1271,10 +1314,20 @@ fn sync_seated_body(
     for (entity, mut transform, mut body, mut controller, disabled) in &mut bodies {
         if let Some((body_pose, eye_pose, velocity, driver, prop_exit)) = seat {
             let yaw = eye_pose.rotation.to_euler(EulerRot::YXZ).0.to_degrees();
-            if !input.in_seat {
+            if let Some(seat) = vehicle_seat.filter(|_| !input.in_seat ||
+                input.vehicle_seat.map(|s|s.0) != vehicle_key.map(|s|s.0)) {
+                // Source EnterVehicle starts at the vehicle's
+                // forward gaze. An optic starts level rather than over the hood.
+                // TrySwitchSeat deliberately retains this relative gaze.
+                input.yaw = 0.;
+                input.pitch = if seat.seat <= 1 && vehicles.get(seat.vehicle).ok()
+                    .and_then(|b| crate::vehicle::data::definition(b.type_id))
+                    .is_some_and(|d| d.spec.turret_meshes.is_some()) {0.} else {-8.75};
+            } else if !input.in_seat {
                 input.yaw = (input.yaw - yaw).rem_euclid(360.);
             }
             input.in_seat = true;
+            input.vehicle_seat = vehicle_key;
             input.seat_yaw = yaw;
             input.prop_exit = prop_exit;
             *transform = body_pose;
@@ -1288,6 +1341,7 @@ fn sync_seated_body(
             }
         } else if input.in_seat {
             input.in_seat = false;
+            input.vehicle_seat = None;
             input.yaw = (input.yaw + input.seat_yaw).rem_euclid(360.);
             if let Some((anchor, exit)) = input.prop_exit.take() {
                 transform.translation = context

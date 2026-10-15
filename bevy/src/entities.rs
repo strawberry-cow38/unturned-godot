@@ -64,6 +64,7 @@ pub struct ItemCatalog {
     pub gestures: Vec<crate::avatar::gestures::Definition>,
     pub throw_motion: Value,
     pub bullet_visuals: Option<crate::bullets::Visuals>,
+    pub mounted_weapons: HashMap<String, f32>,
 }
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
@@ -285,6 +286,8 @@ fn load_catalog(
         catalog.throw_motion = response["result"]["throwMotion"].clone();
         catalog.bullet_visuals =
             serde_json::from_value(response["result"]["bulletVisuals"].clone()).ok();
+        catalog.mounted_weapons =
+            serde_json::from_value(response["result"]["mountedWeapons"].clone()).unwrap_or_default();
         Ok(serde_json::from_value::<Vec<ItemVisual>>(
             response["result"]["items"].clone(),
         )?)

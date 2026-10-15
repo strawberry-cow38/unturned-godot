@@ -3,6 +3,7 @@ use crate::world::WorldConfig;
 use bevy::ecs::system::RunSystemOnce;
 
 mod visual;
+mod seats;
 
 fn app() -> App {
     let mut app = App::new();

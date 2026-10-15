@@ -8,6 +8,10 @@ use serde::Deserialize;
 use std::{path::Path, sync::LazyLock};
 
 mod tank;
+mod seats;
+pub(crate) mod input;
+pub(crate) mod fx;
+pub(crate) use input::Operator;
 #[cfg(test)]
 mod tests;
 
@@ -16,6 +20,10 @@ pub(crate) struct Mounts {
     pub angles: Vec<Vec2>, // accepted yaw/pitch degrees, one row per original mount
     pub crew_alive: Vec<bool>,
     pub head_out: bool,
+    pub gunner_rise: f32,
+    /// Present on current authority replicas; absent only for source fixtures
+    /// or older adapters, where the original three-per-second easing is used.
+    pub accepted_gunner_rise: Option<f32>,
     frames: Vec<Frame>,
     hatches: Option<tank::Hatches>,
 }
@@ -58,6 +66,8 @@ pub(super) fn build(
         angles: vec![Vec2::ZERO; defs.len()],
         crew_alive: defs.iter().map(|t| t.gunner_at == [0.; 3]).collect(),
         head_out: false,
+        gunner_rise: 0.,
+        accepted_gunner_rise: None,
         frames: Vec::new(),
         hatches: None,
     };
@@ -175,6 +185,9 @@ pub(super) fn animate(
             mounts.head_out = false;
         }
         let head_out = mounts.head_out;
+        mounts.gunner_rise = mounts.accepted_gunner_rise.unwrap_or_else(|| {
+            approach(mounts.gunner_rise, if occupied && head_out { 1. } else { 0. }, 3. * dt)
+        });
         if let Some(h) = &mut mounts.hatches {
             h.animate(
                 body.driver_player_id != 0,

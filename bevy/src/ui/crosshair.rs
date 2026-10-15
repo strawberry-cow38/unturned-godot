@@ -136,6 +136,13 @@ fn update(
     mut spread: ResMut<Spread>,
     mut root: Query<&mut Visibility, With<Crosshair>>,
     mut arms: Query<(&Arm, &mut Node)>,
+    mounted: (
+        Option<Res<crate::vehicle::turrets::Operator>>,
+        Option<Res<super::tank_optics::TankOptics>>,
+        Option<Res<crate::settings::Settings>>,
+        Option<Res<ButtonInput<KeyCode>>>,
+        Option<Res<ButtonInput<MouseButton>>>,
+    ),
 ) {
     if spread.epoch != epoch.0 {
         spread.value = 1.;
@@ -143,9 +150,19 @@ fn update(
     }
     let alive = model.connected && model.alive && ui.screen != Screen::MainMenu;
     // Source ThirdPersonActive excludes both driven and passenger vehicle views.
-    // CannonAiming / GunsightActive are not ported yet; do not infer them from
-    // the existence of a turret mesh or show an unsupported first-person mark.
-    let visible = alive && !view.first_person && occupancy.seat.is_none();
+    // The original mounted exception follows the selected, owned mount. A
+    // look-slaved helicopter gun does not acquire this crosshair. The tank's
+    // masked gunner uses the original reticle instead, even in debug cameras.
+    let aim = match (&mounted.2, &mounted.3, &mounted.4) {
+        (Some(settings), Some(keys), Some(mouse)) => {
+            settings.pressed(crate::settings::GameAction::Aim, keys, mouse)
+        }
+        _ => false,
+    };
+    let cannon = !ui.captures_input()
+        && mounted.0.as_ref().is_some_and(|m| m.crosshair_aiming(aim))
+        && !mounted.1.as_ref().is_some_and(|o| o.gunsight_active());
+    let visible = alive && ((!view.first_person && occupancy.seat.is_none()) || cannon);
     for mut visibility in &mut root {
         *visibility = if visible {
             Visibility::Inherited
