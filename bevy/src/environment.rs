@@ -170,7 +170,7 @@ fn lighting(time: f32, storm: f32, overcast: bool) -> Lighting {
         0.,
     );
     let direction = rotation * Vec3::NEG_Z;
-    let day = (-direction.y + 0.15).clamp(0., 1.);
+    let day = daylight(time);
     let sl = 0.06 + 0.94 * day;
     let horizon = gradient(&HORIZON, time);
     // Weather deliberately leaves sunlight/ambient alone in the source port.
@@ -193,6 +193,12 @@ fn lighting(time: f32, storm: f32, overcast: bool) -> Lighting {
             .lerp(Vec3::new(0.8, 0.6, 0.4), day)
             .lerp(Vec3::new(0.22, 0.24, 0.28) * sl, storm),
     }
+}
+
+/// DayNightCycle.DaylightFactor, shared by the sky and unshaded rain streaks.
+pub(crate) fn daylight(time: f32) -> f32 {
+    let elevation = -(time.rem_euclid(1.) * TAU).cos() * std::f32::consts::FRAC_PI_2;
+    (elevation.sin() + 0.15).clamp(0., 1.)
 }
 
 #[derive(Clone, Debug, ShaderType)]

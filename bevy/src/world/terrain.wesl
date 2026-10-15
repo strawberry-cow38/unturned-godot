@@ -1,5 +1,7 @@
 import bevy_pbr::render::pbr_fragment::pbr_input_from_standard_material;
 import unturned_bevy::world::water_optics::linear;
+import unturned_bevy::world::rain::surface::{RainUniform,roof_shelter,puddle_mask,impacts};
+import bevy_pbr::render::mesh_view_bindings::view;
 @if(PREPASS_PIPELINE)
 import bevy_pbr::{prepass::io::{VertexOutput,FragmentOutput},deferred::functions::deferred_output};
 @else
@@ -14,6 +16,8 @@ import bevy_pbr::render::{forward_io::{VertexOutput,FragmentOutput},pbr_function
 @group(constants::MATERIAL_BIND_GROUP) @binding(107) var splat_sampler1:sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(108) var<uniform> boundary:vec4<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(109) var<uniform> water:vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(110) var<uniform> rain:RainUniform;
+@group(constants::MATERIAL_BIND_GROUP) @binding(111) var roof:texture_2d<f32>;
 
 // Terrain.TERRAIN_SHADER's precision-robust gradient noise, without retuning.
 fn chashv(p:vec2<f32>)->f32{
@@ -70,14 +74,23 @@ fn fragment(in:VertexOutput,@builtin(front_facing) is_front:bool)->FragmentOutpu
         let fade=clamp(depth/0.4,0.0,1.0)*(1.0-clamp(depth/9.0,0.0,1.0));
         pbr.material.base_color=vec4<f32>(pbr.material.base_color.rgb+linear(vec3<f32>(0.55,0.9,1.0))*caust*water.z*fade,1.0);
     }
-    // Source dry-to-wet base response; roof shelter and puddle/impact shaders are
-    // separate consumers and are deliberately not approximated here.
-    if settings.w>0.0 && snow<0.98{
+    if (rain.weather.x>0.0 || rain.weather.y>0.0) && snow<0.98{
         var up=smoothstep(0.35,0.75,pbr.world_normal.y);
         if best==2 || best==0 || best==7{up=0.0;}
-        let wet=clamp(settings.w,0.0,1.0)*up;
+        up*=1.0-roof_shelter(roof,rain.roof_rect,in.world_position.xyz,0.3);
+        let wet=clamp(rain.weather.x,0.0,1.0)*up;
+        let road=select(0.0,1.0,best==4);
+        let range=1.0-smoothstep(42.0,60.0,distance(in.world_position.xyz,view.world_position));
+        let pud=puddle_mask(absolute,clamp(rain.weather.z,0.0,1.0),up,range)*road;
         pbr.material.base_color=vec4<f32>(pbr.material.base_color.rgb*mix(1.0,0.60,wet),1.0);
-        pbr.material.perceptual_roughness=mix(1.0,select(0.72,0.42,best==4),wet);
+        pbr.material.base_color=vec4<f32>(pbr.material.base_color.rgb*mix(1.0,0.62,pud),1.0);
+        pbr.material.perceptual_roughness=mix(mix(1.0,select(0.72,0.42,best==4),wet),0.13,pud);
+        if rain.weather.y>0.0 && pud>0.01{
+            let away=world-view.world_position.xz;var direction=vec2<f32>(0.0);if length(away)>0.001{direction=normalize(away);}
+            let hit=impacts(absolute,rain.weather.w,rain.weather.y,direction,rain.slant_origin.xy)*rain.weather.y*pud;
+            pbr.material.base_color=vec4<f32>(pbr.material.base_color.rgb+hit.x*0.45+hit.y*0.58,1.0);
+        }
+        pbr.material.reflectance=vec3<f32>(mix(0.5+wet*0.06+wet*road*0.06,0.78,pud));
     }
 @if(PREPASS_PIPELINE)
     return deferred_output(in,pbr);

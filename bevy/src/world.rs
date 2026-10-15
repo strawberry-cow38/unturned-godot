@@ -6,6 +6,7 @@ pub mod layers;
 pub mod origin;
 mod procedural;
 mod procedural_roads;
+pub mod rain;
 mod roads;
 mod surface_tags;
 mod terrain;
@@ -84,6 +85,7 @@ impl Plugin for WorldPlugin {
             origin::OriginPlugin,
             water::WaterPlugin,
             underwater::UnderwaterPlugin,
+            rain::RainPlugin,
         ))
         .init_resource::<WorldConfig>()
         .init_resource::<WorldState>()
@@ -158,6 +160,12 @@ pub struct RoadSurface {
 }
 #[derive(Component)]
 pub struct WorldTerrain;
+/// Terrain's original flat water collision box, for cosmetic bullet splashes.
+/// It intentionally has no solid Rapier collider in the player/world mask.
+#[derive(Component, Clone, Copy)]
+pub struct OceanBox {
+    pub size: Vec3,
+}
 #[derive(Component)]
 pub struct WorldFoliage;
 #[derive(Component, Clone)]
@@ -669,6 +677,7 @@ fn build_world(
             Name::new("Source ocean"),
             WorldTerrain,
             water::WaterSurface,
+            OceanBox { size: Vec3::new(size.x, 0.2, size.y) },
             Mesh3d(mesh),
             MeshMaterial3d(material),
             Transform::from_xyz(center.x, sea, center.y),

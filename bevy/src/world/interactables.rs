@@ -188,7 +188,7 @@ fn spawn(
         Entity,
         &WorldObject,
         &Transform,
-        &MeshMaterial3d<StandardMaterial>,
+        AnyOf<(&MeshMaterial3d<StandardMaterial>, &super::rain::wet::WetBase)>,
     )>,
     mut cache: ResMut<ContentCache>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -231,6 +231,7 @@ fn spawn(
         }
     }
     for (entity, object, parent_pose, material) in &parents {
+        let material = MeshMaterial3d(material.0.map(|m| m.0.clone()).or_else(|| material.1.map(|m| m.0.clone())).expect("AnyOf base material"));
         if registry.parents.get(&object.source_index) == Some(&entity) {
             continue;
         }
@@ -274,6 +275,7 @@ fn spawn(
                     ChildOf(entity),
                     Mesh3d(mesh),
                     material.clone(),
+                    super::rain::wet::WetTarget(false),
                     leaf_pose(leaf, swing, open, reverse),
                     Collider::compound(vec![(
                         center,

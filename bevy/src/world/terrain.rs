@@ -123,7 +123,7 @@ impl Plugin for TerrainPlugin {
         embedded_asset!(app, "terrain.wesl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .init_resource::<TextureCache>()
-            .add_systems(Update, (convert.after(WorldReady), weather));
+            .add_systems(Update, (convert.after(WorldReady), weather.after(super::rain::RainUpdate)));
     }
 }
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -137,6 +137,10 @@ pub struct TerrainExtension {
     /// mean sea height, elapsed time, source caustic strength (currently zero)
     #[uniform(109)]
     pub water: Vec4,
+    #[uniform(110)]
+    pub rain: super::rain::wet::RainUniform,
+    #[texture(111, filterable = false)]
+    pub roof: Handle<Image>,
     #[texture(102, dimension = "2d_array")]
     #[sampler(103)]
     pub albedos: Handle<Image>,
@@ -253,6 +257,7 @@ fn splat_images(field: &SplatField, images: &mut Assets<Image>) -> [Handle<Image
 }
 fn convert(
     origin: Res<super::origin::WorldOrigin>,
+    roof: Res<super::rain::roof::RoofMap>,
     mut commands: Commands,
     mut materials: ResMut<Assets<TerrainMaterial>>,
     mut images: ResMut<Assets<Image>>,
@@ -307,6 +312,8 @@ fn convert(
                 0.,
             ),
             water: Vec4::new(-100000., 0., 0., 0.),
+            rain: default(),
+            roof: roof.texture.clone(),
             albedos,
             splat0: splats[0].clone(),
             splat1: splats[1].clone(),
@@ -328,12 +335,16 @@ fn weather(
     snapshot: Res<GameSnapshot>,
     time: Res<Time>,
     world: Res<super::WorldState>,
+    rain: Res<super::rain::RainState>,
+    roof: Res<super::rain::roof::RoofMap>,
+    origin: Res<super::origin::WorldOrigin>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
 ) {
     let state = &snapshot.0["weather"];
     let snow = state["snowCover"].as_f64().unwrap_or(0.) as f32;
     let wet = state["rainWetness"].as_f64().unwrap_or(0.) as f32;
     for (_, material) in materials.iter_mut() {
+        material.extension.rain = super::rain::wet::RainUniform::new(&rain, &roof, &origin);
         material.extension.water.x = world.sea_level.unwrap_or(-100000.);
         material.extension.water.y = time.elapsed_secs();
         if material.extension.settings.z != snow || material.extension.settings.w != wet {

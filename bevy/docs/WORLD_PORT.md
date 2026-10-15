@@ -107,10 +107,11 @@ source cubic curves, five-metre sampling, cross-slope banking, per-joint offsets
 material width/depth, texture repeat, end ramps and sealed collision underside.
 Source road editor operations and lane AI bindings remain separate work.
 
-The remaining custom shaders require WGSL ports: ocean normal ripples and shoreline
-foam, planar reflections (the latest source intentionally keeps geometry flat), underwater rendering,
-wind/grass/wire displacement, rain shelter/wetness/puddles/glass/impacts, caustics,
-character clothing/wear, flags, outlines and remaining effects.
+Remaining custom shaders include wind/grass/wire displacement, wet glass,
+character clothing/wear, flags, outlines and remaining effects. Flat ocean,
+reflection, underwater optics and source-disabled terrain caustics are described
+below. Rain shelter, wetness, puddles and surface impacts are described in
+[RAIN_PORT.md](RAIN_PORT.md).
 The source water-volume implementation is itself incomplete and should not be
 mistaken for an already-solved upstream feature.
 
@@ -295,8 +296,9 @@ They show the visible shallow bed, shore/wall foam and actual reflected trees an
 dock geometry. Reflections remain aligned after translation and yaw. Both runs
 reported zero missing source assets and no shader validation errors.
 
-Still separate from this surface milestone: rain impact ripples/puddles and
-exposing the live reflection settings through the graphics menu. Per-volume
+Still separate from this surface milestone: exposing live reflection settings
+through the graphics menu. The current flat source water shader contains no rain
+impact rings; road/prop puddles are covered in [RAIN_PORT.md](RAIN_PORT.md). Per-volume
 water is also absent, but is an existing Godot TODO (Terrain.cs skips Yukon
 water volumes), rather than a feature lost in this engine migration. Physical
 buoyancy remains correctly flat because the current source sets `WaveField.Flat`.
