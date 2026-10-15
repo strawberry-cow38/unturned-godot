@@ -397,3 +397,9 @@ rotation=rotation.replace('GD.RandRange','Range')
 weather_command=method(read('game/WeatherManager.cs'),'public bool ApplyCommand(string arg)')
 weather_command=weather_command.replace('ApplyCommand(string arg)', 'ApplyCommand(string arg, System.Action strike)').replace('Strike();','strike();')
 (out/'WeatherCommands.g.cs').write_text('namespace UnturnedBevy { public sealed partial class WorldEnvironment {\n'+weather_command+'}}')
+
+# This original publisher is already engine-free except for its attachment
+# lookup owner; use the previously extracted exact lookup, not a second table.
+appearance=read('game/PlayerAppearanceNetSync.cs')
+appearance=appearance.replace('AttachmentFit.InstalledId','UnturnedBevy.AttachmentNoise.InstalledId')
+(out/'PlayerAppearanceNetSync.g.cs').write_text(appearance)

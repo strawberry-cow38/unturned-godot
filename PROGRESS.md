@@ -1079,6 +1079,10 @@ Accepted impact facts now carry the actual contact normal, water/thin classifica
 
 The source pellet directions are now sampled once after acceptance and used by both visible flight and the authoritative core. The opt-in core seam preserves defaults and retains server profile control of pellet count/speed/damage plus the accepted command origin; invalid/missing samples fall back to the command axis. Burst count is derived from accepted shots and the original 0.35s reset, so the old cosmetic pattern hint cannot reset damage scatter. The exact executed cone/per-axis source behavior is retained, including its discrepancy with the stale additive comment. Three core cases and three real-host journeys cover acceptance/normalization/defaults, actual per-pellet contacts, off-axis target damage and pattern lifecycle; the old executable fails the off-axis target regression. All 117 bridge and 645 network tests pass in a frozen private build. This explicitly restores direct-source gameplay omitted by the original unified center-aim wire path; see `bevy/docs/BULLET_PORT.md`.
 
+### Bevy original appearance and accepted gesture publisher — 2026-10-15
+
+The bridge now compiles the original `PlayerAppearanceNetSync` with only its attachment lookup redirected to the existing extracted helper, and ticks it at the source 5Hz before replication. Gesture requests previously stopped in the core mailbox; accepted surrender/rest states and one-shot wave events now reach the client alongside original clothing/held appearance. `player.gesture` and `player.arrested` expose the accepted replica for native posture and lean/struggle input. Session teardown drains the owner's pending static request before a new world reuses its ID. Three actual-host regressions cover acceptance/refusal, one-shot state separation, stance rules and session reset; the old executable fails accepted surrender. All 120 bridge tests pass and peer review found no blocker. The source's four-stance input limitation and native multiplayer restraint presentation remain explicit follow-ups in the bridge README.
+
 
 ### Bevy source light falloff and fixed-night verification — 2026-10-15
 

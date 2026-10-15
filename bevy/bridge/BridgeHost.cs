@@ -40,6 +40,7 @@ public sealed partial class BridgeHost : IDisposable
     WeaponServices _weapons;
     CosmeticBulletServices _cosmetic;
     WarheadServices _warheads;
+    PlayerAppearanceNetSync _appearance;
     readonly Dictionary<uint, byte> _vehicleRecov = new();
     readonly List<JsonElement> _serviceSpecs = new();
     WildlifeServices _wildlife;
@@ -298,6 +299,7 @@ public sealed partial class BridgeHost : IDisposable
         _weapons = new WeaponServices(_server, _catalog, Emit);
         _cosmetic = new CosmeticBulletServices(_server,_geometry,_weapons,Emit);
         _warheads = new WarheadServices(_server,_weapons,_cosmetic,Emit);
+        _appearance = new PlayerAppearanceNetSync(_server);
         _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
         _movingInput=false;_footNoiseTimer=0;
         _bodies.RepairRate = _weapons.RepairRate;
@@ -424,6 +426,7 @@ public sealed partial class BridgeHost : IDisposable
             }
         }
         _loot?.Step(); _services.Step(); _bodies.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+        _appearance.Tick();
         if (_worldChanged) PublishFullSnapshot();
         _server.TickReplication();
         if (_client.Players.TryGetByOwner(_client.PlayerId, out var own)) _client.AckCombat(own.LastProcessedCombatSeq);
@@ -519,6 +522,7 @@ public sealed partial class BridgeHost : IDisposable
             player = new { position = Array(_position), velocity = Array(_velocity), yaw = _yaw, pitch = _pitch,
                 profile = profile == null ? null : new { name = profile.Name, face = profile.Face, avatarHash = profile.AvatarHash },
                 stance = _movement.Stance.ToString().ToLowerInvariant(), hp = combat?.Health ?? 100, alive = combat?.Alive ?? true, kills = combat?.Kills ?? 0,
+                gesture = combat?.Gesture ?? 0, arrested = combat?.Gesture == (byte)EPlayerGesture.ARREST_START,
                 food = vitals?.Sim.Food ?? 1, water = vitals?.Sim.Water ?? 1, stamina = vitals?.Sim.Stamina ?? 1,
                 infection = vitals?.Sim.Infection ?? 0, oxygen = vitals?.Sim.Oxygen ?? 1,
                 bleeding = vitals?.Bleeding ?? false, broken = vitals?.Broken ?? false, radiation = vitals?.Sim.Radiation ?? 0,
@@ -588,5 +592,12 @@ public sealed partial class BridgeHost : IDisposable
     internal static Vector3 Vec(JsonElement v) { if (v.GetArrayLength() != 3) throw new ArgumentException("Expected [x,y,z]"); var a = v.EnumerateArray().Select(e => e.GetSingle()).ToArray(); if (a.Any(f => !float.IsFinite(f))) throw new ArgumentException("Vector must be finite"); return new(a[0], a[1], a[2]); }
     InfiniteTerrain Terrain(int seed) { if (!_terrains.TryGetValue(seed, out var source)) _terrains[seed] = source = new InfiniteTerrain(seed); return source; }
     void RequireSession() { if (_server == null) throw new InvalidOperationException("Send init first"); }
-    public void Dispose() { _loot = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null; }
+    public void Dispose()
+    {
+        // The original request mailbox is static. Pending old-world gestures
+        // must not be inherited by a newly connected owner with the same ID.
+        if (_server != null) foreach (var player in _server.CombatState.All)
+            ServerGestures.TryTakePending(player.OwnerPlayerId, out _);
+        _loot = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null;
+    }
 }

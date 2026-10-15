@@ -67,6 +67,23 @@ seasonal outlook, snow accumulation and temperature-dependent melt; `UG_WEATHER`
 `UG_WEATHER_FREQ` and `UG_WEATHER_DUR` retain their original meanings. Visual rain,
 snow, lighting, wind and audio remain Bevy responsibilities.
 
+`state.player.gesture` is the original accepted `EPlayerGesture` byte;
+`state.player.arrested` is true only for `ARREST_START` (11), matching the source
+controller. The original `PlayerAppearanceNetSync` publishes clothing, held
+attachments and gestures at its 5Hz cadence before replication. Use action
+`requestGesture` with `{gesture:6}`/`{gesture:7}` for surrender start/stop,
+`{gesture:9}` for a one-shot wave, and `struggle` with `{side:0}` or `{side:1}`
+for an arrested player's lean change. Core validates held-item/stance/request
+rules and alternating struggle sides. One-shot gestures use retained `gesture`
+events instead of latching into the state. Captor identity and remaining restraint
+strength remain server-private; native must not invent either.
+
+The publisher is the original source class with its attachment lookup redirected
+to the existing extracted helper. Its current input protocol supplies only the
+four on-foot stances; native seated gesture admission and multiplayer restraint
+presentation remain separate integration work. Session teardown discards that
+owner's pending static gesture request so a fresh world cannot inherit it.
+
 `state.events` contains `{seq,kind,data,tick}` and remains available until the consumer
 acknowledges it with `ackEvents:<lastConsumedSeq>` on any request. Consumers must
 deduplicate and acknowledge only after processing. The tick is the authoritative
