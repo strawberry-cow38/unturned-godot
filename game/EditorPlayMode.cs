@@ -183,6 +183,10 @@ namespace UnturnedGodot
                 var pick = pool[rng.RandiRange(0, pool.Count - 1)];
                 _player.GlobalPosition = pick.Pos;
                 _player.Spawn = pick.Pos;
+                // ...FACING the way the spawn does, as the real path faces its spawn's angle (WorldBuilder). A spawn's yaw points
+                // its marker's arrow down local +Z (EditorSpawns.MakeMarker); the player looks down its own -Z, so half a turn
+                // more. Never applied before: a town's spawn on its outermost street stood you looking out at empty plain.
+                _player.RotationDegrees = new Vector3(0f, pick.Yaw + 180f, 0f);
             }
 
             // The world's own sun and sky, so the viewmodel is lit by the time of day instead of ignoring it --
