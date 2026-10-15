@@ -1246,3 +1246,9 @@ native tests (one manual visual fixture ignored) against frozen probe-tests-26.
 Source inverse-distance/max-range gain is applied once; Bevy stereo panning remains
 an adapter and source distance high-shelf filtering is pending. Audio hardware is
 absent, so listening parity is not claimed. See bevy/docs/FOOTSTEPS_PORT.md.
+
+### Bevy remote map bindings and accepted holiday
+
+A read-only map query now reuses original full-manifest metadata and server-accepted holiday, joins containers/fixtures to actual replica IDs by kind and exact wire pose, and leaves missing/ambiguous matches unset. Door/seat counters preserve source full-world order; no local registration or loot simulation runs. This also fixes the host's previously empty Accept holiday, captures one world holiday for parsing/NPC checks, and preserves it in saves. All 30 managed UDP/status tests and all 121 bridge regressions pass, including host/client holiday disagreement, all 696 container/11 fixture ID parity, late replicas, duplicate refusal and saved-holiday restoration. Native adoption remains separately owned.
+
+The corrected crossbow/door real-input render also passed: ammo1→0, recovered arrow stops on visible front leaf at z−114.371 rather than the old backwall−121.992, its actual shaft follows accepted travel, and F removes the world item and returns Arrow347 to inventory. Opened captures and an independent agent image review found no blocker; Pause→Quit exited cleanly. `WARHEAD_PORT.md` records the evidence.

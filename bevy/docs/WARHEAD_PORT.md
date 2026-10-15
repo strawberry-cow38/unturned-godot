@@ -164,6 +164,12 @@ This is a correction to the original source art-axis mismatch, rather than a
 claim of unchanged Godot pixels. Two additional regressions use all four actual
 shipped meshes to check the transformed nose, unchanged root/state, rotated
 pickup focus, cache reuse and late metadata lifecycle (nine item tests pass).
-Peer review found no blocker. The corrected real-input render is queued after
-the shared lean-camera capture; the earlier screenshots above show the reproduced
-source mismatch, not this correction.
+Peer review found no blocker. A fresh real-input PEI journey now verifies the
+correction: the accepted crossbow shot consumes ammo1→0 and Arrow347 stops at the
+visible front leaf, z−114.371m (the earlier missing-center bug reached the back
+wall at z−121.992m). The opened side-angle capture shows the shaft pointing into
+the leaf along its accepted flight direction, with the real pickup prompt.
+Accepted F pickup removes that world item and returns one Arrow347 to inventory.
+Independent image review found no blocker. Artifacts `bevy-arrow-corrected-front-leaf`
+and `bevy-arrow-corrected-recovered` include both actual PNG and state JSON under
+`bevy/artifacts/`; the earlier screenshots above retain the reproduced mismatch.

@@ -636,3 +636,23 @@ Remote animal rows also expose the source puppet clip and static species body
 height/radius; these do not authorize a remote physics body. Original
 `AnimalPuppets` selects these clips on the normal engine-driven animation player
 and has no collider; its comment describing a frozen pose is stale.
+
+`mapBindings` is a read-only counterpart to `mapServices` with the same
+`contentRoot,mapName,mapRoot` request. Call after acceptance; it parses the full
+source manifest using `network.holiday`, never the remote machine's calendar.
+The response preserves `objects,resources,objectDoors,containerDoors,seats,npcs`
+and count fields. It adds `readOnly:true`, `holiday`, monotonic `revision`,
+`complete`, `unboundContainers`, `unboundFixtures`, and corresponding `ambiguous*`
+counts. Authored door/seat counters follow the same original full-manifest order.
+Minted container/fixture IDs bind only from an actual unique replica with matching
+kind and exact wire-quantized position/yaw. Missing/ambiguous IDs stay unset;
+container-door metadata appears only after its actual container has bound.
+Re-query when container/deployable replica IDs change. No authority, loot rolls,
+health mutation or host registration occurs in this query.
+
+The host captures the original holiday once for its world, shares that value in
+Accept and map parsing/NPC checks, and preserves it in the optional save
+extension. Older saves keep the current world's holiday. Native remote loading
+must rebuild holiday props/resources from the accepted value, as the original
+`ApplyServerHoliday` path does; merely obtaining the bindings cannot correct a
+world already rendered with another calendar.

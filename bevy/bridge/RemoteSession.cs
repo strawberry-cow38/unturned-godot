@@ -30,21 +30,21 @@ public sealed partial class BridgeHost
     }
 
     string[] Capabilities() => IsRemote
-        ? ["movement", "udpClient", "inventory", "vitals", "combat", "crafting", "catalog", "terrain", "worldClock", "eventAck", "clientReplicas"]
+        ? ["movement", "udpClient", "inventory", "vitals", "combat", "crafting", "catalog", "terrain", "worldClock", "eventAck", "clientReplicas", "mapBindings"]
         : ["movement", "memSession", "udpListen", "inventory", "vitals", "combat", "crafting", "save", "terrain", "catalog", "worldGeometry", "worldLoot", "worldWildlife", "worldZombies", "worldClock", "weather", "eventAck", "rebase"];
 
     static readonly string[] RemoteWireGaps = [
         "exactHeldInstance", "weaponTimers", "attachmentTransactions", "repairTool",
         "explicitRespawn", "weather", "dayNumber", "cosmeticBullets", "acceptedImpactDetails",
         "warheadEffects", "stuckProjectilePose", "projectileLifetime", "vehiclePartHealth",
-        "wildlifeHostState", "zombieHostState", "mapServiceBindings", "password", "acceptedShotTick",
+        "wildlifeHostState", "zombieHostState", "password", "acceptedShotTick",
     ];
 
     void CheckRemoteOperation(string operation)
     {
         if (!IsRemote || operation is "init" or "disconnect" or "shutdown" or "simulate" or "tick" or "snapshot"
             or "catalog" or "npcCatalog" or "diagnostics" or "action" or "terrain" or "reconnect"
-            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel") return;
+            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel" or "mapBindings") return;
         throw new InvalidOperationException($"{operation} requires world authority; this session is a remote client");
     }
 

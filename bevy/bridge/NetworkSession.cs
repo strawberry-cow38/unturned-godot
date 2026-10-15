@@ -13,7 +13,7 @@ public sealed partial class BridgeHost
 {
     ushort _listenPort;
     int _maxPeers = 24;
-    string _serverName = "Bevy world", _motd = "";
+    string _serverName = "Bevy world", _motd = "", _worldHoliday = "NONE";
     UdpServerTransport _udpTransport;
 
     void ConfigureNetwork(JsonElement request)
@@ -28,6 +28,7 @@ public sealed partial class BridgeHost
         _maxPeers = peers;
         _serverName = Text(request, "serverName", "Bevy world");
         _motd = Text(request, "motd");
+        _worldHoliday = Main.ActiveHolidayNow();
         ConfigureRemote(request);
     }
 
@@ -70,6 +71,7 @@ public sealed partial class BridgeHost
         host = _connectHost,
         port = IsRemote ? _connectPort : _listenPort,
         serverName = _client.Session.ServerName,
+        holiday = _client.ServerHoliday,
         maxPlayers = _client.Session.ServerMaxPlayers,
         state = _client.State.ToString(),
         reason = _client.Session.DisconnectReason.ToString(),

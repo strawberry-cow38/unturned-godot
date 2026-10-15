@@ -85,6 +85,25 @@ puppet clip mapping and static dimensions only; unknown health and corpse expiry
 remain absent. Native remote puppets must preserve the source's lack of a body.
 All121 existing bridge tests also pass against this unchanged executable.
 
+## Read-only remote map bindings
+
+The managed `mapBindings` query reuses the full source manifest and the server's
+accepted holiday. Authored door/seat counters keep original order. Container and
+fixture IDs come only from unique actual replicas of the matching kind and
+wire-quantized pose; missing/ambiguous matches stay unset and later arrivals can
+rebind. The query creates no server, fixture, loot, inventory or health state.
+Its shape matches native `mapServices` metadata, with explicit readiness and
+unbound counts. Native consumption and accepted-holiday world rebuilding remain
+a separate integration step.
+
+This exposed a host omission: the bridge had parsed local seasonal content but
+left the original Accept holiday argument empty. The host now captures one source
+holiday for Accept, parsing and NPC checks and persists it in saves. Three real
+UDP regressions compare all696 container/11fixture bindings and authored counters
+against a host, test Christmas host versus nonholiday client resource ordering,
+late registration, duplicate same-pose refusal, and save/load across a changed
+local holiday. All 30 managed UDP/status tests and all 121 bridge regressions pass.
+
 ## Native remote bodies
 
 Accepted peer replicas now create the original human rig, face, clothing and gear

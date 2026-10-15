@@ -26,7 +26,7 @@ public static class MapServices
         public uint? ObjectDoorNetId { get; set; }
         public uint[] SeatNetIds { get; set; }
     }
-    public static Parsed Parse(JsonElement request)
+    public static Parsed Parse(JsonElement request, string activeHoliday = null)
     {
         string root = Path.GetFullPath(Text(request, "contentRoot", Godot.ProjectSettings.ContentRoot));
         if (root != Path.GetFullPath(Godot.ProjectSettings.ContentRoot))
@@ -38,7 +38,7 @@ public static class MapServices
         if (!File.Exists(manifest)) throw new FileNotFoundException("Map placement manifest is missing", manifest);
         var names = ReadPairs(Path.Combine(objectDir, "guid_mesh.txt"));
         var holiday = ReadPairs(Path.Combine(objectDir, "holiday_props.txt"));
-        string active = Main.ActiveHolidayNow();
+        string active = activeHoliday ?? Main.ActiveHolidayNow();
         var rubble = DestructibleField.LoadCatalog();
         var mappings = new List<ObjectMapping>();
         var fixtures = new List<object>(); var containers = new List<object>(); var destructibles = new List<object>(); var taps = new List<object>();

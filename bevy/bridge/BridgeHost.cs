@@ -47,7 +47,7 @@ public sealed partial class BridgeHost : IDisposable
     ZombieServices _zombies;
     int _seed = 1337;
     bool _worldChanged;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null, CosmeticBulletServices.WaterSaved[] CosmeticWater = null, WarheadServices.Saved[] StuckProjectiles = null);
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null, CosmeticBulletServices.WaterSaved[] CosmeticWater = null, WarheadServices.Saved[] StuckProjectiles = null, string Holiday = null);
     public sealed record BridgeEvent(long Seq, string Kind, object Data, long Tick);
     void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data, _server?.Session.CurrentTick ?? _client?.Applier.LastAppliedServerTick ?? 0));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson(), new ByteArrayJson() } };
@@ -132,12 +132,13 @@ public sealed partial class BridgeHost : IDisposable
             case "worldVehicleState": RequireSession(); return _vehicles.Publish(r);
             case "worldVehicleDamage": RequireSession(); return _bodies.HostVehicleDamage(r);
             case "worldVehicleExit": RequireSession(); return _vehicles.ExitProbe(r);
+            case "mapBindings": RequireSession(); return ReadMapBindings(r);
             case "mapServices":
                 RequireSession();
                 string mapKey = Text(r, "mapName", "PEI") + "|" + Text(r, "mapRoot");
                 if (_services.MapKey == mapKey) return _services.MapResult;
                 if (_services.MapKey != null) throw new InvalidOperationException("A different map requires init");
-                var parsed = MapServices.Parse(r);
+                var parsed = MapServices.Parse(r, _worldHoliday);
                 var mapSpec = JsonNode.Parse(parsed.Spec.GetRawText());
                 mapSpec["mapKey"] = mapKey;
                 mapSpec["mapObjects"] = JsonSerializer.SerializeToNode(parsed.Objects);
@@ -159,7 +160,7 @@ public sealed partial class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture(), _cosmetic.CaptureWater(), _warheads.Capture()));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture(), _cosmetic.CaptureWater(), _warheads.Capture(), _worldHoliday));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -175,6 +176,7 @@ public sealed partial class BridgeHost : IDisposable
                 _geometry.TranslateWorld(loadDelta); _position += loadDelta;
                 _originX = loadedX; _originZ = loadedZ; _originEpoch++;
                 _serviceSpecs.Clear(); if (extra?.Services != null) _serviceSpecs.AddRange(extra.Services);
+                _worldHoliday = extra?.Holiday ?? _worldHoliday;
                 Dispose(); Start(loaded);
                 RestoreProjectiles(extra?.Projectiles);
                 _wildlife.Restore(extra?.Wildlife);
@@ -294,7 +296,7 @@ public sealed partial class BridgeHost : IDisposable
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         if (IsRemote) { StartRemote(); return; }
         _server = new NetWorldServer(ServerTransport(), maxPeers: _maxPeers,
-            contentHash: NetContent.Hash, serverName: _serverName, maxPlayers: _maxPeers, gamemode: "Survival");
+            contentHash: NetContent.Hash, activeHoliday: _worldHoliday, serverName: _serverName, maxPlayers: _maxPeers, gamemode: "Survival");
         _server.Transactions.AllowCheats = _allowCheats;
         _server.PlayerHost.AcceptSeatedActions = true;
         _server.VehicleHost.RepositionExitedOwner = _server.PlayerHost.RepositionOwner;
@@ -313,6 +315,7 @@ public sealed partial class BridgeHost : IDisposable
                 && _server.Inventories.TryGet(owner, out var owned) && owned.Inventory.getItemCount(held.HeldItemId) > 0 ? gun : null;
         DeployableNetSchema.RegisterAll(_server.Deployables.Schema);
         _services = new WorldServices(_server, _catalog, Emit);
+        _server.Npcs.ActiveHoliday = () => _worldHoliday;
         _vehicles = new VehicleServices(_server, _geometry, Emit); _vehicleRecov.Clear();
         _bodies = new BodyCombatServices(_server, _geometry, _vehicles, Emit);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
@@ -579,5 +582,6 @@ public sealed partial class BridgeHost : IDisposable
         _environment = null; _services = null; _vehicles = null; _bodies = null; _weapons = null;
         _cosmetic = null; _warheads = null; _appearance = null; _wildlife = null; _zombies = null;
         _remoteWeapon = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
+        _mapBindings = null;
     }
 }
