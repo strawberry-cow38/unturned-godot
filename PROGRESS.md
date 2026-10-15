@@ -747,3 +747,26 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
 - Native seating integration exposed source core gaps: occupied-driver vehicles rejected every passenger, exit validation accepted only drivers, and reliable passenger-enter events temporarily stole the driver slot. The seat-index protocol already existed; no packet format changed.
 - Entry now validates the requested free seat, exit accepts all real occupants, and reliable facts update the matching seat. The authority follows/ejects all occupants and uses IsSeated for on-foot claims, MoveInput and console-teleport gates; vehicle input and transform authority remain driver-only.
 - Added three regression tests over the real MemTransport server/client stack and event application. All three failed against the old code; after the fix 40 targeted vehicle/owner-authority tests pass, including existing one-seat entry races and recovery checks. New assertions cover rejection of a second passenger claimant, preserved driver identity at reliable-event delivery, blocked-door refusal, replicated exit, and passenger movement/control restrictions.
+
+## 2026-10-14 — Bevy aircraft physics and vehicle authority geometry
+
+Native vehicles now include source rotary/fixed-wing forces and controls, original
+rotor/propeller/gear visuals, the procedural scoutcopter pod, and explicit
+`--vehicle KEY` harness spawning through the same authoritative registration.
+Helicopter startup uses the actual decoded ignition clip and per-airframe playback
+pitch. Source ground-effect/idle trim, ETL, drag/envelope limits and real inertial
+attitude forces survive the engine switch; fixed-wing flight uses the original
+AoA/stall and high-speed dive-recovery lift. Retracted gear stops supplying wheel
+support. Untouched vitals are no longer sent back from native snapshots, avoiding
+an overwrite race with authoritative combat damage. Moving render triangles now
+feed the managed BVH under stable vehicle keys and subpart tags.
+
+Real Rapier tests exercise all seven helicopter climb/idle envelopes and the
+helicopter/plane attitude signs, in addition to existing drivetrain/boat/exit
+checks. Actual PEI aircraft rendering exposed a harness spawn inside the Huey's
+tail boom; placement now includes each definition's rear extent. Opened and
+inspected the corrected rear and three-quarter captures, with the full aircraft,
+main and tail blades, cabin and shadows present. Parked vehicles also have a
+regression-tested collision-stream boundary: they retain height while terrain is
+unloaded and regain physical wheel contact when the region returns. Detailed
+remaining vehicle work remains explicit in bevy/docs/VEHICLE_PORT.md.

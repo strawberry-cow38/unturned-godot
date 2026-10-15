@@ -39,10 +39,18 @@ pub struct VehicleSpec {
     pub heli_rotor_mesh_prefix: Option<String>,
     pub prop_mesh_prefix: Option<String>,
     pub prop_hub: [f32; 3],
+    pub missile_mesh: Option<String>,
+    pub steer_mesh: Option<String>,
+    pub retract_gear: bool,
     pub rotor_hub: [f32; 3],
     pub tail_rotor_hub: [f32; 3],
     pub rotor_radius: f32,
     pub tail_rotor_radius: f32,
+    pub main_hub_box: [f32; 3],
+    pub tail_hub_box: [f32; 3],
+    pub main_rotor_hp: f32,
+    pub tail_rotor_hp: f32,
+    pub rear_engine: bool,
     pub seat_body_rise: f32,
     pub driver_eye: [f32; 3],
     pub access_required: bool,
@@ -90,6 +98,7 @@ pub struct VehicleSpec {
     pub heli_roll_torque: f32,
     pub heli_yaw_torque: f32,
     pub heli_level: f32,
+    pub sling_hook: bool,
     pub heli_climb_max: f32,
     pub heli_fall_max: f32,
     pub plane_thrust: f32,
@@ -125,6 +134,18 @@ pub fn speed_buff() -> f32 {
 impl VehicleSpec {
     pub fn mass(&self) -> f32 {
         if self.mass > 0. { self.mass } else { 900. }
+    }
+    pub fn ground_clearance(&self) -> f32 {
+        let mut lowest = (self.box_center[1] - self.box_size[1] * 0.5).min(0.);
+        for (size, center) in self.extra_boxes.iter().flatten() {
+            lowest = lowest.min(center[1] - size[1] * 0.5);
+        }
+        if self.plane {
+            for wheel in self.wheels() {
+                lowest = lowest.min(wheel.1 - self.wheel_radius);
+            }
+        }
+        -lowest
     }
     pub fn wheels(&self) -> &[(f32, f32, f32, bool)] {
         self.wheels.as_deref().unwrap_or(&[])

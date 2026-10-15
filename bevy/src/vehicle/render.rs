@@ -7,6 +7,7 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 use std::path::Path;
+pub mod aircraft;
 
 #[derive(Component)]
 pub struct WheelVisual {
@@ -92,6 +93,11 @@ pub fn build(
                 images.add(image)
             });
         let m = materials.add(StandardMaterial {
+            base_color: if texture.is_some() {
+                Color::WHITE
+            } else {
+                Color::srgba(paint[0], paint[1], paint[2], paint[3])
+            },
             base_color_texture: texture,
             perceptual_roughness: 0.85,
             ..default()
@@ -160,11 +166,16 @@ pub fn build(
     if let Some(name) = &s.wheel {
         for (index, w) in s.wheels().iter().enumerate() {
             let left = w.0 < 0.;
-            let pose = Transform::from_xyz(w.0, w.1 - 0.25, w.2).with_rotation(if left {
-                Quat::from_rotation_y(std::f32::consts::PI)
-            } else {
-                Quat::IDENTITY
-            });
+            if s.retract_gear {
+                continue;
+            }
+            let pose = Transform::from_xyz(w.0, w.1 - 0.25, w.2)
+                .with_scale(Vec3::splat(s.wheel_radius(index) / s.wheel_radius))
+                .with_rotation(if left {
+                    Quat::from_rotation_y(std::f32::consts::PI)
+                } else {
+                    Quat::IDENTITY
+                });
             if let Some(wheel) = spawn_mesh(
                 commands,
                 entity,
@@ -182,6 +193,19 @@ pub fn build(
                 });
             }
         }
+    }
+    if s.heli || s.plane {
+        aircraft::build(
+            commands,
+            entity,
+            d,
+            root,
+            cache,
+            meshes,
+            materials,
+            body_material,
+            wheel_mat,
+        );
     }
     if s.body.is_some()
         && s.hull_bands.is_none()

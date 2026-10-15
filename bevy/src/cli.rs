@@ -7,6 +7,7 @@ pub struct Options {
     pub unturned: Option<PathBuf>,
     pub map: String,
     pub seed: i32,
+    pub vehicle: Option<String>,
     pub play: bool,
     pub headless: bool,
     pub ticks: u32,
@@ -23,6 +24,7 @@ impl Default for Options {
             unturned: detect_retail_install(),
             map: "PEI".into(),
             seed: 1337,
+            vehicle: None,
             play: false,
             headless: false,
             ticks: 250,
@@ -55,6 +57,7 @@ impl Options {
                 "--stay" => options.exit_after_capture = false,
                 "--map" => options.map = value()?,
                 "--seed" => options.seed = value()?.parse()?,
+                "--vehicle" => options.vehicle = Some(value()?.to_ascii_lowercase()),
                 "--content" => options.content = value()?.into(),
                 "--unturned" => options.unturned = Some(value()?.into()),
                 "--ticks" => options.ticks = value()?.parse()?,
@@ -69,6 +72,18 @@ impl Options {
         }
         if options.screenshot_frame == 0 {
             bail!("--shot-frame must be greater than zero");
+        }
+        if let Some(vehicle) = &options.vehicle {
+            if crate::vehicle::data::named(vehicle).is_none() {
+                bail!(
+                    "Unknown vehicle {vehicle}. Available vehicles: {}",
+                    crate::vehicle::data::FLEET
+                        .iter()
+                        .map(|v| v.key.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
         }
         Ok(options)
     }
@@ -97,6 +112,7 @@ Usage: bevy/run.sh [options]\n\
   --unturned PATH          Retail install root (also UG_UNTURNED_DIR)\n\
   --content PATH           Bundled game/content directory\n\
   --seed 1337              Procedural world seed\n\
+  --vehicle jeep          Spawn an original vehicle beside the player for testing\n\
   --headless --ticks 250   Exercise the core bridge without a renderer\n\
   --shot PATH              Capture the rendered window and exit\n\
   --shot-frame 90          Wait this many rendered frames before capture\n\
@@ -127,8 +143,30 @@ mod tests {
     }
     #[test]
     fn unknown_or_missing_values_fail_instead_of_silently_selecting_defaults() {
-        for args in [vec!["--unknown"], vec!["--map"], vec!["--ticks=0"]] {
+        for args in [
+            vec!["--unknown"],
+            vec!["--map"],
+            vec!["--ticks=0"],
+            vec!["--vehicle"],
+            vec!["--vehicle=imaginary_car"],
+        ] {
             assert!(Options::parse(args.into_iter().map(str::to_owned)).is_err());
+        }
+    }
+    #[test]
+    fn vehicle_harness_accepts_actual_fleet_keys_and_preserves_regular_default() {
+        assert!(Options::parse([]).unwrap().vehicle.is_none());
+        for args in [vec!["--vehicle", "Huey"], vec!["--vehicle=huey"]] {
+            assert_eq!(
+                Options::parse(args.into_iter().map(str::to_owned))
+                    .unwrap()
+                    .vehicle
+                    .as_deref(),
+                Some("huey")
+            );
+        }
+        for vehicle in crate::vehicle::data::FLEET.iter() {
+            assert!(Options::parse([format!("--vehicle={}", vehicle.key)]).is_ok());
         }
     }
 }

@@ -44,6 +44,7 @@ fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
                 },
                 drivetrain: Drivetrain::new(s),
                 buoyancy: Buoyancy::new(s),
+                flight: flight::Flight::new(s, 0.),
             },
             Transform::from_translation(at),
             RigidBody::Dynamic,
@@ -230,4 +231,118 @@ fn native_own_door_probe_rejects_wall_and_standing_person() {
         !probe(&mut app).0,
         "standing person at door blocks room, own seated player does not"
     );
+}
+
+#[test]
+fn parked_vehicle_retains_pose_after_terrain_unloads_and_wakes_when_region_returns() {
+    let mut app = physics_app(None);
+    let mut geometry = WorldGeometry::default();
+    geometry.loaded_radius = 10.;
+    app.insert_resource(geometry);
+    let car = body(&mut app, "jeep", Vec3::new(100., 1.8, 0.));
+    app.world_mut()
+        .get_mut::<VehicleBody>(car)
+        .unwrap()
+        .driver_player_id = 0;
+    ticks(&mut app, 200);
+    assert_eq!(
+        *app.world().get::<RigidBody>(car).unwrap(),
+        RigidBody::Fixed
+    );
+    assert!(
+        (app.world().get::<Transform>(car).unwrap().translation.y - 1.8).abs() < 0.01,
+        "unloaded terrain cannot swallow a parked car"
+    );
+    app.world_mut()
+        .resource_mut::<WorldGeometry>()
+        .loaded_center = Vec3::new(100., 0., 0.);
+    app.world_mut().spawn((
+        Collider::cuboid(10., 0.5, 10.),
+        Transform::from_xyz(100., -0.5, 0.),
+    ));
+    ticks(&mut app, 200);
+    assert_eq!(
+        *app.world().get::<RigidBody>(car).unwrap(),
+        RigidBody::Dynamic
+    );
+    assert!(
+        app.world()
+            .get::<RayCastVehicleController>(car)
+            .unwrap()
+            .wheels
+            .iter()
+            .all(|w| w.state.is_in_contact)
+    );
+}
+
+#[test]
+fn native_rotary_fleet_climbs_within_authority_envelope_and_hands_off_sinks() {
+    for definition in data::FLEET.iter().filter(|d| d.spec.heli) {
+        let mut app = physics_app(None);
+        let heli = body(&mut app, &definition.key, Vec3::new(0., 100., 0.));
+        {
+            let mut b = app.world_mut().get_mut::<VehicleBody>(heli).unwrap();
+            b.flight.spool = 1.;
+            b.flight.collective = 1.;
+            b.controls.throttle = 1.;
+        }
+        ticks(&mut app, 700);
+        let climb = app.world().get::<Velocity>(heli).unwrap().linear.y;
+        assert!(
+            climb > 1. && climb < definition.spec.heli_climb_max * 0.95,
+            "{} climb {climb} must remain inside the actual owner envelope",
+            definition.key
+        );
+        app.world_mut()
+            .get_mut::<VehicleBody>(heli)
+            .unwrap()
+            .controls
+            .throttle = 0.;
+        ticks(&mut app, 600);
+        let sink = app.world().get::<Velocity>(heli).unwrap().linear.y;
+        assert!(
+            sink < -0.4 && sink > -3.,
+            "{} hands-off must descend gently, got {sink}",
+            definition.key
+        );
+    }
+}
+
+#[test]
+fn native_aircraft_cyclic_and_rudder_turn_the_actual_body_in_source_directions() {
+    for key in ["huey", "otter"] {
+        for axis in 0..3 {
+            let mut app = physics_app(None);
+            let aircraft = body(&mut app, key, Vec3::new(0., 100., 0.));
+            {
+                let mut b = app.world_mut().get_mut::<VehicleBody>(aircraft).unwrap();
+                b.flight.spool = 1.;
+                b.flight.collective = 0.6;
+                match axis {
+                    0 => b.controls.pitch = 0.5,
+                    1 => b.controls.roll = 0.5,
+                    _ => b.controls.yaw = 0.5,
+                }
+            }
+            if key == "otter" {
+                app.world_mut()
+                    .get_mut::<Velocity>(aircraft)
+                    .unwrap()
+                    .linear = Vec3::NEG_Z * 16.;
+            }
+            ticks(&mut app, 25);
+            let pose = app.world().get::<Transform>(aircraft).unwrap();
+            let nose = pose.rotation * Vec3::NEG_Z;
+            let up = pose.rotation * Vec3::Y;
+            let direction = match axis {
+                0 => nose.y,
+                1 => up.x,
+                _ => nose.x,
+            };
+            assert!(
+                direction > 0.015,
+                "{key} positive axis {axis} is nose up, bank right, or nose right: nose={nose:?} up={up:?}"
+            );
+        }
+    }
 }

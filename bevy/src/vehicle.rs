@@ -3,6 +3,8 @@ mod collision;
 pub mod data;
 mod dynamics;
 mod exit;
+mod flight;
+mod geometry;
 mod render;
 mod spawns;
 #[cfg(test)]
@@ -16,7 +18,7 @@ use crate::{
     ui::{UiModel, UiState},
     world::{WorldConfig, WorldGeometry, WorldState},
 };
-use bevy::prelude::*;
+use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*};
 use bevy_rapier3d::prelude::*;
 use dynamics::{Buoyancy, Controls, Drivetrain};
 use serde::Deserialize;
@@ -40,6 +42,7 @@ pub struct OccupiedSeat {
     pub eye_pose: Transform,
     pub velocity: Vec3,
     pub driver: bool,
+    pub aircraft: bool,
 }
 #[derive(Component)]
 pub struct VehicleBody {
@@ -56,6 +59,7 @@ pub struct VehicleBody {
     pub controls: Controls,
     drivetrain: Drivetrain,
     buoyancy: Buoyancy,
+    flight: flight::Flight,
 }
 #[derive(Resource, Default)]
 struct Vehicles {
@@ -89,6 +93,7 @@ impl Plugin for VehiclePlugin {
         app.init_resource::<Occupancy>()
             .init_resource::<Vehicles>()
             .init_resource::<collision::Hulls>()
+            .init_resource::<geometry::GeometryUploads>()
             .add_systems(
                 Update,
                 (
@@ -96,6 +101,7 @@ impl Plugin for VehiclePlugin {
                     sync_vehicles,
                     adopt_occupancy,
                     render::animate_wheels,
+                    render::aircraft::animate,
                     collision::update,
                 )
                     .chain()
@@ -110,6 +116,10 @@ impl Plugin for VehiclePlugin {
             )
             .add_systems(FixedUpdate, step_bodies.before(PhysicsSet::SyncBackend))
             .add_systems(
+                PostUpdate,
+                geometry::upload.after(TransformSystems::Propagate),
+            )
+            .add_systems(
                 FixedUpdate,
                 publish_bodies
                     .after(PhysicsSet::Writeback)
@@ -123,6 +133,7 @@ fn register_spawns(
     world: Res<WorldState>,
     geometry: Res<WorldGeometry>,
     model: Res<UiModel>,
+    options: Res<crate::LaunchOptions>,
     snapshot: Res<GameSnapshot>,
     mut vehicles: ResMut<Vehicles>,
     mut commands: Commands,
@@ -174,21 +185,37 @@ fn register_spawns(
             continue;
         };
         let d = data::definition(point.type_id).unwrap();
-        let s = &d.spec;
-        let trunk = d.access.iter().any(|a| a.kind == "Trunk");
-        let hood = d.access.iter().any(|a| a.kind == "Hood");
-        let labels = d.seat_labels();
-        let seats: Vec<_> = (0..d.seats.len())
-            .take(12)
-            .map(
-                |i| json!({"width":if hood{4}else{0},"height":if hood{2}else{0},"label":labels[i]}),
-            )
-            .collect();
-        requests.push(json!({"key":format!("{}:vehicle:{}",config.map_name,point.index),"typeId":point.type_id,"variant":point.index as u8,
-            "position":[point.position.x,height,point.position.z],"yaw":point.yaw,"health":s.health*10.,"fuel":s.fuel,"battery":10000,
-            "speedMax":s.speed_max(),"climbMax":s.heli_climb_max,"fallMax":s.heli_fall_max,"seatCount":d.seats.len(),"seatOffsets":d.seats,"hasDoors":true,
-            "storage":{"trunkWidth":if trunk{6}else{0},"trunkHeight":if trunk{4}else{0},"gloveboxWidth":if hood{3}else{0},"gloveboxHeight":if hood{2}else{0},"seats":seats}}));
+        requests.push(registration(
+            d,
+            format!("{}:vehicle:{}", config.map_name, point.index),
+            Vec3::new(point.position.x, height, point.position.z),
+            point.yaw,
+            point.index as u8,
+        ));
         indices.push(point.index);
+    }
+    if !vehicles.registered.contains(&usize::MAX) {
+        if let Some(d) = options.0.vehicle.as_deref().and_then(data::named) {
+            let yaw = world.spawn_yaw;
+            let rear =
+                (d.spec.box_center[2] + d.spec.box_size[2] * 0.5).max(d.spec.tail_rotor_hub[2]);
+            let mut at =
+                world.spawn + Quat::from_rotation_y(yaw) * Vec3::NEG_Z * (rear + 6.).max(6.);
+            at.y = geometry.terrain_height(at.x, at.z).unwrap_or(world.spawn.y)
+                + if d.spec.heli || d.spec.plane {
+                    d.spec.ground_clearance() + 0.05
+                } else {
+                    1.2
+                };
+            requests.push(registration(
+                d,
+                format!("{}:vehicle:harness:{}", config.map_name, d.key),
+                at,
+                yaw.to_degrees(),
+                0,
+            ));
+            indices.push(usize::MAX);
+        }
     }
     if requests.is_empty() {
         return;
@@ -204,6 +231,43 @@ fn register_spawns(
             warn!("Vehicle registration: {e}");
         }
     }
+}
+fn registration(
+    d: &data::VehicleDefinition,
+    key: String,
+    at: Vec3,
+    yaw: f32,
+    variant: u8,
+) -> serde_json::Value {
+    let s = &d.spec;
+    let trunk = d.access.iter().any(|a| a.kind == "Trunk");
+    let hood = d.access.iter().any(|a| a.kind == "Hood");
+    let labels = d.seat_labels();
+    let seats: Vec<_> = labels
+        .iter()
+        .take(12)
+        .map(|label| json!({"width":if hood{4}else{0},"height":if hood{2}else{0},"label":label}))
+        .collect();
+    let mut hit_regions = Vec::new();
+    if s.heli {
+        let main = if s.main_hub_box != [0.; 3] {
+            s.main_hub_box
+        } else {
+            [(s.rotor_radius * 0.14).max(0.22); 3]
+        };
+        let tail = if s.tail_hub_box != [0.; 3] {
+            s.tail_hub_box
+        } else {
+            [(s.tail_rotor_radius * 0.42).max(0.16); 3]
+        };
+        hit_regions.push(json!({"bodyPart":"mainRotor","center":s.rotor_hub,"size":main,"health":if s.main_rotor_hp > 0. { s.main_rotor_hp } else { s.health * 0.45 }}));
+        hit_regions.push(json!({"bodyPart":"tailRotor","center":s.tail_rotor_hub,"size":tail,"health":if s.tail_rotor_hp > 0. { s.tail_rotor_hp } else { s.health * 0.28 }}));
+    }
+    json!({"key":key,"typeId":d.type_id,"variant":variant,
+        "position":at.to_array(),"yaw":yaw,"health":s.health*10.,"fuel":s.fuel,"battery":10000,
+        "speedMax":s.speed_max(),"climbMax":s.heli_climb_max,"fallMax":s.heli_fall_max,"seatCount":d.seats.len(),"seatOffsets":d.seats,"hasDoors":true,
+        "hitRegions":hit_regions,"engineRegion":{"rear":s.rear_engine,"threshold":s.box_center[2] + if s.rear_engine { 0.15 } else { -0.15 } * s.box_size[2],"health":s.health * 10. * 0.4},
+        "storage":{"trunkWidth":if trunk{6}else{0},"trunkHeight":if trunk{4}else{0},"gloveboxWidth":if hood{3}else{0},"gloveboxHeight":if hood{2}else{0},"seats":seats}})
 }
 fn sync_vehicles(
     mut commands: Commands,
@@ -286,6 +350,10 @@ fn sync_vehicles(
                     controls: default(),
                     drivetrain: Drivetrain::new(spec),
                     buoyancy: Buoyancy::new(spec),
+                    flight: flight::Flight::new(
+                        spec,
+                        flight::ignition_duration(spec, &config.content_root),
+                    ),
                 },
                 pose,
                 Visibility::default(),
@@ -390,6 +458,7 @@ fn adopt_occupancy(
             net_id: body.net_id,
             seat: seat as u8,
             driver: seat == 0,
+            aircraft: d.spec.heli || d.spec.plane,
             velocity: velocity.linear,
             eye_pose: Transform::from_translation(pose.transform_point(eye))
                 .with_rotation(pose.rotation),
@@ -416,6 +485,8 @@ fn read_controls(
     players: Query<Entity, With<crate::player::PlayerBody>>,
     cache: Res<ContentCache>,
     config: Res<WorldConfig>,
+    motion: Res<AccumulatedMouseMotion>,
+    time: Res<Time>,
 ) {
     let active = ui.screen == crate::ui::Screen::Playing && model.alive;
     let pressed = |action| settings.pressed(action, &keys, &mouse);
@@ -452,19 +523,67 @@ fn read_controls(
         }
         if seat.driver {
             if let Ok((_, mut body, _)) = query.get_mut(seat.vehicle) {
+                let spec = &data::definition(body.type_id).unwrap().spec;
+                let throttle = pressed(GameAction::MoveForward) as u8 as f32
+                    - pressed(GameAction::MoveBack) as u8 as f32;
                 if edge(GameAction::VehicleIgnition) {
-                    body.flags ^= 1;
+                    if body.flags & 1 != 0 {
+                        body.flags &= !1;
+                    } else if body.battery >= 400. && body.health > 0. && body.flags & 32 == 0 {
+                        body.flags |= 1;
+                    }
+                }
+                if throttle.abs() > 0.01
+                    && body.battery >= 400.
+                    && body.health > 0.
+                    && body.flags & 32 == 0
+                {
+                    body.flags |= 1;
                 }
                 if edge(GameAction::VehicleLights) {
                     body.flags ^= 2;
                 }
+                let mut cyclic = Vec2::ZERO;
+                if spec.heli || spec.plane {
+                    let delta = if pressed(GameAction::FreeLook) {
+                        Vec2::ZERO
+                    } else {
+                        motion.delta
+                    };
+                    let arrows = Vec2::new(
+                        keys.pressed(KeyCode::ArrowDown) as u8 as f32
+                            - keys.pressed(KeyCode::ArrowUp) as u8 as f32,
+                        keys.pressed(KeyCode::ArrowRight) as u8 as f32
+                            - keys.pressed(KeyCode::ArrowLeft) as u8 as f32,
+                    );
+                    cyclic = body.flight.input(
+                        delta,
+                        arrows,
+                        if spec.plane {
+                            settings.invert_plane_pitch
+                        } else {
+                            settings.invert_heli_pitch
+                        },
+                        settings.heli_sensitivity,
+                        time.delta_secs(),
+                    );
+                    if spec.plane && edge(GameAction::LandingGear) {
+                        body.flight.gear_down = !body.flight.gear_down;
+                    }
+                }
+                let steer = pressed(GameAction::MoveRight) as u8 as f32
+                    - pressed(GameAction::MoveLeft) as u8 as f32;
                 body.controls = Controls {
-                    throttle: pressed(GameAction::MoveForward) as u8 as f32
-                        - pressed(GameAction::MoveBack) as u8 as f32,
-                    steer: pressed(GameAction::MoveRight) as u8 as f32
-                        - pressed(GameAction::MoveLeft) as u8 as f32,
+                    throttle,
+                    steer,
                     handbrake: pressed(GameAction::VehicleHandbrake),
                     engine: body.flags & 1 != 0,
+                    pitch: cyclic.x,
+                    roll: cyclic.y,
+                    yaw: steer,
+                    ground_mode: spec.plane
+                        && (keys.pressed(KeyCode::ControlLeft)
+                            || keys.pressed(KeyCode::ControlRight)),
                     ..default()
                 };
             }
@@ -527,30 +646,128 @@ fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3, limit: f32) -> Option<
 }
 fn step_bodies(
     world: Res<WorldState>,
+    geometry: Option<Res<WorldGeometry>>,
+    context: ReadRapierContext,
+    terrain: Query<(), With<crate::world::WorldTerrain>>,
     mut query: Query<(
+        Entity,
         &mut VehicleBody,
         &Transform,
         &mut Velocity,
         &mut RayCastVehicleController,
         &mut ExternalForce,
         &mut ExternalImpulse,
+        &mut RigidBody,
+        &mut Damping,
     )>,
 ) {
-    for (mut body, pose, mut velocity, mut wheels, mut force, mut impulse) in &mut query {
+    let context = context.single().ok();
+    for (
+        entity,
+        mut body,
+        pose,
+        mut velocity,
+        mut wheels,
+        mut force,
+        mut impulse,
+        mut rigid_body,
+        mut damping,
+    ) in &mut query
+    {
+        // A saved/streamed car must not fall through terrain that has intentionally
+        // left the collision window. The authority retains its parked pose, and the
+        // original single body wakes when its region is physically present again.
+        let outside = body.driver_player_id == 0
+            && geometry.as_ref().is_some_and(|g| {
+                g.loaded_radius > 0.
+                    && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius
+            });
+        if outside {
+            *rigid_body = RigidBody::Fixed;
+            *velocity = Velocity::default();
+            *force = ExternalForce::default();
+            *impulse = ExternalImpulse::default();
+            for wheel in &mut wheels.wheels {
+                wheel.engine_force = 0.;
+                wheel.brake = 0.;
+            }
+            continue;
+        }
+        if *rigid_body == RigidBody::Fixed {
+            *rigid_body = RigidBody::Dynamic;
+        }
         let spec = &data::definition(body.type_id).unwrap().spec;
         let controls = body.controls;
-        let (f, i) = body
-            .drivetrain
-            .step(spec, &mut wheels, pose, &velocity, controls, 0.02);
-        *force = f;
-        *impulse = i;
+        *force = ExternalForce::default();
+        *impulse = ExternalImpulse::default();
+        if !spec.heli && !spec.plane {
+            let (f, i) = body
+                .drivetrain
+                .step(spec, &mut wheels, pose, &velocity, controls, 0.02);
+            *force = f;
+            *impulse = i;
+        }
+        let mut afloat = false;
         if spec.water == "Boat" {
             if let Some(sea) = world.sea_level {
-                let (water, _) = body
-                    .buoyancy
-                    .step(spec, pose, &mut velocity, controls, sea, 0.02);
+                let (water, wet) =
+                    body.buoyancy
+                        .step(spec, pose, &mut velocity, controls, sea, 0.02);
                 force.force += water.force;
                 force.torque += water.torque;
+                afloat = wet;
+            }
+        }
+        if spec.heli || spec.plane {
+            let mut contact = flight::AirContact {
+                afloat,
+                ..default()
+            };
+            if let Some(context) = context.as_ref() {
+                contact.grounded = context
+                    .cast_ray(
+                        pose.translation,
+                        Vec3::NEG_Y,
+                        spec.ground_clearance() + 0.45,
+                        true,
+                        QueryFilter::default().exclude_collider(entity),
+                    )
+                    .is_some();
+                if spec.heli {
+                    let origin = pose.transform_point(Vec3::from_array(spec.rotor_hub));
+                    let only_terrain = |entity, _: &bevy_rapier3d::rapier::geometry::Collider| {
+                        terrain.contains(entity)
+                    };
+                    let hit = context.cast_ray(
+                        origin,
+                        Vec3::NEG_Y,
+                        spec.rotor_radius * 2.,
+                        true,
+                        QueryFilter::default().predicate(&only_terrain),
+                    );
+                    contact.ground_effect =
+                        flight::ground_effect(spec.rotor_radius, hit.map(|(_, distance)| distance));
+                }
+            }
+            let driven = body.driver_player_id != 0;
+            let exploded = body.flags & 32 != 0;
+            let flight = body.flight.step(
+                spec,
+                pose,
+                &velocity,
+                controls,
+                contact,
+                &mut wheels,
+                driven,
+                exploded,
+                0.02,
+            );
+            force.force += flight.force.force;
+            force.torque += flight.force.torque;
+            *damping = flight.damping;
+            if flight.park {
+                *rigid_body = RigidBody::Fixed;
+                *velocity = Velocity::default();
             }
         }
     }
@@ -576,7 +793,7 @@ fn publish_bodies(
                 "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),"steerDegrees":body.drivetrain.steering,"throttle":body.controls.throttle,"steer":body.controls.steer,"handbrake":body.controls.handbrake,"flags":body.flags,"recovAck":body.recov_counter}})) {warn!("Vehicle state: {e}");}
         } else {
             unattended.push(json!({"netId":body.net_id,"position":pose.translation.to_array(),"eulerDegrees":angles,"linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),
-            "steerDegrees":body.drivetrain.steering,"fuel":body.fuel,"health":body.health,"battery":body.battery,"flags":body.flags}));
+            "steerDegrees":body.drivetrain.steering,"flags":body.flags}));
         }
     }
     if !unattended.is_empty() {

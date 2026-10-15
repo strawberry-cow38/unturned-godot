@@ -34,6 +34,32 @@ poses through `worldVehicleState`; the local driver uses the existing
   Centreline, rolled, bi-fold and helm door selection follows `VehicleExit.cs`.
 - Original trunk, glovebox and seat-pocket dimensions/labels are registered with
   the managed `ServerVehicleStorage`; rendering those grids is a separate UI task.
+- All seven rotary-wing definitions now run the source collective/spool, original
+  ignition clip gate, rotor-size pitch timing, hub-height ground effect, ETL,
+  anisotropic drag, shaft-aligned descent, envelope backstop and inertial cyclic.
+  Fixed-wing flight keeps sticky throttle, airflow AoA/stall lift, dive recovery,
+  bank compensation, weathervaning, runway rotation, taxi/reverse and float drag.
+  Actual Godot COMBINE damping is preserved, including the otherwise easy-to-miss
+  project-default contribution. Mouse/arrow cyclic, independent pitch inversions,
+  free look and the manual landing-gear toggle use persisted controls.
+- Source main/tail blade meshes spin on their original hubs. The tail's 90-degree
+  roll is composed with phase; the propeller rotates about its actual mesh centre.
+  Retractable gear folds on the original hinges and removes wheel support halfway
+  through retraction. The source scoutcopter pod primitives, jet missiles/control
+  stick and original gear meshes are present.
+- `--vehicle KEY` explicitly registers any fleet member beside the real player
+  spawn through the same authority path. Spawn distance includes the actual rear
+  extent, so a large aircraft's tail does not envelop the player. Normal launches
+  retain only original map spawns. Unattended bodies freeze outside loaded terrain
+  collision and wake when that region returns.
+- Moving render triangles upload to the managed dynamic BVH under a stable vehicle
+  key, with vehicle/subpart tags. Despawn removes the subtree; terrain replacement
+  republishes it. Native pose publication omits untouched vitals, preventing stale
+  snapshots from undoing authoritative bullet damage.
+- The original passenger validator/event defects are fixed without a packet-format
+  change. Occupied driver seats no longer reject a free passenger seat; reliable
+  enter/exit facts preserve driver identity; every occupant follows the vehicle,
+  while passenger movement, drive input and console teleport remain rejected.
 
 ## Verification
 
@@ -54,19 +80,32 @@ vehicle interaction inspection continues separately. The capture also exposed
 per-pane glass files; the loader now follows the source pane labels and single
 canopy fallback, with a content-backed regression test.
 
+Flight verification runs every rotary-wing definition through actual Rapier
+climb and hands-off descent and checks the authority envelopes. Independent
+helicopter/plane traces pin pitch, roll and rudder direction. Tests also decode
+the real ignition audio and verify its thrust gate, check cushion-aware idle,
+virtual stick decay/inversion and dive/stall lift. The parking test unloads the
+terrain under a car and restores it, verifying both retained height and regained
+four-wheel support. Forty managed vehicle/player-authority tests pass; all three
+new passenger regressions were demonstrated failing before the core fix.
+
+`bevy-huey-three-quarter.png` and `bevy-huey-fixed.png` were rendered and opened:
+the complete source Huey, original main/tail blades, cabin and shadows are visible
+and grounded on the PEI slope. The first close-up exposed a harness placement
+inside the tail; the extent-based clearance is the verified correction.
+
 ## Still required for vehicle parity
 
 This milestone is not the whole 11,264-line vehicle shell. The following remains:
-helicopter/plane forces and all flight controls; rotor, propeller, landing-gear,
-airframe damage and crash presentation; source procedural aircraft frames; ship
+aircraft turbulence, rotor strikes, airframe damage and crash presentation; ship
 deck/superstructure collider details and riding; suspension surface-material
 selection and wheel dust; swamping/drowning; damage, fire, explosions, husks,
 detached wheels and tires; dynamic headlights/sirens/beacons; engine/ignition/horn
 audio; towing, kingpin, sling, winch and cargo; turret weapons/hatches and optics;
 doors/hood/trunk animations and storage dashboard; repair/refuel/battery/carjack
-interaction tools; vehicle console/test entry points; remote-client puppets;
-seat switching and fully posed seated character cameras. Far streamed vehicles
-also need a parking/freeze boundary so terrain unloading cannot let them fall.
+interaction tools; remaining vehicle console/test entry points; remote-client
+puppets; seat switching and fully posed seated character cameras. Jet afterburner
+and contrail shader effects are still pending.
 
 The source data for these systems remains in the export, and the original C#
 authority is retained. Add each adapter against those seams, with a real physics

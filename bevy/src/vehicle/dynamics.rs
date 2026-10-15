@@ -14,6 +14,7 @@ pub struct Controls {
     pub pitch: f32,
     pub roll: f32,
     pub yaw: f32,
+    pub ground_mode: bool,
 }
 #[derive(Clone, Debug)]
 pub struct Drivetrain {
@@ -46,7 +47,7 @@ fn rev_limit(rpm: f32) -> f32 {
         (1. - (rpm - 5400.) / 600.).max(0.)
     }
 }
-fn approach(current: f32, target: f32, step: f32) -> f32 {
+pub(super) fn approach(current: f32, target: f32, step: f32) -> f32 {
     current + (target - current).clamp(-step, step)
 }
 impl Drivetrain {
