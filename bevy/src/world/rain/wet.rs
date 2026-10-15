@@ -91,6 +91,7 @@ fn convert(
         ),
         (
             Without<crate::world::terrain::TerrainSurface>,
+            Without<crate::world::foliage::FoliageSurface>,
             Or<(
                 With<WorldObject>,
                 With<RoadSurface>,

@@ -66,7 +66,9 @@ original source formats and remain the content replacement seam.
   array, mipmaps, grass-only snow film and base wetness response are retained.
 - Ground cover uses the original upward fragment normals, alpha cutoff and
   distance fade in a Bevy material extension. This keeps double-sided grass
-  from developing black backfaces. Source wind displacement remains separate.
+  from developing black backfaces. Source wind, shared press/rotor disturbance,
+  wake decay, and original crown/bush/hedge motion now share the same material
+  and depth/shadow deformation path; see [FOLIAGE_PORT.md](FOLIAGE_PORT.md).
 - Original `UG_INF_AT=x,z[,yaw]` and `UG_INF_CAM=x,y,z[,yaw[,pitch]]` diagnostics
   support repeatable generated-world captures. A fixed camera also selects the
   region streaming focus, including distant tunnels and other source landmarks.
@@ -107,7 +109,7 @@ source cubic curves, five-metre sampling, cross-slope banking, per-joint offsets
 material width/depth, texture repeat, end ramps and sealed collision underside.
 Source road editor operations and lane AI bindings remain separate work.
 
-Remaining custom shaders include wind/grass/wire displacement, wet glass,
+Remaining custom shaders include wire displacement, wet glass,
 character clothing/wear, flags, outlines and remaining effects. Flat ocean,
 reflection, underwater optics and source-disabled terrain caustics are described
 below. Rain shelter, wetness, puddles and surface impacts are described in

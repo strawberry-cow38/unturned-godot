@@ -1280,3 +1280,19 @@ work. LEAN_PORT.md now includes the completed original/native roll comparison.
 ### Bevy accepted profile picture query
 
 Remote nameplates can now request original validated avatar bytes by live player ID and accepted hash, outside snapshots. Missing players, stale hashes, no picture and pending reliable bytes are distinct; retained arrival events carry only the hash. Original name/avatar rules and sanitizer are available without opening a session. Real UDP regressions caught the source cache retaining departed profiles, now guarded by live player and connected-session checks; they also cover late reliable data and a rejected replacement preserving the accepted picture. All 33 UDP/status/map/profile tests pass; the existing 121 bridge regressions passed before the final isolated disconnected-query guard. Root and world reviews found no blocker. Native rendering is a separate checkpoint.
+
+### Bevy source foliage wind and shared disturbance
+
+Grass, flowers, crowns, bushes and hedges now use the original vertex formulas and
+shared WindField phase. The original nearest32 press/wash field consumes actual
+player/vehicle/item/remote replicas, spool-squared rotor wash and fading wake
+crumbs; session changes and origin rebases preserve its lifecycle. Merged meshes
+retain authored local height, so elevated/rotated plants bend correctly. Forward,
+depth and shadow deformation agree, including distance erosion; source ground
+shadow/specular flags, texture-or-tint choice and pebble mip filtering are retained.
+Six focused tests pass. Three original-asset wind/press/wash images and a full real
+PEI coast capture were rendered and opened without shader errors; an independent
+source/code and controlled-image review found no blocker. No live helicopter
+flight is claimed by the controlled wash fixture. Hit/felling shudder, graphics
+UI toggle and previous-frame motion vectors remain explicit follow-up work; see
+bevy/docs/FOLIAGE_PORT.md.

@@ -287,8 +287,10 @@ impl ContentCache {
             // explicitly retain linear filtering; palette props remain nearest.
             let linear = path.starts_with("terrain")
                 || path.starts_with("veh_smoke") || path=="veh_fire.png"
-                || path.starts_with("foliage")
+                || (path.starts_with("foliage")
+                    && !path.rsplit('/').next().is_some_and(|p| p.starts_with("pebble")))
                 || path.starts_with("resources");
+            let mipmaps = linear || path.starts_with("foliage");
             let handle = assets
                 .load_builder()
                 .with_settings(move |settings: &mut ImageLoaderSettings| {
@@ -314,7 +316,7 @@ impl ContentCache {
                     });
                 })
                 .load(path.to_owned());
-            if linear {
+            if mipmaps {
                 self.pending_mipmaps.insert(handle.id());
             }
             handle

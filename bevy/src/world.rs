@@ -959,6 +959,9 @@ fn build_world(
                 source_index: p.source_index,
             },
         ));
+        if p.material.starts_with("Hedge_") && texture.is_some() {
+            entity.insert(foliage::FoliageSurface::canopy());
+        }
         if let Some(shape) = shape {
             entity.insert((RigidBody::Fixed, shape));
         }
@@ -1095,7 +1098,7 @@ fn build_world(
                             .then_some(texture);
                         let material =
                             cache.material(tex.as_deref(), true, &assets, &mut materials);
-                        commands.spawn((
+                        let mut entity = commands.spawn((
                             Name::new(name),
                             Mesh3d(mesh),
                             MeshMaterial3d(material),
@@ -1104,6 +1107,9 @@ fn build_world(
                             resource.clone(),
                             water::Reflective,
                         ));
+                        if (is_tree(f[0]) && part == 0) || f[0].starts_with("Bush") {
+                            entity.insert(foliage::FoliageSurface::canopy());
+                        }
                         state.foliage_count += 1;
                     }
                 }
@@ -1144,7 +1150,7 @@ fn build_world(
                     sources.foliage.insert(bin.clone(), t.clone());
                     t
                 };
-                let mut merged = ObjData::default();
+                let mut merged = foliage::Batch::default();
                 for (mut transform, _) in instances.iter().copied() {
                     // Match the original Ultra foliage range (five 32m tiles).
                     if transform
@@ -1163,10 +1169,10 @@ fn build_world(
                     if name.starts_with("pebble") {
                         transform.scale *= 0.75;
                     }
-                    merged.append_transformed(&source, transform);
+                    merged.append(&source, transform);
                     state.foliage_count += 1;
                 }
-                if merged.positions.is_empty() {
+                if merged.data.positions.is_empty() {
                     continue;
                 }
                 let texture = format!("{foliage_dir}/{name}_tex.png");
@@ -1179,7 +1185,7 @@ fn build_world(
                 commands.spawn((
                     Name::new(format!("Foliage {name}")),
                     WorldFoliage,
-                    foliage::FoliageSurface(160.),
+                    foliage::FoliageSurface::ground(name, 160.),
                     Mesh3d(meshes.add(merged.mesh())),
                     MeshMaterial3d(material),
                 ));
@@ -1250,7 +1256,7 @@ fn build_world(
                     .is_file()
                     .then_some(texture);
                 let material = cache.material(tex.as_deref(), true, &assets, &mut materials);
-                commands.spawn((
+                let mut entity = commands.spawn((
                     Name::new(name.clone()),
                     Mesh3d(mesh),
                     MeshMaterial3d(material),
@@ -1258,6 +1264,9 @@ fn build_world(
                     WorldFoliage,
                     water::Reflective,
                 ));
+                if is_tree(&name) && part == 0 {
+                    entity.insert(foliage::FoliageSurface::canopy());
+                }
                 state.foliage_count += 1;
             }
         }
@@ -1402,7 +1411,7 @@ fn build_world(
             bevy::light::NotShadowCaster,
         ));
     }
-    let mut ground_cover: HashMap<String, (ObjData, Color)> = HashMap::new();
+    let mut ground_cover: HashMap<String, (foliage::Batch, Color)> = HashMap::new();
     for region in &proc_regions {
         let rock_models: Vec<_> = procedural::rows(region, "boulderModels")
             .filter_map(|m| m["name"].as_str())
@@ -1438,8 +1447,8 @@ fn build_world(
             if instance.foliage {
                 let group = ground_cover
                     .entry(instance.mesh)
-                    .or_insert_with(|| (ObjData::default(), instance.tint));
-                group.0.append_transformed(&data, instance.transform);
+                    .or_insert_with(|| (foliage::Batch::default(), instance.tint));
+                group.0.append(&data, instance.transform);
                 state.foliage_count += 1;
                 continue;
             }
@@ -1502,19 +1511,24 @@ fn build_world(
             cache.materials.insert(key, m.clone());
             m
         };
-        let needs_up_normal = name.starts_with("foliage/");
+        let needs_motion = name.starts_with("foliage/") || name.starts_with("resources/Bush");
         let mut entity = commands.spawn((
             Name::new(name.clone()),
             WorldFoliage,
             Mesh3d(meshes.add(merged.mesh())),
             MeshMaterial3d(material),
         ));
-        if needs_up_normal {
-            entity.insert(foliage::FoliageSurface(if name.contains("pebble") {
-                100.
-            } else {
-                160.
-            }));
+        if needs_motion {
+            entity.insert(foliage::FoliageSurface::ground(
+                &name,
+                if name.starts_with("resources/") {
+                    0.
+                } else if name.contains("pebble") {
+                    100.
+                } else {
+                    160.
+                },
+            ));
         }
     }
     state.missing_assets.sort();

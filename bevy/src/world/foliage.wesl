@@ -14,9 +14,11 @@ import bevy_pbr::render::{forward_io::{VertexOutput,FragmentOutput},pbr_function
 @fragment
 fn fragment(in:VertexOutput,@builtin(front_facing) is_front:bool)->FragmentOutput{
     var pbr=pbr_input_from_standard_material(in,is_front);
-    pbr.N=vec3<f32>(0.0,1.0,0.0);
-    pbr.world_normal=pbr.N;
-    pbr.clearcoat_N=pbr.N;
+    if fade.z>0.5 {
+        pbr.N=vec3<f32>(0.0,1.0,0.0);
+        pbr.world_normal=pbr.N;
+        pbr.clearcoat_N=pbr.N;
+    }
     if fade.y>0.001{
         pbr.material.base_color.a*=1.0-smoothstep(fade.x,fade.y,length(in.world_position.xyz-view.world_position));
     }
