@@ -186,7 +186,7 @@ public sealed partial class WorldServices
             System.Numerics.Matrix4x4.Invert(matrix, out var inverse);
             _taps[i] = tap with { Transform = matrix, Inverse = inverse };
         }
-        if (MapResult != null) MapResult = CoordinateJson.ServiceSpec(JsonSerializer.SerializeToElement(MapResult), delta);
+        if (MapResult != null) MapResult = CoordinateJson.ServiceSpec(CoordinateJson.ToElement(MapResult), delta);
     }
     public void AdoptSavedBits()
     {

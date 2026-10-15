@@ -169,6 +169,90 @@ class BridgeTests(unittest.TestCase):
         self.call('worldVehicleState', vehicles=[dict(netId=vehicle,position=[0,0,-3])])
         self.assertEqual([0,0,-3], self.pump()['vehicles'][0]['position'], 'host write after prior snapshot is dirtied for the next snapshot')
 
+    def test_map_mapping_positions_keep_camel_case_and_saved_frame_after_rebase(self):
+        request = dict(mapName='PEI', mapRoot='/tmp/origin-map')
+        self.call('worldServices', mapKey='PEI|/tmp/origin-map',
+            mapObjects=[dict(SourceIndex=7, Name='Container_0', Position=[1025,0,0])],
+            mapResources=[dict(index=0,name='Pine',instance=3,position=[1026,0,0])])
+        self.call('rebase',shift=[1024,0,0],expectedEpoch=0)
+        def check():
+            mapping = self.call('mapServices', **request)['result']
+            self.assertEqual([1,0,0],mapping['objects'][0]['position'])
+            self.assertEqual(7,mapping['objects'][0]['sourceIndex'])
+            self.assertEqual([2,0,0],mapping['resources'][0]['position'])
+        check()
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder)/'mapping.json'); self.call('save',path=path)
+            saved = json.loads(Path(path).read_text())['BevyBridge']['Services'][0]
+            self.assertEqual([1,0,0],saved['mapObjects'][0]['Position'])
+            self.assertEqual([2,0,0],saved['mapResources'][0]['position'])
+            self.call('load',path=path); check()
+
+    def test_rebase_delivers_queued_console_teleport_recovery_before_shifting(self):
+        before=self.call('init',spawn=[1025,40,12])['state']
+        self.call('action',name='console',args=dict(text='teleport 1030 42 18'))
+        state=self.call('rebase',shift=[1024,0,0],expectedEpoch=0)['state']
+        self.assertEqual(before['tick'],state['tick'])
+        self.assertEqual([6,42,18],state['player']['position'])
+        self.assertEqual(before['player']['correctionVersion']+1,state['player']['correctionVersion'])
+        self.assertEqual([6,42,18],self.pump()['player']['position'])
+
+    def test_host_aircraft_immediate_explosion_and_rotor_prop_damage(self):
+        self.call('worldServices',destructibleCount=1,destructibles=[dict(index=0,health=30,resetSeconds=0)])
+        spec = dict(typeId=1,key='crash',position=[0,0,-20],health=300,healthMax=300,
+                    hitRegions=[dict(bodyPart='mainRotor',center=[0,1,0],size=[1,1,1],health=50)])
+        ident = self.call('worldVehicles',vehicles=[spec])['result']['vehicles'][0]['netId']
+        self.reject('worldVehicleDamage',netId=ident,amount=7,bodyPart='mainRotor',destructibles=[dict(index=1,amount=34)])
+        self.assertEqual(50,self.pump()['vehicles'][0]['mainRotorHealth'],'malformed strike is rejected before any mutation')
+        self.call('worldVehicleDamage',netId=ident,amount=7,bodyPart='mainRotor',destructibles=[dict(index=0,amount=34)])
+        state=self.pump(); self.assertEqual([0],state['destructibles']['dead'])
+        self.assertEqual(43,state['vehicles'][0]['mainRotorHealth'])
+        self.call('worldVehicleDamage',netId=ident,amount=300)
+        self.assertFalse(self.pump(6)['vehicles'][0]['flags'] & 32,'ordinary damage preserves source four-second fuse')
+        self.call('worldVehicleDamage',netId=ident,explodeNow=True)
+        state=self.pump(6)
+        self.assertTrue(state['vehicles'][0]['flags'] & 32)
+        self.assertEqual(1,len([e for e in state['events'] if e['kind']=='vehicleExploded']))
+        self.assertFalse(self.call('worldVehicleDamage',netId=ident,explodeNow=True)['result']['accepted'])
+
+    def test_rotor_console_requires_driver_and_both_dead_start_normal_hull_fuse(self):
+        spec=dict(typeId=1,key='heli',isHeli=True,position=[0,0,-1],health=300,healthMax=300,
+                  seatOffsets=[[0,0,0]],engineRegion=dict(rear=False,threshold=0,health=120),
+                  hitRegions=[dict(bodyPart=part,center=[0,1,0],size=[1,1,1],health=hp)
+                              for part,hp in [('mainRotor',50),('tailRotor',30)]])
+        ident=self.call('worldVehicles',vehicles=[spec])['result']['vehicles'][0]['netId']
+        self.call('action',name='console',args=dict(text='hurtmain'))
+        self.assertEqual(50,self.pump()['vehicles'][0]['mainRotorHealth'])
+        self.call('action',name='enterVehicle',args=dict(netId=ident,seat=0)); self.pump()
+        self.call('action',name='console',args=dict(text='hurtmain'))
+        car=self.pump()['vehicles'][0]
+        self.assertEqual(24,car['mainRotorHealth']); self.assertEqual(300,car['health']); self.assertEqual(120,car['engineHealth'])
+        self.call('action',name='console',args=dict(text='killtail')); self.pump()
+        self.call('action',name='console',args=dict(text='killmain'))
+        car=self.pump()['vehicles'][0]
+        self.assertEqual(0,car['health']); self.assertTrue(car['onFire']); self.assertFalse(car['flags'] & 32)
+
+    def test_projectile_age_and_remaining_lifetime_survive_save_without_second_spend(self):
+        self.call('action',name='console',args=dict(text='give 255')); self.pump()
+        self.call('action',name='grenade',args=dict(origin=[0,1.6,0],velocity=[0,1,-2],itemId=255))
+        state=self.pump(20); flight=state['projectiles'][0]
+        self.assertEqual(255,flight['itemId']); self.assertEqual(3450,flight['lifetimeTicks'])
+        self.assertEqual(flight['retireTick']-state['tick'],flight['remainingTicks'])
+        self.assertEqual(3450,flight['elapsedTicks']+flight['remainingTicks'])
+        facts=[e for e in state['events'] if e['kind']=='throwAccepted']
+        self.assertEqual(1,len(facts)); self.assertGreater(facts[0]['tick'],0)
+        self.assertLessEqual(facts[0]['tick'],state['tick'])
+        with tempfile.TemporaryDirectory() as folder:
+            path=str(Path(folder)/'flight.json'); self.call('save',path=path)
+            stored=json.loads(Path(path).read_text())['BevyBridge']['Projectiles'][0]
+            self.assertEqual(flight['remainingTicks'],stored['RemainingTicks'])
+            restored=self.call('load',path=path)['state']; again=restored['projectiles'][0]
+            self.assertEqual(flight['remainingTicks']-6,again['remainingTicks'])
+            self.assertEqual(flight['elapsedTicks']+6,again['elapsedTicks'])
+            self.assertEqual(3450,again['lifetimeTicks'])
+            self.assertFalse(any(e['kind']=='throwAccepted' for e in restored['events']))
+            self.assertFalse(any(i['id']==255 for p in restored['inventory']['pages'] for i in p['items']))
+
     def test_movement_preserves_stance_speed_and_yaw(self):
         r = self.call('simulate', input=dict(moveX=0, moveY=1, grounded=True, stance='sprint', yaw=90))
         velocity = r['result']['velocity']

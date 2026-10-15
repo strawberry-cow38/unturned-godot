@@ -51,10 +51,12 @@ seasonal outlook, snow accumulation and temperature-dependent melt; `UG_WEATHER`
 `UG_WEATHER_FREQ` and `UG_WEATHER_DUR` retain their original meanings. Visual rain,
 snow, lighting, wind and audio remain Bevy responsibilities.
 
-`state.events` contains `{seq,kind,data}` and remains available until the consumer
+`state.events` contains `{seq,kind,data,tick}` and remains available until the consumer
 acknowledges it with `ackEvents:<lastConsumedSeq>` on any request. Consumers must
-deduplicate and acknowledge only after processing. Events include console, chat,
-fire, hit, impact, crafting queue, death and respawn. Result-only operations
+deduplicate and acknowledge only after processing. The tick is the authoritative
+bridge tick when the accepted fact was received, so batched fixed updates retain
+their cadence for presentation. Events include console, chat, fire, hit, impact,
+crafting queue, death and respawn. Result-only operations
 (simulate, terrain, catalog, worldGeometry, worldLoot, worldSpawns, worldSpawn,
 worldRay) omit state by default; `includeState:true` overrides that. Tick recipes
 are emitted only when inventory/skills/knowledge change; snapshot returns them all.
@@ -297,10 +299,25 @@ bounded wire remain unchanged. Far replicas become useful again when their area
 enters the local wire window. This transaction is for this integrated host;
 remote UDP peers would require a negotiated epoch barrier before participating.
 
-`worldVehicleDamage {netId,amount,engineShare?,bodyPart?,point?,direction?}` is a
+`worldVehicleDamage {netId,amount?,engineShare?,bodyPart?,point?,direction?,explodeNow?,destructibles?}` is a
 trusted host physics operation for source crash/rotor-strike results. It is not a
 client game command. Parts are hull, engine, mainRotor, tailRotor or tire:0..7.
 Default engine share is .5 for hull and zero for other parts. Accepted damage uses
 the same authoritative pools, fuse and event path as weapons; native physics never
 writes whole HP snapshots. Writes between simulation ticks are marked for the
 next snapshot so a stationary car or newly popped tire cannot miss replication.
+`explodeNow:true` applies the original aircraft impact's immediate explosion on
+the upcoming authority step, bypassing the normal four-second hull fuse.
+`destructibles:[{index,amount}]` applies the same accepted rotor strike to its
+contacted props. All fields are validated before mutation. Both dead helicopter
+rotors kill hull health and start the normal fuse. Source console diagnostics
+`hurtmain`, `killmain`, `hurttail`, `killtail` require a living helicopter driver
+and enabled console cheats; they use these same authoritative subsystem pools.
+
+Projectile snapshots keep their original replica `position`, `kind` and `netId`,
+and expose host flight `itemId`, `velocity`, `retireTick`, `remainingTicks`,
+`elapsedTicks` and `lifetimeTicks`. Flare age includes its flight/fuse interval;
+the original flare's full authority lifetime is 3450 ticks. Optional save metadata
+restores the remaining flight and its age without spending another inventory item
+or replaying a throw fact. A replica awaiting retirement has `remainingTicks:0`
+and no flight metadata. Core packet layouts are unchanged.

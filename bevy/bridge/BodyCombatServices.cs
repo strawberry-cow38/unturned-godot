@@ -123,11 +123,27 @@ public sealed class BodyCombatServices
         if (amount < 0 || share < 0 || share > 1) throw new ArgumentException("Invalid host damage amount/engine share");
         if (part is not ("hull" or "engine" or "mainRotor" or "tailRotor") && !(part.StartsWith("tire:") && int.TryParse(part.AsSpan(5), out int tire) && tire is >= 0 and < 8))
             throw new ArgumentException("Unknown host vehicle body part");
-        bool accepted = amount > 0 && !vehicle.Exploded;
-        if (accepted) DamageVehicle(id, amount, share, 0, Vec(request, "point", vehicle.Pos), Vec(request, "direction"), part);
+        var point = Vec(request, "point", vehicle.Pos); var direction = Vec(request, "direction");
+        bool explodeNow = Bool(request, "explodeNow");
+        var props = new List<(int index, float amount)>();
+        if (request.TryGetProperty("destructibles", out var destructibles)) foreach (var prop in destructibles.EnumerateArray())
+        {
+            int index = Int(prop, "index", -1); float damage = Float(prop, "amount");
+            if (index < 0 || index >= _server.Destructibles.Count || damage < 0) throw new ArgumentException("Invalid host destructible damage");
+            props.Add((index, damage));
+        }
+        bool accepted = (amount > 0 || explodeNow) && !vehicle.Exploded;
+        if (accepted)
+        {
+            DamageVehicle(id, amount, share, 0, point, direction, part);
+            foreach (var prop in props) _server.DestructibleHost.DamageObject(prop.index, prop.amount, Tick + 1);
+            // The native host publishes contact facts before the upcoming authority Step.
+            // Resolve through the normal explosion lifecycle that step, without its 4s fuse.
+            if (explodeNow) State(true, id).Fuse = Tick;
+        }
         return new { accepted, netId = id };
     }
-    void DamageVehicle(uint id, float amount, float engineShare, ushort attacker, Vector3 point, Vector3 direction, string part = "hull")
+    public void DamageVehicle(uint id, float amount, float engineShare, ushort attacker, Vector3 point, Vector3 direction, string part = "hull")
     {
         if (amount <= 0 || !_server.Vehicles.TryGet(id, out var e) || e.Exploded) return;
         bool hull = part is null or "hull";
@@ -137,6 +153,11 @@ public sealed class BodyCombatServices
         _emit("vehicleDamage", new { netId = id, amount, engineShare, bodyPart = part, point = Array(point), direction = Array(direction), attacker, health });
         var life = State(true, id);
         if (hull && health <= 0 && life.Fuse == NoTime) life.Fuse = Tick + Ticks(BodyRules.VehicleFuse);
+        // Vehicle.StepHeli: losing both rotor pools kills the hull, then follows the
+        // ordinary fuse. Rotor-only hits otherwise leave hull HP untouched.
+        if (!hull && health > 0 && _vehicles.IsHelicopter(id)
+            && _vehicles.MainRotorHealth(id) <= 0 && _vehicles.TailRotorHealth(id) <= 0)
+            DamageVehicle(id, health, .5f, attacker, point, direction);
     }
     void DamageDeployable(uint id, float amount, ushort attacker)
     {

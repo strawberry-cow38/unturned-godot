@@ -100,6 +100,9 @@ internal static class CoordinateJson
     };
     static void Move(JsonObject obj, string key, Vector3 d)
     {
+        // Persisted ObjectMapping predates the wire's camel-case policy. Preserve its
+        // property spelling while translating either serialized representation.
+        key = obj.Select(p => p.Key).FirstOrDefault(k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) ?? key;
         if (obj[key] is JsonArray a && a.Count == 3)
         { a[0] = a[0].GetValue<float>() + d.x; a[1] = a[1].GetValue<float>() + d.y; a[2] = a[2].GetValue<float>() + d.z; }
         else if (obj[key] is JsonObject v && v.ContainsKey("x") && v.ContainsKey("y") && v.ContainsKey("z"))
@@ -114,12 +117,13 @@ internal static class CoordinateJson
     public static JsonElement ServiceSpec(JsonElement element, Vector3 d)
     {
         var node = JsonNode.Parse(element.GetRawText()).AsObject();
-        foreach (string key in new[] { "resources", "destructibles", "doors", "beds", "objectDoors", "containerDoors", "seats", "npcs", "taps", "fixtures", "containers", "vehicles" })
+        foreach (string key in new[] { "objects", "mapObjects", "mapResources", "resources", "destructibles", "doors", "beds", "objectDoors", "containerDoors", "seats", "npcs", "taps", "fixtures", "containers", "vehicles" })
             if (node[key] is JsonArray entries) foreach (var e in entries.OfType<JsonObject>()) Entry(e, d);
         if (node["deadzones"] is JsonArray zones) foreach (var e in zones.OfType<JsonObject>()) Move(e, "center", d);
         if (node["seaLevel"] != null && d.y != 0) node["seaLevel"] = node["seaLevel"].GetValue<float>() + d.y;
         return JsonSerializer.SerializeToElement(node);
     }
+    public static JsonElement ToElement(object value) => JsonSerializer.SerializeToElement(value, Options);
     public static JsonElement Event(object data, Vector3 d)
     {
         var node = JsonSerializer.SerializeToNode(data, Options);

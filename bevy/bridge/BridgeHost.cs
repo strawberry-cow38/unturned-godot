@@ -39,9 +39,9 @@ public sealed partial class BridgeHost : IDisposable
     readonly List<JsonElement> _serviceSpecs = new();
     int _seed = 1337;
     bool _worldChanged;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0);
-    public sealed record BridgeEvent(long Seq, string Kind, object Data);
-    void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data));
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null);
+    public sealed record BridgeEvent(long Seq, string Kind, object Data, long Tick);
+    void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data, _server?.Session.CurrentTick ?? 0));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson(), new ByteArrayJson() } };
     static readonly Dictionary<string, MethodInfo> Actions = typeof(NetWorldClient).GetMethods()
         .Where(m => m.Name.StartsWith("Send") && m.IsPublic && !m.Name.Contains("ForTest"))
@@ -119,6 +119,7 @@ public sealed partial class BridgeHost : IDisposable
                 mapSpec["mapObjects"] = JsonSerializer.SerializeToNode(parsed.Objects);
                 mapSpec["mapResources"] = JsonSerializer.SerializeToNode(parsed.Resources);
                 var persistedSpec = JsonSerializer.SerializeToElement(mapSpec);
+                if (_originX != 0 || _originZ != 0) persistedSpec = CoordinateJson.ServiceSpec(persistedSpec, new((float)-_originX, 0, (float)-_originZ));
                 var mapResult = _services.Register(persistedSpec); _serviceSpecs.Add(persistedSpec); _worldChanged = true; return mapResult;
             case "worldServices":
                 RequireSession();
@@ -134,7 +135,7 @@ public sealed partial class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles()));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -150,6 +151,7 @@ public sealed partial class BridgeHost : IDisposable
                 _originX = loadedX; _originZ = loadedZ; _originEpoch++;
                 _serviceSpecs.Clear(); if (extra?.Services != null) _serviceSpecs.AddRange(extra.Services);
                 Dispose(); Start(loaded);
+                RestoreProjectiles(extra?.Projectiles);
                 _services.Harvesting.Restore(extra?.Resources);
                 _services.RestorePropDoors(extra?.ObjectDoors); _bodies.Restore(extra?.Bodies); _vehicles.RestoreParts(extra?.VehicleParts);
                 if (extra?.Loot != null)
@@ -249,6 +251,7 @@ public sealed partial class BridgeHost : IDisposable
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         _server = new NetWorldServer(new MemServerTransport(_network));
         WorldRebase.EnableUnboundedStorage(_server);
+        _server.Transactions.RepositionOwner = _server.PlayerHost.RepositionOwner;
         _environment = new WorldEnvironment(_server, _seed, save);
         _server.SpawnProvider = _ => _position;
         _geometry.DestructibleAlive = i => i >= _server.Destructibles.Count || _server.Destructibles.IsAlive(i);
@@ -364,6 +367,7 @@ public sealed partial class BridgeHost : IDisposable
 
     object Action(string name, JsonElement args)
     {
+        if (name == "console" && RotorConsole(Text(args, "text"))) return new { queued = true };
         if (name == "toolUse") return new { queued = _bodies.ToolUse(_client.PlayerId, Bool(args, "active")) };
         if (name == "equipAndHold")
         {
@@ -458,7 +462,7 @@ public sealed partial class BridgeHost : IDisposable
             skills = new { experience = skills?.Skills.experience ?? 0, groups = skills?.Skills.skills },
             worldItems = _client.WorldItems.All.Select(e => new { netId = e.NetIdValue, itemId = e.ItemId, amount = e.Amount,
                 quality = e.Quality, position = Array(e.Pos), settled = e.Settled }).ToArray(),
-            projectiles = _client.Projectiles.All.Select(e => new { netId = e.NetIdValue, kind = e.Kind, position = Array(e.Pos), lastChangedTick = e.LastChangedTick }).ToArray(),
+            projectiles = ProjectileSnapshots(),
             deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, health = e.Health, fuel = e.Fuel, onFire = e.OnFire, burnSeconds = _bodies.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray(),
             vehicles = _client.Vehicles.All.Select(e => new { netId = e.NetIdValue, typeId = e.TypeId, variant = e.Variant,
                 position = Array(e.Pos), yaw = e.YawDegrees, eulerDegrees = Array(new(e.PitchDegrees, e.YawDegrees, e.RollDegrees)),
