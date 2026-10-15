@@ -71,6 +71,20 @@ pub enum Binding {
 }
 
 impl Binding {
+    /// Match the configured physical input against one ordered OS event.
+    /// The caller handles press/release/repeat and window ownership; final
+    /// ButtonInput edge flags cannot represent a press and release in one batch.
+    pub(crate) fn matches_window_event(&self, event: &bevy::window::WindowEvent) -> bool {
+        match (self, event) {
+            (Self::Key(name), bevy::window::WindowEvent::KeyboardInput(e)) => {
+                *name == format!("{:?}", e.key_code)
+            }
+            (Self::Mouse(number), bevy::window::WindowEvent::MouseButtonInput(e)) => {
+                *number == mouse_number(e.button)
+            }
+            _ => false,
+        }
+    }
     pub fn label(&self) -> String {
         match self {
             Self::Key(key) => key.strip_prefix("Key").unwrap_or(key).to_owned(),
@@ -364,6 +378,44 @@ fn exclusive(a: GameAction, b: GameAction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordered_binding_matches_each_rebound_physical_edge_and_mouse_button() {
+        use bevy::{
+            input::{
+                ButtonState,
+                keyboard::{Key, KeyboardInput},
+                mouse::MouseButtonInput,
+            },
+            window::WindowEvent,
+        };
+        let window = Entity::PLACEHOLDER;
+        let binding = Binding::Key("KeyQ".into());
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            let event = WindowEvent::KeyboardInput(KeyboardInput {
+                window,
+                key_code: KeyCode::KeyQ,
+                logical_key: Key::Character("a".into()),
+                state,
+                text: None,
+                repeat: false,
+            });
+            assert!(
+                binding.matches_window_event(&event),
+                "physical binding survives a different logical keyboard layout"
+            );
+            assert!(!Binding::Key("KeyF".into()).matches_window_event(&event));
+            assert!(!Binding::Unbound.matches_window_event(&event));
+        }
+        let event = WindowEvent::MouseButtonInput(MouseButtonInput {
+            window,
+            button: MouseButton::Back,
+            state: ButtonState::Released,
+        });
+        assert!(Binding::Mouse(4).matches_window_event(&event));
+        assert!(!Binding::Mouse(5).matches_window_event(&event));
+        assert!(!binding.matches_window_event(&event));
+    }
 
     #[test]
     fn partial_settings_preserve_defaults_and_explicit_unbound_actions() {

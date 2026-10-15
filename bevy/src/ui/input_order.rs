@@ -12,13 +12,13 @@ use std::collections::HashMap;
 /// Held-state snapshots only. Derive edges from `OrderedEvent.event`; the
 /// ButtonInput transition flags are not a second event stream.
 #[derive(Clone, Default, Debug)]
-pub(super) struct Buttons {
+pub(crate) struct Buttons {
     pub physical: ButtonInput<KeyCode>,
     pub logical: ButtonInput<Key>,
     pub mouse: ButtonInput<MouseButton>,
 }
 #[derive(Clone, Debug)]
-pub(super) struct OrderedEvent {
+pub(crate) struct OrderedEvent {
     pub event: WindowEvent,
     pub window: Option<Entity>,
     pub pointer: Vec2,
@@ -38,7 +38,7 @@ impl WindowState {
     }
 }
 #[derive(Resource, Default)]
-pub(super) struct FrameInput {
+pub(crate) struct FrameInput {
     pub events: Vec<OrderedEvent>,
     windows: HashMap<Entity, WindowState>,
 }

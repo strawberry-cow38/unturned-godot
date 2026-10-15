@@ -20,7 +20,7 @@ mod attachments;
 mod clothing;
 pub(crate) mod crafting;
 mod inventory;
-mod input_order;
+pub(crate) mod input_order;
 mod storage;
 mod crosshair;
 pub(crate) mod hurt;
