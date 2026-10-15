@@ -65,6 +65,12 @@ crafting queue, death and respawn. Result-only operations
 (simulate, terrain, catalog, worldGeometry, worldLoot, worldSpawns, worldSpawn,
 worldRay) omit state by default; `includeState:true` overrides that. Tick recipes
 are emitted only when inventory/skills/knowledge change; snapshot returns them all.
+Accepted `fire.data` additionally carries `itemId`, `quality`, `handlingPenalty`,
+`recoilMultiplier`, `selectionVersion` and `acceptedTick`, captured before weapon
+wear at the actual shot. `recoilMultiplier` is the original sharpshooter skill
+multiplier times condition handling penalty; native stance settling remains
+separate. These optional bridge fields survive holstering and retained-event
+delivery without changing the original `PlayerFiredEvent` wire format.
 
 Static geometry accepts `meshes:[{vertices:[[x,y,z],...],indices?:[i0,i1,i2,...],
 terrain?:false,destructibleIndex?:-1,resourceIndex?:-1}]`; omitted indices mean sequential triples.

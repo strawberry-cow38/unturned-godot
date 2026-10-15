@@ -12,17 +12,34 @@ public sealed class WeaponServices
     readonly Catalog _catalog;
     readonly Action<string, object> _emit;
     readonly Dictionary<ushort, WeaponState> _states = new();
+    readonly Dictionary<ushort, Queue<ShotFacts>> _shots = new();
+    public sealed record ShotFacts(string Gun, ushort ItemId, byte Quality, float HandlingPenalty, float RecoilMultiplier, long SelectionVersion, long Tick);
     public WeaponServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
     {
         _server = server; _catalog = catalog; _emit = emit;
         server.Combat.ResolveHeldGunProfile = owner => State(owner).Profile;
         server.Combat.CanFire = owner => State(owner).CanFire();
-        server.Combat.ShotAccepted = (owner, tick) => State(owner).Shot(tick);
+        server.Combat.ShotAccepted = (owner, tick) => {
+            var state=State(owner); var facts=state.CaptureShot(tick);
+            if(facts!=null)
+            {
+                if(!_shots.TryGetValue(owner,out var queue))_shots[owner]=queue=new();
+                queue.Enqueue(facts);
+            }
+            state.Shot(tick);
+        };
         server.Combat.TryBeginReload = (owner, tick) => State(owner).BeginReload(tick);
         server.Combat.CompleteReload = (owner, tick) => State(owner).CompleteReload(tick);
         server.Combat.ResolveHeldMeleeProfile = (owner, strong) => State(owner).MeleeProfile(strong);
         server.Combat.CanMelee = (owner, strong) => State(owner).CanMelee(strong);
         server.Combat.MeleeAccepted = (owner, strong, tick) => State(owner).MeleeUsed(strong, tick);
+    }
+    public ShotFacts TakeShot(ushort owner,string gun)
+    {
+        if(!_shots.TryGetValue(owner,out var queue)||queue.Count==0)return null;
+        var shot=queue.Dequeue();
+        string wireGun=shot.Gun.Length>PlayerFiredEvent.MaxGunNameLength?shot.Gun[..PlayerFiredEvent.MaxGunNameLength]:shot.Gun;
+        return wireGun==gun?shot:null;
     }
     WeaponState State(ushort owner)
     {
@@ -205,6 +222,14 @@ public sealed partial class WeaponState
         if (_reloading && Gun.ShellReload && Ammo > 0)
         { _reloading = false; _combat.ReloadDoneTick = -1; _emit("reloadCancelled", new { playerId = _owner }); }
         UpdateProfile(); return true;
+    }
+    public WeaponServices.ShotFacts CaptureShot(long tick)
+    {
+        if(Gun==null||_heldItem==null)return null;
+        byte quality=_heldItem.quality;
+        float handling=Durability.HandlingPenalty(quality);
+        float skill=_server.Skills.TryGet(_owner,out var skills)?skills.Skills.SharpshooterRecoilMultiplier():1;
+        return new(Profile.AssetName,_heldItem.id,quality,handling,handling*skill,_selectionVersion,tick);
     }
     public void Shot(long tick)
     {

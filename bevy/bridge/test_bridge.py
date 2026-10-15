@@ -296,6 +296,29 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(events, self.call('snapshot')['state']['events'])
         self.assertEqual([], self.call('snapshot', ackEvents=last)['state']['events'])
 
+    def test_retained_fire_fact_captures_shot_condition_before_holster_and_weapon_wear(self):
+        self.call('init',spawn=[0,0,0])
+        self.call('worldSpawn',items=[dict(itemId=4,quality=25,position=[0,0,-.5])])
+        item=self.pump()['worldItems'][0]['netId']
+        self.call('action',name='pickupItem',args=dict(netId=item));self.pump()
+        self.call('action',name='holdItem',args=dict(page=0,x=0,y=0));before=self.pump()
+        self.assertEqual(25,before['inventory']['pages'][0]['items'][0]['quality'])
+        self.call('action',name='fire',args={});self.pump(2)
+        self.call('tick',input=dict(heldItemId=0));after=self.pump()
+        self.assertNotIn('held',after['weapon'])
+        facts=[e for e in after['events'] if e['kind']=='fire'];self.assertEqual(1,len(facts))
+        shot=facts[0]['data'];self.assertEqual(25,shot['quality']);self.assertEqual(4,shot['itemId'])
+        self.assertEqual(1.5,shot['handlingPenalty']);self.assertEqual(1.5,shot['recoilMultiplier'])
+        self.assertEqual(before['weapon']['selectionVersion'],shot['selectionVersion'])
+        self.assertLessEqual(shot['acceptedTick'],facts[0]['tick'])
+        self.call('snapshot',ackEvents=after['events'][-1]['seq'])
+        self.call('action',name='fire',args={});self.assertFalse(any(e['kind']=='fire' for e in self.pump()['events']))
+        self.call('action',name='holdItem',args=dict(page=0,x=0,y=0));before=self.pump()
+        quality=before['inventory']['pages'][0]['items'][0]['quality']
+        self.call('action',name='fire',args={});after=self.pump()
+        shots=[e for e in after['events'] if e['kind']=='fire'];self.assertEqual(1,len(shots))
+        self.assertEqual(quality,shots[0]['data']['quality'],'rejected trigger did not leave a stale shot fact')
+
     def test_headroom_uses_original_stance_gate(self):
         self.call('simulate', input=dict(stance='crouch', grounded=True))
         result = self.call('simulate', input=dict(stance='stand', grounded=True, capsuleHeight=1.2, headroom=False))['result']

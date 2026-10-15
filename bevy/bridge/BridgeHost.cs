@@ -295,7 +295,12 @@ public sealed partial class BridgeHost : IDisposable
         _client.ConsoleResult += e => Emit("console", e);
         _client.HitConfirmed += e => Emit("hit", e);
         _client.CraftQueue_ += e => Emit("craftQueue", e);
-        _client.PlayerFired += e => Emit("fire", e);
+        _client.PlayerFired += e => {
+            var facts=_weapons.TakeShot(e.PlayerId,e.Gun);
+            Emit("fire",new{playerId=e.PlayerId,origin=e.Origin,dir=e.Dir,gun=e.Gun,
+                itemId=facts?.ItemId,quality=facts?.Quality,handlingPenalty=facts?.HandlingPenalty,
+                recoilMultiplier=facts?.RecoilMultiplier,selectionVersion=facts?.SelectionVersion,acceptedTick=facts?.Tick});
+        };
         _client.PlayerMeleed += e => Emit("melee", e);
         _client.PlayerGestured += e => Emit("gesture", e);
         _client.StorageClosed += e => Emit("storageClosed", e);
