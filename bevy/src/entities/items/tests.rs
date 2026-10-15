@@ -31,6 +31,106 @@ fn app() -> App {
     app
 }
 #[test]
+fn recovered_arrow_nose_follows_contact_without_changing_saved_root_or_ordinary_art() {
+    use bevy::mesh::VertexAttributeValues;
+    let mut app = app();
+    let direction = Vec3::new(0.3, -0.1, -1.).normalize();
+    for id in [347, 348, 351, 352] {
+        let state = json!({"worldItems":[
+            {"netId":10,"itemId":id,"amount":1,"position":[4,2,1]},
+            {"netId":11,"itemId":id,"amount":1,"position":[4,2,1],"stuckDirection":direction.to_array()}
+        ]});
+        app.world_mut().resource_mut::<GameSnapshot>().0 = state.clone();
+        app.update();
+        let entities = &app.world().resource::<Replicas>().entities;
+        let ordinary = entities[&10];
+        let recovered = entities[&11];
+        let ordinary_mesh = &app.world().get::<Mesh3d>(ordinary).unwrap().0;
+        let recovered_mesh = &app.world().get::<Mesh3d>(recovered).unwrap().0;
+        assert_ne!(ordinary_mesh, recovered_mesh);
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        let VertexAttributeValues::Float32x3(original) = meshes
+            .get(ordinary_mesh)
+            .unwrap()
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+        else {
+            panic!("source arrow vertices");
+        };
+        let VertexAttributeValues::Float32x3(aligned) = meshes
+            .get(recovered_mesh)
+            .unwrap()
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+        else {
+            panic!("aligned arrow vertices");
+        };
+        let tip = original
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a[1].total_cmp(&b[1]))
+            .unwrap()
+            .0;
+        // Real content has a centered pointed nose at +Y .341786, fins below it.
+        assert!((original[tip][1] - 0.341786).abs() < 1e-5);
+        assert!(original[tip][0].abs() < 1e-5 && original[tip][2].abs() < 1e-5);
+        let pose = app.world().get::<Transform>(recovered).unwrap();
+        assert!((pose.rotation * Vec3::NEG_Z).distance(direction) < 1e-5);
+        let nose = pose.rotation * Vec3::from_array(aligned[tip]).normalize();
+        assert!(
+            nose.distance(direction) < 1e-5,
+            "actual mesh nose must follow flight for {id}"
+        );
+        let focus = app.world().get::<Focus>(recovered).unwrap();
+        assert!(focus.size.z > 0.7 && focus.size.y < 0.04);
+        let center = pose.transform_point(focus.center);
+        assert!(
+            focus
+                .ray(pose, center - direction * 2., direction, 4.)
+                .is_some()
+        );
+        assert_eq!(
+            app.world().resource::<GameSnapshot>().0,
+            state,
+            "authority/save metadata is read-only"
+        );
+    }
+}
+#[test]
+fn late_stuck_metadata_changes_only_known_arrow_art_and_removal_restores_cached_drop() {
+    let mut app = app();
+    let ordinary = json!({"worldItems":[{"netId":10,"itemId":347,"amount":1,"position":[1,2,3]}]});
+    app.world_mut().resource_mut::<GameSnapshot>().0 = ordinary.clone();
+    app.update();
+    let entity = app.world().resource::<Replicas>().entities[&10];
+    let original_mesh = app.world().get::<Mesh3d>(entity).unwrap().0.clone();
+    app.world_mut().resource_mut::<GameSnapshot>().0["worldItems"][0]["stuckDirection"] =
+        json!([0, 0, -1]);
+    app.update();
+    let aligned_mesh = app.world().get::<Mesh3d>(entity).unwrap().0.clone();
+    assert_ne!(aligned_mesh, original_mesh);
+    app.update();
+    assert_eq!(
+        app.world().get::<Mesh3d>(entity).unwrap().0,
+        aligned_mesh,
+        "cached geometry reused"
+    );
+    app.world_mut().resource_mut::<GameSnapshot>().0 = ordinary;
+    app.update();
+    assert_eq!(app.world().get::<Mesh3d>(entity).unwrap().0, original_mesh);
+    for value in [
+        json!({}),
+        json!({"stuckEuler":[1.57,0.3,0]}),
+        json!({"stuckDirection":[0,0,0]}),
+    ] {
+        assert!(!aligned_arrow(&value, 347));
+    }
+    assert!(
+        !aligned_arrow(&json!({"stuckDirection":[0,0,-1]}), 1166),
+        "no guessed magazine or mod axis"
+    );
+}
+#[test]
 fn accepted_stuck_arrow_keeps_look_at_across_updates_new_ids_and_origin_shifts() {
     let mut app = app();
     // Source LookAt begins 5cm outside the target and aims at hit + direction.

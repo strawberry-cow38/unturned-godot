@@ -61,6 +61,16 @@ impl Focus {
 pub(super) struct Displayed {
     pub item_id: u16,
     pub amount: u16,
+    pub aligned_arrow: bool,
+}
+/// The four shipped arrow pickups have an authored +Y nose. Source LookAt
+/// aligns -Z, so adapt that known art only when authority supplies its direction.
+/// Unknown modded ammunition and the source vertical Euler fallback are unchanged.
+pub(super) fn aligned_arrow(item: &serde_json::Value, id: u16) -> bool {
+    matches!(id, 347 | 348 | 351 | 352)
+        && crate::player::vector(&item["stuckDirection"])
+            .and_then(Vec3::try_normalize)
+            .is_some()
 }
 /// StickProjectile freezes the ordinary pickup at the accepted contact. Its
 /// direction already includes the source normal-offset LookAt correction; a
@@ -100,8 +110,29 @@ pub(super) struct Models {
     manifest: HashMap<u16, Entry>,
     models: HashMap<u16, Model>,
     textures: HashMap<String, Handle<Image>>,
+    aligned_arrows: HashMap<u16, Art>,
 }
 impl Models {
+    pub fn align_arrow(&mut self, id: u16, art: Art, meshes: &mut Assets<Mesh>) -> Art {
+        self.aligned_arrows
+            .entry(id)
+            .or_insert_with(|| {
+                let rotation = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                let mut aligned = art.clone();
+                aligned.mesh =
+                    meshes.add(meshes.get(&art.mesh).unwrap().clone().rotated_by(rotation));
+                // Focus already includes its source15% padding. Permute that exact
+                // box rather than expanding it a second time or changing root pose.
+                let size = Vec3::new(art.focus.size.x, art.focus.size.z, art.focus.size.y);
+                aligned.focus = Focus {
+                    center: rotation * art.focus.center,
+                    size,
+                    shape: Collider::cuboid(size.x * 0.5, size.y * 0.5, size.z * 0.5),
+                };
+                aligned
+            })
+            .clone()
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn art(
         &mut self,
@@ -122,6 +153,7 @@ impl Models {
                 .unwrap_or_default();
             self.models.clear();
             self.textures.clear();
+            self.aligned_arrows.clear();
             self.root = Some(root.to_owned());
         }
         if !self.models.contains_key(&id) {

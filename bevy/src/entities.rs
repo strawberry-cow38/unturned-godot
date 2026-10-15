@@ -491,11 +491,15 @@ fn sync_world_items(
         live.insert(id);
         let existing = replicas.entities.get(&id).copied();
         let rotation = items::rotation(item, id);
+        let aligned_arrow = items::aligned_arrow(item, item_id);
         if let Some(entity) = existing {
             if let Ok((mut transform, displayed)) = transforms.get_mut(entity) {
                 transform.translation = position;
                 transform.rotation = rotation;
-                if displayed.item_id == item_id && displayed.amount == amount {
+                if displayed.item_id == item_id
+                    && displayed.amount == amount
+                    && displayed.aligned_arrow == aligned_arrow
+                {
                     continue;
                 }
             }
@@ -512,6 +516,11 @@ fn sync_world_items(
             &mut materials,
             &mut images,
         );
+        let art = if aligned_arrow {
+            models.align_arrow(item_id, art, &mut meshes)
+        } else {
+            art
+        };
         let entity = existing.unwrap_or_else(|| commands.spawn_empty().id());
         if art.translucent {
             commands.entity(entity).insert(items::material::AlphaDepth);
@@ -526,7 +535,11 @@ fn sync_world_items(
                     net_id: id,
                     item_id,
                 },
-                items::Displayed { item_id, amount },
+                items::Displayed {
+                    item_id,
+                    amount,
+                    aligned_arrow,
+                },
                 art.focus,
                 Mesh3d(art.mesh),
                 MeshMaterial3d(art.material),

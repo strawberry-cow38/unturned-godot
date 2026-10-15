@@ -141,8 +141,29 @@ container door exporter omitted the authored leaf AABB center (fixed separately
 with an actual bridge ray regression). The original arrow pickup mesh has its
 nose along +Y, while `StickProjectile.LookAt` aligns root -Z, so faithfully
 applying the saved root pose leaves this mesh sideways to the flight. A separate
-native adapter correction will rotate only the known arrow mesh and focus box;
+native adapter correction rotates only the known arrow mesh and focus box;
 the accepted root pose and saved state remain unchanged. Local artifacts:
 `bevy-crossbow-arrow-pickup-focus`, `bevy-crossbow-arrow-recovered`,
 `bevy-rocket-ocean-blast` and `bevy-rocket-ocean-column` (PNG plus JSON under
 `bevy/artifacts/`).
+
+### Authored arrow-axis correction
+
+The shipped Arrow, Maple Arrow, Birch Arrow and Pine Arrow pickup meshes
+(IDs347/348/351/352) all have a centered +Y nose at y0.341786m. For those known
+assets with an accepted `stuckDirection`, the native adapter caches a mesh rotated
+-90° around X and rotates its already-padded focus box the same way. Mesh positions,
+normals and tangents change; the entity’s source -Z root pose and authority/save
+metadata do not. Ordinary drops retain their original mesh; unknown ammunition
+and the source near-vertical `stuckEuler` fallback are deliberately unchanged
+because neither establishes the same authored forward direction. A late pose
+update rebuilds the live item’s art and AABB; removing that metadata restores the
+cached ordinary mesh.
+
+This is a correction to the original source art-axis mismatch, rather than a
+claim of unchanged Godot pixels. Two additional regressions use all four actual
+shipped meshes to check the transformed nose, unchanged root/state, rotated
+pickup focus, cache reuse and late metadata lifecycle (nine item tests pass).
+Peer review found no blocker. The corrected real-input render is queued after
+the shared lean-camera capture; the earlier screenshots above show the reproduced
+source mismatch, not this correction.
