@@ -111,6 +111,15 @@ viewmodel = read('game/Viewmodel.cs')
 donor = match(r'public static string AnimationDonorFor\(string gunName\)\s*=>[^;]+;', viewmodel)
 (out / 'WeaponClips.g.cs').write_text('namespace UnturnedGodot { public static class WeaponClips {' + donor + '}}\n')
 
+# Display names are source UI policy: output first (including quantity), then
+# owner item, then the authored name/operation. Many real recipes have no Name.
+crafting_menu = read('game/inventory/CraftingMenu.cs')
+title = match(r'public static string Title\(BlueprintDef bp\)\s*\{.*?\n        \}', crafting_menu)
+(out / 'CraftingPresentation.g.cs').write_text(
+    '// Generated unchanged from game/inventory/CraftingMenu.cs; do not edit.\n'
+    'using SDG.Unturned; namespace UnturnedGodot { public static class SourceCraftingMenu {\n'
+    + title + '\n}}\n')
+
 # Source magazine compatibility, richest-mag selection, chamber retention and
 # loose-round consumption remain verbatim, hosted on authoritative inventories.
 player = read('game/PlayerController.cs')

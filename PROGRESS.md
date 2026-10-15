@@ -2184,3 +2184,20 @@ now have CPU/GPU assertions. Original Godot driving-arm comparison required no
 pose change. Glazing/free indexed tire buttons and accepted manual horn are the
 next native slice, using the separately verified protocol69 authority. See
 `bevy/docs/VEHICLE_CONTROLS_PORT.md` and `bevy-mechanics-panel-final.png`.
+
+
+### Bevy source crafting recipe titles
+
+The fullgame dashboard inspection exposed six blank recipe names. The bridge now
+uses the unchanged original `CraftingMenu.Title` method, extracted at build time:
+first output plus quantity, then owner item, then authored name/operation. Recipe
+indices, ingredients and authority checks remain intact. The actual first page
+now shows Birch/Maple/Pine Plank/Stick x2, and all855 loaded recipes have titles.
+
+The real JSONL regression reproduces six empty names against the prior immutable
+bridge and passes with the fix. Two managed fallback/quantity cases and both
+JSONL catalog/title journeys pass. Gameplay independently reviewed source/code.
+`bevy-crafting-titles-fixed.png` was captured from the full game with the new
+bridge and opened by root: all first-page names, quantities, durations and
+requirements are readable. This repairs the title read model; the larger source
+crafting grid/category/queue interface is still pending.

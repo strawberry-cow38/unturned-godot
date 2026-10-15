@@ -387,3 +387,10 @@ Companion documents:
 - `Viewmodel.MagazineVisualFor(name)` — shared resolved magazine mesh and gun-local mount; prevents 3P/world viewers substituting Eaglefire's mount.
 - `AuthoredGunProfiles.Install(server)` — scoped new-gun server profile binding, owned held weapon only; other gun behavior unchanged. See `MAC10_INTEGRATION.md`.
 - `UnturnedSim.ShotCadence` — opt-in 50 Hz rational RPM phase; `CanFire` is read-only, consume with `AcceptShot` only after all other checks. Late shots reanchor; legacy-only instances stay inactive. `IsCoolingDown` protects switching; no state is serialized.
+
+
+### Bevy crafting presentation
+
+| Need | Reuse | Notes |
+| --- | --- | --- |
+| Display an original blueprint title | `SourceCraftingMenu.Title` (extracted unchanged from `game/inventory/CraftingMenu.cs` by `bevy/bridge/extract_data.py`) | Output item/quantity, then owner, then authored name/operation; `BlueprintDef.Name` is often empty and is not the display label |

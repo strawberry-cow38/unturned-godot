@@ -597,7 +597,7 @@ public sealed partial class BridgeHost : IDisposable
         bool can = inv != null && Crafting.CanCraft(bp, new Crafting.PlayerInvAdapter(inv), skills, out reason);
         if (bp.RequiresStation) { can = false; reason = "Requires crafting station"; }
         if (bp.Locked && !(_client.KnownBlueprints?.Contains(bp.Key) ?? false)) { can = false; reason = "Recipe not learned"; }
-        return new { index = i, name = bp.Name, operation = bp.Operation, craftable = can, reason, seconds = bp.Seconds,
+        return new { index = i, name = SourceCraftingMenu.Title(bp), operation = bp.Operation, craftable = can, reason, seconds = bp.Seconds,
             inputs = bp.Inputs.Select(Ingredient).ToArray(), outputs = bp.Outputs.Select(Ingredient).ToArray() };
     }
     static object Ingredient(BlueprintDef.Ingredient i) => new { id = Crafting.Resolve(i.Guid), name = Assets.findByGuid(i.Guid)?.itemName ?? i.Guid, amount = i.Amount, consume = i.Consume };

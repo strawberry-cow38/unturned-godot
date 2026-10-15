@@ -357,10 +357,25 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(water['isFluidContainer'])
         self.assertTrue(water['icon'].startswith('items/icons/'))
         recipes = self.call('snapshot')['state']['recipes']
-        self.assertTrue(any(r['name'].startswith('Split ') for r in recipes))
-        self.assertTrue(any(r['name'].startswith('Salvage ') for r in recipes))
+        # The source menu labels these by their first output, not the internal
+        # generator name ("Split ..." / "Salvage ..."). Retain actual recipes.
+        self.assertTrue(any(r['name'] == 'Firewood x2' and
+                            any(i['id'] == 16 and not i['consume'] for i in r['inputs'])
+                            for r in recipes))
+        self.assertTrue(any(r['name'] == 'Asbestos' and
+                            any(i['id'] == 233 for i in r['inputs']) and
+                            [o['id'] for o in r['outputs']] == [9340, 66, 67]
+                            for r in recipes))
         steady = self.call('tick')['state']
         self.assertNotIn('recipes', steady)
+
+    def test_recipe_titles_resolve_original_outputs_including_unnamed_rows(self):
+        recipes = self.call('snapshot')['state']['recipes']
+        self.assertEqual(['Birch Plank x2', 'Birch Stick x2', 'Maple Plank x2',
+                          'Maple Stick x2', 'Pine Plank x2', 'Pine Stick x2'],
+                         [r['name'] for r in recipes[:6]])
+        self.assertTrue(all(r['name'] for r in recipes))
+        self.assertEqual(list(range(len(recipes))), [r['index'] for r in recipes])
 
     def test_save_uses_original_format_and_restores_inventory(self):
         with tempfile.TemporaryDirectory() as folder:

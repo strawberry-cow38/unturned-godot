@@ -47,6 +47,7 @@
     <Compile Include="$(IntermediateOutputPath)Data/HandRules.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/DoorCatalog.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponClips.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/CraftingPresentation.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponInventory.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/BodyRules.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/VehicleLightRules.g.cs" />
