@@ -209,4 +209,30 @@ public sealed class InventoryViewTests
         Assert.That(tiles.Worn,Has.Length.EqualTo(7)); Assert.That(tiles.Worn.All(w=>w.Tile==null),Is.True);
     }
 
+    [Test]
+    public void UdpCurrencyPreviewCatalogUsesOriginalOrderAndEveryWalletValueMatchesNativeOracle()
+    {
+        var wallet=Put(Assets.find(Currency.StackId),0); wallet.amount=249;
+        Pump();
+        var before=JsonSerializer.Serialize(Inventory,Json);
+        var tiles=View().GetProperty("tiles");
+        var denominations=tiles.GetProperty("currency").EnumerateArray().ToArray();
+        Assert.That(denominations.Select(d=>d.GetProperty("id").GetUInt16()),Is.EqualTo(Currency.Denominations));
+        foreach(var row in denominations)
+        {
+            var id=row.GetProperty("id").GetUInt16();
+            Assert.That(row.GetProperty("value").GetInt32(),Is.EqualTo(Currency.ValueOf(id)));
+            Assert.That(row.GetProperty("icon").GetString(),Is.EqualTo(Assets.find(id).iconPath));
+        }
+        Assert.That(JsonSerializer.Serialize(Inventory,Json),Is.EqualTo(before),"a preview catalog never alters the accepted wallet");
+        var path=Path.GetFullPath(Path.Combine(Content(),"../../bevy/src/ui/inventory/money/source-reference.json"));
+        var expected=Enumerable.Range(0,Currency.MaxPerStack+1).Select(Currency.Breakdown).ToArray();
+        if(Environment.GetEnvironmentVariable("UG_WRITE_CURRENCY_REFERENCE")=="1")
+            File.WriteAllText(path,JsonSerializer.Serialize(expected));
+        var reference=JsonSerializer.Deserialize<ushort[][]>(File.ReadAllText(path));
+        Assert.That(reference,Has.Length.EqualTo(expected.Length));
+        for(int amount=0;amount<expected.Length;amount++)
+            Assert.That(reference[amount],Is.EqualTo(expected[amount]),$"original Breakdown({amount})");
+    }
+
 }

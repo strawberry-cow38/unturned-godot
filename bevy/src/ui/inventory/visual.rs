@@ -29,6 +29,7 @@ struct Capture {
     done: Arc<Mutex<bool>>,
     facts: Vec<Value>,
     magazine: Cell,
+    money: bool,
     sent: Vec<Value>,
 }
 fn action(bridge: &CoreBridge, name: &str, args: Value) {
@@ -51,6 +52,14 @@ fn view(bridge: &CoreBridge) -> api::View {
 #[test]
 #[ignore = "requires Vulkan/display; UG_INVENTORY_SHOT sets output prefix"]
 fn gpu_original_dashboard_context_accepted_split_and_magazine_wheel() {
+    run(false);
+}
+#[test]
+#[ignore = "requires Vulkan/display; UG_INVENTORY_SHOT sets output prefix"]
+fn gpu_original_currency_preview_and_accepted_exact_split() {
+    run(true);
+}
+fn run(money: bool) {
     let prefix =
         std::env::var("UG_INVENTORY_SHOT").unwrap_or_else(|_| "/tmp/bevy-inventory".into());
     let config = WorldConfig::default();
@@ -83,14 +92,19 @@ fn gpu_original_dashboard_context_accepted_split_and_magazine_wheel() {
             tick(&bridge, 8);
         }
     }
-    action(&bridge, "console", json!({"text":"give 6"}));
-    action(&bridge, "console", json!({"text":"give 95"}));
+    for id in if money { [1055, 1054] } else { [6, 95] } {
+        action(&bridge, "console", json!({"text":format!("give {id}")}));
+    }
     let snapshot = tick(&bridge, 20);
     let current = view(&bridge);
     let magazine = current
         .items
         .iter()
-        .find(|r| r.magazine && current.tile(r.address.cell()).is_some_and(|t| t.amount > 5))
+        .find(|r| {
+            current
+                .tile(r.address.cell())
+                .is_some_and(|t| t.amount > 5 && if money { t.money } else { r.magazine })
+        })
         .unwrap()
         .address
         .cell();
@@ -160,6 +174,7 @@ fn gpu_original_dashboard_context_accepted_split_and_magazine_wheel() {
         done: default(),
         facts: vec![],
         magazine,
+        money,
         sent: vec![],
     })
     .add_systems(Startup, scene)
@@ -171,25 +186,26 @@ fn gpu_original_dashboard_context_accepted_split_and_magazine_wheel() {
     assert_eq!(facts.len(), 4);
     assert!(facts[0]["portrait"].as_bool().unwrap());
     assert_eq!(facts[1]["selected"], true);
-    assert_eq!(
-        facts[2]["amount"].as_u64().unwrap(),
-        facts[0]["amount"].as_u64().unwrap() - 3
-    );
-    assert!(facts[3]["rounds"].as_u64().unwrap() > 0);
-    assert!(
-        facts[3]["sent"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["name"] == "splitItem")
-    );
-    assert!(
-        facts[3]["sent"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["name"] == "magazineTransfer")
-    );
+    let sent = facts[3]["sent"].as_array().unwrap();
+    assert!(sent.iter().any(|r| r["name"] == "splitItem"));
+    if money {
+        assert_eq!(facts[0]["amount"], 150);
+        assert_eq!(facts[2]["amount"], 150, "preview must not debit the wallet");
+        assert_eq!(facts[2]["previewAmount"], 51);
+        assert_eq!(facts[3]["wallets"], json!([99, 51]));
+        assert_eq!(
+            sent.len(),
+            1,
+            "one source preview drop, no optimistic second split"
+        );
+    } else {
+        assert_eq!(
+            facts[2]["amount"].as_u64().unwrap(),
+            facts[0]["amount"].as_u64().unwrap() - 3
+        );
+        assert!(facts[3]["rounds"].as_u64().unwrap() > 0);
+        assert!(sent.iter().any(|r| r["name"] == "magazineTransfer"));
+    }
     let decode = |stage| {
         Image::from_buffer(
             &std::fs::read(format!("{prefix}-{stage}.png")).unwrap(),
@@ -210,7 +226,7 @@ fn gpu_original_dashboard_context_accepted_split_and_magazine_wheel() {
     );
     assert!(
         decode(2) != decode(3),
-        "accepted magazine wheel must change actual pixels"
+        "accepted split or magazine wheel must change actual pixels"
     );
     for stage in 0..4 {
         assert!(
@@ -304,6 +320,38 @@ fn point(world: &World, cell: Cell) -> Vec2 {
         .unwrap();
     grid.rect.min + Vec2::new(cell.x as f32, cell.y as f32) * CELL + Vec2::splat(18.)
 }
+fn split(world: &mut World, cell: Cell, amount: u16) {
+    let (preview, to) = {
+        let menu = world.resource::<Menu>();
+        let grid = menu.hits.grids.iter().find(|g| g.page == 2).unwrap();
+        let page = menu.pages.iter().find(|p| p.index == 2).unwrap();
+        let item = at(&menu.pages, cell).unwrap();
+        let size = footprint(item, 0);
+        let dest = (0..page.height)
+            .flat_map(|y| (0..page.width).map(move |x| Cell::at(2, x, y)))
+            .find(|cell| {
+                u32::from(cell.x) + size.x <= u32::from(page.width)
+                    && u32::from(cell.y) + size.y <= u32::from(page.height)
+                    && (0..size.y).all(|dy| {
+                        (0..size.x).all(|dx| {
+                            at(
+                                &menu.pages,
+                                Cell::at(2, cell.x + dx as u8, cell.y + dy as u8),
+                            )
+                            .is_none()
+                        })
+                    })
+                    && grid.clip.contains(point(world, *cell))
+            })
+            .unwrap();
+        (menu.hits.split_preview.unwrap().center(), dest)
+    };
+    world.resource_mut::<Menu>().gesture.split_amount = amount;
+    pointer(world, preview, MouseButton::Left, ButtonState::Pressed);
+    let drop = point(world, to);
+    pointer(world, drop, MouseButton::Left, ButtonState::Released);
+}
+
 fn capture(world: &mut World) {
     world.resource_mut::<FrameInput>().begin();
     let mut c = world.remove_resource::<Capture>().unwrap();
@@ -322,37 +370,11 @@ fn capture(world: &mut World) {
                 pointer(world, p, MouseButton::Right, ButtonState::Pressed);
                 pointer(world, p, MouseButton::Right, ButtonState::Released);
             }
-            2 => {
-                let (preview, to) = {
-                    let menu = world.resource::<Menu>();
-                    let grid = menu.hits.grids.iter().find(|g| g.page == 2).unwrap();
-                    let page = menu.pages.iter().find(|p| p.index == 2).unwrap();
-                    let item = at(&menu.pages, c.magazine).unwrap();
-                    let size = footprint(item, 0);
-                    let dest = (0..page.height)
-                        .flat_map(|y| (0..page.width).map(move |x| Cell::at(2, x, y)))
-                        .find(|cell| {
-                            u32::from(cell.x) + size.x <= u32::from(page.width)
-                                && u32::from(cell.y) + size.y <= u32::from(page.height)
-                                && (0..size.y).all(|dy| {
-                                    (0..size.x).all(|dx| {
-                                        at(
-                                            &menu.pages,
-                                            Cell::at(2, cell.x + dx as u8, cell.y + dy as u8),
-                                        )
-                                        .is_none()
-                                    })
-                                })
-                                && grid.clip.contains(point(world, *cell))
-                        })
-                        .unwrap();
-                    (menu.hits.split_preview.unwrap().center(), dest)
-                };
-                world.resource_mut::<Menu>().gesture.split_amount = 3;
-                pointer(world, preview, MouseButton::Left, ButtonState::Pressed);
-                let drop = point(world, to);
-                pointer(world, drop, MouseButton::Left, ButtonState::Released);
+            2 if c.money => {
+                world.resource_mut::<Menu>().gesture.split_amount = 51;
             }
+            2 => split(world, c.magazine, 3),
+            3 if c.money => split(world, c.magazine, 51),
             3 => {
                 let mut menu = world.resource_mut::<Menu>();
                 let view = menu.view.clone();
@@ -376,7 +398,15 @@ fn capture(world: &mut World) {
         let menu = world.resource::<Menu>();
         let amount = menu.view.tile(c.magazine).unwrap().amount;
         let rounds = menu.magazines.operations.first().map_or(0, |o| o.done);
-        let facts = json!({"stage":c.stage,"amount":amount,"rounds":rounds,"selected":menu.gesture.selected.is_some(),"portrait":world.resource::<paperdoll::Portrait>().root.is_some(),"sourceViewport":world.resource::<paperdoll::stage::Surface>().size.to_array(),"sent":c.sent,"state":world.resource::<GameSnapshot>().0});
+        let wallets: Vec<_> = menu
+            .view
+            .tiles
+            .cells
+            .iter()
+            .filter(|c| c.tile.money)
+            .map(|c| c.tile.amount)
+            .collect();
+        let facts = json!({"wallets":wallets,"previewAmount":menu.gesture.split_amount,"stage":c.stage,"amount":amount,"rounds":rounds,"selected":menu.gesture.selected.is_some(),"portrait":world.resource::<paperdoll::Portrait>().root.is_some(),"sourceViewport":world.resource::<paperdoll::stage::Surface>().size.to_array(),"sent":c.sent,"state":world.resource::<GameSnapshot>().0});
         c.facts.push(facts);
         let done = c.done.clone();
         world

@@ -158,6 +158,25 @@ OS mouse. A separate original Godot `--invsel` render is retained as
 portrait renders cover rifle, compound bow and night lighting. Full-game OS
 inventory interaction remains separate evidence from these production fixtures.
 
+## Currency preview follow-up
+
+The display-only tile catalog now includes the original largest-first currency
+metadata even for an empty owner inventory. Split and carried previews project
+their local amount through that table, using the same repeated-bill layout and
+`$N` caption as accepted tiles. Refresh replaces only preview children; the
+number editor and its draft/focus retain their identity. This never alters an
+accepted wallet or adds a new command.
+
+Validation: eight managed InventoryView tests and 33 native Inventory tests
+pass against immutable `inventory-preview-v73-first` and
+`native-coupling-geometry-first`. A checked-in 0–500 oracle is generated from
+original C# `Currency.Breakdown`; actual UDP metadata drives the native comparison
+and retained-editor test. The older bridge fails this test on the missing table.
+The four-stage Vulkan fixture passes and all `bevy-inventory-money-{0,1,2,3}.png`
+images were opened: accepted $150, preview $75 then $51, and the actual accepted
+split into $99 and $51. Sidecars verify exactly one SplitItem intent; the preview
+stages leave the owner wallet at $150. Independent source review passed.
+
 ## Remaining parity
 
 Source InventoryUI offers Empty for fuel cans in viewed storage and Nearby too.
@@ -174,9 +193,8 @@ Original InventoryUI can address viewed pages; those operations need a separate
 validated view/ground identity seam before native UI can enable them safely.
 This limitation does not broaden legacy39 or claim the complete dashboard done.
 
-Money split/carry previews still need their own source denomination projection
-when their preview amount differs from the accepted stack. General SpinBox
-expressions and captured, accelerated vertical dragging are not yet implemented.
+General SpinBox expressions and captured, accelerated vertical dragging are not
+yet implemented.
 Rejected legacy hold-transfer requests remain reserved until H is released,
 rather than inventing a completion or local inventory change. These are explicit
 follow-ups after this reviewed dashboard checkpoint.

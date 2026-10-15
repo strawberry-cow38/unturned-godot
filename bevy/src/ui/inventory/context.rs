@@ -32,7 +32,7 @@ pub(super) struct SplitSlider;
 #[derive(Component)]
 pub(super) struct SplitThumb;
 #[derive(Component)]
-pub(super) struct SplitCount;
+pub(super) struct SplitPreview(Option<super::api::Tile>);
 #[derive(Component)]
 pub(super) struct SplitFill;
 #[derive(Component)]
@@ -157,7 +157,6 @@ pub(super) fn synchronize(
     mut menu: ResMut<Menu>,
     mut fields: Query<(Entity, &mut Number, &mut EditableText)>,
     mut thumbs: Query<&mut Node, (With<SplitThumb>, Without<SplitFill>)>,
-    mut counts: Query<&mut Text, With<SplitCount>>,
     mut fills: Query<&mut Node, (With<SplitFill>, Without<SplitThumb>)>,
     sliders: Query<Entity, With<SplitSlider>>,
     mut focus: ResMut<bevy::input_focus::InputFocus>,
@@ -199,11 +198,54 @@ pub(super) fn synchronize(
     for mut fill in &mut fills {
         fill.width = px((fraction * 314.).floor() + 8.);
     }
-    for mut text in &mut counts {
-        text.0 = format!("x{amount}");
-    }
     for entity in &sliders {
         commands.entity(entity).insert(SliderValue(amount as f32));
+    }
+}
+/// Original RebuildSplitSlot replaces only its display child when the local
+/// amount changes. It never rebuilds/focuses the sibling number editor.
+pub(super) fn preview(
+    mut commands: Commands,
+    menu: Res<Menu>,
+    mut previews: Query<(Entity, &mut SplitPreview, Option<&Children>)>,
+    mut art: ResMut<render::Art>,
+    config: Res<WorldConfig>,
+    mut images: ResMut<Assets<Image>>,
+    font: Res<crate::character::nameplate::OriginalFont>,
+) {
+    let Some(cell) = menu.gesture.selected else {
+        return;
+    };
+    let Some(tile) = menu.view.tile(cell) else {
+        return;
+    };
+    let facts = super::money::preview(tile, menu.gesture.split_amount, &menu.view.tiles.currency);
+    let magazine = menu.view.at(cell).is_some_and(|row| row.magazine);
+    for (entity, mut preview, children) in &mut previews {
+        if preview.0.as_ref() == Some(&facts) {
+            continue;
+        }
+        if let Some(children) = children {
+            for child in children {
+                commands.entity(*child).despawn();
+            }
+        }
+        commands.entity(entity).with_children(|p| {
+            tiles::tile(
+                p,
+                &facts,
+                Rect::new(4., 4., 76., 76.),
+                0,
+                magazine,
+                true,
+                true,
+                &mut art.0,
+                &config.content_root,
+                &mut images,
+                &font.0,
+            );
+        });
+        preview.0 = Some(facts.clone());
     }
 }
 #[allow(clippy::too_many_arguments)]
@@ -442,33 +484,12 @@ pub(super) fn draw(
                 );
             }
             let preview = Rect::new(364., top + 48., 444., top + 128.);
-            render::panel(p, preview, Color::srgba(0.1, 0.1, 0.1, 0.6), |p| {
-                let mut one = tile.clone();
-                one.amount = menu.gesture.split_amount;
-                tiles::tile(
-                    p,
-                    &one,
-                    Rect::new(4., 4., 76., 76.),
-                    0,
-                    row.magazine,
-                    true,
-                    false,
-                    art,
-                    &config.content_root,
-                    images,
-                    font,
-                );
-                let text = tiles::label(
-                    p,
-                    format!("x{}", menu.gesture.split_amount),
-                    Rect::new(4., 54., 72., 74.),
-                    13.,
-                    Color::WHITE,
-                    font,
-                    Justify::Right,
-                );
-                p.commands().entity(text).insert(SplitCount);
-            });
+            p.spawn((
+                tiles::rect(preview),
+                BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.6)),
+                Pickable::IGNORE,
+                SplitPreview(None),
+            ));
             menu.hits.split_preview = Some(Rect::from_corners(
                 origin + preview.min,
                 origin + preview.max,

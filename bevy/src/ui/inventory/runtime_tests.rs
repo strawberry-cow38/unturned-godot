@@ -490,3 +490,111 @@ fn closing_cancels_pending_slot_equip_before_a_delayed_udp_move_echo() {
     );
     assert_eq!(app.world().resource::<UiState>().screen, Screen::Inventory);
 }
+
+#[test]
+fn accepted_currency_table_matches_all_source_wallets_and_live_preview_rebuilds_only_its_tile() {
+    use crate::character::nameplate::OriginalFont;
+    let (host, mut app, _) = setup();
+    for id in [1055, 1054] {
+        app.world()
+            .resource::<CoreBridge>()
+            .request(
+                "action",
+                json!({"name":"console","args":{"text":format!("give {id}")}}),
+            )
+            .unwrap();
+    }
+    pump(&host, &mut app, 16);
+    step(&mut app, 0.1);
+    let view = app.world().resource::<Menu>().view.clone();
+    let expected: Vec<Vec<u16>> =
+        serde_json::from_str(include_str!("money/source-reference.json")).unwrap();
+    assert_eq!(expected.len(), 501);
+    for (amount, ids) in expected.into_iter().enumerate() {
+        assert_eq!(
+            money::breakdown(amount as u16, &view.tiles.currency)
+                .iter()
+                .map(|d| d.id)
+                .collect::<Vec<_>>(),
+            ids,
+            "original Currency.Breakdown({amount})"
+        );
+    }
+    let row = view.tiles.cells.iter().find(|c| c.tile.money).unwrap();
+    assert_eq!(row.tile.amount, 150);
+    let cell = model::Cell {
+        page: row.page,
+        x: row.x,
+        y: row.y,
+    };
+    app.init_resource::<Assets<Image>>()
+        .init_resource::<Assets<feedback::WheelMaterial>>()
+        .init_resource::<render::Art>()
+        .init_resource::<badge::Badge>()
+        .insert_resource(WorldConfig::default())
+        .insert_resource(OriginalFont(default()));
+    {
+        let mut menu = app.world_mut().resource_mut::<Menu>();
+        menu.gesture.selected = Some(cell);
+        menu.gesture.split_amount = 51;
+    }
+    app.world_mut().run_system_once(render::build).unwrap();
+    app.world_mut().run_system_once(context::preview).unwrap();
+    let editor = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<context::Number>>()
+            .single(world)
+            .unwrap()
+    };
+    let picture = |app: &mut App| {
+        let world = app.world_mut();
+        let root = world
+            .query_filtered::<Entity, With<context::SplitPreview>>()
+            .single(world)
+            .unwrap();
+        let descendants: Vec<_> = world
+            .query::<&Children>()
+            .query(world)
+            .iter_descendants(root)
+            .collect();
+        let texts: Vec<_> = descendants
+            .iter()
+            .filter_map(|e| world.get::<Text>(*e).map(|t| t.0.clone()))
+            .collect();
+        let images = descendants
+            .iter()
+            .filter(|e| world.get::<ImageNode>(**e).is_some())
+            .count();
+        (root, images, texts)
+    };
+    let first = picture(&mut app);
+    assert_eq!(first.1, 2, "$51 is one original fifty and one loonie");
+    assert!(first.2.contains(&"$51".to_owned()));
+    app.world_mut().resource_mut::<Menu>().gesture.split_amount = 1;
+    app.world_mut().run_system_once(context::preview).unwrap();
+    let one = picture(&mut app);
+    assert_eq!(one.0, first.0);
+    assert_eq!(
+        one.1, 1,
+        "a live amount change must not retain the old $150 fan"
+    );
+    assert!(one.2.contains(&"$1".to_owned()));
+    assert!(
+        app.world().get_entity(editor).is_ok(),
+        "only preview children rebuild; draft focus survives"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<Menu>()
+            .view
+            .tile(cell)
+            .unwrap()
+            .amount,
+        150
+    );
+    assert!(
+        flush(&mut app).is_empty(),
+        "changing preview art emits no gameplay action"
+    );
+}

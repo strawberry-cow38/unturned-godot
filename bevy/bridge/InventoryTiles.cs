@@ -16,9 +16,10 @@ public static class InventoryTiles
         bool Money, Denomination[] Denominations);
     public sealed record Cell(byte Page, byte X, byte Y, Tile Tile);
     public sealed record Worn(byte Slot, Tile Tile);
-    public sealed record View(Cell[] Cells, Worn[] Worn);
+    public sealed record View(Cell[] Cells, Worn[] Worn, Denomination[] Currency);
 
     static float[] Color(Godot.Color c) => [c.R,c.G,c.B,c.A];
+    static Denomination Denom(ushort id) => new(id,Currency.ValueOf(id),Assets.find(id)?.iconPath);
 
     static Item ActiveBottle(PlayerInventory inventory)
     {
@@ -54,8 +55,7 @@ public static class InventoryTiles
                 Color(type == FluidType.None ? new(.49f,.49f,.49f) : FluidDef.WaterColor(type,(WaterQuality)copy.fluidQuality)),false);
         }
         bool money = Currency.IsCurrency(item.id);
-        var denominations = money ? Currency.Breakdown(item.amount).Select(id =>
-            new Denomination(id,Currency.ValueOf(id),Assets.find(id)?.iconPath)).ToArray() : [];
+        var denominations = money ? Currency.Breakdown(item.amount).Select(Denom).ToArray() : [];
         var rarity = ItemTool.RarityColorUI(a.rarity);
         return new(item.id,InventoryView.ShownName(a,item),a.iconPath,a.size_x,a.size_y,item.amount,item.quality,
             [rarity.R,rarity.G,rarity.B,rarity.A],condition,food,broken,Color(quality),food ? item.frozen : (byte)0,
@@ -64,7 +64,11 @@ public static class InventoryTiles
 
     public static View Read(PlayerInventory inventory)
     {
-        if (inventory == null) return new([],[]);
+        // Display-only preview amounts can change every slider frame. Supply the
+        // original ordered denominations once per read instead of baking IDs or
+        // making a preview mutate the accepted stack to obtain its new artwork.
+        var currency = Currency.Denominations.Select(Denom).ToArray();
+        if (inventory == null) return new([],[],currency);
         var active = ActiveBottle(inventory);
         var cells = new List<Cell>();
         foreach (var page in inventory.items)
@@ -72,6 +76,6 @@ public static class InventoryTiles
                 if (Describe(jar.item,active) is { } tile) cells.Add(new(page.page,jar.x,jar.y,tile));
         Item[] worn = [inventory.wornHat,inventory.wornGlasses,inventory.wornMask,inventory.wornShirt,
             inventory.wornVest,inventory.wornBackpack,inventory.wornPants];
-        return new(cells.ToArray(),worn.Select((item,slot) => new Worn((byte)slot,Describe(item,active))).ToArray());
+        return new(cells.ToArray(),worn.Select((item,slot) => new Worn((byte)slot,Describe(item,active))).ToArray(),currency);
     }
 }

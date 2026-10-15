@@ -8,6 +8,37 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use std::{collections::HashMap, path::Path};
+/// Original Currency.Breakdown, using the source-provided largest-first table.
+/// This changes only a local preview; repetitions are essential for $249/$500.
+pub(super) fn breakdown(mut amount: u16, currency: &[Denomination]) -> Vec<Denomination> {
+    let mut result = Vec::new();
+    for denomination in currency {
+        let Ok(value) = u16::try_from(denomination.value) else {
+            continue;
+        };
+        if value == 0 {
+            continue;
+        }
+        result.extend(std::iter::repeat_n(
+            denomination.clone(),
+            usize::from(amount / value),
+        ));
+        amount %= value;
+    }
+    result
+}
+pub(super) fn preview(
+    tile: &super::api::Tile,
+    amount: u16,
+    currency: &[Denomination],
+) -> super::api::Tile {
+    let mut result = tile.clone();
+    if result.money && amount != result.amount {
+        result.denominations = breakdown(amount, currency);
+    }
+    result.amount = amount;
+    result
+}
 #[derive(Default)]
 pub(super) struct Art(HashMap<u16, Option<(Handle<Image>, Vec2)>>);
 impl Art {

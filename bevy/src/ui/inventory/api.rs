@@ -19,6 +19,7 @@ pub(super) struct View {
 pub(super) struct Tiles {
     pub cells: Vec<TileCell>,
     pub worn: Vec<Worn>,
+    pub currency: Vec<Denomination>,
 }
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]

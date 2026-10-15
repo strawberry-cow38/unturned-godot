@@ -798,7 +798,7 @@ pub(super) fn ghost(
     }
     .cloned()
     .unwrap_or_default();
-    facts.amount = carry.item.amount;
+    facts = super::money::preview(&facts, carry.item.amount, &menu.view.tiles.currency);
     let size = footprint(&carry.item, carry.rotation).as_vec2() * CELL;
     let origin = menu.gesture.pointer - carry.grab;
     let Some(parent) = dashboard.iter().next() else {

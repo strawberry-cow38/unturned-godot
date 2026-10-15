@@ -63,6 +63,7 @@ impl Plugin for InventoryPlugin {
                     badge::refresh,
                     render::build,
                     context::synchronize,
+                    context::preview,
                     context::slider_appearance,
                     spin::appearance,
                     symbols::apply,

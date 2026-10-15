@@ -446,5 +446,6 @@ Companion documents:
 | Need | Reuse | Notes |
 | --- | --- | --- |
 | Draw accepted Inventory pages and preserve native gesture/editor state | `ui::inventory::{InventoryPlugin,controller,gesture,commands}` | source grid, independent scrolling, original context/split/hold-transfer/quickcraft; shared ordered input; commands only, never optimistic inventory; exact owner tokens for new operations |
+| Project a money carry/split preview without mutating an accepted wallet | `ui::inventory::money::{breakdown,preview}`, `inventoryView.tiles.currency` | original largest-first metadata; same repeated-bill tile layout; preview children refresh independently from the number editor; 501-value original C# oracle |
 | Render the isolated original Inventory portrait | `ui::inventory::paperdoll`, `avatar::outfit`, `avatar::held_item` | accepted outfit/held pose, source framing/Filmic/lighting, first-frame transforms, SwoopAlpha, no body or authority |
 | Advance source magazine UI one accepted round at a time | `ui::inventory::magazines::Magazines` | owner81/60 completion plus snapshot tick; request IDs retained across close; no invented ammo counts or timeout success |
