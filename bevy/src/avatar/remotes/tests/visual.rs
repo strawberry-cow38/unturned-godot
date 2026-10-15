@@ -18,9 +18,14 @@ fn render_remote_pose_fixture() {
     let path = std::env::var("UG_REMOTE_POSE_SHOT")
         .unwrap_or_else(|_| "/tmp/bevy-remote-poses.png".into());
     let mut players = vec![row(1, Vec3::ZERO)];
+    let held = std::env::var_os("UG_REMOTE_POSE_HELD").is_some();
     for (i, stance) in [0, 2, 3, 4].into_iter().enumerate() {
         let mut peer = row(i as u16 + 2, Vec3::new((i as f32 - 1.5) * 2., 0., 0.));
         peer["stance"] = json!(stance);
+        if held {
+            peer["heldItemId"] = json!([4, 121, 4, 0][i]);
+            peer["attachments"] = json!({"sightId":21,"magazineId":6,"barrelId":7});
+        }
         players.push(peer);
     }
     let mut app = App::new();
@@ -52,7 +57,7 @@ fn render_remote_pose_fixture() {
         )
         .insert_resource(config)
         .init_resource::<WorldSessionEpoch>()
-        .init_resource::<ItemCatalog>()
+        .insert_resource(source_catalog())
         .insert_resource(GameSnapshot(json!({"connected":true,"playerId":1,
             "players":players,"vehicles":[]})))
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
@@ -66,13 +71,6 @@ fn render_remote_pose_fixture() {
         ))
         .add_systems(Startup, scene)
         .add_systems(Update, capture);
-    app.world_mut().resource_mut::<ItemCatalog>().items.insert(
-        24,
-        serde_json::from_value(
-            json!({"id":24,"name":"Gold shirt","type":"shirt","hasCondition":true}),
-        )
-        .unwrap(),
-    );
     app.run();
     assert!(
         std::path::Path::new(&path).is_file(),

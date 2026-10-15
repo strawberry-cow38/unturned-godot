@@ -39,7 +39,7 @@ const LOWER: [&str; 7] = [
     "Right_Leg",
     "Right_Foot",
 ];
-fn clip<'a>(rig: &'a RigPlayback, asset: &str, suffix: &str, fallback: &'a str) -> String {
+pub(crate) fn clip(rig: &RigPlayback, asset: &str, suffix: &str, fallback: &str) -> String {
     let named = asset
         .chars()
         .next()

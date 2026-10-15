@@ -1194,3 +1194,20 @@ there are no transparent viewport wedges and third-person omits the viewmodel.
 Independent source-equation and live-image reviews found no blocker. This
 completes the previously pending lean render integration. Lamp-off residual
 diagnosis remains separate; see `bevy/docs/HDR_NIGHTVISION_PORT.md`.
+
+### Bevy remote held weapons and accepted upper-body actions (2026-10-15)
+
+Accepted remote equipment now loads original gun/melee meshes, body hooks and
+sight/magazine/barrel mounts, replacing old trees even when only an attachment
+changes. Source body-sight placement and zero-ID factory irons remain distinct
+from first-person optical placement. Holds use the final equip pose; accepted
+melee and gesture events preserve locomotion and low-stance posture, deduplicate
+retained facts and never request gameplay mutations. Review found a replica-before-
+catalog race that could leave hands empty indefinitely; pending equipment now
+retries and has a regression. Nine focused remote tests and all328 native tests
+pass. Production-render fixed-replica captures bevy-remote-poses.png and
+bevy-remote-held.png were opened and independently reviewed: all four stances,
+original clothes/gear, standing/prone scoped rifles and a crouched knife render
+coherently. These fixtures are not live UDP gameplay evidence. Remaining remote
+presentation includes footsteps, names, reclined furniture, lights and muzzle
+FX; managed/native connection lifecycle is continuing separately.

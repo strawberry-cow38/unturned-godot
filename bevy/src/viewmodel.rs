@@ -14,7 +14,7 @@ use bevy::{
 };
 use std::{collections::HashMap, fs, path::Path};
 
-mod attachments;
+pub(crate) mod attachments;
 mod driving;
 mod inspect;
 pub(crate) mod lighting;

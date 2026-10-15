@@ -40,9 +40,20 @@ stance heights and contact the local player without blocking vehicles. Furniture
 sitting or replicated vehicle occupancy disables the remote capsule.
 
 Appearance changes retain the existing rig. Leave, disconnect and world-session
-replacement remove the entire old body tree. Held weapons, remote gesture overlays,
-footsteps, nameplates, reclined seats and remote light fixtures remain separate
-presentation work; this body checkpoint does not establish complete multiplayer.
+replacement remove the entire old body tree. Accepted held weapons now mount on
+the source body hook with original sight/magazine/barrel geometry. Changing an
+attachment on the same gun replaces the old tree. Remote sights preserve the
+source body mount and zero-ID factory-irons fallback, which differ from the
+first-person alignment rules. A replica arriving before the catalog retries once
+the item definition becomes available.
+
+Gun and melee holds use the original equip clip's final upper-body pose. Accepted
+melee facts play the weapon's weak/strong clip and return to that hold; bare fists
+use the original punch clips and unknown items do not invent punches. Looping
+gestures and one-shot gesture facts use the shared source playback rules, preserve
+locomotion legs and low-stance torso posture, and deduplicate retained events.
+Footsteps, nameplates, reclined seats, remote light fixtures and muzzle effects
+remain presentation work; this checkpoint does not establish complete multiplayer.
 
 ## Verification
 
@@ -59,12 +70,28 @@ the checkpoint.
 The complete 121-test bridge protocol/authority suite also passes against the
 frozen UDP-capable executable, preserving the default memory-transport journeys.
 
-Four native remote-body tests load the shipped rig and check accepted outfit/wear,
+Nine native remote-body tests load the shipped rig and check accepted outfit/wear,
 local-owner exclusion, glide/speed/stance/teleport behavior, seat and world cleanup,
-and actual Rapier contact filtering. An ignored `render_remote_pose_fixture` test
-loads the production renderer, rig and clothing path with fixed peer snapshots;
-its render review is pending at this checkpoint. This fixture is deliberately
-separate from live two-client gameplay verification.
+actual Rapier contact filtering, weapon/attachment changes, catalog-arrival order,
+body attachment rules, gesture completion/deduplication and melee selection. All
+328 native tests pass on the integrated remote-equipment candidate, with the
+interactive renderer fixture excluded from the automatic run.
+
+The opt-in `render_remote_pose_fixture` uses the production renderer, rig,
+clothing and peer plugins with fixed snapshots. Both `bevy-remote-poses.png` and
+`bevy-remote-held.png` were rendered under Vulkan, opened and independently reviewed:
+standing/crouching/prone/sitting bodies, clothing, standing/prone scoped rifles
+and a crouched knife are coherent. This fixture is deliberately separate from
+live two-client gameplay verification. To repeat the equipped side view:
+
+```sh
+env -u WAYLAND_DISPLAY WGPU_BACKEND=vulkan \
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  UG_REMOTE_POSE_HELD=1 UG_REMOTE_POSE_SIDE=1 \
+  UG_REMOTE_POSE_SHOT=/tmp/bevy-remote-held.png \
+  xvfb-run -a cargo test --manifest-path bevy/Cargo.toml \
+  avatar::remotes::tests::visual::render_remote_pose_fixture -- --ignored --exact --nocapture
+```
 
 Run with:
 

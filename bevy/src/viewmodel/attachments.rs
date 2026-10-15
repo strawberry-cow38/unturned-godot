@@ -29,13 +29,13 @@ fn dot(mesh: &str) -> Option<Dot> {
     })
 }
 #[derive(Debug)]
-struct Part {
-    slot: &'static str,
-    mesh: String,
-    texture: Option<String>,
-    position: Vec3,
-    color: Color,
-    id: i64,
+pub(crate) struct Part {
+    pub slot: &'static str,
+    pub mesh: String,
+    pub texture: Option<String>,
+    pub position: Vec3,
+    pub color: Color,
+    pub id: i64,
 }
 fn parts(visual: &GunVisual, ids: &Value, catalog: &ItemCatalog) -> Vec<Part> {
     let mut result = vec![];
@@ -95,9 +95,37 @@ fn parts(visual: &GunVisual, ids: &Value, catalog: &ItemCatalog) -> Vec<Part> {
     }
     result
 }
+/// Original AttachmentFit.PartsFor used by RemotePlayers: a zero sight still
+/// uses the gun's authored irons, and body sights use SightPos rather than the
+/// first-person optical alignment adjustment. Magazine zero remains empty.
+pub(crate) fn body_parts(visual: &GunVisual, ids: &Value, catalog: &ItemCatalog) -> Vec<Part> {
+    let mut ids = ids.clone();
+    if !ids.is_object() {
+        ids = serde_json::json!({});
+    }
+    if ids["sightId"].as_i64().unwrap_or(0) <= 0 {
+        ids["sightId"] = serde_json::json!(-1);
+    }
+    // The source remote appearance block has no tactical attachment field.
+    ids["tacticalId"] = serde_json::json!(0);
+    let mut parts = parts(visual, &ids, catalog);
+    for part in &mut parts {
+        if part.slot == "Sight" {
+            part.position = if visual.sight_position == Vec3::ZERO {
+                Vec3::new(0., 0.1312, -0.118)
+            } else {
+                visual.sight_position
+            };
+            if part.texture.is_none() {
+                part.color = visual.sight_color;
+            }
+        }
+    }
+    parts
+}
 /// AttachmentFit.BottleFit: seat against actual bore geometry, grow only to
 /// cover a larger muzzle face. The bottle mesh's neck remains at the origin.
-fn bottle_fit(visual: &GunVisual, vertices: &[[f32; 3]]) -> (Vec3, f32) {
+pub(crate) fn bottle_fit(visual: &GunVisual, vertices: &[[f32; 3]]) -> (Vec3, f32) {
     let m = visual.muzzle;
     if m == Vec3::ZERO {
         return (Vec3::new(0., 0.7307, -0.0818), 1.);

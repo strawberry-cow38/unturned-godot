@@ -14,16 +14,30 @@ use bevy_rapier3d::prelude::*;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
+mod actions;
+mod held;
+
 pub(super) struct RemotePlayersPlugin;
 impl Plugin for RemotePlayersPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Roster>().add_systems(
-            Update,
-            (sync, update)
-                .chain()
-                .after(PlayerUpdate)
-                .before(RigAnimation),
-        );
+        app.init_resource::<Roster>()
+            .init_resource::<crate::content::ContentCache>()
+            .init_resource::<held::Library>()
+            .init_resource::<actions::Events>()
+            .add_message::<crate::entities::CoreEvent>()
+            .add_systems(
+                Update,
+                (sync, update, held::sync, actions::receive)
+                    .chain()
+                    .after(PlayerUpdate)
+                    .before(RigAnimation),
+            )
+            .add_systems(
+                Update,
+                actions::animate
+                    .after(RigAnimation)
+                    .before(crate::character::CharacterUpdate),
+            );
     }
 }
 #[derive(Component)]
@@ -136,6 +150,8 @@ fn sync(
                 seated: false,
             },
             RigidBody::KinematicPositionBased,
+            held::Held::default(),
+            actions::Actions::default(),
             appearance(row, &catalog),
             CharacterLayers(RenderLayers::layer(0)),
         ));

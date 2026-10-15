@@ -1,7 +1,31 @@
 use super::*;
 use serde_json::json;
 
+mod actions;
 mod visual;
+
+fn source_catalog() -> ItemCatalog {
+    static CATALOG: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    let result = CATALOG.get_or_init(|| {
+        let bridge =
+            crate::bridge::CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                .unwrap();
+        bridge
+            .request(
+                "init",
+                json!({"contentRoot":WorldConfig::default().content_root}),
+            )
+            .unwrap();
+        bridge.request("catalog", json!({})).unwrap()["result"].clone()
+    });
+    let items: Vec<crate::entities::ItemVisual> =
+        serde_json::from_value(result["items"].clone()).unwrap();
+    ItemCatalog {
+        items: items.into_iter().map(|item| (item.id, item)).collect(),
+        gestures: serde_json::from_value(result["gestures"].clone()).unwrap(),
+        ..default()
+    }
+}
 
 fn row(id: u16, position: Vec3) -> Value {
     json!({"playerId":id,"position":position.to_array(),"yaw":0,"stance":0,
@@ -15,11 +39,20 @@ fn app_with_physics(physics: bool) -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
-        AssetPlugin::default(),
+        AssetPlugin {
+            file_path: WorldConfig::default()
+                .content_root
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            ..default()
+        },
         TransformPlugin,
         crate::rig::RigPlugin,
     ))
     .init_asset::<Mesh>()
+    .init_asset::<Image>()
     .init_asset::<StandardMaterial>()
     .init_asset::<SkinnedMeshInverseBindposes>()
     .init_resource::<WorldConfig>()
