@@ -4,6 +4,7 @@ use bevy::ecs::system::{RunSystemOnce, SystemState};
 use serde_json::json;
 
 mod authority;
+mod exit_teleport;
 mod effects;
 mod exits;
 

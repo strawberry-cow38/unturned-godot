@@ -2146,3 +2146,17 @@ panes. Three new physics regressions, the extended real crosshair query and all3
 player tests pass (one render fixture ignored). World independently reviewed source
 and code; its throw-mask finding was corrected before validation. See
 `bevy/docs/VALIDATION.md` for evidence and the source distinction.
+
+### Native accepted seat exit must teleport its physics capsule
+
+The real PEI entry/exit journey exposed false vehicle damage while stepping out:
+the rendered player jumped to the accepted door, but Rapier treated that next
+kinematic pose as a fast sweep through the car. Native seat adoption now reuses
+the existing owner-teleport helper to reset current and next translation/rotation
+before enabling the standing collider. The original crash threshold is unchanged.
+
+The guarding actual-police/slope/capsule test proves the old behavior reaches
+19.138 m/s and damages the hull; the production exit peaks at0.035 m/s, produces
+no damage, and immediately places the physical capsule at the accepted doorway.
+Six origin tests and three existing seated tests also pass. A rebuilt fullgame
+exit/health capture remains the final visual confirmation.

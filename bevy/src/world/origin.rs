@@ -380,11 +380,14 @@ fn refresh_queries(
         &(),
     );
 }
-fn move_physics_owner(world: &mut World, entity: Entity, position: Vec3) {
+/// Teleport the current and next physics poses together; a standing collider
+/// must never sweep through the distance from its former seat or recovery pose.
+pub(crate) fn move_physics_owner(world: &mut World, entity: Entity, position: Vec3) {
     if let Some(mut interpolation) = world.get_mut::<TransformInterpolation>(entity) {
         *interpolation = default();
     }
     let handle = world.get::<RapierRigidBodyHandle>(entity).map(|h| h.0);
+    let rotation = world.get::<Transform>(entity).map(|pose| pose.rotation);
     for (mut bodies, mut colliders, mut simulation) in world
         .query::<(
             &mut RapierRigidBodySet,
@@ -395,6 +398,9 @@ fn move_physics_owner(world: &mut World, entity: Entity, position: Vec3) {
     {
         if let Some(body) = handle.and_then(|h| bodies.bodies.get_mut(h)) {
             body.set_translation(position, false);
+            if let Some(rotation) = rotation {
+                body.set_rotation(rotation, false);
+            }
         }
         bodies.propagate_modified_body_positions_to_colliders(&mut colliders);
         refresh_queries(&mut simulation, &mut bodies, &mut colliders);

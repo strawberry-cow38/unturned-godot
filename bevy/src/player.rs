@@ -1278,7 +1278,7 @@ fn publish_body(
     }
 }
 
-fn sync_seated_body(
+pub(crate) fn sync_seated_body(
     mut commands: Commands,
     occupancy: Option<Res<crate::vehicle::Occupancy>>,
     prop_occupancy: Option<Res<crate::world::interactables::PropOccupancy>>,
@@ -1359,6 +1359,13 @@ fn sync_seated_body(
             body.grounded = false;
             body.stance = "stand".into();
             controller.translation = None;
+            // This is a teleport, not a kinematic sweep from the seat through
+            // the hull. Rapier's normal Transform sync only assigns the next
+            // pose and would push the car at (door-seat)/dt when re-enabled.
+            let position = transform.translation;
+            commands.queue(move |world: &mut World| {
+                crate::world::origin::move_physics_owner(world, entity, position);
+            });
             commands.entity(entity).remove::<ColliderDisabled>();
         }
     }
