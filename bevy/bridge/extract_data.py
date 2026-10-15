@@ -548,3 +548,9 @@ extract_inventory(read, out, match, method)
 
 from extract_island_chart import extract as extract_island_chart
 extract_island_chart(read, out, match, method)
+
+from extract_island_mesh import extract as extract_island_mesh
+extract_island_mesh(read, out, match, method)
+
+from extract_island_files import extract as extract_island_files
+extract_island_files(read, out, match, method)

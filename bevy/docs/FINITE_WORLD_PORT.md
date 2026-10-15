@@ -188,3 +188,31 @@ Opened original PNGs `godot-finite-chart-1234.png`,
 relief, original point-road/town overlays and square framing. These verify the
 source raster data; native PNG persistence, Information projection and finite
 world rendering remain the following integration stage, not a completed claim.
+
+Original `Terrain.RebuildChunk` array construction is now extracted through its
+mesh/collider handoff. It retains 48-cell chunks, source edge normals and UVs,
+individual quad holes, and four subdivisions per river quad evaluated from the
+analytic surface. The native decoder reverses clockwise triangles once. A fully
+dug chunk has an empty index array and must retire its visual and collider.
+
+The extended `--meshes` source differential passes all 94 files, including four
+complete chunks per map with edge/river/hole cases. Four focused mesh regressions
+pass for shared edges, single-quad removal, complete chunk removal/refill, and
+river subdivision/reload. The immutable `finite-island-files-final` candidate
+also passes two file-handoff tests: source generation/save/edit/reopen preserves
+all authored bytes, while invalid names/dimensions, existing destinations and
+escaping scatter paths are rejected.
+
+`FiniteIslandFiles` writes original editor terrain, props, Paths.dat, player
+translator and proc seed marker into a new directory, then atomically publishes
+that directory. Its small `finite.json` descriptor names the data and shared-art
+boundary. Reopening consumes saved files without rebuilding generation-only town
+or population lists. Original RGB8 chart bytes remain available for the native
+PNG encoder; the chart must be persisted before calling original Rebind.
+
+Disposable `.native` chunks use explicit versioned binary arrays. The surface
+transport keeps normalized base heights and original river polylines, rather
+than baking river cuts into a coarse interpolation. Each cache file is written
+to a unique temporary file and atomically replaced, so concurrent openers never
+observe a truncated writer. Native descriptor/decoder/streaming/authority and
+rendered finite-world validation are still in progress.

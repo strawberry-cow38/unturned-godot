@@ -2622,3 +2622,24 @@ Independent authority and tile reviews passed. Native Inventory integration and
 portrait GPU work remain uncommitted; this does not complete the Inventory UI.
 Viewed-container exact magazine/Empty authorization remains an explicit gap.
 See `bevy/docs/INVENTORY_PORT.md`.
+
+
+### Bevy finite-world chunk and file handoff
+
+Extracted original Terrain.RebuildChunk array construction through the engine
+handoff, retaining edge normals, clockwise indices, individual quad holes and
+one-metre river subdivision. Original-Godot comparison passes all94 files;
+four mesh regressions cover shared edges, single and complete hole removal,
+refill and analytic river reload.
+
+FiniteIslandFiles now writes a new original editor-map family into a staging
+directory before publishing it. Reopen preserves edited grid/splat/hole/river,
+prop, road and player-spawn files, and does not regenerate source-only town or
+population lists. Disposable native transport keeps normalized base heights plus
+original river polylines, and each file is replaced atomically. Two file tests
+pass, including untouched authored bytes and invalid/escaping destination guards.
+Root independently reviewed extraction, persistence and array boundaries.
+
+Native decoder/streaming/authority, original PNG persistence, finite Vulkan
+world validation and separate BuildingGen materialization remain in progress.
+See bevy/docs/FINITE_WORLD_PORT.md; no finite playable milestone is claimed yet.

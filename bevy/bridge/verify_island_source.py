@@ -130,6 +130,8 @@ def main():
                         help='Build the engine chart reference without claiming the renderer yet')
     parser.add_argument('--saved-data', action='store_true',
                         help='Compare original prop/road save and reopen, plus Godot Basis save operations')
+    parser.add_argument('--meshes', action='store_true',
+                        help='Compare original chunk arrays, including saved holes and subdivided rivers')
     parser.add_argument('--scatter', action='store_true',
                         help='Also compare original foliage/resource bakes after final ground')
     parser.add_argument('--placements-content', type=Path,
@@ -141,6 +143,7 @@ def main():
     assert not args.chart_engine or args.chart, 'Chart engine requires --chart'
     assert not args.chart or args.placements_content, 'Chart requires --placements-content'
     assert not args.saved_data or args.placements_content, 'Saved data requires --placements-content'
+    assert not args.meshes or (args.saved_data and args.chart), 'Meshes require --saved-data and --chart'
     assert not args.scatter or args.placements_content, 'Scatter requires --placements-content'
     assert not args.placements_content or args.paths_environment, 'Placements require --paths-environment'
     args.work.mkdir(parents=True, exist_ok=True)
@@ -186,6 +189,10 @@ def main():
                 from extract_island_save import extract as extract_save
                 extract_save(lambda p: (REPO / p).read_text(), folder, match, method)
                 source_files += ['bevy/bridge/FiniteIslandRoadsSaved.cs']
+            if args.meshes:
+                from extract_island_mesh import extract as extract_mesh
+                extract_mesh(lambda p: (REPO / p).read_text(), folder, match, method)
+                source_files += ['bevy/bridge/FiniteIslandSurfaceMesh.cs']
             if args.scatter:
                 from extract_island_scatter import extract as extract_scatter
                 extract_scatter(lambda p: (REPO / p).read_text(), folder, match, method)
@@ -273,6 +280,20 @@ if (args.Length > 1 && args[1] == "--math-only") return;''')
             }).ToArray(),
             paths=restoredSurface.Rivers.Select(r => restoredSurface.RiverPathPoints(r.Anchors)).ToArray()
         },options));
+        using (var writer = new BinaryWriter(File.Create(path + "-surface.bin")))''')
+        if args.meshes:
+            program = program.replace('        using (var writer = new BinaryWriter(File.Create(path + "-surface.bin")))', r'''        using(var mesh=new BinaryWriter(File.Create(path+"-chunks.bin")))
+        foreach(var (cx,cz) in new[] { (0,0),(1,0),(0,1),
+            (surface.ChunkCountX-1,surface.ChunkCountZ-1) })
+        {
+            var chunk=surface.BuildChunk(cx,cz);
+            mesh.Write(cx);mesh.Write(cz);mesh.Write(chunk.Positions.Length);mesh.Write(chunk.Indices.Length);
+            foreach(var v in chunk.Positions) {mesh.Write(v.X);mesh.Write(v.Y);mesh.Write(v.Z);}
+            foreach(var v in chunk.Normals) {mesh.Write(v.X);mesh.Write(v.Y);mesh.Write(v.Z);}
+            foreach(var v in chunk.Uvs) {mesh.Write(v.X);mesh.Write(v.Y);}
+            foreach(var v in chunk.Colors) {mesh.Write(v.R);mesh.Write(v.G);mesh.Write(v.B);mesh.Write(v.A);}
+            foreach(var i in chunk.Indices) mesh.Write(i);
+        }
         using (var writer = new BinaryWriter(File.Create(path + "-surface.bin")))''')
         if args.chart:
             program = program.replace('        roads.SavePaths', r'''        var chart = FiniteIslandChart.Bake(surface,seed);
