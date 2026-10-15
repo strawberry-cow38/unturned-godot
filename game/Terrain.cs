@@ -312,7 +312,7 @@ void fragment() {
         public float WorldMaxZ => -_bz;
 
         public bool IsHole(int gx, int gy) =>
-            _anyHoles && _holes != null && gx >= 0 && gy >= 0 && gx < _gw - 1 && gy < _gh - 1 && _holes[gx, gy];
+            (_anyHoles && _holes != null && gx >= 0 && gy >= 0 && gx < _gw - 1 && gy < _gh - 1 && _holes[gx, gy]) || IsCutHole(gx, gy);   // (or a basement cut's: TerrainBasementCuts)
 
         /// <summary>Dig or fill one quad. Returns true if it changed, so a brush can skip a no-op rebuild.</summary>
         public bool SetHole(int gx, int gy, bool dug)
@@ -2293,6 +2293,13 @@ void fragment() {
                     int gx = x0 + lx, gy = y0 + ly; int i = lx * ny + ly;
                     verts[i] = new Vector3(_bx + gx * UNIT, _grid[gx, gy] * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutAt(gx, gy), -(_bz + gy * UNIT));
                     uvs[i] = new Vector2(gx / (float)(_gw - 1), gy / (float)(_gh - 1));
+                    // (a vertex a basement cut moved onto its outline: there, at the ground's height there, its splat with it)
+                    if (_bend != null && _bend[gx, gy] != Vector2.Zero)
+                    {
+                        verts[i] = CutVertex(gx, gy);
+                        var g = GridVertex(gx, gy);
+                        uvs[i] = new Vector2(g.X / (_gw - 1), g.Y / (_gh - 1));
+                    }
                     cols[i] = _dom != null ? LayerColor(_dom[System.Math.Min(gx, _dw - 1), System.Math.Min(gy, _dh - 1)]) : new Color(0.34f, 0.42f, 0.26f);
                     float hl = _grid[System.Math.Max(0, gx - 1), gy], hr = _grid[System.Math.Min(_gw - 1, gx + 1), gy];
                     float hd = _grid[gx, System.Math.Max(0, gy - 1)], hu = _grid[gx, System.Math.Min(_gh - 1, gy + 1)];
@@ -2312,11 +2319,14 @@ void fragment() {
                     // A hole is a quad that emits no triangles. The VERTS stay in the buffer -- dropping them
                     // would renumber every index after them, and the neighbouring quads still reference these
                     // corners. Unreferenced verts cost a few bytes and nothing else.
-                    if (_anyHoles && IsHole(qgx, qgy)) continue;
+                    if (IsHole(qgx, qgy)) continue;
                     int i00 = lx * ny + ly, i10 = (lx + 1) * ny + ly, i01 = lx * ny + (ly + 1), i11 = (lx + 1) * ny + (ly + 1);
 
                     if (!QuadHasRiver(qgx, qgy))
                     {
+                        // (a quad a basement cut split or half dug: TerrainBasementCuts)
+                        byte cutTri = CutTri(qgx, qgy);
+                        if (cutTri != 0) { CutQuadTriangles(cutTri, i00, i10, i01, i11, (a, b, c) => { iList.Add(a); iList.Add(b); iList.Add(c); }); continue; }
                         iList.Add(i00); iList.Add(i01); iList.Add(i10);
                         iList.Add(i10); iList.Add(i01); iList.Add(i11);
                         continue;
@@ -2428,7 +2438,8 @@ void fragment() {
             // path, and holes are rare and local by nature.
             // A heightfield cannot express a hole OR a clipped bank -- one height per column, no absent
             // samples, no partial quads -- so any chunk carrying either swaps to a trimesh.
-            if (ChunkHasHole(cxi, cyi) || ChunkHasRiver(cxi, cyi)) { ApplyChunkTrimesh(cs, cxi, cyi, x0, y0, x1, y1); return; }
+            // (and a basement cut's: its moved vertices are off the lattice, TerrainBasementCuts)
+            if (ChunkHasHole(cxi, cyi) || ChunkHasRiver(cxi, cyi) || ChunkHasCut(cxi, cyi)) { ApplyChunkTrimesh(cs, cxi, cyi, x0, y0, x1, y1); return; }
 
             var data = new float[nx * ny];
             for (int hz = 0; hz < ny; hz++)
@@ -2480,11 +2491,19 @@ void fragment() {
                             }
                         continue;
                     }
-                    Vector3 V(int ax, int ay) => new Vector3(
+                    Vector3 V(int ax, int ay) => _bend != null && _bend[ax, ay] != Vector2.Zero ? CutVertex(ax, ay) : new Vector3(   // (a basement cut's moved vertex as the mesh has it)
                         _bx + ax * UNIT,
                         _grid[ax, ay] * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutAt(ax, ay),   // identical to the mesh vert expression, river included
                         -(_bz + ay * UNIT));
                     Vector3 v00 = V(gx, gy), v10 = V(gx + 1, gy), v01 = V(gx, gy + 1), v11 = V(gx + 1, gy + 1);
+                    // (a quad a basement cut split or half dug, as the render mesh has it: TerrainBasementCuts)
+                    byte cutTri = CutTri(gx, gy);
+                    if (cutTri != 0)
+                    {
+                        var corner = new[] { v00, v10, v01, v11 };
+                        CutQuadTriangles(cutTri, 0, 1, 2, 3, (a, b, c) => { tris.Add(corner[a]); tris.Add(corner[b]); tris.Add(corner[c]); });
+                        continue;
+                    }
                     // Same winding + same diagonal as the render mesh (i00,i01,i10 / i10,i01,i11), so the
                     // collision surface matches the visible one on the split too, not just at the corners.
                     tris.Add(v00); tris.Add(v01); tris.Add(v10);

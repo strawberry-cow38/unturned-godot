@@ -291,6 +291,9 @@ namespace UnturnedSim
         /// <summary>The spec the plan was drawn from when FitPlot changed it to fit (fewer rooms, more floors, smaller
         /// rooms...), else null: what the building actually answers to.</summary>
         public BuildingGenSpec Fitted;
+        /// <summary>A front door side was asked for and no layout could put the door there: it went where it could (said in
+        /// the notes). FitPlot's search reads it, so a plan that keeps the street door beats one that fits as well without.</summary>
+        internal bool FrontLost;
         /// <summary>Its basement's style, None (Auto) for no basement: storey -1, under the whole ground floor
         /// (BuildingGenBasement.cs). Its rooms are in Layout on floor -1, its walls, floor and flight in Walls and Stairs.</summary>
         public BasementStyle Basement;
@@ -688,6 +691,12 @@ namespace UnturnedSim
             ["Ship_1"] = (4, 3, 6),
         };
 
+        /// <summary>The texel a ceiling wears, on a slab's underside (its back face, TexelBack): the palette's Tile -- its
+        /// lightest neutral that is neither wall, floor nor concrete (FloorTexels), the nearest a retail palette comes to
+        /// plaster (House_02's d9d9d9, House_09's e0e0e0, an apartment's bfbfbf or a0a0a0). -1 for "the same as its top"
+        /// when the palette is not in the table.</summary>
+        public static int CeilingTexel(string palette) => palette != null && FloorTexels.TryGetValue(palette, out var t) ? t.Tile : -1;
+
         /// <summary>The texel a room's floor wears: tile where water is, concrete where vehicles and stock are, the
         /// building's floor colour everywhere else. -1 for "the palette's default" when the palette is not in the table.</summary>
         public static int FloorTexelFor(string palette, RoomKind k)
@@ -765,6 +774,11 @@ namespace UnturnedSim
             // badly); Lopsided, fits with rooms out of proportion; past it, over the plot by that many cells
             const int Lopsided = 1000;
             BuildingGenSpec best = null; BuildingGenResult bestBuilt = null; int bestScore = int.MaxValue, tries = 0;
+            // and the street door before all but the plot: a plan that fits with its front door wherever it could go (no
+            // layout put it on the side asked for) comes after every one that fits with it there, even out of proportion;
+            // one over the plot that lost it, after every one over the plot that kept it, however much further over -- the
+            // plot is lost either way, the street door need not be (the first that fitted won outright before, door or none)
+            long bestKey = long.MaxValue; bool bestLost = false;
             // and when nothing fits whole, all of it again without a garage the spec did not ask for (a garage is two
             // cells by three, for a car: strawberry, "yes 2x3"), and the house goes without one, as it would without a room
             bool sawGarage = false;
@@ -802,8 +816,9 @@ namespace UnturnedSim
                                 r.Fitted = s;
                                 score = Shortfall(r).Sum(x => x.Weight);
                             }
-                            if (score < bestScore) { best = s; bestBuilt = r; bestScore = score; }
-                            if (score > 0) continue;
+                            long key = (over > 0 ? 2L << 32 : 0) + (plan.FrontLost ? 1L << 32 : 0) + score;
+                            if (key < bestKey) { best = s; bestBuilt = r; bestScore = score; bestKey = key; bestLost = plan.FrontLost; }
+                            if (score > 0 || plan.FrontLost) continue;
                             var gave = new List<string>();
                             if (shape != spec.Shape) gave.Add("a rectangle, not an L or a T");
                             if (compact > 0) gave.Add($"rooms smaller (compact {compact})");
@@ -818,10 +833,12 @@ namespace UnturnedSim
             }
             var closest = bestBuilt ?? (best == null ? GenerateOnce(spec) : GenerateOnce(best));
             closest.Fitted = best;
-            closest.Notes.Add(bestScore < Lopsided
-                ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but short of {string.Join(", ", Shortfall(closest).Select(x => x.What))}"
-                : bestScore == Lopsided ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but only with rooms out of proportion"
-                : $"could not fit the {spec.Width}x{spec.Depth} plot: {closest.CellsX}x{closest.CellsZ} is the closest of {tries} plans");
+            string Short() => string.Join(", ", Shortfall(closest).Select(x => x.What));
+            closest.Notes.Add(bestScore > Lopsided ? $"could not fit the {spec.Width}x{spec.Depth} plot: {closest.CellsX}x{closest.CellsZ} is the closest of {tries} plans"
+                : bestLost ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but no plan that fits it put the front door on the {spec.FrontSide} side"
+                             + (bestScore == Lopsided ? ", and only with rooms out of proportion" : bestScore > 0 ? $", and short of {Short()}" : "")
+                : bestScore < Lopsided ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but short of {Short()}"
+                : $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but only with rooms out of proportion");
             return closest;
         }
 
@@ -1396,6 +1413,7 @@ namespace UnturnedSim
             }
             if (ground == null) throw new InvalidOperationException($"BuildingGen: no ground floor connected for {kind} seed {spec.Seed} (min {spec.MinRooms} rooms, {spec.MinFloors}-{spec.MaxFloors} floors, {spec.MaxRoomsPerFloor}/floor): {string.Join(", ", onFloor[0])}");
             res.CellsX = W; res.CellsZ = D;
+            res.FrontLost = spec.FrontSide != Sides.None && frontAsked == Sides.None;
             if (wantW > 0 && W > wantW) res.Notes.Add($"{W} cells long, not the {wantW} asked for: its rooms need it");
             if (wantD > 0 && D != wantD) res.Notes.Add($"{D} cells deep, not the {wantD} asked for");
             res.Bay = multi ? (bx0, 0, bx0 + L, bayRows) : (0, 0, 0, 0);
@@ -2249,6 +2267,18 @@ namespace UnturnedSim
             // Reset clears -- to go back to without building it again; and the doors tried single for nothing)
             List<(GenRoom A, GenRoom B)> latched = null; int latchedShortBy = 0; Action builtBoth = null;
             var tried = new HashSet<(GenRoom A, GenRoom B)>();
+            // (and whether this is the last build: the building settled on, built again where a kitchen in it cannot cook --
+            // no fridge, sink or stove -- with its kitchens let fall back on a galley, each room ending on the draws it left
+            // in that building, Furnish)
+            bool galley = false;
+            var draws = new Dictionary<GenRoom, ulong>();
+            bool Galley()
+            {
+                if (galley || !Shortfall(res).Any(m => m.What is "Kitchen: fridge" or "Kitchen: sink" or "Kitchen: stove")) return false;
+                galley = true; latched = null; builtBoth = null;
+                Reset();
+                return true;
+            }
             static Action Keep<T>(List<T> list) { var kept = list.ToList(); return () => { list.Clear(); list.AddRange(kept); }; }
             Action Built()
             {
@@ -2260,6 +2290,7 @@ namespace UnturnedSim
                 };
                 var chimney = res.Chimney;
                 var records = res.Layout.Select(g => (g, g.Hvac, g.Electrical)).ToList();
+                var drew = draws.ToList();
                 var at = doors.Select(d => (d.At, d.Width)).ToList();
                 return () =>
                 {
@@ -2267,6 +2298,7 @@ namespace UnturnedSim
                     res.Chimney = chimney;
                     foreach (var (g, h, e) in records) { g.Hvac = h; g.Electrical = e; }
                     for (int i = 0; i < doors.Count; i++) (doors[i].At, doors[i].Width) = at[i];
+                    draws.Clear(); foreach (var (g, m) in drew) draws[g] = m;
                 };
             }
             for (int pass = 0, closes = 0; ; pass++)
@@ -2299,7 +2331,8 @@ namespace UnturnedSim
                 }
                 // the basement, once the chimney has settled (it keeps off the hatch's well, which was planned with the rooms)
                 BuildBasement(res);
-                Furnish(res, spec.Seed);
+                Furnish(res, spec.Seed, draws, galley);
+                if (galley) return;
                 var unfurnished = new HashSet<GenRoom>(); int shortBy = Shortfall(res, unfurnished).Sum(x => x.Weight);
                 if (res.OpenPlan.Count > 0)
                 {
@@ -2320,12 +2353,13 @@ namespace UnturnedSim
                         // no better for it: the doors swing both ways again, in the building as it was
                         res.SingleSwing.RemoveAll(latched.Contains); tried.UnionWith(latched);
                         builtBoth();
+                        if (Galley()) continue;
                         return;
                     }
                     latched = null; builtBoth = null;
                 }
                 var single = DoubleSwingDoors(res).Where(p => (unfurnished.Contains(p.A) || unfurnished.Contains(p.B)) && !tried.Contains(p)).Distinct().ToList();
-                if (single.Count == 0) return;
+                if (single.Count == 0) { if (Galley()) continue; return; }
                 res.SingleSwing.AddRange(single); latched = single; latchedShortBy = shortBy; builtBoth = Built();
                 Reset();
             }
@@ -2480,6 +2514,14 @@ namespace UnturnedSim
             float Dm = D * Cell, he = Ext * 0.5f;
             var bay = res.Bay;
             var tops = new List<WallPlan>();
+            // A pitched roof's rooms look up at a ceiling, not into the roof (strawberry, 2026-10-15: "do single floor homes
+            // not have ceilings?" -- they did not: the walls stopped at their heads and the roof's underside was overhead,
+            // 6 m up at the ridge): a slab as the floor of a storey over them would be, its top at the wall heads, so the
+            // ceiling is at OpeningTop as it is under every floor above -- the attic's floor, the space under the roof
+            // above it. Its top the building's floor colour, as a floor's; underneath, the palette's ceiling texel. A flat
+            // roof is its own ceiling: the slab on the wall heads, painted so underneath.
+            int floorTexel = FloorTexels.TryGetValue(res.Palette ?? "", out var flt) ? flt.Floor : -1, ceilingTexel = CeilingTexel(res.Palette);
+            void Ceiling(WallPlan slab) { slab.Texel = floorTexel; slab.TexelBack = ceilingTexel; res.Walls.Add(slab); }
             // A lower floor's own roof over [xa, xb] (strawberry: "slope from the wall off the edge"): a SHED leaning on
             // the wall of the floor above, rising from its eave at the open end to that wall -- RoofShapes' Shed, so it is
             // the same roof the editor's Shed button builds. Pitched no steeper than lets it meet that wall under its
@@ -2489,7 +2531,16 @@ namespace UnturnedSim
             // the full-length row (Wing.Z0) -- the arm's roof goes no further north than the arm.
             void Lower(float xa, float xb, WallPlan endWall, bool westEnd, float head, float zN)
             {
-                if (res.Roof == RoofKind.Flat) { res.Walls.Add(SlabPlan(xa, xb, -he, zN + he, head + Slab, SurfaceKind.Roof)); return; }
+                if (res.Roof == RoofKind.Flat)
+                {
+                    var flat = SlabPlan(xa, xb, -he, zN + he, head + Slab, SurfaceKind.Roof);
+                    flat.TexelBack = ceilingTexel;
+                    res.Walls.Add(flat);
+                    return;
+                }
+                // under the shed, a ceiling (Ceiling): from SlabInset inside the open end's outer face to the floor above's
+                // slab, which it meets edge to edge, at that slab's height
+                Ceiling(SlabPlan(westEnd ? xa + SlabInset : xa - SlabInset, westEnd ? xb + SlabInset : xb - SlabInset, -he + SlabInset, zN + he - SlabInset, head, SurfaceKind.Floor));
                 float minX = westEnd ? xa - RoofOverhang : xa, maxX = westEnd ? xb : xb + RoofOverhang;
                 float run = maxX - minX;
                 float pitch = MathF.Min(res.RoofPitch, MathF.Atan((Storey - 0.6f) / run) * 180f / MathF.PI);
@@ -2883,11 +2934,16 @@ namespace UnturnedSim
             float head = floors * Storey;
             if (res.Shape != FootprintShape.Rect && floors == 1)
             {
-                if (res.Roof == RoofKind.Flat) res.Walls.AddRange(Slabs(res, head + Slab, SurfaceKind.Roof));
-                else CrossGable(res, head);
+                if (res.Roof == RoofKind.Flat) foreach (var sl in Slabs(res, head + Slab, SurfaceKind.Roof)) { sl.TexelBack = ceilingTexel; res.Walls.Add(sl); }
+                else
+                {
+                    CrossGable(res, head);
+                    foreach (var sl in Slabs(res, head, SurfaceKind.Floor)) Ceiling(sl);
+                }
             }
             else if (res.Roof != RoofKind.Flat)
             {
+                Ceiling(SlabPlan(t0 * Cell - he + SlabInset, t1 * Cell + he - SlabInset, -he + SlabInset, Dm + he - SlabInset, head, SurfaceKind.Floor));
                 var rs = new RoofSpec
                 {
                     Kind = res.Roof, MinX = t0 * Cell - he - RoofOverhang, MaxX = t1 * Cell + he + RoofOverhang,
@@ -2908,7 +2964,12 @@ namespace UnturnedSim
                     else w.GableRise = tri;
                 }
             }
-            else res.Walls.Add(SlabPlan(t0 * Cell - he, t1 * Cell + he, -he, Dm + he, head + Slab, SurfaceKind.Roof));
+            else
+            {
+                var flat = SlabPlan(t0 * Cell - he, t1 * Cell + he, -he, Dm + he, head + Slab, SurfaceKind.Roof);
+                flat.TexelBack = ceilingTexel;
+                res.Walls.Add(flat);
+            }
 
             // ---- the stairs: k1 flight rows against the south wall, centred along the bay. One flight climbs east up row
             // 0; with alternating rows, odd floors climb west up row 1, so each lands beside the next one's foot.

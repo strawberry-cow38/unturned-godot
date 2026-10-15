@@ -114,6 +114,8 @@ namespace UnturnedGodot
         {
             if (_playing || _editor == null) return;
             _playing = true;
+            _editor.Objects?.TextTool?.SuspendForPlay();
+            _editor.IsPlaying = true;
 
             // SAVE FIRST (master: "saves current map and then spawns u"). Playtesting is when a crash or a
             // hard exit is most likely, and losing the edits you were about to test is the worst possible
@@ -261,6 +263,7 @@ namespace UnturnedGodot
         {
             if (!_playing) return;
             _playing = false;
+            _editor.IsPlaying = false;
 
             // ⚠ THE SHELL GOES WITH THE PLAYER. AttachPlayerShell adds ~9 nodes to the EDITOR, not to the
             // player, so leaving them behind means a second playtest stacks a second HUD, a second pause menu

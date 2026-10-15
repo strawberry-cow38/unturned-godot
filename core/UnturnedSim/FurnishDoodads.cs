@@ -28,6 +28,11 @@ namespace UnturnedSim
         [ThreadStatic] public static bool NoDoodads;
         /// <summary>Debugging only: told each doodad set down, and its row.</summary>
         [ThreadStatic] public static Action<FurniturePlan, DoodadRow> DoodadTrace;
+        /// <summary>Whether the kit's outdoor pieces go out round a building (Outdoors: the yard, the porch, the outside
+        /// walls -- every doodad with no room). Off for now (strawberry, 2026-10-15: "disable outdoor props for now"); set
+        /// it true to have them back. They are the last thing furnished, on draws of their own, so nothing inside moves
+        /// either way.</summary>
+        public static bool OutdoorDoodads = false;
 
         /// <summary>A row's odds, per piece, in a room (or a yard) that can take it: the TSV's rarity.</summary>
         public const int DoodadCommon = 55, DoodadUncommon = 25, DoodadRare = 10;

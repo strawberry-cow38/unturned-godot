@@ -12,8 +12,8 @@ namespace UnturnedSim
     ///
     /// A basement is storey -1 under the whole ground floor, the editor's own negative storey (EditorBuildings.ActiveFloor:
     /// FloorY = floor x StoreyHeight): its floor at -Storey, its outside walls the ground floor's outline carried down a
-    /// storey -- their outer faces the wall colour as the footings always were, their inner faces concrete but in a finished
-    /// one -- on footings the rest of the way down. A full storey, not a lower one: every per-storey rule in the furnisher and
+    /// storey -- concrete through, inside and out, as a foundation wall is, but in a finished one, which is the wall colour
+    /// through -- on footings the rest of the way down. A full storey, not a lower one: every per-storey rule in the furnisher and
     /// the editor reads a storey's walls and floor at a multiple of Storey, so its ceiling is any storey's (3.75 m clear).
     /// No windows: the ground is 0.25 m under the ground floor, so the wall shows no more than that above it.
     ///
@@ -420,8 +420,8 @@ namespace UnturnedSim
             return outp;
         }
 
-        /// <summary>Build the basement planned: its outside walls (the ground floor's outline a storey down, faced with
-        /// concrete inside but in a finished one) on footings the rest of the way down; its partitions and their doors, and
+        /// <summary>Build the basement planned: its outside walls (the ground floor's outline a storey down, concrete through
+        /// but in a finished one) on footings the rest of the way down; its partitions and their doors, and
         /// the hatch's door; its floor; the flight down from the stair room; and the hatch -- the well's walls, its floor, its
         /// flight, the cover over the landing and the cellar door thrown open. Every wall laid joined, as BuildWalls' are
         /// once the corner solve has run, so the editor's own solve finds nothing to grow. Each pass of BuildOut.</summary>
@@ -437,7 +437,12 @@ namespace UnturnedSim
             int bare = finished ? -1 : tex.Concrete;
             var walls = new List<WallPlan>();
             var outs = Outline(gb, y);
-            foreach (var o in outs) { o.W.TexelBack = bare; walls.Add(o.W); }
+            // (one colour through, not a back face of its own: a wall's ends and top wear its FRONT face's colour
+            // (WallSurface), and at an L's inside corner an outside wall's end faces into the basement -- strawberry saw
+            // it, "the concrete color misses a face on the ends of walls". So concrete through, outside too, as a
+            // foundation wall is: the strip that shows over the ground and the hatch well's house side with it. A
+            // finished one is the wall colour through, its rooms plastered.)
+            foreach (var o in outs) { o.W.Texel = bare; walls.Add(o.W); }
             bool Partition(float t) => t > 0f && t < Ext;
             var inner = new List<(bool AlongX, int Line, int S0, int S1, WallPlan W)>();
             for (int z = 1; z < D; z++)
@@ -474,7 +479,7 @@ namespace UnturnedSim
             // footings under the outside walls, the rest of the way down
             foreach (var w in outs.Select(o => o.W))
                 res.Walls.Add(new WallPlan { X = w.X, Y = -WallOpenings.FoundationDepth, Z = w.Z, Yaw = w.Yaw, Length = w.Length,
-                                             Height = WallOpenings.FoundationDepth - Storey, Thickness = w.Thickness, Kind = SurfaceKind.Foundation });
+                                             Height = WallOpenings.FoundationDepth - Storey, Thickness = w.Thickness, Kind = SurfaceKind.Foundation, Texel = bare });
             // the floor: concrete, or a finished one's the building's floor colour -- and a cover over each room that is not
             int floorTexel = finished ? tex.Floor : tex.Concrete;
             if (res.Shape != FootprintShape.Rect)

@@ -671,7 +671,7 @@ namespace UnturnedSim
             }
 
             /// <summary>The height a piece hangs at, over its floor, to meet the ceiling over it with its top: under the lowest of
-            /// the ceiling over its four corners (a pitched roof's slopes).</summary>
+            /// the ceiling over its four corners.</summary>
             float UnderCeiling(string name, (float X, float Z, float Yaw) at)
             {
                 var fp = FurnitureCatalog.Footprint(name, at.X, at.Z, at.Yaw);

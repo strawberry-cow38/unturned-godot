@@ -66,6 +66,10 @@ namespace UnturnedGodot
             }
             box.AddChild(tools);
 
+            var textTool = new Button { Text = "Text mesh…  Ctrl+Shift+H", CustomMinimumSize = new Vector2(CTRL, 34), FocusMode = FocusModeEnum.None };
+            textTool.Pressed += _objects.OpenTextTool;
+            box.AddChild(textTool);
+
             var hint = new Label { Text = "click a prop → E places it · click a placed one → E moves it\nDel removes · Ctrl+Z undoes" };
             hint.AddThemeFontSizeOverride("font_size", 13);
             hint.AddThemeColorOverride("font_color", new Color(0.75f, 0.8f, 0.85f));

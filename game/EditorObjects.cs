@@ -59,18 +59,18 @@ namespace UnturnedGodot
         Vector2 _boxStart;
         MarqueeOverlay _marquee;
         readonly List<Transform3D> _groupRel = new();   // each selected's transform relative to Primary, captured at gizmo drag-start
-        List<(Node3D n, Transform3D x)> _dragCapture;   // selection transforms at gizmo drag-start, for the move undo
+        List<(Node3D n, Transform3D x, string textId)> _dragCapture;   // stable text IDs survive delete/undo
 
         // --- undo helpers (Editor.PushUndo / Ctrl+Z) ---
-        List<(Node3D n, Transform3D x)> CaptureSelection()
+        List<(Node3D n, Transform3D x, string textId)> CaptureSelection()
         {
-            var l = new List<(Node3D, Transform3D)>();
-            foreach (var s in _selection) l.Add((s, s.GlobalTransform));
+            var l = new List<(Node3D, Transform3D, string)>();
+            foreach (var s in _selection) l.Add((s, s.GlobalTransform, (s as ModeledTextProp)?.Id));
             return l;
         }
-        void RestoreTransforms(List<(Node3D n, Transform3D x)> cap)
+        void RestoreTransforms(List<(Node3D n, Transform3D x, string textId)> cap)
         {
-            foreach (var (n, x) in cap) if (IsInstanceValid(n)) n.GlobalTransform = x;
+            foreach (var (n, x, id) in cap) { var target = id != null ? FindText(id) : n; if (IsInstanceValid(target)) target.GlobalTransform = x; }
             AttachGizmo(); PositionMarkers();
         }
         void RemoveProp(Node3D n)   // fully detach a placed prop (used by delete + place/paste undo)
@@ -900,7 +900,8 @@ namespace UnturnedGodot
                 var delta = pt - Primary.GlobalPosition;
                 foreach (var s in _selection) s.GlobalPosition += delta;
                 AttachGizmo(); PositionMarkers();
-                _editor.PushUndo("move", () => RestoreTransforms(cap));
+                var after = CaptureSelection();
+                _editor.PushUndo("move", () => RestoreTransforms(cap), () => RestoreTransforms(after));
             }
             else if (PlaceName != null)   // E with only a list type -> summon one (stays unselected so E keeps placing)
             {
@@ -971,6 +972,7 @@ namespace UnturnedGodot
         public void DeleteSelected()   // source: delete the whole selection
         {
             if (_selection.Count == 0) return;
+            if (_selection.Exists(n => n is ModeledTextProp)) { DeleteSelectionWithText(); return; }
             var cap = new List<(string guid, Transform3D x)>();   // for undo: re-place the deleted props
             int uncapturable = 0;
             foreach (var sel in _selection)
@@ -1012,8 +1014,10 @@ namespace UnturnedGodot
         void CopySelection()
         {
             _copies.Clear();
+            _textCopies.Clear();
             foreach (var sel in _selection)
             {
+                if (sel is ModeledTextProp text) { _textCopies.Add(text.Snapshot()); continue; }
                 string g = sel.HasMeta("guid") ? (string)sel.GetMeta("guid") : "";
                 if (g.Length > 0) _copies.Add((g, sel.GlobalTransform));
             }
@@ -1022,6 +1026,7 @@ namespace UnturnedGodot
 
         void PasteSelection()
         {
+            if (_textCopies.Count > 0) { PasteCopiesWithText(); return; }
             if (_copies.Count == 0) return;
             _selection.Clear();
             var pasted = new List<Node3D>();
@@ -1110,6 +1115,7 @@ namespace UnturnedGodot
 
         public override void _UnhandledInput(InputEvent ev)
         {
+            if (_editor.IsPlaying || TextTool?.BlocksWorld == true) return;
             if (_editor.Mode != EEditorMode.Level || _flyCam.Flying) return;   // Level tab only (object placement lives under Level); never while flying (RMB)
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
@@ -1126,7 +1132,7 @@ namespace UnturnedGodot
                     if (_gizmo.TryBeginDrag(mp)) { BeginGroupDrag(); _dragCapture = CaptureSelection(); return; }   // gizmo grab -> drag (+ capture for undo)
                     if (!TrySelect(mp)) { _boxDragging = true; _boxStart = mp; }            // click selects a prop; empty ground -> arm a box drag-select
                 }
-                else if (_gizmo.Dragging) { _gizmo.EndDrag(); AttachGizmo(); PositionMarkers(); if (_dragCapture != null) { var c = _dragCapture; _dragCapture = null; _editor.PushUndo("move", () => RestoreTransforms(c)); } }
+                else if (_gizmo.Dragging) { _gizmo.EndDrag(); AttachGizmo(); PositionMarkers(); if (_dragCapture != null) { var c = _dragCapture; _dragCapture = null; var after = CaptureSelection(); _editor.PushUndo("move", () => RestoreTransforms(c), () => RestoreTransforms(after)); } }
                 else if (_boxDragging) { FinishBoxSelect(mp); _boxDragging = false; _marquee.Visible = false; }
             }
             else if (ev is InputEventMouseMotion)
@@ -1142,6 +1148,7 @@ namespace UnturnedGodot
                 else if (ctrl && k.Keycode == Key.V) PasteSelection();                   // Ctrl+V paste objects (source EditorObjects)
                 else if (ctrl && k.Keycode == Key.B) CopyTransform();                    // Ctrl+B copy transform (source)
                 else if (ctrl && k.Keycode == Key.N) PasteTransform();                   // Ctrl+N paste transform (source)
+                else if (ctrl && (k.Keycode == Key.Y || (k.Keycode == Key.Z && k.ShiftPressed))) _editor.Redo();
                 else if (ctrl && k.Keycode == Key.Z) _editor.Undo();                      // Ctrl+Z undo (source EditorInteract)
                 else if (k.Keycode == Key.E) PlaceOrMoveAtCursor();                     // E = source tool_2: move the selection to the cursor, or summon the list-selected prop
                 // ONE KEY PER MODE, taken from retail rather than invented: ControlsSettings binds
@@ -1199,6 +1206,7 @@ namespace UnturnedGodot
             SaveLaneSigns();
             SaveTunnels();
             SaveFences();
+            n += SaveTextProps();
             SaveBakeOmit();
             Log.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
@@ -1235,6 +1243,7 @@ namespace UnturnedGodot
             LoadLaneSigns();
             LoadTunnels();
             LoadFences();
+            LoadTextProps();
         }
 
         void LoadSaved()   // restore previously-saved editor placements on open (custom placeables + main mesh objects from the sidecar)
@@ -1784,6 +1793,7 @@ namespace UnturnedGodot
         void PasteTransform()
         {
             if (!_hasCopyXform || _selection.Count == 0) return;
+            var before = CaptureSelection();
             if (_copyFull && _selection.Count == 1)
                 _selection[0].GlobalTransform = new Transform3D(_copyBasis, _copyPos);   // local + single: align pos+rot+scale exactly
             else   // global (position only), or a group: move the selection so the primary lands on the copied position
@@ -1793,6 +1803,8 @@ namespace UnturnedGodot
             }
             AttachGizmo(); PositionMarkers();
             Log.Print($"[editor] pasted transform ({(_copyFull ? "full" : "position")}) to {_selection.Count}");
+            var after = CaptureSelection();
+            _editor.PushUndo("paste transform", () => RestoreTransforms(before), () => RestoreTransforms(after));
         }
 
         // harness hook (--editor): scatter a few props so a headless render shows placement working
