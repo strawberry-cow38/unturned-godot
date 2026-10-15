@@ -80,11 +80,21 @@ The same box triangles block authoritative bullets; streaming and load rebuilds
 republish its named geometry. Session cleanup retires its render/seat metadata,
 and origin changes translate its cached base once alongside world roots.
 
-The original Bed.cs 200-HP damage/destruction adapter is still absent from the
-native authority path. The current box blocks bullets but cannot yet be broken;
-no local damage or claim deletion is inferred. Removal of an accepted bed does
-retire its visible collider and metadata. The source standalone demo door is
-not part of this bed checkpoint.
+The host adapter now uses the original `ServerCombat.DamageBarricadeAlong` seam
+and `Bed.cs` 200-HP rule. Accepted bullets and melee supply their original
+`VehicleDamage`; the nearest actual world collider must be this bed's named
+geometry. Static walls and other dynamic colliders block that damage. At zero
+health the authority removes the bed claim, its child seat, and its collision
+geometry; accepted snapshot removal then retires the native box and metadata.
+Repeated host registration or a delayed geometry upload cannot heal or revive
+the destroyed fixture. There is no client damage operation.
+
+The source server melee ray is horizontal at feet + 1.2m, so a low mattress on
+the same ground is below that ray. This inherited targeting limitation is kept
+separate from the damage adapter. Source explosion code does not call bed damage.
+The original save format has no bed health/claim record; native session reload
+reconstructs this diagnostic fixture. Persistence extensions and the standalone
+demo door remain separate work.
 
 Seed-selection references: Godot 4.6
 [RandomPCG](https://github.com/godotengine/godot/blob/4.6-stable/core/math/random_pcg.cpp)
@@ -110,3 +120,23 @@ occupied appended seat 394, then released it; third-person rendering shows the
 original reclined body on the mattress. The run exited cleanly via Quit and had
 no shader validation errors. Its immutable pre-NPC bridge reported the newer
 unrelated `npcView` request as unsupported; this did not affect bed operations.
+
+The damage adapter has three managed regressions: exact 200-HP retirement with
+an occupied child seat and stale host uploads; nearest static/dynamic occlusion
+and origin translation; and six accepted Eaglefire shots from a real UDP peer
+(35 VehicleDamage each), followed by replicated bed/seat removal. The last test
+fails against the pre-adapter bridge with the bed still present. Eight native
+bed tests include accepted gunfire retiring the rendered collider and recline
+metadata without rematerializing it. The immutable candidate also passes all
+56 managed adapter tests and all 121 bridge protocol/authority tests.
+
+The production PEI disappearance journey uses the same original fixture and
+actual mouse fire input. `bevy-bed-destruction-five-hits.png` and its snapshot
+show the claimed bed still present with ammo 25 and a wood impact decal;
+`bevy-bed-destruction-sixth-shot.png` shows clear ground, no prompt, ammo 24,
+and both bed 1 and child seat 394 absent. Both images received independent code
+and visual review. The renderer exited successfully via Quit without shader
+errors. A separate loaded-save seated-position correction loop was discovered
+and retained in the preceding snapshots for the player-authority follow-up;
+the sixth shot and disappearance were captured standing. The eight native bed
+tests also pass against the immutable v63 `resource-contact-59` bridge.

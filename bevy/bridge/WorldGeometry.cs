@@ -18,6 +18,7 @@ public sealed partial class WorldGeometry
     public Func<int, bool> ResourceAlive { get; set; }
     public Func<uint, bool> VehicleExists { get; set; }
     public Func<uint, bool> DeployableExists { get; set; }
+    public Func<string, bool> DynamicAlive { get; set; }
     readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible, int Resource = -1, uint Vehicle = 0, uint Deployable = 0, string Part = null, bool Thin = false, bool Water = false);
     sealed class Node
     {
@@ -27,6 +28,7 @@ public sealed partial class WorldGeometry
     }
     public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _root = null; _terrainRoot = null; _dynamic.Clear(); _layerPatches.Clear(); }
     public void ClearDynamic() => _dynamic.Clear();
+    public void RemoveDynamic(string key) => _dynamic.Remove(key);
     public void TranslateWorld(Vector3 delta)
     {
         Triangle Shift(Triangle t) => t with { A = t.A + delta, B = t.B + delta, C = t.C + delta };
@@ -46,7 +48,7 @@ public sealed partial class WorldGeometry
     public void SetDynamic(string key, WorldGeometry geometry)
     {
         if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Dynamic geometry requires a stable key");
-        if (geometry._root == null) _dynamic.Remove(key); else _dynamic[key] = geometry._root;
+        if (geometry._root == null || DynamicAlive?.Invoke(key) == false) _dynamic.Remove(key); else _dynamic[key] = geometry._root;
     }
     public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false, int resource = -1, uint vehicle = 0, uint deployable = 0, string bodyPart = null, bool thin = false, bool water = false)
     {
@@ -98,12 +100,19 @@ public sealed partial class WorldGeometry
         bool found = RayDetailed(from, to, out var result); hit = result.Point; destructible = result.DestructibleIndex; return found;
     }
     bool RayTriangle(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle)
+        => RayTriangle(from,to,out point,out triangle,out _);
+    bool RayTriangle(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle,out string dynamicKey)
     {
-        float nearest=1f;triangle=default;bool found=false;
+        float nearest=1f;triangle=default;bool found=false;dynamicKey=null;
         Visit(_root,from,to-from,ref nearest,ref triangle,ref found);
-        foreach(var tree in _dynamic.Values)Visit(tree,from,to-from,ref nearest,ref triangle,ref found);
+        foreach(var pair in _dynamic)
+            if(Visit(pair.Value,from,to-from,ref nearest,ref triangle,ref found))dynamicKey=pair.Key;
         point=found?from+(to-from)*nearest:to;return found;
     }
+    /// <summary>Identity of the nearest host-owned moving collider. A static wall
+    /// returns a null key; callers must not ray-test their fixture in isolation.</summary>
+    public bool RayDynamicKey(Vector3 from,Vector3 to,out string key)
+        => RayTriangle(from,to,out _,out _,out key);
     public bool RayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit)
     {
         bool found=RayTriangle(from,to,out var point,out var triangle);
@@ -131,15 +140,16 @@ public sealed partial class WorldGeometry
         Visit(_terrainRoot, new(x, 10000, z), new(0, -20000, 0), ref t, ref triangle, ref hit);
         return hit ? 10000 - 20000 * t : 0;
     }
-    void Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref Triangle nearestTriangle, ref bool found, bool worldOnly = false)
+    bool Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref Triangle nearestTriangle, ref bool found, bool worldOnly = false)
     {
-        if (node == null || !Box(node.Min, node.Max, origin, dir, nearest)) return;
+        if (node == null || !Box(node.Min, node.Max, origin, dir, nearest)) return false;
         if (node.Leaf == null)
         {
-            Visit(node.Left, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly);
-            Visit(node.Right, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly);
-            return;
+            bool left = Visit(node.Left, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly);
+            bool right = Visit(node.Right, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly);
+            return left || right;
         }
+        bool changed = false;
         foreach (var triangle in node.Leaf)
         {
             if (worldOnly && (triangle.Vehicle != 0 || triangle.Deployable != 0)) continue;
@@ -156,8 +166,9 @@ public sealed partial class WorldGeometry
             if (v < -1e-6f || u + v > 1.000001f) continue;
             float t = inverse * Vector3.Dot(edge2, q);
             if (t < 0 || t > nearest) continue;
-            nearest = t; nearestTriangle = triangle; found = true;
+            nearest = t; nearestTriangle = triangle; found = true; changed = true;
         }
+        return changed;
     }
     static bool Box(Vector3 min, Vector3 max, Vector3 origin, Vector3 dir, float end)
     {

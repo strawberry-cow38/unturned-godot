@@ -98,7 +98,7 @@ public sealed partial class WorldServices
         foreach (var d in Entries(spec, "doors"))
             _server.Interactables.RegisterDoor(checked((uint)Int(d, "netId")), Vec(d, "position"), checked((ulong)Int(d, "owner")), Bool(d, "locked"));
         foreach (var d in Entries(spec, "beds"))
-            _server.Interactables.RegisterBed(checked((uint)Int(d, "netId")), Vec(d, "position"), Float(d, "yaw"));
+            RegisterBedBody(d);
         foreach (var d in Entries(spec, "objectDoors"))
         {
             uint id = checked((uint)Int(d, "netId")); var pos = Vec(d, "interactionPosition", Vec(d, "position")); var side = Vec(d, "swingSide");
@@ -106,7 +106,10 @@ public sealed partial class WorldServices
             _objectDoorMeta[id] = (pos, side);
         }
         foreach (var d in Entries(spec, "seats"))
-            _server.Interactables.RegisterSeat(checked((uint)Int(d, "netId")), Vec(d, "position"));
+        {
+            uint id = checked((uint)Int(d, "netId"));
+            if (!_retiredBedSeats.Contains(id)) _server.Interactables.RegisterSeat(id, Vec(d, "position"));
+        }
         foreach (var d in Entries(spec, "deadzones"))
         {
             var kind = Enum.TryParse<DeadzoneKind>(Text(d, "kind", "Radiation"), true, out var k) ? k : throw new ArgumentException("Unknown deadzone kind");

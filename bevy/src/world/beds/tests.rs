@@ -125,6 +125,13 @@ fn real_authority_claim_then_recline_and_stand_use_original_bed_and_one_seat() {
         Group::GROUP_1
     );
     let bed = app.world().get::<Bed>(entity).unwrap();
+    assert_eq!(
+        app.world()
+            .get::<crate::impact::surfaces::SurfaceOverride>(entity)
+            .unwrap()
+            .0,
+        crate::impact::surfaces::Surface::Wood
+    );
     let material = app
         .world()
         .resource::<Assets<StandardMaterial>>()
@@ -211,6 +218,63 @@ fn retail_default_never_registers_demo_furniture_and_disconnect_retires_metadata
     app.update();
     assert!(app.world().get_entity(entity).is_err());
     assert!(app.world().resource::<ServiceManifest>().seats.is_empty());
+}
+
+#[test]
+fn accepted_gunfire_retires_native_bed_collider_and_recline_metadata() {
+    let mut app = app(true);
+    let content = app.world().resource::<WorldConfig>().content_root.clone();
+    let reply = app
+        .world()
+        .resource::<CoreBridge>()
+        .request(
+            "init",
+            json!({
+                "contentRoot":content,"spawn":[-5,0,-346],"starterKit":true
+            }),
+        )
+        .unwrap();
+    app.world_mut().resource_mut::<GameSnapshot>().0 = reply["state"].clone();
+    app.update();
+    tick(&mut app);
+    action(&mut app, "claimBed", 1);
+    let entity = app.world().resource::<Demo>().entity.unwrap();
+    let direction = Vec3::new(0., 0.225 - 1.6, -2.).normalize();
+    for shot in 1..=6 {
+        app.world()
+            .resource::<CoreBridge>()
+            .request(
+                "action",
+                json!({
+                    "name":"fire","args":{"origin":[-5,1.6,-346],"dir":direction.to_array()}
+                }),
+            )
+            .unwrap();
+        tick(&mut app);
+        assert_eq!(app.world().get::<Bed>(entity).is_some(), shot < 6);
+    }
+    assert!(app.world().get::<Collider>(entity).is_none());
+    assert!(
+        app.world()
+            .resource::<ServiceManifest>()
+            .seats
+            .iter()
+            .all(|s| s["demoBed"] != true)
+    );
+    assert!(!accepted(
+        &app.world().resource::<GameSnapshot>().0,
+        "beds",
+        1
+    ));
+    assert_eq!(
+        app.world().resource::<GameSnapshot>().0["player"]["ammo"],
+        24
+    );
+    tick(&mut app);
+    assert!(
+        app.world().resource::<Demo>().entity.is_none(),
+        "dead fixture never rematerializes"
+    );
 }
 #[test]
 fn client_uses_accepted_source_ids_without_host_registration_or_geometry_publication() {

@@ -39,7 +39,8 @@ impl Definition {
             .with_translation(self.base.translation + Vec3::Y * SIZE.y * 0.5)
     }
     fn registration(&self) -> Value {
-        json!({"beds":[{"netId":BED_ID,"position":self.base.translation.to_array(),"yaw":90.}],
+        json!({"beds":[{"netId":BED_ID,"position":self.base.translation.to_array(),"yaw":90.,
+            "geometryKey":GEOMETRY_KEY,"seatNetId":self.seat_id}],
             "seats":[self.seat()]})
     }
     fn geometry(&self) -> Value {
@@ -270,6 +271,9 @@ fn sync(world: &mut World) {
                     },
                     Mesh3d(mesh),
                     MeshMaterial3d(material),
+                    crate::impact::surfaces::SurfaceOverride(
+                        crate::impact::surfaces::Surface::Wood,
+                    ),
                     def.body(),
                     RigidBody::Fixed,
                     Collider::cuboid(SIZE.x * 0.5, SIZE.y * 0.5, SIZE.z * 0.5),

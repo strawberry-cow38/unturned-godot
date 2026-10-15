@@ -1516,3 +1516,24 @@ only the client subscription in an isolated build makes the remote regression
 fail. The59-test artifact includes the separate bed-damage adapter's three tests;
 this commit does not own that adapter. Native accepted-age adoption and a remote
 fall render remain the presentation follow-up. See bevy/docs/RESOURCE_PROTOCOL.md.
+
+## 2026-10-15 — Bevy original bed destruction
+
+Connected the original 200-HP fallback bed to accepted server bullet/melee
+VehicleDamage through the existing barricade callback. The shared nearest-world
+ray preserves static/dynamic obstruction; death retires the claim, child seat
+and authority geometry together. Delayed native uploads and repeated host
+registration cannot revive or heal it. Native accepted removal deletes its box,
+collider and recline metadata; impacts use the original wood surface.
+
+Three managed regressions include a real UDP six-shot Eaglefire kill and
+occupied-seat/claim retirement. The real UDP test fails against the older bridge
+with the bed still alive. Eight native bed tests,56 managed adapter tests and121
+protocol tests pass; the eight native tests also pass against the committed v63
+resource-contact-59 candidate. Actual production fire leaves the mattress after
+five shots (ammo25), then removes it and its prompt on the sixth (ammo24). Both
+PNG/JSON captures were opened and independently reviewed; Quit exited0 without
+shader errors. The run separately exposed a loaded-save seated correction loop,
+now assigned to player authority. Source horizontal melee targeting, absent bed
+save records and the unported standalone demo door are documented separately in
+bevy/docs/PROP_SEATS_PORT.md; no client damage or invented blast behavior added.

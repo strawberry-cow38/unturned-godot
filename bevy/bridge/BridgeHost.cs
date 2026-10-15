@@ -320,6 +320,7 @@ public sealed partial class BridgeHost : IDisposable
                 && _server.Inventories.TryGet(owner, out var owned) && owned.Inventory.getItemCount(held.HeldItemId) > 0 ? gun : null;
         DeployableNetSchema.RegisterAll(_server.Deployables.Schema);
         _services = new WorldServices(_server, _catalog, Emit);
+        _services.AttachBarricadeDamage(_geometry);
         _server.Npcs.ActiveHoliday = () => _worldHoliday;
         _vehicles = new VehicleServices(_server, _geometry, Emit); _vehicleRecov.Clear();
         _bodies = new BodyCombatServices(_server, _geometry, _vehicles, Emit);
