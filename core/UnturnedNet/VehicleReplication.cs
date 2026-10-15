@@ -16,7 +16,7 @@ namespace UnturnedGodot.Net
     /// rolling wheel's spin derives from the replicated linear velocity ("wheel steer/spin summary" =
     /// steer angle + velocity), so only steer rides the snapshot.
     /// </summary>
-    public sealed class VehicleReplication : IReplicatedSystem
+    public sealed partial class VehicleReplication : IReplicatedSystem
     {
         // Flags bits (byte on the wire)
         public const byte FlagEngineOn = 1 << 0;
@@ -167,7 +167,7 @@ namespace UnturnedGodot.Net
                 NetIdValue = id.Value,
                 TypeId = typeId,
                 Variant = variant,
-                Pos = PlayerReplication.Quantize(pos),
+                Pos = StorePosition(pos),
                 LastChangedTick = tick,
                 SpeedMaxMps = speedMaxMps,
                 ClimbMaxMps = climbMaxMps,
@@ -184,7 +184,7 @@ namespace UnturnedGodot.Net
                                   float steerDegrees, float fuel, float health, float battery, byte flags, long tick)
         {
             if (!_vehicles.TryGet(id, out var e)) return;
-            var newPos = PlayerReplication.Quantize(pos);
+            var newPos = StorePosition(pos);
             float newYaw = NetQuantization.QuantizeDegrees(eulerDegrees.y, NetQuantization.YawBits);
             float newPitch = NetQuantization.QuantizeDegrees(eulerDegrees.x, NetQuantization.PitchBits);
             float newRoll = NetQuantization.QuantizeDegrees(eulerDegrees.z, NetQuantization.PitchBits);
@@ -216,7 +216,7 @@ namespace UnturnedGodot.Net
                                            float steerDegrees, byte flags, long tick)
         {
             if (!_vehicles.TryGet(id, out var e)) return;
-            var newPos = PlayerReplication.Quantize(pos);
+            var newPos = StorePosition(pos);
             float newYaw = NetQuantization.QuantizeDegrees(eulerDegrees.y, NetQuantization.YawBits);
             float newPitch = NetQuantization.QuantizeDegrees(eulerDegrees.x, NetQuantization.PitchBits);
             float newRoll = NetQuantization.QuantizeDegrees(eulerDegrees.z, NetQuantization.PitchBits);
@@ -984,7 +984,7 @@ namespace UnturnedGodot.Net
     /// additionally tracks which vehicle each REMOTE player drives so Exit/DriveInput validate cheaply
     /// and a disconnect frees the seat.
     /// </summary>
-    public sealed class ServerVehicles
+    public sealed partial class ServerVehicles
     {
         /// <summary>Server-side enter reach: SP enters by look-focus within ~4 m + generous vehicle bounds;
         /// the server bounds it from the entity CENTER (long vehicles reach farther than their center), so

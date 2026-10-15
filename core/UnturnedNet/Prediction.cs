@@ -15,7 +15,7 @@ namespace UnturnedGodot.Net
     /// Convergence shape: predictions are recorded AFTER the tick's correction is applied, so each
     /// fresh authoritative sample measures the REMAINING error (replace semantics, no double-count).
     /// </summary>
-    public sealed class PredictionReconciler
+    public sealed partial class PredictionReconciler
     {
         /// <summary>Above this error (metres) smoothing would look like ice-skating -- snap instead.</summary>
         public float SnapThresholdMeters = 2f;

@@ -223,7 +223,7 @@ namespace UnturnedGodot.Net
     /// stage never crosses the wire, so the block only changes on plant/harvest (the §3.7 "tiny low-cadence
     /// Snap block", and join-consistency comes free through WriteFull).
     /// </summary>
-    public sealed class CropReplication : IReplicatedSystem
+    public sealed partial class CropReplication : IReplicatedSystem
     {
         public sealed class CropEntity
         {
@@ -278,7 +278,7 @@ namespace UnturnedGodot.Net
             {
                 NetIdValue = id.Value,
                 SeedId = seedId,
-                Pos = PlayerReplication.Quantize(pos),
+                Pos = StorePosition(pos),
                 PlantedAtTick = tick,
                 Grown = grown,
                 LastChangedTick = Stamp(tick),

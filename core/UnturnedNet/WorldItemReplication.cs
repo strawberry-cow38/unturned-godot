@@ -94,7 +94,7 @@ namespace UnturnedGodot.Net
     /// <summary>World items as an IReplicatedSystem (SystemId 8). Server side keeps the REAL Item object
     /// (gun ammo/firemode/attachments survive drop->pickup server-side without those fields ever crossing
     /// the wire); replicas carry only what rendering needs (id/amount/quality/pos/settled).</summary>
-    public sealed class WorldItemReplication : IReplicatedSystem
+    public sealed partial class WorldItemReplication : IReplicatedSystem
     {
         public sealed class WorldItemEntity
         {
@@ -171,7 +171,7 @@ namespace UnturnedGodot.Net
                 ItemId = item.id,
                 Amount = item.amount,
                 Quality = item.quality,
-                Pos = PlayerReplication.Quantize(pos),
+                Pos = StorePosition(pos),
                 LastChangedTick = Stamp(tick),
                 ServerItem = item,
             };
@@ -193,7 +193,7 @@ namespace UnturnedGodot.Net
         public void ServerMove(uint netId, Vector3 pos, long tick)
         {
             if (!TryGet(netId, out var e) || e.Settled) return;
-            var q = PlayerReplication.Quantize(pos);
+            var q = StorePosition(pos);
             if (q.x == e.Pos.x && q.y == e.Pos.y && q.z == e.Pos.z) return;
             e.Pos = q;
             e.LastChangedTick = Stamp(tick);
@@ -202,7 +202,7 @@ namespace UnturnedGodot.Net
         public void ServerSettle(uint netId, Vector3 pos, long tick)
         {
             if (!TryGet(netId, out var e) || e.Settled) return;
-            e.Pos = PlayerReplication.Quantize(pos);
+            e.Pos = StorePosition(pos);
             e.Settled = true;
             e.LastChangedTick = Stamp(tick);
         }

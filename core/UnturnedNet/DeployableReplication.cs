@@ -334,7 +334,7 @@ namespace UnturnedGodot.Net
     /// calls); the client mutates ONLY through ApplyXxx (event plane) and ReadSnapshot (join/scalars).
     /// Solve() is the §3.1 payoff -- it feeds the replicated graph to the pure PowerSolver, on either side.
     /// </summary>
-    public sealed class DeployableReplication : IReplicatedSystem
+    public sealed partial class DeployableReplication : IReplicatedSystem
     {
         public sealed class DeployableEntity
         {
@@ -528,7 +528,7 @@ namespace UnturnedGodot.Net
                 NetIdValue = id.Value,
                 DefId = defId,
                 OwnerPlayerId = owner,
-                Pos = PlayerReplication.Quantize(pos),
+                Pos = StorePosition(pos),
                 YawDegrees = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits),
                 // Quantized at STORE, exactly as the update path below does. Pos and Yaw already were;
                 // Health/Fuel were not, so the server held a raw scalar while every client held the value

@@ -20,7 +20,7 @@ namespace UnturnedGodot.Net
     /// onto the server's own copy of the mask. Any sink left null simply drops that effect, which is how a
     /// harness can exercise the geometry without standing up an inventory.
     /// </summary>
-    public sealed class ServerDeadzones
+    public sealed partial class ServerDeadzones
     {
         /// <summary>Matches DeadzoneField.PollSeconds. A deadzone is a slow hazard; re-evaluating every
         /// player every tick would be per-player work nobody could feel the difference of -- and stepping

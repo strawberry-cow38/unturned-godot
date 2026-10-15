@@ -35,6 +35,7 @@ Rules of the road:
 | yaw → forward vector | the Godot-frame rule `(-sin yaw, 0, -cos yaw)` | copy it a fourth time — it is inline in 3 places and **one shipped inverted**, aiming 180° behind the player |
 | parse `"x,y,z"` from a `.dat` | `UnityDatEx.TryParseVector3` | `Split(',')` + `float.Parse` — **five** hand-rolled copies exist, one of which (`game/CropNode.cs:26`) *throws* instead of defaulting |
 | quantize a world position | `PlayerReplication.Quantize` (`core/UnturnedNet/PlayerReplication.cs:458`) | pick your own bit budget; this is THE grid every entity shares |
+| rebase an integrated world without teleporting or restarting clocks | `WorldRebase.Translate` + `NetWorldServer/Client.PollNetwork` (`core/UnturnedNet/WorldRebase.cs`; managed barrier `bevy/bridge/OriginServices.cs`) | drain every peer first; shift native physics/geometry too; this does not negotiate a remote UDP epoch |
 | write a pos/dir/vel/damage to the wire | `NetWire.WritePos/WriteDir/WriteVel/WriteDamage` (`core/UnturnedNet/CombatReplication.cs:339`+) | choose bit widths yourself — golden byte tests lock these |
 | hash replicated state | `NetHash.Mix*` / `HashString` (`core/UnturnedNet/NetHash.cs`) | `string.GetHashCode` (not stable across processes) |
 | put an item in a bag | `PlayerInventory.tryAddItem` (`core/UnturnedSim/PlayerInventory.cs:107`) | walk pages yourself |
@@ -122,7 +123,7 @@ listed so you can *read* a packet, not so you can retune one.
 
 | Field | Encoding | Real range / grain |
 |---|---|---|
-| position X/Z | `ClampedFloat(11,8)` | ±2048 m, ~4 mm |
+| position X/Z | `ClampedFloat(13,8)` | ±4096 m, ~4 mm (integer bits include sign) |
 | position Y | `ClampedFloat(9,8)` | ±256 m |
 | direction | 3× `SignedNormalized(12)` | ~0.03° |
 | velocity | 3× `ClampedFloat(6,6)` | **±32 m/s** (the doc comment saying ±64 is wrong) |

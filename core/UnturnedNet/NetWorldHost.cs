@@ -729,6 +729,21 @@ namespace UnturnedGodot.Net
         public void TickSimulation()
         {
             Session.Tick();
+            DispatchCommands();
+            StepSimulation();
+        }
+
+        /// <summary>Receive and dispatch queued intents without stepping gameplay or its clock.
+        /// The caller must quiesce every local peer before changing coordinate frames.</summary>
+        public void PollNetwork()
+        {
+            Session.PollNetwork();
+            DispatchCommands();
+            Inventories.ServerCommitDirty(Session.CurrentTick);
+        }
+
+        void DispatchCommands()
+        {
             // The door cooldown is measured in sim seconds, so the clock must be current BEFORE this tick's
             // commands are validated against it -- otherwise every toggle is judged against last tick.
             Interactables.Now = Session.CurrentTick * SimClock.FixedDelta;
@@ -741,6 +756,10 @@ namespace UnturnedGodot.Net
             // than removing, because Peers IS the list this loop just walked; apply the queue now that the
             // enumerator is done.
             Session.FlushPendingKicks();
+        }
+
+        void StepSimulation()
+        {
             Players.ServerStep(Session.CurrentTick, (float)SimClock.FixedDelta);
             VehicleHost.Step(Session.CurrentTick);   // drivers ride their vehicle entity; dead drivers exit
             // B5: BETWEEN VehicleHost.Step and Combat.Step so a queued starvation drain lands in THIS tick's
@@ -904,7 +923,7 @@ namespace UnturnedGodot.Net
     /// shell to render fx from -- fx are always client-LOCAL, §3.4), and the predicted local player
     /// (MP_PLAN §2.5b). Tick() once per 50 Hz tick.
     /// </summary>
-    public sealed class NetWorldClient
+    public sealed partial class NetWorldClient
     {
         public readonly NetClientSession Session;
         public readonly PlayerReplication Players = new PlayerReplication();
@@ -1178,6 +1197,19 @@ namespace UnturnedGodot.Net
         public void Tick()
         {
             Session.Tick();
+            ReceiveMessages(true);
+        }
+
+        /// <summary>Apply received facts at the current tick, without advancing time.
+        /// A barrier can omit the redundant snapshot ack to let its transport become empty.</summary>
+        public void PollNetwork(bool acknowledgeSnapshot = true)
+        {
+            Session.PollNetwork();
+            ReceiveMessages(acknowledgeSnapshot);
+        }
+
+        void ReceiveMessages(bool acknowledgeSnapshot)
+        {
             while (Session.TryReceiveUnreliable(out byte[] msg))
                 ApplySnapshot(msg, msg.Length);
             while (Session.TryReceiveReliable(out byte[] msg))
@@ -1185,7 +1217,7 @@ namespace UnturnedGodot.Net
             // ack the newest applied tick EVERY tick (newest-wins, ~5 bytes): the server holds unreliable
             // snapshots until the first ack lands, so a lost ack datagram must never be able to stall the
             // join -- the next tick re-acks
-            if (Session.State == NetSessionState.Connected && Applier.LastAppliedServerTick > 0)
+            if (acknowledgeSnapshot && Session.State == NetSessionState.Connected && Applier.LastAppliedServerTick > 0)
                 Session.SendUnreliableSequenced(NetMessagePak.Pack(SnapshotComposer.AckCommandId,
                     w => w.WriteUInt32((uint)Applier.LastAppliedServerTick)));
             // reconcile the predicted local player against the newest own-entity authoritative state

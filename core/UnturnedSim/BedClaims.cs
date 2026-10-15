@@ -34,6 +34,16 @@ namespace SDG.Unturned
 
         public int Count => _beds.Count;
 
+        /// <summary>Translate the world's coordinate frame without changing ownership or cooldowns.</summary>
+        public void TranslateWorld(Vector3 delta)
+        {
+            foreach (int id in new List<int>(_beds.Keys))
+            {
+                var bed = _beds[id]; bed.Position += delta; _beds[id] = bed;
+            }
+        }
+
+
         public void Register(int id, Vector3 position, float yaw = 0f)
         {
             if (_beds.ContainsKey(id)) throw new ArgumentException($"bed {id} already registered", nameof(id));

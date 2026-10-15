@@ -17,7 +17,7 @@ namespace UnturnedGodot.Net
     // The port keeps all of that, including the 20 m: it is generous next to any sensible interact ray,
     // which is the point -- the server is guarding against a forged index, not re-deciding what the client
     // may aim at.
-    public sealed class ServerForage
+    public sealed partial class ServerForage
     {
         /// <summary>Retail ReceiveForageRequest: `(point - player.position).sqrMagnitude > 400f` rejects.</summary>
         public const float ReachSq = 400f;

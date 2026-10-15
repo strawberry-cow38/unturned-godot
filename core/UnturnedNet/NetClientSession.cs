@@ -88,6 +88,13 @@ namespace UnturnedGodot.Net
         public void Tick()
         {
             _tick++;
+            PollNetwork();
+        }
+
+        /// <summary>Drain transport/reliability at the current tick without advancing time.
+        /// Used by an in-process host's atomic world-coordinate barrier.</summary>
+        public void PollNetwork()
+        {
             while (_transport.Receive(_rx, out long size))
                 _session.HandleDatagram(_tick, _rx, (int)size);
 

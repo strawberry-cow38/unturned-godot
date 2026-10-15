@@ -71,6 +71,13 @@ namespace SDG.NetTransport.Mem
             _rng = new Random(seed);
         }
 
+        /// <summary>Datagrams still on this in-process wire, including delayed ones.
+        /// An atomic coordinate barrier requires zero queued packets AND zero reliable sends.</summary>
+        public int PendingDatagramCount
+        {
+            get { int count = _serverInbox.Count; foreach (var inbox in _clientInboxes.Values) count += inbox.Count; return count; }
+        }
+
         public void Tick() => CurrentTick++;
 
         internal void BindServer()

@@ -293,7 +293,7 @@ namespace UnturnedGodot.Net
     /// keeping both in one block means the removal cascade and the join snapshot cannot disagree about which
     /// pipes exist. Same mutation-stamp and tombstone rules as the wire registry beside it.
     /// </summary>
-    public sealed class ItemPipeGraph
+    public sealed partial class ItemPipeGraph
     {
         readonly NetEntityRegistry<ItemPipeEntity> _pipes = new NetEntityRegistry<ItemPipeEntity>();
         readonly Dictionary<uint, long> _removedAtTick = new Dictionary<uint, long>();
@@ -330,7 +330,7 @@ namespace UnturnedGodot.Net
         public ItemPipeEntity ServerConnect(NetId id, uint srcId, byte srcPort, uint dstId, byte dstPort, Vector3[] path, long tick)
         {
             var q = new Vector3[path?.Length ?? 0];
-            for (int i = 0; i < q.Length; i++) q[i] = PlayerReplication.Quantize(path[i]);
+            for (int i = 0; i < q.Length; i++) q[i] = StorePosition(path[i]);
             var p = new ItemPipeEntity
             {
                 NetIdValue = id.Value, SrcId = srcId, SrcPort = srcPort, DstId = dstId, DstPort = dstPort,

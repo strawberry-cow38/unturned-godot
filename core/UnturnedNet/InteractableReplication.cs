@@ -172,7 +172,7 @@ namespace UnturnedGodot.Net
     /// one rule set rather than a client copy and a server copy that drift. Reach is checked here too --
     /// a command naming a door across the map is refused whatever the client believes.
     /// </summary>
-    public sealed class ServerInteractables
+    public sealed partial class ServerInteractables
     {
         /// <summary>How close a player must be to work a door or claim a bed. Generous enough for the
         /// arm's-length interaction the client offers, tight enough that a remote command is refused.</summary>

@@ -158,7 +158,7 @@ namespace UnturnedGodot.Net
     /// server-owned (PlayerCombatReplication). Runs from NetWorldServer.TickSimulation AFTER the player sim,
     /// BEFORE replication (§2.5 order).
     /// </summary>
-    public sealed class ServerCombat
+    public sealed partial class ServerCombat
     {
         // the Phase-1 NetServer.Hitscan zone cylinder, generalized to a 3D segment test
         const float PlayerZoneRadius = 0.42f;

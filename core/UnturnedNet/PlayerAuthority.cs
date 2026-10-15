@@ -144,7 +144,7 @@ namespace UnturnedGodot.Net
     /// CommandPlayerState on the §2.3 choke point, envelope-validates each claim against the entity's
     /// last published position, and adopts or recovs. All constants spec-derived, never tuned magic.
     /// </summary>
-    public sealed class ServerPlayerAuthority
+    public sealed partial class ServerPlayerAuthority
     {
         // ---- the on-foot plausibility envelope: a per-axis leaky allowance (token bucket) ----
         // The Part A vehicle envelope caps each packet by speed x SERVER-ARRIVAL elapsed time. That

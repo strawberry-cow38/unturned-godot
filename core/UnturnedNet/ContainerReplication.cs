@@ -30,7 +30,7 @@ namespace UnturnedGodot.Net
     /// fixtures + projects their display; the client materializes them via StorageReplicaView. The server
     /// keeps the real crate grid (InventoryReplication owns the contents) -- this system carries only the
     /// fixture + the display digest, never the live grid.</summary>
-    public sealed class ContainerReplication : IReplicatedSystem
+    public sealed partial class ContainerReplication : IReplicatedSystem
     {
         public sealed class ContainerEntity
         {
@@ -94,7 +94,7 @@ namespace UnturnedGodot.Net
         {
             var e = new ContainerEntity
             {
-                NetIdValue = id.Value, KindId = kindId, Pos = PlayerReplication.Quantize(pos),
+                NetIdValue = id.Value, KindId = kindId, Pos = StorePosition(pos),
                 // quantize yaw at store time (like Pos) so the server's StateHash matches the wire-quantized value
                 // the client reads back -- else relevancy/desync parity fails on the sub-degree rounding (WriteDegrees).
                 YawDegrees = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits), Width = width, Height = height, LastChangedTick = Stamp(tick),

@@ -16,7 +16,7 @@ namespace UnturnedGodot.Net
     /// Mirrors ZombieReplication exactly (transform + anim byte + a kind byte); relevancy-ringed, NOT in
     /// EnableSyncCheck (clients receive a nearby subset, never derive the whole set).
     /// </summary>
-    public sealed class AnimalReplication : IReplicatedSystem
+    public sealed partial class AnimalReplication : IReplicatedSystem
     {
         public sealed class AnimalEntity
         {
@@ -67,7 +67,7 @@ namespace UnturnedGodot.Net
             {
                 NetIdValue = id.Value,
                 Species = species,
-                Pos = PlayerReplication.Quantize(pos),
+                Pos = StorePosition(pos),
                 YawDegrees = 0f,
                 AnimState = (byte)AnimalNetAnim.Idle,
                 LastChangedTick = tick,
@@ -82,7 +82,7 @@ namespace UnturnedGodot.Net
         public void ServerPublish(NetId id, Vector3 pos, float yawDegrees, byte animState, long tick)
         {
             if (!_animals.TryGet(id, out var e)) return;
-            var newPos = PlayerReplication.Quantize(pos);
+            var newPos = StorePosition(pos);
             float newYaw = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits);
             if (newPos == e.Pos && newYaw == e.YawDegrees && animState == e.AnimState) return;
             e.Pos = newPos;

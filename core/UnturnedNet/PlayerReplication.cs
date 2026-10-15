@@ -465,7 +465,7 @@ namespace UnturnedGodot.Net
     /// this integration with the real PlayerController sim/shell split. The wire format (including
     /// LastProcessedInputSeq, which prediction v1 will consume) is the part designed to last.
     /// </summary>
-    public sealed class PlayerReplication : IReplicatedSystem
+    public sealed partial class PlayerReplication : IReplicatedSystem
     {
         public sealed class PlayerEntity
         {
@@ -544,7 +544,7 @@ namespace UnturnedGodot.Net
             {
                 NetIdValue = id.Value,
                 OwnerPlayerId = ownerPlayerId,
-                Pos = Quantize(pos),
+                Pos = StorePosition(pos),
                 YawDegrees = 0f,
                 LastChangedTick = tick,
                 Sim = new PlayerMovementSim(),
@@ -681,7 +681,7 @@ namespace UnturnedGodot.Net
         {
             if (!TryGetByOwner(ownerPlayerId, out var e)) return;
             e.ExternallyDriven = true;
-            var newPos = Quantize(pos);
+            var newPos = StorePosition(pos);
             float newYaw = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits);
             // v18: the stance comes off the held input. ⚠ v57: for a client-auth JOINER that is its PlayerState's
             // buttons (StateInput) -- the v18 note said "the owner's MoveInput stream still flows", which stopped being
@@ -714,7 +714,7 @@ namespace UnturnedGodot.Net
         public void ServerTeleport(ushort ownerPlayerId, Vector3 pos, long tick)
         {
             if (!TryGetByOwner(ownerPlayerId, out var e)) return;
-            var newPos = Quantize(pos);
+            var newPos = StorePosition(pos);
             // NOT gated on the position differing: the counter has to advance even for a teleport to where the entity
             // already is, or a listen-server host would silently skip adopting it.
             e.Pos = newPos;

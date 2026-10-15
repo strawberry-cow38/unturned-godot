@@ -15,7 +15,7 @@ namespace UnturnedGodot.Net
     /// choice, the wire framing doesn't change). CLIENT side: replicas drive IsPuppet ZombieControllers that
     /// interpolate -- no AI, no nav, no physics ever runs from this data.
     /// </summary>
-    public sealed class ZombieReplication : IReplicatedSystem
+    public sealed partial class ZombieReplication : IReplicatedSystem
     {
         /// <summary>Mirror of the game's ZombieController.ESpeciality byte (NORMAL 0, SPRINTER 1, CRAWLER 2,
         /// FLANKER 3, BURNER 4, ACID 5) -- core only needs CRAWLER for the short hitbox.</summary>
@@ -74,7 +74,7 @@ namespace UnturnedGodot.Net
             {
                 NetIdValue = id.Value,
                 Speciality = speciality,
-                Pos = PlayerReplication.Quantize(pos),
+                Pos = StorePosition(pos),
                 YawDegrees = 0f,
                 AnimState = (byte)ZombieNetAnim.Idle,
                 LastChangedTick = tick,
@@ -89,7 +89,7 @@ namespace UnturnedGodot.Net
         public void ServerPublish(NetId id, Vector3 pos, float yawDegrees, byte animState, long tick)
         {
             if (!_zombies.TryGet(id, out var e)) return;
-            var newPos = PlayerReplication.Quantize(pos);
+            var newPos = StorePosition(pos);
             float newYaw = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits);
             if (newPos == e.Pos && newYaw == e.YawDegrees && animState == e.AnimState) return;
             e.Pos = newPos;
@@ -256,7 +256,7 @@ namespace UnturnedGodot.Net
     /// the exact colour) rides GrenadeExplodedEvent, which is where the cloud is actually built.</summary>
     public enum ProjectileKind : byte { Grenade = 0, Smoke = 1, Flare = 2 }
 
-    public sealed class ProjectileReplication : IReplicatedSystem
+    public sealed partial class ProjectileReplication : IReplicatedSystem
     {
         public sealed class ProjectileEntity
         {
@@ -289,7 +289,7 @@ namespace UnturnedGodot.Net
 
         public ProjectileEntity ServerSpawn(NetId id, ProjectileKind kind, Vector3 pos, long tick)
         {
-            var e = new ProjectileEntity { NetIdValue = id.Value, Kind = (byte)kind, Pos = PlayerReplication.Quantize(pos), LastChangedTick = tick };
+            var e = new ProjectileEntity { NetIdValue = id.Value, Kind = (byte)kind, Pos = StorePosition(pos), LastChangedTick = tick };
             _entities.Add(id, e);
             _removedAtTick.Remove(id.Value);
             return e;
@@ -298,7 +298,7 @@ namespace UnturnedGodot.Net
         public void ServerPublish(NetId id, Vector3 pos, long tick)
         {
             if (!_entities.TryGet(id, out var e)) return;
-            var newPos = PlayerReplication.Quantize(pos);
+            var newPos = StorePosition(pos);
             if (newPos == e.Pos) return;
             e.Pos = newPos;
             e.LastChangedTick = tick;
