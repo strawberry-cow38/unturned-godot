@@ -44,8 +44,9 @@ Host-only registration, save/load, damage and rebasing are refused. Unknown
 host enrichments remain absent and `network.wireGaps` enumerates them: exact held
 instance identity, weapon timers, attachment transactions, repair, explicit
 respawn, weather/absolute day, cosmetic flights, detailed impact/warhead/stuck-pose
-facts, projectile expiry, vehicle part health, host wildlife/zombie data, map
-bindings, password authentication and accepted shot tick. These are concrete
+facts, projectile expiry, vehicle part health, host wildlife/zombie data,
+password authentication and accepted shot tick. Authored map bindings now use the
+read-only adapter described below. These are concrete
 protocol follow-ups. The existing automatic respawn and recovery events work.
 The original handshake has no password field, so a nonempty password is refused.
 
@@ -93,8 +94,19 @@ fixture IDs come only from unique actual replicas of the matching kind and
 wire-quantized pose; missing/ambiguous matches stay unset and later arrivals can
 rebind. The query creates no server, fixture, loot, inventory or health state.
 Its shape matches native `mapServices` metadata, with explicit readiness and
-unbound counts. Native consumption and accepted-holiday world rebuilding remain
-a separate integration step.
+unbound counts. The native consumer adopts it only after the accepted owner and
+matching world geometry are ready. A registry identity/pose signature avoids
+reloading the large manifest when only a door, health or fuel changes. Late IDs
+replace the native binding generation; existing animated leaves retire and
+rebuild against the accepted ID, while ambiguous/missing IDs stay unavailable.
+The client never invokes `mapServices` or uploads authority geometry.
+
+Accepted `network.holiday` now drives native prop and resource filtering. Source
+placement row numbers remain unchanged. A holiday change uses the streaming
+rebuild, keeping the owner, terrain cache, origin and camera focus; host collision
+uploads wait for the matching new geometry. The old leaves remain valid until
+that rebuild. Disconnect clears the complete manifest, including seats and NPC
+metadata. NPC dialogue/trade presentation is still separate work.
 
 This exposed a host omission: the bridge had parsed local seasonal content but
 left the original Accept holiday argument empty. The host now captures one source
@@ -103,6 +115,25 @@ UDP regressions compare all696 container/11fixture bindings and authored counter
 against a host, test Christmas host versus nonholiday client resource ordering,
 late registration, duplicate same-pose refusal, and save/load across a changed
 local holiday. All 30 managed UDP/status tests and all 121 bridge regressions pass.
+
+Native integration passes all 362 tests (two manual render fixtures ignored),
+including a real two-process UDP late-registration journey, identity-only cache
+invalidation, accepted-holiday streaming reload, and real source leaf replacement
+and retirement on binding changes. Frozen `map-bindings-30` supplied that test
+boundary; the live renderer used the compatible `profile-tests-33-final` superset
+for the new nameplate consumer.
+
+Opened live UDP captures `bevy-mapbindings-door-closed/open` show authored door 18
+changing its replicated flag and both visible leaves after F. The
+`bevy-mapbindings-container-facing/storage-open` pair opens real container 68 and
+its accepted 8×6 storage page. `bevy-mapbindings-seat-focus/seat-accepted` shows
+couch seat 5 accepting owner 2 with native sitting pose and Stand up prompt.
+`bevy-mapbindings-server-christmas` visibly contains the original Christmas gift
+props: the managed authority ran `UG_HOLIDAY=CHRISTMAS`, while the renderer ran
+`UG_HOLIDAY=NONE`. The session retained ownership and collision across all
+teleports/streaming rebuilds. Initial washer-wall and incorrectly aimed test
+captures are not counted as evidence. These checks establish the authored map
+binding path, not the remaining NPC dialogue/trade UI or protocol gaps above.
 
 ## Native remote bodies
 

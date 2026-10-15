@@ -1309,3 +1309,11 @@ three worn fixtures and four torch bulbs changing in the same dim scene. World
 review found no material-sharing or source-rule blocker. The combined native
 suite passes356 tests (two manual render fixtures ignored) against immutable
 profile-tests-33-final. These fixed replicas do not prove live UDP light toggles.
+
+
+### 2026-10-15 — Bevy remote authored map bindings and accepted holiday
+
+- Native remote map services now consume read-only `mapBindings` after owner/geometry readiness, preserving source full-manifest door/seat IDs and matching container/fixture IDs only from accepted replicas. Late registry membership changes replace native door leaves/collision using a binding generation; missing/ambiguous IDs remain unavailable. NPC metadata is retained for the separate dialogue/trade port.
+- Native props and resources use the authority's accepted holiday, including saved-host changes. The existing streaming rebuild preserves owner position, origin and terrain cache; source prop rows and resource `(name,instance)` keys remain stable, with resource indices taken from the accepted active manifest. Host geometry uploads wait for the new holiday geometry. Disconnect clears all bindings.
+- All 362 native tests passed (2 opt-in visual fixtures ignored) against immutable map-bindings-30. New regressions use real UDP late fixture registration, production binding adoption without local authority, real extracted door replacement/retirement, and holiday reload without session/pose reset. World peer review found no blocker.
+- Actual Vulkan UDP journey (native profile-tests-33-final, managed authority map-bindings-30) rendered and opened door18 closed/open, real container68 storage8×6, accepted couch5/owner2 sitting, and original Christmas gift props with host CHRISTMAS versus native NONE. Artifacts are `bevy-mapbindings-door-closed/open`, `-container-facing/storage-open`, `-seat-focus/seat-accepted`, and `-server-christmas` PNG+JSON. Initial wall/incorrect aim attempts are excluded. This does not claim NPC or full protocol parity.

@@ -92,6 +92,7 @@ struct Registry {
     geometry_revision: u64,
     session_epoch: u64,
     spawn_epoch: u64,
+    service_revision: u64,
 }
 pub struct InteractablePlugin;
 impl Plugin for InteractablePlugin {
@@ -200,11 +201,15 @@ fn spawn(
     session: Res<crate::player::WorldSessionEpoch>,
     old_leaves: Query<Entity, With<DoorLeaf>>,
 ) {
-    if registry.map != services.map || registry.spawn_epoch != session.0 {
+    if registry.map != services.map
+        || registry.spawn_epoch != session.0
+        || registry.service_revision != services.revision
+    {
         for entity in &old_leaves {
             commands.entity(entity).despawn();
         }
         registry.spawn_epoch = session.0;
+        registry.service_revision = services.revision;
         registry.map = services.map.clone();
         registry.parents.clear();
         registry.doors.clear();

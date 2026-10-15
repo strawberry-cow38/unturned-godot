@@ -1,6 +1,7 @@
 //! Original map/content assembly. Missing retail terrain is reported explicitly.
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
 mod foliage;
+mod holiday;
 pub mod interactables;
 pub mod layers;
 pub mod origin;
@@ -33,6 +34,8 @@ pub struct WorldConfig {
     /// Unturned map folder itself, containing Landscape/Heightmaps.
     pub map_root: Option<PathBuf>,
     pub map_name: String,
+    /// Accepted authority holiday; never inferred from this renderer's calendar.
+    pub holiday: String,
     pub spawn_center: Option<Vec3>,
     pub spawn_radius: f32,
     /// Original UG_INF_CAM absolute XYZ and yaw/pitch in degrees.
@@ -48,6 +51,7 @@ impl Default for WorldConfig {
             map_root: std::env::var_os("UG_UNTURNED_DIR")
                 .map(|p| PathBuf::from(p).join("Maps/PEI")),
             map_name: "PEI".into(),
+            holiday: "NONE".into(),
             spawn_center: None,
             spawn_radius: 180.,
             fixed_camera: std::env::var("UG_INF_CAM")
@@ -117,7 +121,9 @@ fn world_needs_reload(
     ui: Res<crate::ui::UiState>,
     players: Query<&Transform, With<crate::player::PlayerBody>>,
 ) -> bool {
-    if !state.ready {
+    if !state.ready
+        || geometry.holiday.as_deref().is_some_and(|h| h != config.holiday)
+    {
         return true;
     }
     if let Some((position, _, _)) = config.fixed_camera {
@@ -437,6 +443,8 @@ pub struct ObjectCollider {
 }
 #[derive(Resource, Default)]
 pub struct WorldGeometry {
+    /// Holiday used for the currently materialized props and resources.
+    pub holiday: Option<String>,
     /// Increments when collision geometry changes; authority must refresh its copy.
     pub revision: u64,
     pub loaded_center: Vec3,
@@ -834,6 +842,7 @@ fn build_world(
         state.spawn
     };
     geometry.revision = geometry.revision.wrapping_add(1);
+    geometry.holiday = Some(config.holiday.clone());
     if !state.terrain_available {
         state.description = format!(
             "{} extracted prop viewer — retail terrain unavailable",
@@ -882,9 +891,13 @@ fn build_world(
         }
     }
     let within = |p: Vec3| Vec2::new(p.x - center.x, p.z - center.z).length() <= render_radius;
+    let holidays = holiday::restrictions(&config.content_root);
     for p in placements
         .iter()
-        .filter(|p| within(p.transform.translation))
+        .filter(|p| {
+            within(p.transform.translation)
+                && holiday::prop_allowed(&holidays, &p.guid, &config.holiday)
+        })
     {
         let path = config.content_root.join(format!("objects/{}.obj", p.name));
         let Ok((mesh, data)) = cache.load_mesh(&path, &mut meshes) else {
@@ -1029,7 +1042,9 @@ fn build_world(
         {
             for line in manifest.lines() {
                 let f: Vec<_> = line.split_whitespace().collect();
-                if f.len() < 2 || f.get(2).is_some_and(|h| *h != "NONE") {
+                if f.len() < 2
+                    || f.get(2).is_some_and(|h| !holiday::resource_allowed(h, &config.holiday))
+                {
                     continue;
                 }
                 let Ok(parts) = f[1].parse::<usize>() else {
@@ -1800,6 +1815,47 @@ pub fn decode_resource_instances(bytes: &[u8]) -> Result<Vec<Transform>, Content
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn accepted_holiday_rebuilds_stationary_world_without_resetting_live_state() {
+        #[derive(Resource, Default)]
+        struct Rebuilds(u32);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(WorldState {
+                ready: true,
+                spawn: Vec3::new(123., 45., 67.),
+                ..default()
+            })
+            .insert_resource(WorldGeometry {
+                holiday: Some("NONE".into()),
+                ..default()
+            })
+            .init_resource::<WorldConfig>()
+            .init_resource::<origin::WorldOrigin>()
+            .init_resource::<crate::ui::UiState>()
+            .init_resource::<Rebuilds>()
+            .add_systems(
+                Update,
+                (|mut count: ResMut<Rebuilds>| count.0 += 1).run_if(world_needs_reload),
+            );
+        app.update();
+        assert_eq!(app.world().resource::<Rebuilds>().0, 0);
+        app.world_mut().resource_mut::<WorldConfig>().holiday = "CHRISTMAS".into();
+        app.update();
+        assert_eq!(app.world().resource::<Rebuilds>().0, 1);
+        assert!(app.world().resource::<WorldState>().ready);
+        assert_eq!(
+            app.world().resource::<WorldState>().spawn,
+            Vec3::new(123., 45., 67.)
+        );
+        app.world_mut().resource_mut::<WorldGeometry>().holiday = Some("CHRISTMAS".into());
+        app.update();
+        assert_eq!(
+            app.world().resource::<Rebuilds>().0,
+            1,
+            "matching completed geometry must stop rebuilds"
+        );
+    }
     #[test]
     fn remote_target_defers_world_load_until_successful_probe_start() {
         #[derive(Resource, Default)]

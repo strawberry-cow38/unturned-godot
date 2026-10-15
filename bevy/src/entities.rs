@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 mod items;
+mod map_bindings;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,11 +67,52 @@ pub struct ItemCatalog {
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
     pub map: String,
+    /// Local adoption generation; also changes when a late replica rebinds a door.
+    pub revision: u64,
+    pub holiday: Option<String>,
+    pub npcs: Vec<Value>,
     pub objects: HashMap<usize, Value>,
     pub resources: HashMap<(String, usize), Value>,
     pub object_doors: Vec<Value>,
     pub container_doors: Vec<Value>,
     pub seats: Vec<Value>,
+}
+impl ServiceManifest {
+    fn clear(&mut self) {
+        let revision = self.revision.wrapping_add(1);
+        *self = Self {
+            revision,
+            ..default()
+        };
+    }
+    fn adopt(&mut self, map: &str, holiday: &str, result: &Value) {
+        self.clear();
+        self.map = map.into();
+        self.holiday = Some(holiday.into());
+        self.object_doors = result["objectDoors"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        self.container_doors = result["containerDoors"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        self.seats = result["seats"].as_array().cloned().unwrap_or_default();
+        self.npcs = result["npcs"].as_array().cloned().unwrap_or_default();
+        for object in result["objects"].as_array().into_iter().flatten() {
+            if let Some(index) = object["sourceIndex"].as_u64() {
+                self.objects.insert(index as usize, object.clone());
+            }
+        }
+        for resource in result["resources"].as_array().into_iter().flatten() {
+            if let (Some(name), Some(index)) =
+                (resource["name"].as_str(), resource["instance"].as_u64())
+            {
+                self.resources
+                    .insert((name.to_owned(), index as usize), resource.clone());
+            }
+        }
+    }
 }
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorldServicesReady;
@@ -146,16 +188,21 @@ impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ItemCatalog>()
             .init_resource::<ServiceManifest>()
+            .init_resource::<map_bindings::Bindings>()
             .init_resource::<InteractionFocus>()
             .init_resource::<Replicas>()
             .init_resource::<items::Models>()
             .add_plugins(items::material::AlphaDepthPlugin)
-            .configure_sets(Update, items::material::AlphaDepthUpdate.after(sync_world_items))
+            .configure_sets(
+                Update,
+                items::material::AlphaDepthUpdate.after(sync_world_items),
+            )
             .add_message::<CoreEvent>()
             .add_systems(
                 Update,
                 (
                     load_catalog,
+                    map_bindings::adopt,
                     register_world_geometry.in_set(WorldServicesReady),
                     sync_static_life,
                     sync_world_items,
@@ -204,7 +251,7 @@ fn load_catalog(
         replicas.geometry_map.clear();
         replicas.geometry_revision = 0;
         replicas.session_epoch = epoch.0;
-        services.map.clear();
+        services.clear();
         replicas.map_name = config.map_name.clone();
     }
     if !model.connected || !catalog.items.is_empty() {
@@ -240,45 +287,25 @@ fn register_world_geometry(
     if !world.ready
         || !model.connected
         || !model.network.owns_world
+        || geometry
+            .holiday
+            .as_deref()
+            .is_some_and(|h| h != config.holiday)
         || (replicas.geometry_map == config.map_name
             && replicas.geometry_revision == geometry.revision)
     {
         return;
     }
     let result = (|| -> anyhow::Result<()> {
-        if services.map != config.map_name {
-            services.objects.clear();
-            services.resources.clear();
-            services.object_doors.clear();
-            services.container_doors.clear();
-            services.seats.clear();
+        if services.map != config.map_name
+            || services.holiday.as_deref() != Some(config.holiday.as_str())
+        {
+            services.clear();
             if config.procedural_path.is_none() {
                 if let Some(root) = &config.map_root {
                     let reply = bridge.request("mapServices", json!({"mapRoot":root,"mapName":config.map_name,"contentRoot":config.content_root}))?;
                     let result = &reply["result"];
-                    services.object_doors = result["objectDoors"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default();
-                    services.container_doors = result["containerDoors"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default();
-                    services.seats = result["seats"].as_array().cloned().unwrap_or_default();
-                    for object in result["objects"].as_array().into_iter().flatten() {
-                        if let Some(index) = object["sourceIndex"].as_u64() {
-                            services.objects.insert(index as usize, object.clone());
-                        }
-                    }
-                    for resource in result["resources"].as_array().into_iter().flatten() {
-                        if let (Some(name), Some(index)) =
-                            (resource["name"].as_str(), resource["instance"].as_u64())
-                        {
-                            services
-                                .resources
-                                .insert((name.to_owned(), index as usize), resource.clone());
-                        }
-                    }
+                    services.adopt(&config.map_name, &config.holiday, result);
                     info!(
                         "Original map services: {} containers, {} fixtures, {} resources",
                         result["containerCount"], result["fixtureCount"], result["resourceCount"]
@@ -286,6 +313,7 @@ fn register_world_geometry(
                 }
             }
             services.map = config.map_name.clone();
+            services.holiday = Some(config.holiday.clone());
         }
         bridge.request(
             "worldGeometry",
@@ -527,7 +555,9 @@ fn sync_world_items(
         if art.translucent {
             commands.entity(entity).insert(items::material::AlphaDepth);
         } else {
-            commands.entity(entity).remove::<items::material::AlphaDepth>();
+            commands
+                .entity(entity)
+                .remove::<items::material::AlphaDepth>();
         }
         commands
             .entity(entity)

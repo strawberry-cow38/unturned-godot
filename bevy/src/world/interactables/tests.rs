@@ -415,3 +415,90 @@ fn authored_container_leaf_export_hits_the_visible_front_and_follows_opening() {
         "future host must still publish this leaf afresh"
     );
 }
+
+#[test]
+fn late_binding_revision_replaces_real_leaf_id_and_unbound_revision_retires_it() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, TransformPlugin))
+        .init_resource::<ServiceManifest>()
+        .init_resource::<WorldConfig>()
+        .init_resource::<Registry>()
+        .init_resource::<ContentCache>()
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .init_resource::<GameSnapshot>()
+        .init_resource::<crate::player::WorldSessionEpoch>()
+        .add_systems(Update, spawn);
+    let material = app
+        .world_mut()
+        .resource_mut::<Assets<StandardMaterial>>()
+        .add(StandardMaterial::default());
+    let parent = app
+        .world_mut()
+        .spawn((
+            WorldObject {
+                guid: "fixture".into(),
+                asset_name: "Fridge_0".into(),
+                source_index: 42,
+            },
+            Transform::IDENTITY,
+            MeshMaterial3d(material),
+        ))
+        .id();
+    let leaf = fixture();
+    let row = |net_id: u32| {
+        json!({"netId":net_id,"sourceIndex":42,"name":"Fridge_0","open":false,"leaves":[{
+            "mesh":leaf.mesh,"pivot":leaf.pivot,"axis":leaf.axis,"angleDegrees":leaf.angle_degrees,
+            "durationSeconds":leaf.duration_seconds,"sound":leaf.sound,"openCurve":leaf.open_curve,"closeCurve":leaf.close_curve
+        }]})
+    };
+    {
+        let mut service = app.world_mut().resource_mut::<ServiceManifest>();
+        service.map = "PEI".into();
+        service.revision = 1;
+        service.container_doors = vec![row(7)];
+    }
+    app.update();
+    let (first, first_id) = app
+        .world_mut()
+        .query::<(Entity, &DoorLeaf)>()
+        .single(app.world())
+        .map(|(e, l)| (e, l.net_id))
+        .unwrap();
+    assert_eq!(first_id, 7);
+    {
+        let mut service = app.world_mut().resource_mut::<ServiceManifest>();
+        service.revision += 1;
+        service.container_doors = vec![row(19)];
+    }
+    app.update();
+    assert!(app.world().get_entity(first).is_err());
+    let (second, second_id) = app
+        .world_mut()
+        .query::<(Entity, &DoorLeaf)>()
+        .single(app.world())
+        .map(|(e, l)| (e, l.net_id))
+        .unwrap();
+    assert_eq!(
+        second_id, 19,
+        "same map/session/parent must adopt the accepted replacement NetId"
+    );
+    assert!(app.world().get_entity(parent).is_ok());
+    {
+        let mut service = app.world_mut().resource_mut::<ServiceManifest>();
+        service.revision += 1;
+        service.container_doors.clear();
+    }
+    app.update();
+    assert!(
+        app.world().get_entity(second).is_err(),
+        "ambiguous or withdrawn binding retires interaction and collision together"
+    );
+    assert_eq!(
+        app.world_mut()
+            .query::<&DoorLeaf>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+}
