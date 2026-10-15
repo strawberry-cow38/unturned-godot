@@ -17,6 +17,9 @@ mod attachments;
 mod clothing;
 mod storage;
 mod crosshair;
+pub(crate) mod hurt;
+pub(crate) mod layers;
+mod low_health;
 mod map;
 mod network_menu;
 mod swoop;
@@ -399,6 +402,9 @@ impl Plugin for GameUiPlugin {
                 attachments::AttachmentMenuPlugin,
                 vitals::VitalsPlugin,
                 crosshair::CrosshairPlugin,
+                hurt::HurtPlugin,
+                layers::LayersPlugin,
+                low_health::LowHealthPlugin,
                 network_menu::NetworkMenuPlugin,
                 npc::NpcUiPlugin,
                 map::MapPlugin,
@@ -447,7 +453,7 @@ fn spawn_ui_camera(mut commands: Commands) {
         Name::new("Interface camera"),
         Camera2d,
         Camera {
-            order: 2,
+            order: layers::HUD_ORDER,
             clear_color: ClearColorConfig::None,
             ..default()
         },

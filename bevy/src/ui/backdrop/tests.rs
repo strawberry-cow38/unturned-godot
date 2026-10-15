@@ -15,7 +15,7 @@ fn routes_only_requested_roots_and_recovers_after_camera_replacement() {
         app.world().get::<Settings>(camera).unwrap().parameters.x,
         0.7
     );
-    assert_eq!(app.world().get::<Camera>(camera).unwrap().order, 4);
+    assert_eq!(app.world().get::<Camera>(camera).unwrap().order, super::super::layers::MODAL_ORDER);
     assert!(app.world().get::<UiTargetCamera>(hud).is_none());
     app.world_mut().entity_mut(camera).despawn();
     app.update();

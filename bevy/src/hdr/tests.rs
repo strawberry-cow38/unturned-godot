@@ -48,14 +48,15 @@ fn separate_viewport_keeps_one_tonemap_and_tracks_resize_and_inactive_arms() {
         .world_mut()
         .spawn((Camera3d::default(), ViewmodelCamera))
         .id();
-    let ui = app.world_mut().spawn((Camera2d, IsDefaultUiCamera)).id();
+    let ui = app.world_mut().spawn((Camera2d, crate::ui::layers::SceneCanvas)).id();
+    let hud = app.world_mut().spawn((Camera2d, IsDefaultUiCamera)).id();
     let console = app.world_mut().spawn((Camera2d, ConsoleCamera)).id();
     let reflection = app
         .world_mut()
         .spawn((Camera3d::default(), crate::world::water::ReflectionCamera))
         .id();
     app.update();
-    for e in [main, vm, ui, console, reflection] {
+    for e in [main, vm, ui, hud, console, reflection] {
         assert!(app.world().get::<Hdr>(e).is_some());
         assert_eq!(
             *app.world()
@@ -78,6 +79,7 @@ fn separate_viewport_keeps_one_tonemap_and_tracks_resize_and_inactive_arms() {
     assert_eq!(app.world().get::<Composite>(ui).unwrap().image, image);
     assert!(app.world().get::<Composite>(ui).unwrap().active);
     assert!(app.world().get::<Composite>(console).is_none());
+    assert!(app.world().get::<Composite>(hud).is_none(), "HUD cannot composite the hands a second time");
     assert_eq!(
         app.world().get::<HdrSettings>(reflection).unwrap().glow,
         app.world().get::<HdrSettings>(main).unwrap().glow,
@@ -167,7 +169,7 @@ fn source_lean_only_rolls_composite_and_resize_does_not_accumulate_fov() {
         .world_mut()
         .spawn((Camera3d::default(), ViewmodelCamera))
         .id();
-    let ui = app.world_mut().spawn((Camera2d, IsDefaultUiCamera)).id();
+    let ui = app.world_mut().spawn((Camera2d, crate::ui::layers::SceneCanvas)).id();
     app.init_resource::<crate::player::lean::LeanState>();
     app.world_mut()
         .resource_mut::<crate::player::lean::LeanState>()

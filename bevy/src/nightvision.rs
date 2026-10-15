@@ -100,7 +100,7 @@ fn update(
     switches: Res<crate::viewmodel::lights::Switches>,
     debug: Res<Diagnostic>,
     time: Res<Time<Real>>,
-    cameras: Query<Entity, With<IsDefaultUiCamera>>,
+    cameras: Query<Entity, With<crate::ui::layers::SceneCanvas>>,
 ) {
     *nv = debug.0.map_or(
         NightVision {
@@ -128,7 +128,7 @@ mod tests {
             .init_resource::<Diagnostic>()
             .init_resource::<crate::viewmodel::lights::Switches>()
             .add_systems(Update, update);
-        let world_composite = app.world_mut().spawn(IsDefaultUiCamera).id();
+        let world_composite = app.world_mut().spawn(crate::ui::layers::SceneCanvas).id();
         let console = app
             .world_mut()
             .spawn(crate::world::rain::lightning::ConsoleCamera)

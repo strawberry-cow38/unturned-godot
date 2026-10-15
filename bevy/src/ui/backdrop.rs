@@ -55,7 +55,7 @@ struct DashboardCamera;
 /// AmmoPie layer60 screen copy still includes them.
 #[derive(Component)]
 pub(super) struct AboveDashboard;
-pub(crate) const CONSOLE_ORDER: isize = 5;
+pub(crate) const CONSOLE_ORDER: isize = super::layers::CONSOLE_ORDER;
 #[derive(Component)]
 struct Routed;
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
@@ -95,7 +95,7 @@ fn camera_bundle(style: Style) -> impl Bundle {
         }),
         Camera2d,
         Camera {
-            order: if style == Style::AmmoPie { 4 } else { 3 },
+            order: if style == Style::AmmoPie { super::layers::MODAL_ORDER } else { super::layers::DASHBOARD_ORDER },
             clear_color: ClearColorConfig::None,
             ..default()
         },

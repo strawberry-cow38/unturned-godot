@@ -205,7 +205,7 @@ fn animate(world: &mut World) {
             }
             if closing && screen == Screen::Information {
                 // MapUI.Close ducks its departing canvas under HUD layer10.
-                entity.remove::<Backdrop>().insert(GlobalZIndex(9));
+                entity.remove::<Backdrop>().insert((GlobalZIndex(9), super::layers::BelowHud));
             } else {
                 // Out hides the backdrop immediately; retain layer11 routing
                 // for Inventory/Crafting while their panels finish fading.

@@ -2264,6 +2264,27 @@ suite also passes79 tests,
 including accepted UDP hurt presentation; seven renderer cases remain opt-in.
 Source/code review passed. Immutable managed output: `.local/player-damage-v69`.
 
+### Native original low-health feedback and pre-HUD canvas boundary
+
+The original LowHealthOverlay now consumes accepted owner HP, smoothing below
+50% toward full strength at15% with the source6/s response. Pain tint precedes
+the sRGB desaturation/vignette; death retains it and healing/respawn recovers
+smoothly. A dedicated pre-HUD canvas keeps world/viewmodel night vision and the
+departing Information panel below the effect, while ordinary HUD, dashboard
+vitals, higher modals and console preserve their source order.
+
+All570 native tests pass against the immutable player-damage-v69 bridge, including
+79 UI tests and actual UDP hurt feedback;24 renderer cases remain opt-in. The
+ten-stage Vulkan sequence was opened and independently reviewed, with rendered
+center/corner equation checks, unchanged HUD pixels, same-run healthy recovery,
+square resize, stacked dashboard/modal and both production night-vision modes.
+The combined production application with RainGlass also passed actual accepted
+hurt→15HP→Inventory→equipped rifle/arms→death→100HP respawn. All seven captures
+were opened; recovery restores healthy colors and clears the death screen.
+The source hurt wedges have five focused tests including a real two-peer UDP
+head hit, and a five-stage opened Vulkan bearing/turn/fade/restoration sequence.
+Details: `bevy/docs/LOW_HEALTH_PORT.md` and `HURT_FEEDBACK_PORT.md`.
+
 ### Native original RainGlass material and source renderer comparison
 
 Original vehicle panes now render mesh-local beads/released trails and world-height

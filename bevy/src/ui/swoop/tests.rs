@@ -163,6 +163,7 @@ fn map_close_ducks_below_hud_and_reopen_reverses_without_a_second_root() {
     );
     assert!(app.world().get::<Backdrop>(map).is_none());
     assert_eq!(app.world().get::<GlobalZIndex>(map).unwrap().0, 9);
+    assert!(app.world().get::<super::super::layers::BelowHud>(map).is_some());
     assert_eq!(
         app.world().get::<UiTransform>(map).unwrap().translation.y,
         px(40.5)

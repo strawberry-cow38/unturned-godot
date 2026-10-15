@@ -147,7 +147,7 @@ impl Plugin for HdrPlugin {
         .init_resource::<ViewmodelTarget>()
         .init_resource::<viewport::ViewmodelViewport>()
         .add_systems(Startup, layers::configure)
-        .add_systems(PostUpdate, configure.before(CameraUpdateSystems));
+        .add_systems(PostUpdate, configure.after(crate::ui::layers::CanvasRouting).before(CameraUpdateSystems));
         render::install(app);
         light_units::install(app);
     }
@@ -174,6 +174,7 @@ fn configure(
         Has<ViewmodelCamera>,
         Option<&ScopeView>,
         Has<IsDefaultUiCamera>,
+        Has<crate::ui::layers::SceneCanvas>,
         Has<ConsoleCamera>,
         Has<crate::world::water::ReflectionCamera>,
     )>,
@@ -213,9 +214,9 @@ fn configure(
     };
     let active = cameras
         .iter()
-        .any(|(_, cam, _, vm, _, _, _, _)| vm && cam.is_active);
-    for (entity, _, main, vm, scope, ui, console, reflection) in &cameras {
-        if !(main || vm || scope.is_some() || ui || console || reflection) {
+        .any(|(_, cam, _, vm, _, _, _, _, _)| vm && cam.is_active);
+    for (entity, _, main, vm, scope, ui, scene, console, reflection) in &cameras {
+        if !(main || vm || scope.is_some() || ui || scene || console || reflection) {
             continue;
         }
         commands.entity(entity).insert((
@@ -246,7 +247,7 @@ fn configure(
                 scope.is_some(),
             ));
         }
-        if ui {
+        if scene {
             commands.entity(entity).insert((
                 Composite {
                     image: image.clone(),
