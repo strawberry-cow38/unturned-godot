@@ -1207,6 +1207,7 @@ fn build_world(
                             WorldFoliage,
                             resource.clone(),
                             water::Reflective,
+                            crate::entities::forage::Part { last: part + 1 == parts },
                         ));
                         if (is_tree(f[0]) && part == 0) || f[0].starts_with("Bush") {
                             entity.insert(foliage::FoliageSurface::canopy());

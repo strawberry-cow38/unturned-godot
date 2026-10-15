@@ -275,7 +275,7 @@ the reopen capture starts a new owner rather than claiming a Load-world journey.
 
 Remaining finite scope includes source spawn/respawn pool selection (the current
 entry chooses a nearby authored spawn and grounds it), generated loot/fauna/
-zombie/vehicle population and resource/fixture authority registration, original
+zombie/vehicle population, additional custom fixture authority, original
 editor interactions and custom sidecars, river-water/wet-cell ocean geometry,
 Information chart projection and menu entry, and remote descriptor negotiation.
 Existing generator town/route metadata is intentionally not reconstructed on
@@ -283,3 +283,54 @@ saved-map reopen. Separate BuildingGen plans still need their original
 EditorBuildings geometry, openings, stairs, furniture, interaction and saves.
 The playable terrain entry is a verified intermediate milestone, not complete
 finite-world or building-generator parity.
+
+## Original editor gameplay registration
+
+`finiteServices` now registers the selected authored map through the existing
+host-owned WorldServices. It consumes the same original-parser prop handoff as
+native rendering, including unquantized fresh bases and serialized reopen bases.
+EditorObjects.Place calls SmartProps.AttachEditor: containers resolve by mesh
+name, door children retain independent object-door IDs, and ordinary Circuit or
+Gas_Pump meshes do not become the editor's separate custom power/pump markers.
+Retail GUID fixture, seat, rubble, holiday and automatic container-lid branches
+are not substituted. Existing prop meshes remain the only visible containers;
+ServiceManifest joins their original sourceIndex to accepted registry IDs.
+
+Generated resource registration shares the original ResourceField parser with
+retail maps. Manifest order, per-file instance indices, holiday gating, tree
+sinking, forage rewards and tree/ore metadata remain identical. Streamed geometry
+resolves these source keys to accepted resource indices; stream refresh does not
+re-register, restock or revive the map. Existing gameplay save/load restores
+harvested resources and independent door state without regenerating authored files.
+
+The managed candidate `finite-services-final` passes all 200 bridge tests. Two
+new cases exercise the actual source container/door branches and tilted live
+basis, duplicate registration, real UDP read-only bindings and remote-registration
+rejection, door toggles, forage reach rejection, accepted harvest and save/load.
+The native registration regression runs the actual uploader against the bridge,
+verifies an exact source terrain ray and resource index, then consumes accepted
+harvest state and preserves it across a streaming refresh. It passes on
+`native-inventory-dashboard-v1`. Remote finite CLI/session negotiation remains
+unavailable; the UDP test validates the adapter and accepted ID binding only.
+
+The native forage follow-up uses the source look-only fruit box; it never adds
+walking or bullet collision. Resource part order is preserved so accepted harvest
+hides only the final fruit mesh, retaining bush leaves; single-part mushrooms
+disappear entirely. Regrowth restores the fruit and its focus. Source dimensions,
+radial scale rule and original orientation are used, and nearer scene geometry
+occludes focus. Source fruit outlines and harvest audio remain separate pending
+presentation work. Two focused native regressions cover exact scaled/tilted ray
+boxes, wall occlusion, zero physical colliders, fruit-only harvest and regrowth.
+
+Actual Vulkan `native-finite-forage-main` reopened an isolated authored map and
+registered four containers and 501 resources. The real F key changed original
+object-door3 from closed to open; opened `bevy-finite-door-closed/open.png` show
+the exterior leaf swinging out of the close diagnostic camera into the original
+container interior. A second process focused Bush_Jade resource395, displayed
+Harvest Raw Viriberries, and accepted F harvest added item272 amount1. Opened
+`bevy-finite-forage-before/after.png` show the prompt/fruit removed while leaves
+remain; JSON records dead resource395 and the received inventory reward. Both
+processes exited through Pause→Quit with code0. Root independently opened all
+four images; source/code review also passed. These are authored fixture and
+source resource checks, not a claim that all finite editor interactions or
+fresh-generated populations are complete.

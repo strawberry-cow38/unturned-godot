@@ -79,7 +79,7 @@ shelf = shelf[shelf.index('        class Profile'):shelf.index('        static r
 (out / 'ShelfData.g.cs').write_text('using Godot; using System.Collections.Generic; using SDG.Unturned; namespace UnturnedGodot { public static class StoreShelf {\n' + shelf + '}}\n')
 builder = read('game/WorldBuilder.cs')
 container_table = match(r'static readonly System.Collections.Generic.Dictionary<string, \(string mesh, int table, bool display, string label\)> ContainerShelf = new\(\)\s*\{.*?\n        \};', builder)
-container_kinds = builder[builder.index('        public static System.Collections.Generic.List<(string mesh, bool display, string label)> ContainerKinds()'):builder.index('        // Openable PROP DOORS')]
+container_kinds = builder[builder.index('        static System.Collections.Generic.Dictionary<string, (int table, bool display, string label)> _containerByMesh;'):builder.index('        // Openable PROP DOORS')]
 (out / 'ContainerKinds.g.cs').write_text('namespace UnturnedGodot { public static partial class WorldBuilder {\n' + container_table.replace('static readonly', 'public static readonly', 1) + container_kinds + '}}\n')
 sync = read('game/ContainerNetSync.cs')
 sync = sync.replace('        readonly Node _host;', '        // No scene node is needed by the original container lifecycle.')

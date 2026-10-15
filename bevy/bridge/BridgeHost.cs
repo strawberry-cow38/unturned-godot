@@ -151,12 +151,15 @@ public sealed partial class BridgeHost : IDisposable
             case "worldVehicleDamage": RequireSession(); return _bodies.HostVehicleDamage(r);
             case "worldVehicleExit": RequireSession(); return _vehicles.ExitProbe(r);
             case "mapBindings": RequireSession(); return ReadMapBindings(r);
+            case "finiteServices":
             case "mapServices":
                 RequireSession();
-                string mapKey = Text(r, "mapName", "PEI") + "|" + Text(r, "mapRoot");
+                bool finiteServices = op == "finiteServices";
+                string mapKey = finiteServices ? "finite|" + Path.GetFullPath(Text(r, "directory"))
+                    : Text(r, "mapName", "PEI") + "|" + Text(r, "mapRoot");
                 if (_services.MapKey == mapKey) return _services.MapResult;
                 if (_services.MapKey != null) throw new InvalidOperationException("A different map requires init");
-                var parsed = MapServices.Parse(r, _worldHoliday);
+                var parsed = finiteServices ? MapServices.ParseFinite(r, _worldHoliday) : MapServices.Parse(r, _worldHoliday);
                 var mapSpec = JsonNode.Parse(parsed.Spec.GetRawText());
                 mapSpec["mapKey"] = mapKey;
                 mapSpec["mapObjects"] = JsonSerializer.SerializeToNode(parsed.Objects);

@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 mod items;
+pub(crate) mod forage;
 mod map_bindings;
 pub(crate) mod npcs;
 
@@ -254,6 +255,7 @@ impl Plugin for EntityPlugin {
                     map_bindings::adopt,
                     register_world_geometry.in_set(WorldServicesReady),
                     sync_static_life,
+                    forage::prepare,
                     sync_world_items,
                     forward_events.in_set(CoreEventsReady),
                 )
@@ -335,6 +337,7 @@ fn load_catalog(
 
 fn register_world_geometry(
     bridge: Res<CoreBridge>,
+    options: Res<crate::LaunchOptions>,
     config: Res<WorldConfig>,
     world: Res<crate::world::WorldState>,
     geometry: Res<WorldGeometry>,
@@ -359,7 +362,14 @@ fn register_world_geometry(
             || services.holiday.as_deref() != Some(config.holiday.as_str())
         {
             services.clear();
-            if config.procedural_path.is_none() {
+            if let Some(directory) = &config.finite_path {
+                let map_root = options.0.unturned.as_ref().map(|root| root.join("Maps/PEI"));
+                let reply = bridge.request("finiteServices", json!({"directory":directory,
+                    "mapName":config.map_name,"contentRoot":config.content_root,"mapRoot":map_root}))?;
+                services.adopt(&config.map_name, &config.holiday, &reply["result"]);
+                info!("Original editor services: {} containers, {} resources",
+                    reply["result"]["containerCount"], reply["result"]["resourceCount"]);
+            } else if config.procedural_path.is_none() {
                 if let Some(root) = &config.map_root {
                     let reply = bridge.request("mapServices", json!({"mapRoot":root,"mapName":config.map_name,"contentRoot":config.content_root}))?;
                     let result = &reply["result"];
@@ -473,6 +483,7 @@ fn sync_static_life(
             &crate::world::WorldResource,
             &mut Visibility,
             Option<&bevy_rapier3d::prelude::ColliderDisabled>,
+            Option<&forage::Part>,
         ),
         Without<crate::world::WorldObject>,
     >,
@@ -503,20 +514,22 @@ fn sync_static_life(
             !broken.contains(&index),
         );
     }
-    for (entity, resource, mut visibility, disabled) in &mut resources {
-        let Some(index) = services
+    for (entity, resource, mut visibility, disabled, part) in &mut resources {
+        let Some(row) = services
             .resources
             .get(&(resource.name.clone(), resource.instance_index))
-            .and_then(|row| row["index"].as_u64())
         else {
             continue;
         };
+        let Some(index) = row["index"].as_u64() else { continue; };
+        let keep_leaves = row["rewardItemId"].as_u64().unwrap_or(0) > 0
+            && part.is_some_and(|part| !part.last);
         set_alive(
             &mut commands,
             entity,
             &mut visibility,
             disabled.is_some(),
-            !taken.contains(&index),
+            keep_leaves || !taken.contains(&index),
         );
     }
 }
@@ -689,6 +702,7 @@ fn interact_items(
     resources: Query<&crate::world::WorldResource>,
     services: Res<ServiceManifest>,
     occupancy: Option<Res<crate::vehicle::Occupancy>>,
+    forage: forage::Plants,
 ) {
     if ui.captures_input() || occupancy.is_some_and(|o| o.seat.is_some()) {
         return;
@@ -711,6 +725,7 @@ fn interact_items(
             .exclude_sensors(),
     );
     let wall_distance = obstacle.map_or(6.0, |hit| hit.1);
+    forage::offer(&forage, &services, &catalog, origin, direction, wall_distance, &mut focus);
     let nearest = items
         .iter()
         .filter_map(|(transform, item, shape)| {
@@ -820,3 +835,5 @@ fn apply_interaction(
 
 #[cfg(test)]
 mod manual_interaction_tests;
+#[cfg(test)]
+mod finite_tests;

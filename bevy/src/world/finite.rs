@@ -168,7 +168,7 @@ impl FiniteWorld {
         }
         out
     }
-    pub(super) fn chunk(&self, x: usize, z: usize) -> Result<ObjData, ContentError> {
+    pub(crate) fn chunk(&self, x: usize, z: usize) -> Result<ObjData, ContentError> {
         decode_chunk(&fs::read(
             self.root.join(format!(".native/chunk_{x}_{z}.bin")),
         )?)

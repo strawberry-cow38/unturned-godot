@@ -25,7 +25,8 @@ sealed class RemoteMapBindings
         _map = map; _holiday = holiday;
         if (!Text(request, "mapName", "PEI").Equals(map, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Map bindings must use the session's selected map");
-        _parsed = MapServices.Parse(request, holiday);
+        _parsed = request.TryGetProperty("directory", out _)
+            ? MapServices.ParseFinite(request, holiday) : MapServices.Parse(request, holiday);
     }
 
     static Key KeyFor(ushort kind, Vector3 pos, float yaw) =>
