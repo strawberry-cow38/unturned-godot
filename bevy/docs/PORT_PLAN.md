@@ -48,7 +48,7 @@ not make its features playable.
 | 3 | Player stances, water/ladders, vitals, death/respawn, skills, appearance | In progress; remaining parity below |
 | 4 | Inventory, equipment, loot, attachments, weapons/ballistics/melee/grenades, viewmodels | In progress; remaining parity below |
 | 5 | World saves, UDP multiplayer, replicas, reconnection, server browser and moderation | In progress; remaining parity below |
-| 6 | All vehicle types, suspension, seats/storage, tow/hitch, crane/turrets, damage | In progress; remaining parity below |
+| 6 | All vehicle types, suspension, seats/storage, tow/hitch, crane/turrets, damage | In progress; original armed-fleet mount meshes, tank hatches and moving collision validated in `TURRET_PORT.md`; mount input/fire/crew integration remains unfinished |
 | 7 | Deployables, building, power, fluids, appliances, crops, resource interactions | In progress; remaining parity below |
 | 8 | Terrain/foliage/roads, procedural worlds/buildings, streaming, weather/water/audio | In progress; remaining parity below |
 | 9 | NPCs, quests, trading, animals and remaining current gameplay | In progress; human rigs/focus/console, host capsule collision, accepted dialogue/trade/quest UI validated in `NPC_CHARACTER_PORT.md` / `NPC_UI_PORT.md`; remaining parity below |

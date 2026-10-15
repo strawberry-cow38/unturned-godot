@@ -1607,3 +1607,31 @@ establish owner movement and correctionVersion3 remaining stable from tick4624
 through6086 and6349, rather than the old8→53→218 loop. Independent source and
 image review found no blocker. The renderer exited cleanly. See the bridge
 README owner-pose lifecycle section for the adapter boundary.
+
+### Bevy: original armed-fleet mounts and tank articulation
+
+The native vehicle builder now materializes the original Hind chin turret,
+Huey/Orca crew-gated door guns, and tank cannon/roof HMG. Ordered source yaw/pitch
+frames preserve parent-mount yaw without inheriting cannon elevation. The tank
+uses the original tread mesh, peeled roof gun/top lid/driver visor, driver hinge
+cap, original0.8s Fridge_0 curves and accepted seat occupancy. Separate moving
+player-collision bodies cannot alter hull mass or suspension; managed combat rays
+receive the articulated visible triangles even when the hull does not move.
+
+The source exporter keeps all39 fleet definitions byte-equivalent as JSON values
+and appends evaluated tank constants.49 native vehicle tests passed (including
+8 new mount tests;1 opt-in renderer ignored), covering actual source partition
+conservation, gun frames, hatch curves/occupancy/pause, crew visibility, Rapier
+collision, and real managed rays before/after traverse and removal. Initial
+fixture failures exposed missing lightweight VisibilityPlugin registration and
+an unregistered vehicle ID; both fixtures now use the production contracts.
+
+Four Vulkan/lavapipe runs passed and their PNGs were opened: tank mounts open,
+tank mounts occupied, Hind chin mount, and Huey door mounts, under
+`bevy/artifacts/bevy-{tank-mounts-open,tank-mounts-occupied,hind-mount,huey-mounts}.png`.
+The empty tank has both original raised lids; occupied poses close both lids,
+turn/elevate the cannon, and independently traverse the HMG. Helicopter gun
+meshes sit on their original mounts. These are explicit presentation fixtures,
+not player firing evidence. Independent source review found no blocker. See
+`bevy/docs/TURRET_PORT.md` for remaining aim/fire/crew, tank camera/body and NPC
+helicopter integration; the vehicle milestone remains incomplete.

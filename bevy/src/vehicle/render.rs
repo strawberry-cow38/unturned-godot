@@ -269,6 +269,7 @@ pub fn build(
             }
         }
     }
+    super::turrets::build(commands, entity, d, root, cache, meshes, materials, body_material.clone());
     if s.heli || s.plane {
         aircraft::build(
             commands,
@@ -332,7 +333,7 @@ mod tests {
         );
     }
 }
-fn spawn_mesh(
+pub(super) fn spawn_mesh(
     commands: &mut Commands,
     parent: Entity,
     name: &str,

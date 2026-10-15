@@ -33,6 +33,10 @@ pub struct VehicleSpec {
     pub wheel_tex: Option<String>,
     pub palette: Option<String>,
     pub parts: Option<Vec<(String, [f32; 4])>>,
+    pub turrets: Option<Vec<TurretDef>>,
+    pub treads: Option<String>,
+    pub turret_meshes: Option<Vec<String>>,
+    pub gun_mesh: Option<String>,
     pub glass_mesh: Option<String>,
     pub glass_tint: Option<[f32; 4]>,
     pub frame: String,
@@ -121,6 +125,36 @@ pub struct VehicleSpec {
 #[derive(Deserialize)]
 struct Export {
     vehicles: Vec<VehicleDefinition>,
+}
+/// Exact source mounted-weapon metadata, including parent frames and seat priority.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TurretDef {
+    pub seat: u8,
+    pub yaw_mesh: Option<String>,
+    pub pitch_mesh: Option<String>,
+    pub pivot: [f32; 3],
+    pub muzzle: [f32; 3],
+    pub yaw_min: f32,
+    pub yaw_max: f32,
+    pub pitch_min: f32,
+    pub pitch_max: f32,
+    pub gunner_at: [f32; 3],
+    pub mesh_rotation_deg: [f32; 3],
+    pub gun_id: String,
+    pub display_name: String,
+    pub belt: u16,
+    pub colour: [f32; 4],
+    pub cycle: f32,
+    pub yaw_free: bool,
+    pub driver_fallback: bool,
+    pub crosshair_aim: bool,
+    pub hold_to_aim: bool,
+    pub parent_mount: i32,
+    pub yaw_mesh_rotation_deg: [f32; 3],
+    pub yaw_rate: f32,
+    pub pitch_rate: f32,
+    pub pitch_offset: [f32; 3],
 }
 pub static FLEET: LazyLock<Vec<VehicleDefinition>> = LazyLock::new(|| {
     serde_json::from_str::<Export>(include_str!("../../data/vehicles.json"))

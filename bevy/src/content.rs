@@ -52,6 +52,35 @@ pub struct ObjData {
     pub max: Vec3,
 }
 impl ObjData {
+    /// Original ParseObjSplitByZone: all three corners must lie in one zone.
+    /// Triangles spanning separate zones stay outside, retaining authored attributes.
+    pub fn split_zones(&self, zones: &[(Vec3, Vec3)]) -> (Self, Self) {
+        let empty = || Self {
+            min: Vec3::splat(f32::INFINITY),
+            max: Vec3::splat(f32::NEG_INFINITY),
+            ..Default::default()
+        };
+        let (mut outside, mut inside) = (empty(), empty());
+        for (n, triangle) in self.positions.chunks_exact(3).enumerate() {
+            let enclosed = zones.iter().any(|(min, max)| {
+                triangle.iter().all(|p| {
+                    let p = Vec3::from_array(*p);
+                    p.cmpge(*min).all() && p.cmple(*max).all()
+                })
+            });
+            let out = if enclosed { &mut inside } else { &mut outside };
+            for i in n * 3..n * 3 + 3 {
+                let p = Vec3::from_array(self.positions[i]);
+                out.positions.push(self.positions[i]);
+                out.normals.push(self.normals[i]);
+                out.uvs.push(self.uvs[i]);
+                out.colors.push(self.colors[i]);
+                out.min = out.min.min(p);
+                out.max = out.max.max(p);
+            }
+        }
+        (outside, inside)
+    }
     /// Merge instances without changing source UVs or lighting normals. Reflected
     /// instances reverse winding so their outward surface remains front-facing.
     pub fn append_transformed(&mut self, source: &Self, transform: Transform) {

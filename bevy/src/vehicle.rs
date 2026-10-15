@@ -17,6 +17,7 @@ mod spawns;
 #[cfg(test)]
 mod tests;
 mod tires;
+pub(crate) mod turrets;
 mod water;
 
 use crate::{
@@ -186,6 +187,7 @@ impl Plugin for VehiclePlugin {
                     adopt_occupancy,
                     render::animate_wheels,
                     render::animate_steering,
+                    turrets::animate,
                     tires::update,
                     render::aircraft::animate,
                     collision::update,

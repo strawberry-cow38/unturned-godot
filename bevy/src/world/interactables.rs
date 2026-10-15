@@ -130,7 +130,7 @@ impl Plugin for InteractablePlugin {
             );
     }
 }
-fn easing(swing: f32, opening: bool, curve: Option<&[[f32; 2]]>) -> f32 {
+pub(crate) fn easing(swing: f32, opening: bool, curve: Option<&[[f32; 2]]>) -> f32 {
     let Some(curve) = curve.filter(|c| !c.is_empty()) else {
         return swing * swing * (3. - 2. * swing);
     };

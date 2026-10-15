@@ -47,6 +47,9 @@ def generate(source):
     markers = [m[0] for m in re.finditer(r'static readonly Spec \w+\s*=', source)]
     markers += ['static readonly TurretDef[] HindTurret', 'static readonly System.Collections.Generic.Dictionary<string, Vector3[]> SeatTable',
                 'static readonly Vector3 TankGunnerSeatDown', 'public static readonly Vector3 TankPeriscopeEye', 'static readonly Vector3 GenericSeatRise', 'public readonly record struct AccessZone', 'const float DoorZoneWidth', 'const float MinCompartmentRun', 'const float CompartmentHeight', 'public static readonly string[] SpecNames']
+    markers += ['static readonly (Vector3 min, Vector3 max) '+name for name in ['TankMgBox','TankMgBarrel','TankTopHatch','TankDriverHatch']]
+    markers += ['static readonly Vector3 '+name for name in ['TankTopHatchHinge','TankDriverHatchHinge','TankGlacisDown','TankTurretColSize','TankBarrelColSize','TankSightEye','TankCupolaEye']]
+    markers += ['const float '+name for name in ['TankTopHatchClosedDeg','TankDriverHatchLift','TankDriverHatchSlide','TankDriverHatchClosedDeg','TankHatchSwingSeconds','RearArcDepressionScale','TankGunnerRise']]
     # Original declaration order is required for shared turret arrays.
     for marker in sorted(markers, key=source.index):
         snippets.append(declaration(source, marker))
@@ -120,7 +123,15 @@ public static void Main() {
             paints=Enumerable.Range(0,256).Select(v=>ConvertValue(SpawnPaint(spec,v))).ToArray(),
             roof=ConvertValue(RoofBox(spec.Name)) };
     }).ToArray();
-    Console.WriteLine(JsonSerializer.Serialize(vehicles));
+    var tank = new {
+        mgBox=ConvertValue(TankMgBox), mgBarrel=ConvertValue(TankMgBarrel), topHatch=ConvertValue(TankTopHatch), driverHatch=ConvertValue(TankDriverHatch),
+        topHinge=ConvertValue(TankTopHatchHinge), driverHinge=ConvertValue(TankDriverHatchHinge), glacisDown=ConvertValue(TankGlacisDown),
+        topClosed=TankTopHatchClosedDeg, driverClosed=TankDriverHatchClosedDeg, driverLift=TankDriverHatchLift, driverSlide=TankDriverHatchSlide,
+        swingSeconds=TankHatchSwingSeconds, rearDepressionScale=RearArcDepressionScale,
+        turretSize=ConvertValue(TankTurretColSize), turretCenter=ConvertValue(TankTurretColCenter), barrelSize=ConvertValue(TankBarrelColSize), barrelCenter=ConvertValue(TankBarrelColCenter),
+        sightEye=ConvertValue(TankSightEye), cupolaEye=ConvertValue(TankCupolaEye), gunnerSeat=ConvertValue(TankGunnerSeatDown), gunnerRise=TankGunnerRise,
+    };
+    Console.WriteLine(JsonSerializer.Serialize(new {vehicles,tank}));
 }
 }
 '''.replace('RESOLVES',resolves)
@@ -141,14 +152,15 @@ def main():
             print(result.stdout, result.stderr)
             Path('/tmp/vehicle-export-failed.cs').write_text((work/'Program.cs').read_text())
             raise SystemExit(result.returncode)
-        data=json.loads(result.stdout.strip().splitlines()[-1])
+        exported=json.loads(result.stdout.strip().splitlines()[-1])
+        data=exported['vehicles']
     assert len(data)==len({v['key'] for v in data}), 'Duplicate vehicle keys'
     # Plane keys historically fell through SpecFor to jeep. BuildByName is the
     # actual spawn path and the source of truth for this exporter.
     assert next(v for v in data if v['key']=='otter')['spec']['Plane']
     assert next(v for v in data if v['key']=='fighterjet')['spec']['Plane']
     args.output.parent.mkdir(parents=True,exist_ok=True)
-    args.output.write_text(json.dumps({'source':'game/Vehicle.cs','sourceSha256':hashlib.sha256(source.encode()).hexdigest(),'vehicles':data},indent=2)+'\n')
+    args.output.write_text(json.dumps({'source':'game/Vehicle.cs','sourceSha256':hashlib.sha256(source.encode()).hexdigest(),**exported},indent=2)+'\n')
     print(f'Exported {len(data)} original vehicle type IDs to {args.output}')
 
 if __name__=='__main__': main()

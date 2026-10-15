@@ -8,12 +8,14 @@ struct Stamp {
     rotation: Quat,
     articulation: [f32; 4],
     damage: u16,
+    mounts: Vec<f32>,
 }
 impl Stamp {
-    fn of(body: &VehicleBody, pose: &Transform) -> Self {
+    fn of(body: &VehicleBody, pose: &Transform, mounts: Option<&turrets::Mounts>) -> Self {
         Self {
             position: pose.translation,
             rotation: pose.rotation,
+            mounts: mounts.map_or_else(Vec::new, turrets::Mounts::signature),
             damage: (body.popped_tire_mask as u16) | ((body.flags as u16) << 8),
             articulation: [
                 body.flight.main_phase,
@@ -25,6 +27,7 @@ impl Stamp {
     }
     fn changed(&self, other: &Self) -> bool {
         self.damage != other.damage
+            || self.mounts != other.mounts
             || self.position.distance_squared(other.position) > 0.000001
             || self.rotation.angle_between(other.rotation).abs() > 0.001
             || self
@@ -55,7 +58,7 @@ pub fn upload(
     world: Res<WorldState>,
     config: Res<WorldConfig>,
     geometry: Res<WorldGeometry>,
-    bodies: Query<(Entity, &VehicleBody, &Transform)>,
+    bodies: Query<(Entity, &VehicleBody, &Transform, Option<&turrets::Mounts>)>,
     hierarchy: Query<(Option<&ChildOf>, Option<&Visibility>)>,
     parts: Query<
         (
@@ -92,9 +95,9 @@ pub fn upload(
     let mut live = HashSet::new();
     let roots: HashMap<_, _> = bodies
         .iter()
-        .map(|(entity, body, pose)| {
+        .map(|(entity, body, pose, mounts)| {
             live.insert(body.net_id);
-            let stamp = Stamp::of(body, pose);
+            let stamp = Stamp::of(body, pose, mounts);
             if uploaded
                 .previous
                 .get(&body.net_id)
@@ -159,7 +162,7 @@ pub fn upload(
         let part = if let Some(tire) = tire {
             format!("tire:{}", tire.index)
         } else if let Some(wheel) = wheel.filter(|wheel| {
-            bodies.get(wheel.body).is_ok_and(|(_, body, _)| {
+            bodies.get(wheel.body).is_ok_and(|(_, body, _, _)| {
                 let spec = &data::definition(body.type_id).unwrap().spec;
                 !spec.plane && !spec.tracked
             })
