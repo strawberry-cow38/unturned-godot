@@ -18,9 +18,15 @@ conversion helpers therefore use `pi/exposure` lux per directional source unit,
 ambient energy. This replaces the earlier18,000-lux visual calibration, which
 overexposed daylight when fed into the source tone curve. `UG_AMB` preserves
 the source ambient override. Tests recover the original diffuse energy after
-Bevy's conversions. Stock Bevy still has inverse-square local-light attenuation,
-whereas the source defaults to inverse-distance; their range cutoff matches,
-but that distance profile and spot cone interpolation need a shader adaptation.
+Bevy's conversions. `hdr/light_units.rs` adapts Bevy's canonical shared PBR
+lighting shader in place to the original default inverse-distance attenuation
+and outer-cone rim profile. The common quartic range cutoff, material BRDF,
+shadow sampling and texture-light behavior remain in the upstream module.
+The adapter runs before shader asset publication, retains its canonical import
+identity, and rejects changed upstream equations rather than partially patching
+them. All currently materialized native local lights use the source default
+exponents. Nondefault siren/headlight/streetlight exponents need per-light GPU
+metadata when those renderers are integrated.
 
 The source Forward+ glow chain is adapted from Godot4.6 `copy.glsl`: four
 half-resolution mip levels use the original nine-tap separable Gaussian,
@@ -76,9 +82,23 @@ Real inventory Wear/Unwear and N-key journeys produced
 `bevy-worn-headlamp-on`, with accepted equipment/switch state in their sidecars.
 The green military and neutral civilian passes preserve colored HUD elements;
 removal restores the ordinary world. These images were opened and reviewed with
-no shader or renderer error. Fixed-night comparisons, other scope variants and
-the source local-light distance/cone adapter remain pending; daylight captures
-do not establish their parity.
+no shader or renderer error. Fixed-midnight captures add `bevy-night-source-off`, `bevy-night-headlamp-on`,
+`bevy-night-worn-military`, `bevy-night-worn-civilian`, and
+`bevy-night-scope-crosshair` PNG/JSON pairs. The goggles were worn through actual
+inventory transactions and toggled with N; sidecars confirm IDs334/1044 and
+active switch state. Opened images retain coastal silhouettes while the military
+tube reveals more cloud/foliage detail and the civilian tube remains weaker and
+grainier. The 8x image confirms aimAlpha1 and the corrected absence of the white
+first-person HUD crosshair. The baseline lamp uses stock inverse-square falloff. The opened
+`bevy-night-headlamp-source-falloff` image uses the same saved pose (under0.2mm
+position difference, identical yaw/pitch and only the headlamp enabled) with the
+source distance/cone adapter: its readable grass/beach light pool extends beyond
+the baseline's weak central patch. The source-light Vulkan run has no shader
+validation failures; all six focused HDR tests pass. Root peer review confirmed
+both night-vision modes, the scope/crosshair image and the broader lamp pool.
+An immediate lamp-off screenshot still retained illumination despite its switch
+sidecar being false; capture latency versus visibility scheduling remains under
+investigation. Other scope variants remain unverified.
 
 The Godot and upstream BakingLab MIT notices are in
 `licenses/GODOT_POSTPROCESS.txt`. Source references:
@@ -94,4 +114,4 @@ readability fills, night floors and per-view ambient override through
 `viewmodel/lighting.rs`, using the same derived light units. Dynamic world-light
 mirrors from `Viewmodel.SetWorldLights`, source label/focus-outline renderers,
 and the broader volumetric-fog pipeline remain separate presentation work.
-Fresh corrected-unit night and further scope-variant visual checks remain pending.
+Further scope variants remain pending; the fixed-night cases above are verified.
