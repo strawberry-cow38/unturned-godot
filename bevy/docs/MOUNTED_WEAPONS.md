@@ -21,7 +21,7 @@ Tank `headOut` belongs to seat1 and is independent of selected mount. Departure 
 `state.vehicleMounts` comes from the client replication registry in both integrated and UDP sessions:
 
 ```json
-[{"vehicleNetId":123,"headOut":false,"mounts":[{"index":0,"yaw":0,"pitch":0,"ammo":59,"cooldownSeconds":2,"crewAlive":true}]}]
+[{"vehicleNetId":123,"headOut":false,"gunnerRise":0,"mounts":[{"index":0,"yaw":0,"pitch":0,"ammo":59,"cooldownSeconds":2,"crewAlive":true}]}]
 ```
 
 The accepted `mountShot` fact contains `vehicleNetId`, `index`, `operatorPlayerId`, `npc`, `gun`, `muzzle`, `direction`, `tick`, `remainingAmmo`, and `sequence`. It is delivered once through the reliable event plane. Late joiners receive current angles/belts/cooldowns, with no historical gunfire replay. Save/load preserves per-vehicle source-order mount state and remaining cooldown; held trigger intent is deliberately not persisted. Origin rebasing translates queued point targets and retained muzzle facts while angles, belts, IDs and clocks remain unchanged.
@@ -34,8 +34,32 @@ Protocol64 appends system20 (`VehicleMounts`), command74 (`MountedInput`) and ev
 
 Trusted NPC bullets carry owner0, may hurt players with PvP disabled, and emit no owner hitmarker. The source player-contact path is flat `PlayerDamage*falloff`, with the original muzzle as the damage direction source, rather than the ordinary player weapon's humanoid zone/armor rules. NPC warheads preserve that PvE permission through the original authoritative blast service. These are optional trusted-host combat seams; ordinary gun, grenade and no-adapter core behavior remains unchanged.
 
+## Accepted occupant anchors
+
+Protocol65 appends the validated `gunnerRise` float to each mounted vehicle row;
+version64 peers fail the handshake rather than decoding shifted mount fields.
+The source `UpdateHatches` progress advances at3/s exactly once per50Hz host
+tick, toward1 only for an occupied seat1 with accepted `headOut`. Native readers
+use that accepted progress directly, including late joins; there is no second
+rise simulation. Save/load retains progress, then lowers it during the existing
+six load-publication ticks when no occupant has been restored.
+
+The host prepares mount aim and hatch progress after command dispatch and before
+placing vehicle occupants or stepping combat. Ordinary body origins come from
+the embedded original `bodySeats`; the tank gunner uses the cannon yaw pivot plus
+`TankGunnerSeatDown + Up * (0.7 * gunnerRise)`. Cannon pitch never rotates the seat.
+The complete accepted hull rotation transforms the result. The player wire keeps
+the resulting heading and sitting stance. This moves the existing authoritative
+player hit cylinder to the rendered body origin; its existing stance geometry
+is unchanged. The optional core host provider remains null in bare harnesses.
+
+Dead, exiting and removed-vehicle occupants leave through the existing validated
+seat lifecycle. A missing vehicle row now triggers that cleanup even if a host
+caller omitted `OnVehicleRemoved`, preventing stranded occupancy after registry
+replacement. Source seat switching is a separate subsequent integration.
+
 ## Verification and remaining presentation
 
 The managed tests exercise real UDP driver-to-gunner takeover and return, owner-only controls, exact source belts and muzzles, parent yaw without parent pitch, source rear-deck depression, look-versus-point gates, stale/replayed inputs, crew/player distinctions, persisted state, origin barriers and late joins. Core tests reject every truncated command/event/registry prefix, verify small row deltas among100 idle vehicles, reject old protocol versions, and hit an actual player's head-height band with an NPC round to distinguish the source flat/falloff rule from ordinary2x head damage.
 
-Native articulated models were rendered in the preceding vehicle checkpoint. Playable mounted input, accepted belt HUD, firing effects and camera anchors are still pending their native integration and live visual verification. Remote cosmetic mounted flights and warhead visuals still require their accepted presentation adapter; the shared server already owns damage. NPC helicopter navigation, targeting and live damageable crew are subsequent source-controller work, not implied by this launch seam.
+Native articulated models were rendered in the preceding vehicle checkpoint. Playable mounted input, accepted belt HUD, firing effects and camera-anchor presentation are still pending their native integration and live visual verification. The host occupant anchor and rise are covered by managed/real-UDP regressions above. Remote cosmetic mounted flights and warhead visuals still require their accepted presentation adapter; the shared server already owns damage. NPC helicopter navigation, targeting and live damageable crew are subsequent source-controller work, not implied by this launch seam.

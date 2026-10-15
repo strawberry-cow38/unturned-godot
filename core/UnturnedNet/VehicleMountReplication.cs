@@ -11,7 +11,7 @@ namespace UnturnedGodot.Net
             && float.IsFinite(Pitch) && Pitch >= -180 && Pitch <= 180
             && float.IsFinite(CooldownSeconds) && CooldownSeconds >= 0 && CooldownSeconds <= 60;
     }
-    public sealed record VehicleMountsState(uint VehicleNetId, VehicleMountState[] Mounts, bool HeadOut);
+    public sealed record VehicleMountsState(uint VehicleNetId, VehicleMountState[] Mounts, bool HeadOut, float GunnerRise = 0);
 
     /// <summary>Source mounts in original definition order. Atomic row deltas and tombstones
     /// keep removal/late join consistent; no client simulation or ammo writes.</summary>
@@ -27,9 +27,10 @@ namespace UnturnedGodot.Net
         public void ServerSet(VehicleMountsState value, long tick)
         {
             if (value.VehicleNetId == 0 || value.Mounts == null || value.Mounts.Length is < 1 or > MaxMounts
+                || !float.IsFinite(value.GunnerRise) || value.GunnerRise < 0 || value.GunnerRise > 1
                 || value.Mounts.Any(m => !m.IsValid)) throw new ArgumentException("Invalid vehicle mounts");
             if (!_vehicles.ContainsKey(value.VehicleNetId) && _vehicles.Count == MaxVehicles) throw new InvalidOperationException("Mounted vehicle limit");
-            if (_vehicles.TryGetValue(value.VehicleNetId, out var old) && old.HeadOut == value.HeadOut && old.Mounts.SequenceEqual(value.Mounts)) return;
+            if (_vehicles.TryGetValue(value.VehicleNetId, out var old) && old.HeadOut == value.HeadOut && old.GunnerRise == value.GunnerRise && old.Mounts.SequenceEqual(value.Mounts)) return;
             _vehicles[value.VehicleNetId] = value with { Mounts = value.Mounts.ToArray() }; _changed[value.VehicleNetId] = tick; _removed.Remove(value.VehicleNetId);
         }
         public void ServerRemove(uint id, long tick)
@@ -56,7 +57,7 @@ namespace UnturnedGodot.Net
         {
             var rows=values.ToArray();w.WriteUInt16((ushort)rows.Length);
             foreach (var row in rows) {
-                w.WriteUInt32(row.VehicleNetId); w.WriteUInt8((byte)row.Mounts.Length); w.WriteBit(row.HeadOut);
+                w.WriteUInt32(row.VehicleNetId); w.WriteUInt8((byte)row.Mounts.Length); w.WriteBit(row.HeadOut); w.WriteFloat(row.GunnerRise);
                 foreach (var mount in row.Mounts) {
                     w.WriteFloat(mount.Yaw); w.WriteFloat(mount.Pitch); w.WriteUInt16(mount.Ammo);
                     w.WriteFloat(mount.CooldownSeconds); w.WriteBit(mount.CrewAlive);
@@ -71,7 +72,8 @@ namespace UnturnedGodot.Net
             var next = new SortedDictionary<uint, VehicleMountsState>();
             for (int n = 0; n < count; n++) {
                 if (!r.ReadUInt32(out uint id) || id == 0 || next.ContainsKey(id)
-                    || !r.ReadUInt8(out byte size) || size is < 1 or > MaxMounts || !r.ReadBit(out bool head)) return;
+                    || !r.ReadUInt8(out byte size) || size is < 1 or > MaxMounts || !r.ReadBit(out bool head)
+                    || !r.ReadFloat(out float rise) || !float.IsFinite(rise) || rise < 0 || rise > 1) return;
                 var mounts = new VehicleMountState[size];
                 for (int i = 0; i < size; i++) {
                     if (!r.ReadFloat(out float yaw) || !r.ReadFloat(out float pitch) || !r.ReadUInt16(out ushort ammo)
@@ -79,7 +81,7 @@ namespace UnturnedGodot.Net
                     mounts[i] = new(yaw, pitch, ammo, cooldown, crew);
                     if (!mounts[i].IsValid) return;
                 }
-                next[id] = new(id, mounts, head);
+                next[id] = new(id, mounts, head, rise);
             }
             var removed=new HashSet<uint>();
             if(!full) {
@@ -97,6 +99,7 @@ namespace UnturnedGodot.Net
             ulong hash = NetHash.MixUInt32(NetHash.FnvOffset, (uint)_vehicles.Count);
             foreach (var row in _vehicles.Values) {
                 hash = NetHash.MixUInt32(hash, row.VehicleNetId); hash = NetHash.MixUInt32(hash, row.HeadOut ? 1u : 0);
+                hash = NetHash.MixUInt32(hash, BitConverter.SingleToUInt32Bits(row.GunnerRise));
                 hash = NetHash.MixUInt32(hash, (uint)row.Mounts.Length);
                 foreach (var m in row.Mounts) {
                     hash = NetHash.MixUInt32(hash, BitConverter.SingleToUInt32Bits(m.Yaw));

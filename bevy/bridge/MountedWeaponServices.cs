@@ -23,9 +23,10 @@ public sealed class MountedWeaponServices
         public MountedWeaponCatalog.Fleet Spec;
         public VehicleMountState[] Mounts;
         public bool HeadOut;
+        public float GunnerRise;
     }
     sealed record Input(MountedInputCommand Command,long Until,int Seat);
-    public sealed record Saved(int Ordinal,byte TypeId,VehicleMountState[] Mounts,bool HeadOut);
+    public sealed record Saved(int Ordinal,byte TypeId,VehicleMountState[] Mounts,bool HeadOut,float GunnerRise=0);
     readonly NetWorldServer _server;
     readonly MountedWeaponCatalog _catalog;
     readonly CosmeticBulletServices _cosmetic;
@@ -38,6 +39,8 @@ public sealed class MountedWeaponServices
         _server=server;_catalog=catalog.Mounted;_cosmetic=cosmetic;
         server.MountedInputAllowed=Allowed;
         server.MountedInputRequested=Accept;
+        server.VehicleHost.BeforeOccupantStep=Prepare;
+        server.VehicleHost.OccupantPoseOf=OccupantPose;
         server.Session.PeerDisconnected+=(peer,reason)=>{_inputs.Remove(peer.PlayerId);_sequences.Remove(peer.PlayerId);};
     }
     public void SyncFleet()
@@ -47,7 +50,7 @@ public sealed class MountedWeaponServices
         foreach(var v in _server.Vehicles.All)
         {
             if(_states.TryGetValue(v.NetIdValue,out var old)&&old.Spec.TypeId==v.TypeId)continue;
-            var spec=_catalog.For(v.TypeId);if(spec==null)continue;
+            var spec=_catalog.For(v.TypeId);if(spec==null||spec.Mounts.Length==0)continue;
             _states[v.NetIdValue]=new(){Spec=spec,Mounts=spec.Mounts.Select(m=>new VehicleMountState(0,0,(ushort)m.Belt,0,MountedWeaponCatalog.V(m.GunnerAt)==NVector.Zero)).ToArray()};
             Publish(v.NetIdValue,_states[v.NetIdValue]);
         }
@@ -84,9 +87,11 @@ public sealed class MountedWeaponServices
         _sequences[owner]=command.Sequence;
         _inputs[owner]=new(command,_server.Session.CurrentTick+InputLifetimeTicks,SeatOf(command.VehicleNetId,owner));
     }
-    public void Step()
+    // Aim/head-out intent is received before vehicle occupants are placed. Keep
+    // body and capsule on that same accepted frame before this tick's combat.
+    void Prepare(long tick)
     {
-        SyncFleet();long tick=_server.Session.CurrentTick;
+        SyncFleet();
         foreach(ushort owner in _sequences.Keys.Where(owner=>!_server.Players.TryGetByOwner(owner,out _)).ToArray()){_sequences.Remove(owner);_inputs.Remove(owner);}
         foreach(var state in _states.Values)for(int i=0;i<state.Mounts.Length;i++)
             if(state.Mounts[i].CooldownSeconds>0)state.Mounts[i]=state.Mounts[i] with{CooldownSeconds=Math.Max(0,state.Mounts[i].CooldownSeconds-Dt)};
@@ -98,7 +103,28 @@ public sealed class MountedWeaponServices
             var state=_states[command.VehicleNetId];int index=IndexFor(command.VehicleNetId,input.Seat,command.Slot);
             if(state.Spec.Tank&&input.Seat==1)state.HeadOut=command.HeadOut;
             ApplyAim(command.VehicleNetId,index,command);
-            if(command.Trigger)Fire(command.VehicleNetId,index,owner,false,false);
+        }
+        foreach(var pair in _states)
+        {
+            var state=pair.Value;
+            if(state.Spec.Tank)
+            {
+                bool occupied=_server.Vehicles.SeatOccupant(new(pair.Key),1)!=0;
+                if(!occupied)state.HeadOut=false;
+                state.GunnerRise=Move(state.GunnerRise,state.HeadOut&&occupied?1:0,3*Dt);
+            }
+        }
+    }
+    public void Step()
+    {
+        // Preserve the existing post-combat launch phase: a newly accepted round
+        // first advances next tick. Recheck life because combat may have killed
+        // the operator after preparation and before this launch.
+        foreach(var pair in _inputs.ToArray())
+        {
+            var input=pair.Value;var command=input.Command;
+            if(command.Trigger&&Allowed(pair.Key,command)&&SeatOf(command.VehicleNetId,pair.Key)==input.Seat)
+                Fire(command.VehicleNetId,IndexFor(command.VehicleNetId,input.Seat,command.Slot),pair.Key,false,false);
         }
         foreach(var pair in _states)
         {
@@ -106,9 +132,28 @@ public sealed class MountedWeaponServices
             Publish(pair.Key,pair.Value);
         }
     }
+    (Vector3 Position,float YawDegrees)? OccupantPose(uint id,int seat)
+    {
+        if(!_server.Vehicles.TryGet(id,out var vehicle))return null;
+        var spec=_catalog.For(vehicle.TypeId);
+        if(spec==null||seat<0||seat>=spec.BodySeats.Length)return null;
+        var rotation=Quaternion.CreateFromYawPitchRoll(vehicle.YawDegrees*Rad,vehicle.PitchDegrees*Rad,vehicle.RollDegrees*Rad);
+        var local=spec.BodySeats[seat];var bodyRotation=rotation;
+        if(spec.Tank&&seat==1&&_states.TryGetValue(id,out var state))
+        {
+            var yaw=Quaternion.CreateFromAxisAngle(NVector.UnitY,state.Mounts[0].Yaw*Rad);
+            local=MountedWeaponCatalog.V(spec.Mounts[0].Pivot)+NVector.Transform(
+                _catalog.TankGunnerSeat+NVector.UnitY*(_catalog.TankGunnerRise*state.GunnerRise),yaw);
+            bodyRotation=Quaternion.Normalize(rotation*yaw);
+        }
+        // The wire retains only heading; compute it from the actual composed
+        // seat basis so a pitched/rolled hull is not treated as yaw-only.
+        var forward=NVector.Transform(-NVector.UnitZ,bodyRotation);
+        return(U(N(vehicle.Pos)+NVector.Transform(local,rotation)),MathF.Atan2(-forward.X,-forward.Z)/Rad);
+    }
     // Restore/host intent may run after this tick's snapshot was acknowledged.
     // Stamp the next publication so even a fully idle restored belt is echoed.
-    void Publish(uint id,State state)=>_server.VehicleMounts.ServerSet(new(id,state.Mounts,state.HeadOut),_server.Session.CurrentTick+1);
+    void Publish(uint id,State state)=>_server.VehicleMounts.ServerSet(new(id,state.Mounts,state.HeadOut,state.GunnerRise),_server.Session.CurrentTick+1);
     readonly record struct Frame(NVector Position,Quaternion Rotation)
     {
         public NVector Point(NVector p)=>Position+NVector.Transform(p,Rotation);
@@ -196,7 +241,7 @@ public sealed class MountedWeaponServices
     public Saved[] Capture()
     {
         SyncFleet();return _server.Vehicles.All.Select((v,i)=>(v,i)).Where(p=>_states.ContainsKey(p.v.NetIdValue))
-            .Select(p=>new Saved(p.i,p.v.TypeId,_states[p.v.NetIdValue].Mounts.ToArray(),_states[p.v.NetIdValue].HeadOut)).ToArray();
+            .Select(p=>new Saved(p.i,p.v.TypeId,_states[p.v.NetIdValue].Mounts.ToArray(),_states[p.v.NetIdValue].HeadOut,_states[p.v.NetIdValue].GunnerRise)).ToArray();
     }
     public void Restore(Saved[] saved)
     {
@@ -204,9 +249,10 @@ public sealed class MountedWeaponServices
         foreach(var row in saved??[])
         {
             if(row.Ordinal<0||row.Ordinal>=fleet.Length||fleet[row.Ordinal].TypeId!=row.TypeId||!_states.TryGetValue(fleet[row.Ordinal].NetIdValue,out var state)
-                ||row.Mounts==null||row.Mounts.Length!=state.Mounts.Length||row.Mounts.Any(m=>!m.IsValid))continue;
+                ||row.Mounts==null||row.Mounts.Length!=state.Mounts.Length||row.Mounts.Any(m=>!m.IsValid)
+                ||!float.IsFinite(row.GunnerRise)||row.GunnerRise<0||row.GunnerRise>1)continue;
             for(int i=0;i<row.Mounts.Length;i++)state.Mounts[i]=row.Mounts[i] with{Ammo=(ushort)Math.Min(row.Mounts[i].Ammo,state.Spec.Mounts[i].Belt)};
-            state.HeadOut=row.HeadOut;Publish(fleet[row.Ordinal].NetIdValue,state);
+            state.HeadOut=row.HeadOut;state.GunnerRise=row.GunnerRise;Publish(fleet[row.Ordinal].NetIdValue,state);
         }
     }
     public void TranslateWorld(Vector3 delta)

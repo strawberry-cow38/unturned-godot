@@ -1082,6 +1082,14 @@ namespace UnturnedGodot.Net
             _tick = tick; _broadcast = broadcast; _sendTo = sendTo;
         }
 
+        /// <summary>Optional host preparation for source articulated seats. Runs once
+        /// after command dispatch and before occupant poses/combat, never per rider.</summary>
+        public Action<long> BeforeOccupantStep;
+
+        /// <summary>Optional source body origin/facing, derived from accepted vehicle
+        /// type, transform and seat. Null keeps the original hull-origin harness behavior.</summary>
+        public Func<uint, int, (Vector3 Position, float YawDegrees)?> OccupantPoseOf;
+
         /// <summary>(sender, spraypaint item id) -> the colour it was, having SPENT it; null if the sender
         /// does not own that can or it is not a spraypaint. Set by the host to ServerTransactions.SpendPaintCan
         /// -- ServerVehicles has the vehicles and the reach, and that has the bag and the content table, and
@@ -1431,12 +1439,26 @@ namespace UnturnedGodot.Net
         /// occupant who died in a seat is force-exited.</summary>
         public void Step(long tick)
         {
+            BeforeOccupantStep?.Invoke(tick);
             List<ushort> exits = null;
             foreach (var kv in _seatByPlayer)
             {
                 if (!_combat.IsAlive(kv.Key)) { (exits ??= new List<ushort>()).Add(kv.Key); continue; }
                 if (_vehicles.TryGet(new NetId(kv.Value.NetId), out var v))
-                    _players.ServerTeleport(kv.Key, v.Pos, tick);
+                {
+                    var pose = OccupantPoseOf?.Invoke(kv.Value.NetId, kv.Value.Seat);
+                    if (pose is { } body && float.IsFinite(body.Position.x) && float.IsFinite(body.Position.y)
+                        && float.IsFinite(body.Position.z) && float.IsFinite(body.YawDegrees)
+                        && _players.TryGetByOwner(kv.Key, out var rider))
+                    {
+                        _players.ServerDrive(kv.Key, body.Position, body.YawDegrees, rider.LastProcessedInputSeq, tick);
+                        // The generic SeatedOf callback describes prop furniture;
+                        // accepted vehicle occupancy supplies this stance itself.
+                        if(rider.Stance!=MoveInput.WireStanceSitting){rider.Stance=MoveInput.WireStanceSitting;rider.LastChangedTick=tick;}
+                    }
+                    else _players.ServerTeleport(kv.Key, v.Pos, tick);
+                }
+                else (exits ??= new List<ushort>()).Add(kv.Key);
             }
             if (exits != null) foreach (ushort p in exits) ServerExit(p);
         }

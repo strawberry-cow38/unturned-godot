@@ -750,3 +750,8 @@ UDP sessions. Protocol64 adds IDs20/74/55; old peers are explicitly refused.
 `worldMountedInput` is the separate trusted AI lane and is unavailable remotely.
 See [MOUNTED_WEAPONS.md](../docs/MOUNTED_WEAPONS.md) for fields, source rules,
 validation, persistence and the remaining remote cosmetic flight work.
+
+`state.vehicleMounts[].gunnerRise` is protocol65 accepted source hatch progress
+(0..1). Use it directly for the tank gunner body; its authoritative player pose
+already uses the same source seat/yaw/rise before combat. Ordinary body seats use
+the embedded source fleet table, independent of native asserted offsets.

@@ -1728,3 +1728,24 @@ passed. Original native mount geometry was verified earlier; playable mounted
 input/HUD/FX and accepted occupant anchors still need their separate native
 integration/visual checkpoint. Remote cosmetic mounted flights and original NPC
 flight/crew logic remain queued. See bevy/docs/MOUNTED_WEAPONS.md.
+
+### Bevy: source vehicle occupant anchors before combat
+
+The host now places accepted riders at the original exported bodySeats, using
+the complete accepted hull transform. The tank gunner follows only the cannon's
+yaw and the source0.7m head-out rise; aim/rise prepare once per50Hz tick before
+occupant adoption and combat. The existing hit-cylinder shape stays unchanged.
+Protocol65 carries validated gunnerRise progress so remote bodies and late joins
+consume the same accepted frame. Partial rise persists and naturally lowers
+through the six existing load-publication ticks without inventing an occupant.
+
+The immutable occupant-provider-v65-final candidate passes87 managed and121
+JSONL tests;669 core tests pass. New regressions cover tilted ordinary/tank seats,
+real UDP same-snapshot body/rise, death/exit, save/load and rebase. An actual NPC
+round hits the source passenger anchor before any native collider publication;
+disabling only the provider makes the same round miss. Removal coverage exposed
+and fixed a stale seat-table case: missing vehicle rows now use existing
+ServerExit cleanup even when a host omitted OnVehicleRemoved. Bare harnesses
+retain the null-provider hull-origin behavior. Independent source review passed.
+Native tank body/camera validation
+and seat switching are separate ongoing checkpoints.

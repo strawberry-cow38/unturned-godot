@@ -108,9 +108,9 @@ namespace UnturnedNet.Tests
         [Test]
         public void Version63IsExplicitlyRejectedBeforeMissingMountStateCanBeMistakenForAnEmptyGun()
         {
-            Assert.That(NetProtocol.Version,Is.EqualTo(64));Assert.That(ReplicationIds.CommandMountedInput,Is.EqualTo(74));Assert.That(ReplicationIds.EventMountedShot,Is.EqualTo(55));
+            Assert.That(NetProtocol.Version,Is.GreaterThanOrEqualTo(64));Assert.That(ReplicationIds.CommandMountedInput,Is.EqualTo(74));Assert.That(ReplicationIds.EventMountedShot,Is.EqualTo(55));
             var h=new NetSimHarness(7643);var old=h.AddClient("old",version:63);old.Connect();
-            Assert.That(h.StepUntil(()=>old.State==NetSessionState.Disconnected,100),Is.True);Assert.That(old.RejectReason,Is.EqualTo(NetRejectReason.VersionMismatch));Assert.That(old.RejectServerVersion,Is.EqualTo(64));
+            Assert.That(h.StepUntil(()=>old.State==NetSessionState.Disconnected,100),Is.True);Assert.That(old.RejectReason,Is.EqualTo(NetRejectReason.VersionMismatch));Assert.That(old.RejectServerVersion,Is.EqualTo(NetProtocol.Version));
         }
     }
 }

@@ -29,18 +29,23 @@ public sealed class MountedWeaponCatalog
         public float YawRate { get; set; } public float PitchRate { get; set; }
         public GunDef Gun;
     }
-    public sealed record Fleet(byte TypeId,string Key,Mount[] Mounts,bool Tank);
+    public sealed record Fleet(byte TypeId,string Key,Mount[] Mounts,bool Tank,Vector3[] BodySeats);
     readonly Dictionary<byte,Fleet> _fleet = new();
     public float RearDepressionScale { get; }
+    public Vector3 TankGunnerSeat { get; }
+    public float TankGunnerRise { get; }
     public MountedWeaponCatalog(string contentRoot)
     {
         using var stream = typeof(MountedWeaponCatalog).Assembly.GetManifestResourceStream("UnturnedBevy.VehicleSpecs.json")!;
         using var doc = JsonDocument.Parse(stream);
-        RearDepressionScale = doc.RootElement.GetProperty("tank").GetProperty("rearDepressionScale").GetSingle();
+        var tank = doc.RootElement.GetProperty("tank");
+        RearDepressionScale = tank.GetProperty("rearDepressionScale").GetSingle();
+        TankGunnerSeat = V(tank.GetProperty("gunnerSeat").Deserialize<float[]>());
+        TankGunnerRise = tank.GetProperty("gunnerRise").GetSingle();
         foreach(var row in doc.RootElement.GetProperty("vehicles").EnumerateArray())
         {
-            if(!row.GetProperty("spec").TryGetProperty("Turrets",out var turrets)||turrets.ValueKind!=JsonValueKind.Array||turrets.GetArrayLength()==0)continue;
-            var mounts=turrets.Deserialize<Mount[]>();
+            var mounts=row.GetProperty("spec").TryGetProperty("Turrets",out var turrets)&&turrets.ValueKind==JsonValueKind.Array
+                ?turrets.Deserialize<Mount[]>():Array.Empty<Mount>();
             if(mounts.Length>VehicleMountReplication.MaxMounts)throw new InvalidDataException("Too many source mounts");
             for(int i=0;i<mounts.Length;i++)
             {
@@ -51,7 +56,8 @@ public sealed class MountedWeaponCatalog
                 m.Gun=File.Exists(path)?GunDef.FromDatText(File.ReadAllText(path)):null;
             }
             byte type=row.GetProperty("typeId").GetByte();string key=row.GetProperty("key").GetString();
-            _fleet.Add(type,new(type,key,mounts,key=="tank"));
+            var bodies=row.GetProperty("bodySeats").Deserialize<float[][]>().Select(V).ToArray();
+            _fleet.Add(type,new(type,key,mounts,key=="tank",bodies));
         }
     }
     public Fleet For(byte type)=>_fleet.GetValueOrDefault(type);
