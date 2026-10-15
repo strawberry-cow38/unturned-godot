@@ -11,13 +11,15 @@ public sealed partial class BridgeHost
     {
         _npcView = new();
         _storageView = new();
+        _craftQueue = default;
+        _craftQueueTick = 0;
         _client = new NetWorldClient(transport, _name, contentHash: NetContent.Hash);
         DeployableNetSchema.RegisterAll(_client.Deployables.Schema);
         WorldServices.RegisterCrops(_client.Crops.Schema);
         _client.PlayerRecov += e => { _position = e.Pos; _velocity = e.Vel; _recov = e.RecovCounter; _movement.Velocity = WorldToLocal(_velocity, _yaw); _correctionVersion++; };
         _client.ConsoleResult += e => Emit("console", e);
         _client.HitConfirmed += e => Emit("hit", e);
-        _client.CraftQueue_ += e => Emit("craftQueue", e);
+        _client.CraftQueue_ += e => { _craftQueue = e; _craftQueueTick = _network.CurrentTick; Emit("craftQueue", e); };
         _client.PlayerFired += e => {
             var facts=_weapons?.TakeShot(e.PlayerId,e.Gun);
             Emit("fire",new{playerId=e.PlayerId,origin=e.Origin,dir=e.Dir,gun=e.Gun,

@@ -2407,3 +2407,19 @@ respective frame and emitted the exact two intents. The Vulkan image was opened
 and independently reviewed, as was the source patch. No authority or wire
 behavior changes. See `bevy/docs/UI_POINTER_INPUT_PORT.md` and
 `bevy/artifacts/bevy-fast-buttons.{png,json}`.
+
+### Original crafting browse projection and accepted owner queue
+
+The new read-only `craftingView` uses the original indexed catalog, category and
+title policy, typed search, item/tool/output lookup, blueprint knowledge,
+salvage-held filter and ordered blocker text. Stable full-catalog indices remain
+the existing Craft command's address. Details count only carried pages, clamp
+quantities against consumed supplies and preserve the original tool-table color
+quirk. Current original authority still rejects station recipes; no station
+crafting completion is claimed.
+
+Five managed presentation tests pass. A real two-process UDP journey verifies
+remote browsing, accepted private queue state, ingredient escrow, cancellation
+and exact refunds; the old bridge without the read operation fails the same
+test. Final immutable bridge is `.local/crafting-view-v70`. The replacement
+native category grid/detail/queue is in progress and being rendered separately.

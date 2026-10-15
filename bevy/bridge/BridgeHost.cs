@@ -105,6 +105,7 @@ public sealed partial class BridgeHost : IDisposable
                     recipes = _catalog.Recipes.Count, movementHeights = new { stand = PlayerMovementDef.HEIGHT_STAND, crouch = PlayerMovementDef.HEIGHT_CROUCH, prone = PlayerMovementDef.HEIGHT_PRONE }, network = NetworkState(), capabilities = Capabilities(),
                     actions = Actions.Keys.Append("respawn").Append("setFiremode").Append("holdItem").Append("equipAndHold").Order().ToArray() };
             case "rebase": return Rebase(r);
+            case "craftingView": RequireSession(); return ReadCrafting(r);
             case "simulate":
                 RequireSession();
                 return Simulate(r.TryGetProperty("input", out var input) ? input : r);

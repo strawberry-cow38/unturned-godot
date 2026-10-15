@@ -115,10 +115,25 @@ donor = match(r'public static string AnimationDonorFor\(string gunName\)\s*=>[^;
 # owner item, then the authored name/operation. Many real recipes have no Name.
 crafting_menu = read('game/inventory/CraftingMenu.cs')
 title = match(r'public static string Title\(BlueprintDef bp\)\s*\{.*?\n        \}', crafting_menu)
+crafting_policy = [title,
+    match(r'static readonly string\[\] CatOrder[^;]+;', crafting_menu).replace('static readonly', 'public static readonly'),
+    match(r'static bool OffAll\(string cat\)\s*=>[^;]+;', crafting_menu).replace('static bool', 'public static bool')]
+for name, result in [('CategoryOf', 'string'), ('OutAsset', 'ItemAsset'), ('UsesItem', 'bool'),
+                     ('MakesItem', 'bool'), ('HowToLearn', 'string'), ('StationNames', 'string'), ('Matches', 'bool')]:
+    method = match(r'(?:public )?static ' + result + r' ' + name + r'\([^\n]+\)\s*\{.*?\n        \}', crafting_menu)
+    if not method.startswith('public '): method = 'public ' + method
+    crafting_policy.append(method)
+# Keep the authored blocker ordering/text, adapting only its instance dependencies
+# to explicit accepted-client inputs. No Godot scene or client mutation is linked.
+blocker = match(r'public string CraftBlocker\([^\n]+\)\s*\{.*?\n        \}', crafting_menu)
+blocker = blocker.replace('public string CraftBlocker(BlueprintDef bp, Crafting.IInv inv, int qty = 1)',
+    'public static string CraftBlocker(BlueprintDef bp, Crafting.IInv inv, PlayerSkills skills, ICollection<string> known, ICollection<string> stations, int qty = 1)')
+blocker = blocker.replace('Known(bp)', 'Crafting.Knows(bp, known)').replace('Player?.Skills', 'skills').replace('_stationTags', 'stations')
+crafting_policy.append(blocker)
 (out / 'CraftingPresentation.g.cs').write_text(
-    '// Generated unchanged from game/inventory/CraftingMenu.cs; do not edit.\n'
-    'using SDG.Unturned; namespace UnturnedGodot { public static class SourceCraftingMenu {\n'
-    + title + '\n}}\n')
+    '// Generated from game/inventory/CraftingMenu.cs; only visibility and instance inputs adapted.\n'
+    'using SDG.Unturned; using UnityEngine; using System.Collections.Generic; namespace UnturnedGodot { public static class SourceCraftingMenu {\n'
+    + '\n'.join(crafting_policy) + '\n}}\n')
 
 # Source magazine compatibility, richest-mag selection, chamber retention and
 # loose-round consumption remain verbatim, hosted on authoritative inventories.

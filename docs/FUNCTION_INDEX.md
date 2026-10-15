@@ -405,3 +405,4 @@ Companion documents:
 | Need | Reuse | Notes |
 | --- | --- | --- |
 | Display an original blueprint title | `SourceCraftingMenu.Title` (extracted unchanged from `game/inventory/CraftingMenu.cs` by `bevy/bridge/extract_data.py`) | Output item/quantity, then owner, then authored name/operation; `BlueprintDef.Name` is often empty and is not the display label |
+| Browse original crafting categories/search/lookup and inspect accepted ingredient counts | `CraftingView.Read`, bridge `craftingView`, generated `SourceCraftingMenu` policies | original Index subset with full-catalog command indices; unknown/unheld salvage only appear in typed search; carried pages only, quantity/tools/blockers; accepted owner queue slots remain oldest-first |
