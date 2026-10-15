@@ -92,6 +92,9 @@ public sealed class VehicleServices
             if (!_server.Vehicles.TryGet(id, out var e)) throw new ArgumentException($"Unknown vehicle {id}");
             float fuel = Float(state, "fuel", FuelFor(id, e.Fuel)), health = Float(state, "health", e.Health), battery = Float(state, "battery", e.Battery);
             byte flags = checked((byte)Int(state, "flags", e.Flags));
+            // Body telemetry must not resurrect a vehicle destroyed by server
+            // combat after the host's last replica. Damage is an explicit fact.
+            flags = (byte)((flags & ~VehicleReplication.FlagExploded) | (e.Flags & VehicleReplication.FlagExploded));
             _fuel[id] = fuel;
             if (e.DriverPlayerId == 0)
                 _server.Vehicles.ServerPublish(new(id), Vec(state, "position", e.Pos), Vec(state, "eulerDegrees", new(e.PitchDegrees, e.YawDegrees, e.RollDegrees)),

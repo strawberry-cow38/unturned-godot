@@ -409,6 +409,16 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(1, len(self.pump()['vehicles']))
             self.assertEqual(48000, self.call('snapshot')['state']['vehicles'][0]['fuel'])
 
+    def test_vehicle_telemetry_preserves_authoritative_explosion_and_vitals(self):
+        vehicle = dict(typeId=0, key='wreck', position=[0, 0, -2], health=0, fuel=12345, battery=50,
+                       flags=32, speedMax=35, seatCount=1)
+        net_id = self.call('worldVehicles', vehicles=[vehicle])['result']['vehicles'][0]['netId']
+        self.call('worldVehicleState', vehicles=[dict(netId=net_id, position=[0, 0, -2], flags=0)])
+        state = self.pump()['vehicles'][0]
+        self.assertEqual(32, state['flags'] & 32)
+        self.assertEqual(0, state['health'])
+        self.assertEqual(12345, state['fuel'])
+
     def test_world_services_forage_reach_regrowth_and_save(self):
         self.call('worldServices', resourceCount=2, resources=[
             dict(index=0, rewardItemId=13, position=[0, 0, -1], resetSeconds=.4),
