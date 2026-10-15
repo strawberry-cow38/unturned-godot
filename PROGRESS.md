@@ -1390,3 +1390,22 @@ retains its face-down/mattress intersection; no guessed offset was added. The
 original Bed is fallback/CI furniture, not a retail Bed_* prop interaction. Its
 separate native registration/claim/sit fixture is still in progress; these images
 use fixed accepted replicas. See bevy/docs/PROP_SEATS_PORT.md.
+
+### Bevy remote attachment menu and exact-instance UDP journey (2026-10-15)
+
+The original hold-T menu now explicitly waits for asynchronous owner options,
+keeps matching accepted choices during refresh, and disables pending/busy
+controls. Clicks recheck current connection, life, selection epoch, exact gun
+token and accepted weapon clocks, including the interval before an old widget
+is rebuilt. Source hook geometry, icons and per-magazine counts remain intact.
+
+Four native UI tests pass, including a production-widget journey over two real
+UDP processes: remove loaded29 into chamber1 plus the actual28-round magazine,
+then select that instance beside an identical full30 magazine. The gun returns
+to29 and the unclicked full30/token remain owned. Combined native385 PASS (three
+manual render fixtures ignored) on immutable profile-config-49. Actual Vulkan
+inventory/equip/fire/T inputs reproduced the same swap; three paired image/state
+captures were opened and independently reviewed by two agents, and client/host
+quit cleanly. See bevy/docs/EQUIPMENT_PROTOCOL.md. The live journey also confirmed
+the inherited held-T pose ending at ready after reload; its native usability
+repair is tracked separately and does not alter these authority results.

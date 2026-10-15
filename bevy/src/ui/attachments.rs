@@ -35,6 +35,9 @@ impl Plugin for AttachmentMenuPlugin {
 struct Menu {
     options: Value,
     drawn: Value,
+    pending: bool,
+    drawn_pending: bool,
+    drawn_busy: bool,
     selection: Value,
     epoch: u64,
     poll: f32,
@@ -100,6 +103,7 @@ fn input(
         menu.epoch = epoch.0;
         menu.options = Value::Null;
         menu.drawn = Value::Null;
+        menu.pending = true;
         menu.poll = 0.;
     }
 }
@@ -112,6 +116,7 @@ fn refresh(
 ) {
     if state.screen != Screen::Attachments {
         menu.options = Value::Null;
+        menu.pending = false;
         return;
     }
     menu.poll -= time.delta_secs();
@@ -120,9 +125,27 @@ fn refresh(
     }
     menu.poll = 0.15;
     match bridge.request("attachmentOptions", json!({})) {
-        Ok(reply) => menu.options = reply["result"].clone(),
-        Err(e) => model.notice(format!("Attachment options: {e}")),
+        Ok(reply) => {
+            let options = &reply["result"];
+            menu.pending = options["pending"] == true
+                || (options["supported"] != false && options["selectionVersion"] != menu.selection);
+            if !menu.pending {
+                menu.options = options.clone();
+            }
+        }
+        Err(e) => {
+            menu.pending = true;
+            model.notice(format!("Attachment options: {e}"));
+        }
     }
+}
+fn weapon_busy(snapshot: &Value) -> bool {
+    ["reloading", "unloading", "rechambering"]
+        .iter()
+        .any(|key| snapshot["weapon"][key] == true)
+}
+fn actions_busy(menu: &Menu, snapshot: &Value) -> bool {
+    menu.pending || menu.options["busy"].as_bool().unwrap_or(true) || weapon_busy(snapshot)
 }
 fn request(options: &Value, name: &str, mut args: Value) -> Action {
     args["selectionVersion"] = options["selectionVersion"].clone();
@@ -136,13 +159,24 @@ fn activate(
     event: On<Activate>,
     buttons: Query<&Action>,
     state: Res<UiState>,
+    snapshot: Res<GameSnapshot>,
     mut intents: MessageWriter<UiIntent>,
     mut menu: ResMut<Menu>,
 ) {
-    if state.screen != Screen::Attachments {
+    if state.screen != Screen::Attachments
+        || actions_busy(&menu, &snapshot.0)
+        || snapshot.0["connected"] != true
+        || snapshot.0["player"]["alive"] != true
+        || menu.selection != snapshot.0["weapon"]["selectionVersion"]
+    {
         return;
     }
     if let Ok(action) = buttons.get(event.entity) {
+        if action.args["gunToken"] != menu.options["gunToken"]
+            || action.args["selectionVersion"] != menu.selection
+        {
+            return;
+        }
         intents.write(UiIntent::Action {
             name: action.name.clone(),
             args: action.args.clone(),
@@ -169,21 +203,32 @@ fn build(
         menu.drawn = Value::Null;
         return;
     }
-    if menu.options.is_null() || (menu.options == menu.drawn && !roots.is_empty()) {
+    let busy = actions_busy(&menu, &snapshot.0);
+    if (menu.options.is_null() && !menu.pending)
+        || (menu.options == menu.drawn
+            && menu.pending == menu.drawn_pending
+            && busy == menu.drawn_busy
+            && !roots.is_empty())
+    {
         return;
     }
     for root in &roots {
         commands.entity(root).despawn();
     }
     menu.drawn = menu.options.clone();
+    menu.drawn_pending = menu.pending;
+    menu.drawn_busy = busy;
     let options = &menu.options;
-    let busy = options["busy"].as_bool().unwrap_or(true);
     commands.spawn((Root,Node{width:percent(100),height:percent(100),position_type:PositionType::Absolute,..default()},
         GlobalZIndex(58),BackgroundColor(Color::srgba(0.,0.,0.,0.35))))
         .with_children(|root| {
             root.spawn((text(format!("{}   |   Release {} to close", options["gunName"].as_str().unwrap_or("Attachments"),settings.bindings.get(&GameAction::AttachMenu).map_or_else(||"T".into(),Binding::label)),16.,TEXT),
                 Node{position_type:PositionType::Absolute,left:px(24),top:px(84),..default()}));
             root.spawn((Tooltip,text("",14.,TEXT),Node{position_type:PositionType::Absolute,bottom:px(80),left:percent(30),..default()}));
+            if menu.pending || options["supported"]==false {
+                root.spawn((text(if menu.pending {"Loading attachments…"}else{"This server does not support attachment controls."},16.,TEXT),
+                    Node{position_type:PositionType::Absolute,left:px(24),top:px(112),..default()}));
+            }
             for slot in options["slots"].as_array().into_iter().flatten() {
                 if slot["visible"]==false {continue;}
                 let name=slot["name"].as_str().unwrap_or("");
@@ -382,153 +427,4 @@ fn orient_icons(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    fn item(id: u16) -> crate::entities::ItemVisual {
-        serde_json::from_value(json!({"id":id,"name":"Rifle","type":"gun"})).unwrap()
-    }
-    #[test]
-    fn hold_menu_closes_on_release_replacement_or_session_and_refuses_reload() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .init_resource::<Settings>()
-            .init_resource::<ButtonInput<KeyCode>>()
-            .init_resource::<ButtonInput<MouseButton>>()
-            .init_resource::<UiState>()
-            .init_resource::<ItemCatalog>()
-            .init_resource::<WorldSessionEpoch>()
-            .init_resource::<GameSnapshot>()
-            .init_resource::<ViewmodelStatus>()
-            .init_resource::<Menu>()
-            .add_systems(Update, input);
-        app.world_mut().resource_mut::<UiState>().screen = Screen::Playing;
-        app.world_mut()
-            .resource_mut::<ItemCatalog>()
-            .items
-            .insert(4, item(4));
-        {
-            let mut status = app.world_mut().resource_mut::<ViewmodelStatus>();
-            status.held = 4;
-            status.ready = true;
-        }
-        app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"connected":true,"player":{"alive":true},"weapon":{"selectionVersion":3,"reloading":true}});
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyT);
-        app.update();
-        assert_eq!(app.world().resource::<UiState>().screen, Screen::Playing);
-        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["reloading"] = json!(false);
-        app.update();
-        assert_eq!(
-            app.world().resource::<UiState>().screen,
-            Screen::Attachments
-        );
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .clear();
-        app.update();
-        assert_eq!(
-            app.world().resource::<UiState>().screen,
-            Screen::Attachments
-        );
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .release(KeyCode::KeyT);
-        app.update();
-        assert_eq!(app.world().resource::<UiState>().screen, Screen::Playing);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyT);
-        app.update();
-        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["selectionVersion"] = json!(4);
-        app.update();
-        assert_eq!(app.world().resource::<UiState>().screen, Screen::Playing);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .clear();
-        app.update();
-        assert_eq!(app.world().resource::<UiState>().screen, Screen::Playing);
-    }
-    #[test]
-    fn rendered_duplicate_magazine_buttons_retain_exact_tokens_and_rounds() {
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
-            .init_asset::<Image>()
-            .init_resource::<Menu>()
-            .init_resource::<Settings>()
-            .init_resource::<UiState>()
-            .init_resource::<WorldConfig>()
-            .init_resource::<ItemCatalog>()
-            .init_resource::<GameSnapshot>()
-            .add_message::<UiIntent>()
-            .add_systems(Update, build)
-            .add_observer(activate);
-        app.world_mut().resource_mut::<UiState>().screen = Screen::Attachments;
-        let options = json!({"gunToken":100,"selectionVersion":3,"gunName":"Rifle","busy":false,"slots":[{
-            "name":"Magazine","visible":true,"available":true,"detachable":true,"color":[1,1,1,1],"kind":"magazine",
-            "choices":[{"id":6,"page":2,"x":0,"y":0,"amount":30,"instanceToken":101},
-                {"id":6,"page":2,"x":2,"y":0,"amount":12,"instanceToken":102}]}]});
-        app.world_mut().resource_mut::<Menu>().options = options.clone();
-        app.update();
-        let world = app.world_mut();
-        let buttons: Vec<_> = world
-            .query::<(Entity, &Action, &Label)>()
-            .iter(world)
-            .filter(|(_, a, _)| a.name == "installAttachment")
-            .map(|(e, a, l)| (e, a.args.clone(), l.0.clone()))
-            .collect();
-        assert_eq!(buttons.len(), 2);
-        let short = buttons
-            .iter()
-            .find(|(_, a, _)| a["instanceToken"] == 102)
-            .unwrap();
-        assert!(short.2.contains("12 rounds"));
-        world.trigger(Activate { entity: short.0 });
-        let messages: Vec<_> = world.resource_mut::<Messages<UiIntent>>().drain().collect();
-        assert!(
-            matches!(&messages[0],UiIntent::Action{name,args} if name=="installAttachment"&&args["instanceToken"]==102&&args["gunToken"]==100&&args["selectionVersion"]==3&&args["x"]==2)
-        );
-        assert_eq!(world.resource::<Menu>().options, options);
-        world.resource_mut::<UiState>().screen = Screen::Playing;
-        app.update();
-        let world = app.world_mut();
-        assert_eq!(world.query::<&Hook>().iter(world).count(), 0);
-    }
-    #[test]
-    fn original_magazine_alpha_bounds_choose_stanag_but_not_upright_drum() {
-        use bevy::{
-            asset::RenderAssetUsages,
-            image::{CompressedImageFormats, ImageSampler, ImageType},
-        };
-        for (id, wide) in [(6, true), (17, false)] {
-            let bytes = std::fs::read(
-                WorldConfig::default()
-                    .content_root
-                    .join(format!("items/icons/{id}.png")),
-            )
-            .unwrap();
-            let image = Image::from_buffer(
-                &bytes,
-                ImageType::Extension("png"),
-                CompressedImageFormats::NONE,
-                true,
-                ImageSampler::Default,
-                RenderAssetUsages::MAIN_WORLD,
-            )
-            .unwrap();
-            assert_eq!(drawn_wide(&image), wide, "item{id}");
-        }
-        let screen = Vec2::new(1280., 720.);
-        for n in 2..=20 {
-            let centers: Vec<_> = (0..n)
-                .map(|i| {
-                    option_position(Vec2::ZERO, Vec2::splat(44.), screen, i, n) + Vec2::splat(22.)
-                })
-                .collect();
-            for i in 0..n {
-                assert!(centers[i].distance(centers[(i + 1) % n]) >= 53.999);
-                assert!(centers[i].min_element() >= 22.);
-            }
-        }
-    }
-}
+mod tests;

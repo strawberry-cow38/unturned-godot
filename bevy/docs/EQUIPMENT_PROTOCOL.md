@@ -98,6 +98,27 @@ token, selected-gun replacement epochs, replay refusal, blocked legacy ammunitio
 assertions, canonical magazine removal, same-tick safety ordering, menu-clock invalidation
 and supported firemode selection. All 41
 managed UDP/status/profile/equipment tests pass; the 121 existing Python authority
-journeys also pass. These are authority/transport checks. The native menu's remote
-pending state and interactive multiplayer fitting journey require their own
-native tests and live rendering checkpoint.
+journeys also pass.
+
+The native menu retains matching accepted options while a replacement query is
+pending, displays its loading state, and disables controls until both options
+and current owner state permit them. Activation rechecks connection, life,
+selection epoch, exact gun token and busy state, including the interval before
+an old widget is rebuilt. Weapon-clock changes rebuild controls without another
+selection change. A real OS-UDP production-widget test waits for asynchronous
+options, removes a 29-round loaded magazine, then selects the returned 28-round
+instance instead of an identical full 30-round magazine. It proves the chamber
+stays loaded, the gun returns to 29, and the unclicked full magazine/token remain
+owned. Four attachment UI tests and the combined 385-test native suite pass
+(three manual render fixtures ignored) against immutable profile-config-49.
+
+The same sequence was driven through actual inventory/equip, fire and hold-T
+widgets in a Vulkan client connected to a separate managed UDP host. Opened
+captures under `bevy/artifacts/` are `bevy-equipment-udp-two-magazines` (accepted
+ammo 1, separate 30/28 choices), `bevy-equipment-udp-exact-magazine-installed`
+(accepted ammo 29) and `bevy-equipment-udp-untouched-full-magazine` (full 30 still
+in the bag). Each PNG has its accepted authority JSON beside it. Both processes
+quit cleanly. Two independent reviewers opened all three result images. The
+journey also confirmed the inherited reload/attachment-pose issue described in
+`WEAPON_PORT.md`; releasing and reopening the menu restores its presented pose.
+The native pose usability repair is a separate checkpoint.
