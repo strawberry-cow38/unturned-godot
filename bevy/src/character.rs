@@ -17,6 +17,7 @@ use bevy::{
 };
 use std::collections::HashMap;
 pub mod ragdoll;
+pub(crate) mod nameplate;
 pub struct CharacterPlugin;
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
@@ -24,6 +25,7 @@ impl Plugin for CharacterPlugin {
         app.add_plugins((
             MaterialPlugin::<ClothesMaterial>::default(),
             ragdoll::RagdollPlugin,
+            nameplate::NameplatePlugin,
         ))
         .init_resource::<Wardrobe>()
         .add_systems(

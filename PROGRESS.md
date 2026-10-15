@@ -1317,3 +1317,21 @@ profile-tests-33-final. These fixed replicas do not prove live UDP light toggles
 - Native props and resources use the authority's accepted holiday, including saved-host changes. The existing streaming rebuild preserves owner position, origin and terrain cache; source prop rows and resource `(name,instance)` keys remain stable, with resource indices taken from the accepted active manifest. Host geometry uploads wait for the new holiday geometry. Disconnect clears all bindings.
 - All 362 native tests passed (2 opt-in visual fixtures ignored) against immutable map-bindings-30. New regressions use real UDP late fixture registration, production binding adoption without local authority, real extracted door replacement/retirement, and holiday reload without session/pose reset. World peer review found no blocker.
 - Actual Vulkan UDP journey (native profile-tests-33-final, managed authority map-bindings-30) rendered and opened door18 closed/open, real container68 storage8×6, accepted couch5/owner2 sitting, and original Christmas gift props with host CHRISTMAS versus native NONE. Artifacts are `bevy-mapbindings-door-closed/open`, `-container-facing/storage-open`, `-seat-focus/seat-accepted`, and `-server-christmas` PNG+JSON. Initial wall/incorrect aim attempts are excluded. This does not claim NPC or full protocol parity.
+
+### Bevy accepted remote profiles and world nameplates (2026-10-15)
+
+Remote bodies now display source-sanitized accepted names and independently
+arriving profile pictures. Exact player/hash queries reject stale images, retry
+late bytes, and clean up on departure or session replacement. The shared world
+renderer embeds the original Open Sans Semibold font and preserves the source
+anchor, scale, outline, depth, billboarding, 60m cutoff and corrupt-image checker.
+Its measured-gear helper is available for the subsequent NPC integration.
+
+Five focused regressions cover real Unicode shaping, original PNG decoding,
+distance boundaries, delayed/stale avatar bytes and profile/body lifecycle. The
+combined native suite passes 373 tests with three opt-in render fixtures ignored
+against immutable profile-tests-33-final. Opened front and side Vulkan renders
+show decoded, absent and corrupt pictures plus full and partial wall occlusion;
+independent code/image review found no blocker. The render fixture uses fixed
+accepted profile values; appearance editing and a full live profile-update
+journey remain separate work. See bevy/docs/NAMEPLATE_PORT.md.

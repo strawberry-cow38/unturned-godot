@@ -3,6 +3,7 @@ use serde_json::json;
 
 mod actions;
 mod lights;
+mod profiles;
 mod visual;
 
 fn source_catalog() -> ItemCatalog {

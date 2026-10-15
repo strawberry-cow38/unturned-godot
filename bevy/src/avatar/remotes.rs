@@ -17,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 mod actions;
 mod held;
 mod lights;
+mod profiles;
 
 pub(super) struct RemotePlayersPlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,6 +29,7 @@ impl Plugin for RemotePlayersPlugin {
             .init_resource::<held::Library>()
             .init_resource::<actions::Events>()
             .init_resource::<crate::viewmodel::lights::EmissionMasks>()
+            .init_resource::<profiles::Profiles>()
             .add_message::<crate::entities::CoreEvent>()
             .add_systems(
                 Update,
@@ -45,7 +47,7 @@ impl Plugin for RemotePlayersPlugin {
             )
             .add_systems(
                 Update,
-                lights::update.after(crate::character::CharacterUpdate),
+                (lights::update, profiles::update).after(crate::character::CharacterUpdate),
             );
     }
 }

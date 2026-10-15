@@ -20,6 +20,7 @@ fn render_remote_pose_fixture() {
     let mut players = vec![row(1, Vec3::ZERO)];
     let held = std::env::var_os("UG_REMOTE_POSE_HELD").is_some();
     let lamps = std::env::var("UG_REMOTE_POSE_LAMPS").ok();
+    let profiles = std::env::var_os("UG_REMOTE_POSE_PROFILES").is_some();
     for (i, stance) in [0, 2, 3, 4].into_iter().enumerate() {
         let mut peer = row(i as u16 + 2, Vec3::new((i as f32 - 1.5) * 2., 0., 0.));
         peer["stance"] = json!(stance);
@@ -34,6 +35,11 @@ fn render_remote_pose_fixture() {
             peer["heldItemId"] = json!(276);
             peer["worn"]["glasses"] = json!([1199, 334, 1044, 0][i]);
             peer["lights"] = json!({"worn":mode == "on", "held":mode == "on"});
+        }
+        if profiles {
+            peer["stance"] = json!(0);
+            peer["worn"]["hat"] = json!(0);
+            peer["profile"]["face"] = json!(0);
         }
         players.push(peer);
     }
@@ -79,6 +85,7 @@ fn render_remote_pose_fixture() {
             RemotePlayersPlugin,
         ))
         .add_systems(Startup, scene)
+        .add_systems(Update, fixture_profiles.after(RemotePlayersUpdate))
         .add_systems(Update, capture);
     app.run();
     assert!(
@@ -96,6 +103,7 @@ fn scene(
     let lamps = std::env::var_os("UG_REMOTE_POSE_LAMPS").is_some();
     commands.spawn((
         Camera3d::default(),
+        crate::player::PlayerCamera,
         Tonemapping::TonyMcMapface,
         Msaa::Off,
         Transform::from_xyz(if side { -5. } else { 0. }, 3.5, -10.)
@@ -123,6 +131,48 @@ fn scene(
         })),
         Transform::from_xyz(0., -0.05, 0.),
     ));
+    if std::env::var_os("UG_REMOTE_POSE_PROFILES").is_some() {
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(1.7, 1.4, 0.2))),
+            MeshMaterial3d(materials.add(Color::srgb(0.3, 0.35, 0.4))),
+            Transform::from_xyz(3., 2.2, -0.65),
+        ));
+    }
+}
+
+fn fixture_profiles(
+    mut commands: Commands,
+    mut done: Local<bool>,
+    players: Query<(Entity, &RemotePlayer)>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    if *done || std::env::var_os("UG_REMOTE_POSE_PROFILES").is_none() || players.iter().count() != 4
+    {
+        return;
+    }
+    use crate::character::nameplate::{Nameplate, decode_picture};
+    let valid = images.add(decode_picture(
+        include_bytes!("../../../character/nameplate/tests/avatar.png"),
+        128,
+    ));
+    let broken = images.add(decode_picture(b"broken PNG", 128));
+    for (body, player) in &players {
+        let (name, picture) = match player.id {
+            2 => ("Ålice", Some(valid.clone())),
+            3 => ("No picture", None),
+            4 => ("Broken picture", Some(broken.clone())),
+            _ => ("Hidden by wall", Some(valid.clone())),
+        };
+        commands.spawn((
+            Nameplate {
+                name: name.into(),
+                picture,
+            },
+            Transform::from_xyz(0., Nameplate::HEIGHT, 0.),
+            ChildOf(body),
+        ));
+    }
+    *done = true;
 }
 
 fn capture(mut frames: Local<u32>, mut commands: Commands, path: Res<Shot>) {
