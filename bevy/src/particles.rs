@@ -36,6 +36,8 @@ pub struct Spec {
     pub animation_speed: Vec2,
     pub animation_offset: Vec2,
     pub animation_loop: bool,
+    /// A separate viewport's simulation frame (first-person arms). None is the world.
+    pub reference: Option<Entity>,
 }
 impl Default for Spec {
     fn default() -> Self {
@@ -62,6 +64,7 @@ impl Default for Spec {
             animation_speed: Vec2::ZERO,
             animation_offset: Vec2::ZERO,
             animation_loop: false,
+            reference: None,
         }
     }
 }
@@ -105,6 +108,9 @@ impl Emitter {
         self.spec.amount = amount;
     }
     pub fn shift_origin(&mut self, shift: Vec3) {
+        if self.spec.reference.is_some() {
+            return;
+        }
         for p in &mut self.particles {
             p.position -= shift;
         }
@@ -191,11 +197,15 @@ pub struct ParticleAssets {
     additive: Handle<StandardMaterial>,
 }
 pub struct ParticlePlugin;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ParticleUpdate;
 impl Plugin for ParticlePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup).add_systems(
             PostUpdate,
-            update.after(bevy::transform::TransformSystems::Propagate),
+            update
+                .in_set(ParticleUpdate)
+                .after(bevy::transform::TransformSystems::Propagate),
         );
     }
 }
@@ -338,6 +348,7 @@ fn update(
     camera: Query<&GlobalTransform, With<PlayerCamera>>,
     mut emitters: Query<(Entity, &mut Emitter, &GlobalTransform, &Mesh3d)>,
     mut meshes: ResMut<Assets<Mesh>>,
+    frames: Query<&GlobalTransform>,
 ) {
     if crate::player::simulation_paused(&ui) {
         return;
@@ -351,18 +362,37 @@ fn update(
     let up = camera_pose.rotation * Vec3::Y;
     let normal = camera_pose.rotation * Vec3::Z;
     for (entity, mut e, pose, mesh) in &mut emitters {
-        e.advance(dt, pose.translation());
+        let frame = if let Some(frame) = e.spec.reference {
+            let Ok(frame) = frames.get(frame) else {
+                commands.entity(entity).despawn();
+                continue;
+            };
+            frame.to_matrix()
+        } else {
+            Mat4::IDENTITY
+        };
+        e.advance(dt, frame.inverse().transform_point3(pose.translation()));
         let spec = &e.spec.clone();
         if e.finished() {
             commands.entity(entity).despawn();
             continue;
         }
         e.particles.sort_by(|a, b| {
-            b.position
+            frame
+                .transform_point3(b.position)
                 .distance_squared(camera_pose.translation)
-                .total_cmp(&a.position.distance_squared(camera_pose.translation))
+                .total_cmp(
+                    &frame
+                        .transform_point3(a.position)
+                        .distance_squared(camera_pose.translation),
+                )
         });
         let inv = pose.to_matrix().inverse();
+        // Compose the relative frame once. Building each corner at the world's
+        // large coordinates loses visible precision on tiny first-person sparks.
+        let particle_to_mesh = inv * frame;
+        let right = inv.transform_vector3(right);
+        let up = inv.transform_vector3(up);
         let normal = inv.transform_vector3(normal).normalize_or_zero().to_array();
         let mut positions = Vec::with_capacity(e.particles.len() * 6);
         let mut normals = Vec::with_capacity(positions.capacity());
@@ -375,14 +405,15 @@ fn update(
             let size = p.size * curve(&spec.growth, age, true) * 0.5;
             let x = (right * p.angle.cos() + up * p.angle.sin()) * size;
             let y = (up * p.angle.cos() - right * p.angle.sin()) * size;
+            let position = particle_to_mesh.transform_point3(p.position);
             let corners = [
-                p.position - x - y,
-                p.position + x - y,
-                p.position + x + y,
-                p.position - x + y,
+                position - x - y,
+                position + x - y,
+                position + x + y,
+                position - x + y,
             ];
             for i in [0, 1, 2, 0, 2, 3] {
-                positions.push(inv.transform_point3(corners[i]).to_array());
+                positions.push(corners[i].to_array());
                 normals.push(normal);
                 uvs.push(
                     p.atlas_uv(
@@ -406,6 +437,98 @@ fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn viewmodel_particles_keep_the_viewport_frame_while_the_camera_moves_and_origin_changes() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .insert_resource(UiState {
+                screen: crate::ui::Screen::Playing,
+                ..default()
+            })
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(20),
+            ))
+            .add_plugins(ParticlePlugin);
+        let camera = app
+            .world_mut()
+            .spawn((PlayerCamera, Transform::from_xyz(100., 2., 300.)))
+            .id();
+        let mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::default(),
+            ));
+        let node = app
+            .world_mut()
+            .spawn((
+                emitter(Spec {
+                    reference: Some(camera),
+                    one_shot: true,
+                    life: 100.,
+                    duration: 100.,
+                    ..default()
+                }),
+                Mesh3d(mesh.clone()),
+                Transform::from_xyz(0., 0., -1.),
+                ChildOf(camera),
+            ))
+            .id();
+        app.update();
+        app.update();
+        let centre = |app: &App| {
+            let bevy::mesh::VertexAttributeValues::Float32x3(vertices) = app
+                .world()
+                .resource::<Assets<Mesh>>()
+                .get(&mesh)
+                .unwrap()
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+            else {
+                panic!("particle vertices")
+            };
+            vertices.iter().map(|p| Vec3::from_array(*p)).sum::<Vec3>() / vertices.len() as f32
+        };
+        assert!(centre(&app).length() < 0.0001);
+        *app.world_mut().get_mut::<Transform>(camera).unwrap() =
+            Transform::from_xyz(500., 6., 900.).with_rotation(Quat::from_rotation_y(1.1));
+        app.update();
+        assert!(
+            centre(&app).length() < 0.0001,
+            "existing viewport sparks must follow camera translation and rotation"
+        );
+        // The particles are free of the tool itself, like Godot's default
+        // local_coords=false, but inside its separate first-person viewport.
+        app.world_mut()
+            .get_mut::<Transform>(node)
+            .unwrap()
+            .translation
+            .x += 0.5;
+        app.update();
+        assert!(
+            (centre(&app) - Vec3::X * -0.5).length() < 0.0001,
+            "moving tool centre {:?}",
+            centre(&app)
+        );
+        app.world_mut()
+            .get_mut::<Emitter>(node)
+            .unwrap()
+            .shift_origin(Vec3::X * 256.);
+        app.world_mut()
+            .get_mut::<Transform>(camera)
+            .unwrap()
+            .translation
+            .x -= 256.;
+        app.update();
+        assert!(
+            (centre(&app) - Vec3::X * -0.5).length() < 0.0001,
+            "origin shifts move the viewport root, not its internal simulation coordinates"
+        );
+    }
     #[test]
     fn source_growth_uses_zero_tangent_curves_but_color_gradients_stay_linear() {
         let growth = [(0., 0.35), (1., 1.)];

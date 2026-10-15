@@ -17,6 +17,7 @@ use std::{collections::HashMap, fs, path::Path};
 mod driving;
 mod motion;
 mod parts;
+mod tools;
 const LAYER: usize = 1;
 const ARMS_POSITION: Vec3 = Vec3::new(0., -1.75, 0.12);
 #[derive(Clone, Debug)]
@@ -147,6 +148,8 @@ struct ViewmodelState {
     hammer_delay: Option<f32>,
     driving: bool,
     seated: bool,
+    tool_active: bool,
+    tool_random: u64,
 }
 #[derive(Resource, Default)]
 pub struct ViewmodelStatus {
@@ -154,6 +157,8 @@ pub struct ViewmodelStatus {
     pub ready: bool,
     pub aiming: bool,
     pub aim_alpha: f32,
+    tool: tools::Kind,
+    tool_active: bool,
 }
 struct PendingHeld {
     mesh: Option<String>,
@@ -171,6 +176,7 @@ impl Plugin for ViewmodelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ViewmodelState>()
             .init_resource::<ViewmodelStatus>()
+            .add_plugins(tools::ToolPlugin)
             .add_systems(
                 Update,
                 (build_viewmodel, attach_held_mesh, animate_viewmodel)
@@ -354,6 +360,7 @@ fn build_viewmodel(
             state.hammer_delay = None;
             state.driving = false;
             state.seated = false;
+            state.tool_active = false;
             state.motion = default();
             state.previous_look = None;
             state.use_clip = consumable
@@ -626,6 +633,7 @@ fn animate_viewmodel(
         state.aim_progress = 0.;
         state.sprinting = false;
         state.hammer_delay = None;
+        state.tool_active = false;
         state.position_offset = Vec3::ZERO;
         state.rotation_offset = Vec3::ZERO;
         rig.additive = None;
@@ -676,7 +684,7 @@ fn animate_viewmodel(
         .filter(|e| e.data["playerId"] == snapshot.0["playerId"])
     {
         match event.kind.as_str() {
-            "melee" => {
+            "melee" if !item.is_some_and(|i| i.melee["repeated"].as_bool() == Some(true)) => {
                 let strong = event.data["strong"].as_bool().unwrap_or(false);
                 let clip = if held == 0 {
                     if strong { "Punch_Right" } else { "Punch_Left" }.into()
@@ -754,9 +762,31 @@ fn animate_viewmodel(
                     .anims
                     .get(&state.hold_clip)
                     .map_or(0., |c| c.length));
+    status.tool = if snapshot.0["connected"].as_bool().unwrap_or(false)
+        && snapshot.0["player"]["alive"].as_bool().unwrap_or(true)
+        && !matches!(stance, "swim" | "climb")
+    {
+        tools::Kind::of(item)
+    } else {
+        tools::Kind::None
+    };
+    status.tool_active = status.tool != tools::Kind::None
+        && status.ready
+        && !ui.captures_input()
+        && settings.pressed(GameAction::Fire, &keys, &mouse)
+        && !settings.pressed(GameAction::FreeLook, &keys, &mouse);
+    if status.tool_active != state.tool_active {
+        tools::set_active(&mut rig, &state.asset, status.tool_active);
+        state.tool_active = status.tool_active;
+    }
+    if status.tool == tools::Kind::Saw && dt > 0. {
+        let shake = tools::shake(&mut state.tool_random, status.tool_active);
+        state.motion.shake.position += shake;
+    }
     status.aiming = state.is_gun
         && status.ready
         && !ui.captures_input()
+        && !settings.pressed(GameAction::FreeLook, &keys, &mouse)
         && !reloading
         && !hammering
         && !matches!(stance, "swim" | "climb" | "driving" | "sitting")

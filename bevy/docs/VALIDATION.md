@@ -217,3 +217,12 @@ foliage shading and the remaining parity ledger still need further validation.
   original cockpit capture. This run also exposed a shader type error in the
   concurrently added water renderer; that independent fix and its validation
   belong to the water milestone.
+
+
+## Continuous melee tools and viewport particles
+
+- The integrated native suite passes 175 tests (`/tmp/unturned-bevy-native-tool-checkpoint.log`). Original blowtorch/chainsaw rigs enter their own `Start_Swing` once per hold, retain the final pose across accepted damage facts, and play their original release clips. Tests exercise the real clips and rig, held-to-released transitions, unequip, audio pause/gain and particle fade. Alt look stops attack input and discards queued attack edges; full free-look camera/head motion remains a separate task.
+- Camera-relative particles preserve the source viewmodel viewport behavior while the held tool moves. A real transform/mesh regression covers camera rotation, tool motion and origin rebasing. Composing the relative transform before making billboard corners avoids precision loss at distant coordinates.
+- Opened and inspected `bevy-blowtorch-idle-fixed`, `bevy-blowtorch-burning-fixed`, `bevy-blowtorch-released-fixed` and `bevy-blowtorch-moving`: source blue sparks originate at the nozzle, follow the viewport frame, and expire after release. The earlier captures without the `fixed` suffix were taken before equip and are not validation evidence.
+- Opened `bevy-chainsaw-idle`, `bevy-chainsaw-cutting` and `bevy-chainsaw-released`. A peer flagged the large foreground forearm; running the original Godot chainsaw harness and inspecting `godot-chainsaw/rig_00.png` confirms that authored close pose. Native viewmodel lighting remains darker, and the original viewport glow is not yet reproduced. No exact lighting or pixel parity claim is made.
+- Native live renderer logs contain no shader/ECS failures. Original Godot captured successfully but logged its existing render-thread finalization warning during shutdown. This machine has no audio output device: source files, scheduling, gains, attenuation limits and pause behavior were checked, but sound was not verified by listening.

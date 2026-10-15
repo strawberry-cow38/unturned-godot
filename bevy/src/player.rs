@@ -139,6 +139,7 @@ struct PlayerInput {
     fire: bool,
     fire_pressed: bool,
     secondary_pressed: bool,
+    free_look: bool,
     selector: bool,
     reload: bool,
     yaw: f32,
@@ -494,9 +495,10 @@ fn read_input(
     );
     input.jump |= pressed(GameAction::Jump);
     input.jump_held = held(GameAction::Jump);
-    input.fire = held(GameAction::Fire);
-    input.fire_pressed |= pressed(GameAction::Fire);
-    input.secondary_pressed |= pressed(GameAction::Aim);
+    input.free_look = held(GameAction::FreeLook) && occupancy.as_ref().is_none_or(|o| o.seat.is_none());
+    input.fire = held(GameAction::Fire) && !input.free_look;
+    input.fire_pressed = !input.free_look && (input.fire_pressed || pressed(GameAction::Fire));
+    input.secondary_pressed = !input.free_look && (input.secondary_pressed || pressed(GameAction::Aim));
     input.selector |= pressed(GameAction::Firemode);
     input.reload |= pressed(GameAction::Reload);
     if pressed(GameAction::CrouchToggle) {
@@ -713,7 +715,7 @@ fn simulate(
                 reload: std::mem::take(&mut input.reload),
                 selector: std::mem::take(&mut input.selector),
             };
-            let allowed = !ui.captures_input() && !matches!(body.stance.as_str(), "swim" | "climb");
+            let allowed = !ui.captures_input() && !input.free_look && !matches!(body.stance.as_str(), "swim" | "climb");
             let (uses, events) = hands.0.step(
                 0.02,
                 &snapshot.0,
@@ -788,10 +790,7 @@ fn simulate(
                 item.map_or(&Value::Null, |i| &i.melee),
                 &snapshot.0["weapon"],
                 buttons,
-                !ui.captures_input()
-                    && viewmodel.ready
-                    && viewmodel.held == input.held_item_id
-                    && !matches!(body.stance.as_str(), "swim" | "climb"),
+                allowed && viewmodel.ready && viewmodel.held == input.held_item_id,
             );
             for action in actions {
                 let eye = body.eye_height;
@@ -1151,6 +1150,37 @@ pub(crate) fn vector(value: &Value) -> Option<Vec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn alt_look_stops_continuous_tool_fire_and_discards_pending_attack_edges() {
+        let bridge = CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let mut model = UiModel::default();
+        model.connected = true;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins).insert_resource(bridge)
+            .init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>().init_resource::<Settings>()
+            .init_resource::<crate::viewmodel::ViewmodelStatus>()
+            .init_resource::<crate::recoil::Recoil>().init_resource::<GameSnapshot>()
+            .init_resource::<crate::entities::ItemCatalog>().init_resource::<WorldSessionEpoch>()
+            .insert_resource(UiState { screen:Screen::Playing, ..default() })
+            .insert_resource(model)
+            .insert_resource(PlayerInput { fire_pressed:true, secondary_pressed:true, ..default() })
+            .add_systems(Update, read_input);
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+        app.update();
+        assert!(app.world().resource::<PlayerInput>().fire);
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::AltLeft);
+        app.update();
+        let input = app.world().resource::<PlayerInput>();
+        assert!(input.free_look);
+        assert!(!input.fire && !input.fire_pressed && !input.secondary_pressed);
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::AltLeft);
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear_just_pressed(MouseButton::Left);
+        app.update();
+        let input = app.world().resource::<PlayerInput>();
+        assert!(!input.free_look && input.fire);
+        assert!(!input.fire_pressed && !input.secondary_pressed);
+    }
     #[test]
     fn source_event_vectors_and_snapshot_vectors_share_one_finite_decoder() {
         let source=json!({"pos":{"x":0.,"y":0.109375,"z":-1.609375},"radius":9.3125,"itemId":262});
