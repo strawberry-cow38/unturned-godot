@@ -89,14 +89,16 @@ namespace UnturnedGodot
                 for (int i = 0; i < all.Length; i++)
                 {
                     float x = -49f + i * 14f;
-                    // the ones with a broken prop get one dropped in on the far side of the hill
-                    c.Objects.AddFenceSpline(all[i], new[] { G(x, 30f), G(x + 5f, 12f), G(x - 5f, -6f), G(x + 4f, -26f) }, true,
-                                             all[i].Wreck != null ? new[] { G(x - 3f, -10f) } : null);
+                    // the ones with a broken prop get one on the far side of the hill -- the prop's own width in two of them, opened
+                    // a bay wider in the other two (a second marker on the same spot)
+                    var wreck = all[i].Wreck == null ? null
+                              : i % 2 == 0 ? new[] { G(x - 3f, -10f) } : new[] { G(x - 3f, -10f), G(x - 3f, -10f) };
+                    c.Objects.AddFenceSpline(all[i], new[] { G(x, 30f), G(x + 5f, 12f), G(x - 5f, -6f), G(x + 4f, -26f) }, true, wreck);
                 }
                 // and a pen with square corners in front of them: one post on each corner, shared by both legs
                 c.Objects.AddFenceSpline(FenceSpline.WoodPrivacy,
                     new[] { G(-22f, 40f), G(22f, 40f), G(22f, 54f), G(-22f, 54f), G(-22f, 40f) }, false,
-                    new[] { G(6f, 40f) });
+                    new[] { G(6f, 40f), G(-12f, 54f), G(-12f, 54f), G(-12f, 54f) });     // the prop's width at the front, two bays wider at the back
                 Log.Print($"[showcase] fences at {c.Origin}: {all.Length} styles on S-bends over a hill (top {G(0f, -4f).Y:0.0}), and a cornered pen; broken sections in the four that have one");
             }),
 

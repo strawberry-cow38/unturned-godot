@@ -2797,7 +2797,7 @@ namespace UnturnedGodot
                         var outw = new Vector3(tan.Z, 0f, -tan.X).Normalized() * bay.Side;     // from the road out to this pavement
                         var at = pos + outw * (roads.RoadHalfWidth(bay.Road) + BayExtra(bay.Road, bay.Side, d) + RoadGapForLights + MeterSetback);
                         bool crowded = false;
-                        foreach (var q in standing) if (Flat(q, at) < 1.2f) { crowded = true; break; }
+                        foreach (var q in standing) if (Flat(q, at) < MeterClear) { crowded = true; break; }
                         if (crowded) { MetersCrowded++; continue; }
                         at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                         // facing its space: like the lamps' arms, back over the road (its front is local +Y, Z-up as they are)

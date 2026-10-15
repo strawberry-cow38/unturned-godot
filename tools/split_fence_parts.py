@@ -32,8 +32,14 @@ and lines up with the bays either side (strawberry 2026-10-14: "add support for 
 the spline (lining up with the fences ofc)"). Their own end posts are thrown away -- the run stands its own there, so the
 joint is the same post as everywhere else. Each wears the same palette PNG as its intact prop (byte-identical).
 
+⭐ AND IN HALVES (--halves), strawberry 2026-10-15: "could you also split the broken fence prop in half down the middle,
+so that we could have a bigger broken gap?". A wreck's LEFT half hangs off its left post and its RIGHT half off its right
+one, so with whole bays left out between them the gap opens as wide as wanted. The halves are cut BY COMPONENT -- each
+broken board, rail stub and torn panel goes whole to the side its middle is on -- not by a plane through x = 0, which
+would leave every piece it crossed open-ended. Neither is recentred: laid together they ARE the wreck.
+
 Usage:
-  split_fence_parts.py Fence_Wood_0 [Fence_Metal_0 ...] [--register] [--dry-run] [--bay-only]
+  split_fence_parts.py Fence_Wood_0 [Fence_Metal_0 ...] [--register] [--dry-run] [--bay-only] [--halves]
 """
 import argparse, os, shutil, sys, uuid
 
@@ -144,7 +150,7 @@ def corner(v, vt, vn, c):
     return (v[c[0]], vt[c[1]] if c[1] >= 0 else None, vn[c[2]] if c[2] >= 0 else None)
 
 
-def split(name, dry, register, bay_only=False):
+def split(name, dry, register, bay_only=False, halves=False):
     src = os.path.join(OBJ_DIR, name + '.obj')
     v, vt, vn, faces = read_obj(src)
     comps = components(v, faces)
@@ -185,6 +191,18 @@ def split(name, dry, register, bay_only=False):
             for k in range(1, len(poly) - 1):  # fan back into triangles, winding as authored
                 bay_tris.append([poly[0], poly[k], poly[k + 1]])
     bay_tris = [[((p[0] - mid, p[1], p[2]), uv, n) for p, uv, n in t] for t in bay_tris]
+    # the halves: whole components, each to the side of the bay's middle its own middle is on (a component in two bays
+    # was clipped above, so this pass works off the components again)
+    half_tris = {'BayL': [], 'BayR': []}
+    for ci, comp in enumerate(comps):
+        if ci in post_set:
+            continue
+        cx = (boxes[ci][0][0] + boxes[ci][1][0]) * 0.5
+        if cx <= c0 or cx >= c1:
+            continue
+        side = 'BayL' if cx < mid else 'BayR'
+        for fi in comp:
+            half_tris[side].append([((p[0] - mid, p[1], p[2]), uv, n) for p, uv, n in (corner(v, vt, vn, c) for c in faces[fi])])
     # the post: the middle one where there is one (both of its faces are in-bay faces), else the right-hand end
     pi = posts[len(posts) // 2] if len(posts) > 2 else posts[-1]
     pc = centres[posts.index(pi)]
@@ -204,9 +222,15 @@ def split(name, dry, register, bay_only=False):
         return []
     tex = os.path.join(OBJ_DIR, name + '_tex.png')
     out = []
-    parts = (('Post', post_tris, f'one post, recentred on x = 0 (pitch {pitch:.4f} m)'),
-             ('Bay', bay_tris, f'the infill between two post centres {pitch:.4f} m apart, x = 0 midway'))
-    for part, tris, note in (parts[1:] if bay_only else parts):
+    parts = [('Post', post_tris, f'one post, recentred on x = 0 (pitch {pitch:.4f} m)'),
+             ('Bay', bay_tris, f'the infill between two post centres {pitch:.4f} m apart, x = 0 midway')]
+    if bay_only:
+        parts = parts[1:]
+    if halves:
+        print(f'   halves: left {len(half_tris["BayL"])} tris, right {len(half_tris["BayR"])} tris')
+        parts += [(h, half_tris[h], f'the {"left" if h == "BayL" else "right"} half of the bay, by component, in the bay\'s own frame')
+                  for h in ('BayL', 'BayR')]
+    for part, tris, note in parts:
         pn = f'{name}_{part}'
         write_obj(os.path.join(OBJ_DIR, pn + '.obj'), tris, name, part, note)
         if os.path.exists(tex):
@@ -230,6 +254,7 @@ if __name__ == '__main__':
     ap.add_argument('--register', action='store_true')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--bay-only', action='store_true', help='a wreck: write its bay, not its (leaning) post')
+    ap.add_argument('--halves', action='store_true', help='also write the bay\'s left and right halves (a wreck that can open wider)')
     a = ap.parse_args()
     for n in a.names:
-        split(n, a.dry_run, a.register, a.bay_only)
+        split(n, a.dry_run, a.register, a.bay_only, a.halves)

@@ -79,14 +79,18 @@ namespace UnturnedGodot
         public const float CellSize = 64f;
 
         /// <summary>One bay: the posts it runs between and how much of the native bay it lays -- 1 = whole (fitted to the
-        /// gap), under 1 = cut short at B. A WRECK spans Span bays' worth of run between its two posts, with none between.</summary>
-        public struct Bay { public int A, B; public float Keep; public bool Wreck; public int Span; }
+        /// gap), under 1 = cut short at B. A WRECK spans Span bays' worth of run between its two posts: the bays after its
+        /// first are Skip, and the posts between them are hidden; FirstEnd and LastStart are where its first bay ended and its
+        /// last began, which its two halves hang along.</summary>
+        public struct Bay { public int A, B; public float Keep; public bool Wreck, Skip; public int Span, FirstEnd, LastStart; }
 
         /// <summary>How far from a dropped marker a wreck may land: the group of bays nearest it, within this.</summary>
         public const float WreckSnap = 6f;
-        /// <summary>The sharpest a curve may turn across a wreck that spans more than one bay: it is one rigid piece, a chord
-        /// across what would have been a post.</summary>
-        public const float WreckMaxTurnDeg = 6f;
+        /// <summary>Markers dropped within this of each other are ONE wreck, a bay wider for each one past the first.</summary>
+        public const float WreckCluster = 2.5f;
+        /// <summary>Nothing else may come within this of a wreck's chord: not a post of another fence, nor of this one's other
+        /// lines -- where fences meet, a wreck would leave one ending at a hole.</summary>
+        public const float WreckClear = 0.75f;
 
         /// <summary>Every fence of one style laid so far: its posts (each on the ground at its centre) and its bays.</summary>
         public sealed class Run
@@ -94,6 +98,8 @@ namespace UnturnedGodot
             public readonly Style Style;
             public readonly List<Vector3> Posts = new();
             public readonly List<Bay> Bays = new();
+            /// <summary>Posts a wreck took down (the fallen one inside it): not built.</summary>
+            public readonly HashSet<int> Hidden = new();
             public Run(Style s) { Style = s; }
         }
 
@@ -131,6 +137,9 @@ namespace UnturnedGodot
             readonly List<(float s0, float s1, float keep)> _fit = new();
             public int Lines { get; private set; }
             public float Length { get; private set; }
+            /// <summary>Wrecks laid, and how many of them were opened wider than the broken prop.</summary>
+            public int Wrecks { get; private set; }
+            public int WideWrecks { get; private set; }
 
             /// <param name="ground">The ground height at (x, z); null keeps each point's own Y.</param>
             public Builder(Func<float, float, float> ground) { _ground = ground; }
@@ -164,32 +173,32 @@ namespace UnturnedGodot
                 return k;
             }
 
-            /// <summary>One straight leg of a line, or the whole of a curve: where arc length s is, and its fitted bays.</summary>
-            sealed class Leg
+            /// <summary>A line as laid, kept until Build so its wrecks can be chosen once EVERY line is in: whether a post is
+            /// where fences meet is not known while the lines are still arriving.</summary>
+            sealed class LineRec
             {
-                public Func<float, Vector3> At; public float Len; public bool Curved;
-                public readonly List<(float s0, float s1, float keep)> Fit = new();
-                public readonly HashSet<int> WreckStart = new();
+                public Style Style;
+                public readonly List<List<int>> Legs = new();      // each leg's bays, in order, as indices into Run.Bays
+                public IReadOnlyList<Vector3> WreckAt; public float Wear; public ulong Seed;
             }
-
-            /// <summary>Wrecks laid so far.</summary>
-            public int Wrecks { get; private set; }
+            readonly List<LineRec> _lines = new();
+            bool _resolved;
 
             /// <summary>A fence along `pts`. `smooth` = a curve THROUGH the points (Catmull-Rom, as every spline tool here
             /// draws one); otherwise straight legs with a post on every corner.
             ///
             /// ⭐ WRECKS GO IN ON THE POST RHYTHM (strawberry 2026-10-14: "add support for the fence broken props to be inserted
-            /// along the spline (lining up with the fences ofc)"). A wreck replaces whole bays -- WreckBays of them, never a
-            /// cut one -- between two of the run's own posts, fitted exactly as the bays either side of it are: so it starts
-            /// and ends on the same posts they do. `wreckAt`: put one in the group of bays nearest each point (within
-            /// WreckSnap). `wear`: also break each eligible group with that chance, from `seed`.</summary>
+            /// along the spline (lining up with the fences ofc)"): a wreck replaces whole bays between two of the run's own
+            /// posts, fitted as the bays either side of it are. `wreckAt`: one in the group of bays nearest each point within
+            /// WreckSnap, a bay WIDER for each further point dropped within WreckCluster of it. `wear`: also break stretches by
+            /// chance, from `seed`. Chosen at Build -- see ResolveWrecks for where they may not go.</summary>
             public void AddLine(Style s, IReadOnlyList<Vector3> pts, bool smooth = false,
                                 IReadOnlyList<Vector3> wreckAt = null, float wear = 0f, ulong seed = 0)
             {
                 if (s == null || pts == null || pts.Count < 2) return;
                 var r = RunFor(s);
                 Lines++;
-                var legs = new List<Leg>();
+                var legs = new List<(Func<float, Vector3> at, float len)>();
                 if (!smooth || pts.Count < 3)
                 {
                     for (int k = 0; k + 1 < pts.Count; k++)
@@ -197,79 +206,151 @@ namespace UnturnedGodot
                         var a = pts[k]; var b = pts[k + 1];
                         float len = new Vector2(b.X - a.X, b.Z - a.Z).Length();
                         if (len < 1e-3f) continue;
-                        legs.Add(new Leg { At = t => a.Lerp(b, Mathf.Clamp(t / len, 0f, 1f)), Len = len });
+                        legs.Add((t => a.Lerp(b, Mathf.Clamp(t / len, 0f, 1f)), len));
                     }
                 }
                 else
                 {
                     var curve = SplineTiling.CurveThrough(pts, true);
                     float total = curve.GetBakedLength();
-                    if (total >= 1e-3f) legs.Add(new Leg { At = t => curve.SampleBaked(Mathf.Clamp(t, 0f, total), true), Len = total, Curved = true });
+                    if (total >= 1e-3f) legs.Add((t => curve.SampleBaked(Mathf.Clamp(t, 0f, total), true), total));
                 }
-                foreach (var leg in legs) { Fit(leg.Len, s.Pitch, _fit); leg.Fit.AddRange(_fit); Length += leg.Len; }
-                if (s.Wreck != null && (wreckAt != null || wear > 0f)) MarkWrecks(s, legs, wreckAt, wear, seed);
-                foreach (var leg in legs)
+                var rec = new LineRec { Style = s, WreckAt = wreckAt, Wear = wear, Seed = seed };
+                foreach (var (at, len) in legs)
                 {
-                    int prev = PostAt(r, leg.At(0f));
-                    for (int i = 0; i < leg.Fit.Count;)
+                    Length += len;
+                    Fit(len, s.Pitch, _fit);
+                    var ids = new List<int>(_fit.Count);
+                    int prev = PostAt(r, at(0f));
+                    foreach (var (_, s1, keep) in _fit)
                     {
-                        bool wreck = leg.WreckStart.Contains(i);
-                        int span = wreck ? s.WreckBays : 1;
-                        var (_, s1, keep) = leg.Fit[i + span - 1];
-                        int next = PostAt(r, leg.At(s1));
-                        if (next != prev) r.Bays.Add(new Bay { A = prev, B = next, Keep = wreck ? 1f : keep, Wreck = wreck, Span = span });
-                        if (wreck) Wrecks++;
+                        int next = PostAt(r, at(s1));
+                        if (next != prev) { ids.Add(r.Bays.Count); r.Bays.Add(new Bay { A = prev, B = next, Keep = keep, Span = 1 }); }
                         prev = next;
-                        i += span;
                     }
-                    if (leg.Fit.Count == 0) PostAt(r, leg.At(leg.Len));
+                    if (_fit.Count == 0) PostAt(r, at(len));
+                    rec.Legs.Add(ids);
                 }
+                if (s.Wreck != null && (wreckAt is { Count: > 0 } || wear > 0f)) _lines.Add(rec);
             }
 
-            /// <summary>Choose the bays that are wrecked: whole ones only, WreckBays in a row, and -- on a curve, where a wreck
-            /// spanning several bays is a rigid chord across their posts -- only where the line hardly turns.</summary>
-            static void MarkWrecks(Style s, List<Leg> legs, IReadOnlyList<Vector3> wreckAt, float wear, ulong seed)
+            /// <summary>⭐ WHERE A WRECK MAY GO (strawberry 2026-10-15: "prevent broken pieces being placed where multiple
+            /// fences meet"). Whole bays only, and a whole intact bay between it and either end of its leg -- so never against
+            /// a corner or the end of a line, where another fence picks up; every post at and inside it held by this line
+            /// alone (two bays: a third is a fence joining there); and nothing else within WreckClear of its chord -- another
+            /// fence's end post landing mid-bay is a junction too, just not a welded one.
+            /// A wreck WreckBays wide is the broken prop; wider (strawberry: "split the broken fence prop in half down the
+            /// middle, so that we could have a bigger broken gap") is its two halves at the ends with nothing between.</summary>
+            void ResolveWrecks()
             {
-                int k = s.WreckBays;
-                bool Eligible(Leg leg, int i)
+                if (_resolved) return;
+                _resolved = true;
+                if (_lines.Count == 0) return;
+                var deg = new Dictionary<Run, int[]>();
+                var near = new Dictionary<(int, int), List<(Run r, int i)>>();
+                const float cell = 2f;
+                foreach (var r in _runs.Values)
                 {
-                    if (i < 0 || i + k > leg.Fit.Count) return false;
-                    for (int j = i; j < i + k; j++)
-                        if (leg.Fit[j].keep < 0.999f || leg.WreckStart.Contains(j)) return false;
-                    for (int j = i - k + 1; j < i; j++) if (j >= 0 && leg.WreckStart.Contains(j)) return false;   // inside another
-                    if (k > 1 && leg.Curved)
+                    var d = new int[r.Posts.Count];
+                    foreach (var b in r.Bays) { d[b.A]++; d[b.B]++; }
+                    deg[r] = d;
+                    for (int i = 0; i < r.Posts.Count; i++)
                     {
-                        var p0 = leg.At(leg.Fit[i].s0); var p1 = leg.At(leg.Fit[i].s1); var p2 = leg.At(leg.Fit[i + k - 1].s1);
-                        var d0 = new Vector2(p1.X - p0.X, p1.Z - p0.Z); var d1 = new Vector2(p2.X - p1.X, p2.Z - p1.Z);
-                        if (d0.LengthSquared() < 1e-6f || d1.LengthSquared() < 1e-6f) return false;
-                        if (Mathf.RadToDeg(Mathf.Abs(d0.AngleTo(d1))) > WreckMaxTurnDeg) return false;
+                        var key = (Mathf.FloorToInt(r.Posts[i].X / cell), Mathf.FloorToInt(r.Posts[i].Z / cell));
+                        if (!near.TryGetValue(key, out var l)) near[key] = l = new List<(Run, int)>();
+                        l.Add((r, i));
                     }
-                    return true;
                 }
-                if (wreckAt != null)
-                    foreach (var m in wreckAt)
+                foreach (var rec in _lines)
+                {
+                    var r = RunFor(rec.Style);
+                    var d = deg[r];
+                    int k0 = rec.Style.WreckBays;
+                    bool Eligible(int leg, int i, int k)
                     {
-                        Leg best = null; int bi = -1; float bd = WreckSnap;
-                        foreach (var leg in legs)
-                            for (int i = 0; i + k <= leg.Fit.Count; i++)
+                        var lb = rec.Legs[leg];
+                        if (i < 1 || i + k > lb.Count - 1) return false;                  // a whole bay to either side, in its leg
+                        for (int j = i; j < i + k; j++)
+                        {
+                            var b = r.Bays[lb[j]];
+                            if (b.Keep < 0.999f || b.Wreck || b.Skip) return false;
+                        }
+                        int a = r.Bays[lb[i]].A, z = r.Bays[lb[i + k - 1]].B;
+                        var own = new HashSet<int> { z };
+                        for (int j = i; j < i + k; j++) own.Add(r.Bays[lb[j]].A);
+                        foreach (int q in own) if (d[q] != 2 || r.Hidden.Contains(q)) return false;
+                        var pa = r.Posts[a]; var pz = r.Posts[z];
+                        var ab = new Vector2(pz.X - pa.X, pz.Z - pa.Z);
+                        float len2 = Mathf.Max(1e-6f, ab.LengthSquared());
+                        int x0 = Mathf.FloorToInt((Mathf.Min(pa.X, pz.X) - WreckClear) / cell), x1 = Mathf.FloorToInt((Mathf.Max(pa.X, pz.X) + WreckClear) / cell);
+                        int z0 = Mathf.FloorToInt((Mathf.Min(pa.Z, pz.Z) - WreckClear) / cell), z1 = Mathf.FloorToInt((Mathf.Max(pa.Z, pz.Z) + WreckClear) / cell);
+                        for (int cx = x0; cx <= x1; cx++)
+                            for (int cz = z0; cz <= z1; cz++)
                             {
-                                if (!Eligible(leg, i)) continue;
-                                var mid = leg.At((leg.Fit[i].s0 + leg.Fit[i + k - 1].s1) * 0.5f);
-                                float d = new Vector2(mid.X - m.X, mid.Z - m.Z).Length();
-                                if (d < bd) { bd = d; best = leg; bi = i; }
+                                if (!near.TryGetValue((cx, cz), out var l)) continue;
+                                foreach (var (qr, qi) in l)
+                                {
+                                    if (ReferenceEquals(qr, r) && own.Contains(qi)) continue;
+                                    var q = qr.Posts[qi];
+                                    float t = Mathf.Clamp(((q.X - pa.X) * ab.X + (q.Z - pa.Z) * ab.Y) / len2, 0f, 1f);
+                                    if (new Vector2(pa.X + ab.X * t - q.X, pa.Z + ab.Y * t - q.Z).Length() < WreckClear) return false;
+                                }
                             }
-                        best?.WreckStart.Add(bi);
+                        return true;
                     }
-                if (wear <= 0f) return;
-                ulong h = seed ^ 0x9E3779B97F4A7C15UL;
-                foreach (var leg in legs)
-                    for (int i = 0; i + k <= leg.Fit.Count; i++)
+                    void Apply(int leg, int i, int k)
                     {
-                        h ^= h >> 33; h *= 0xFF51AFD7ED558CCDUL; h ^= h >> 33; h += 0x632BE59BD9B4E5C1UL;
-                        if ((h >> 40) / (float)(1UL << 24) >= wear || !Eligible(leg, i)) continue;
-                        leg.WreckStart.Add(i);
-                        i += k;                                   // (and a whole bay before the next can start)
+                        var lb = rec.Legs[leg];
+                        var first = r.Bays[lb[i]];
+                        first.Wreck = true; first.Span = k; first.FirstEnd = first.B; first.LastStart = r.Bays[lb[i + k - 1]].A;
+                        first.B = r.Bays[lb[i + k - 1]].B;
+                        r.Bays[lb[i]] = first;
+                        for (int j = i + 1; j < i + k; j++)
+                        {
+                            var b = r.Bays[lb[j]]; b.Skip = true; r.Bays[lb[j]] = b;
+                            r.Hidden.Add(b.A);
+                        }
+                        Wrecks++; if (k > k0) WideWrecks++;
                     }
+                    // markers: clustered, each cluster one wreck a bay wider per extra marker; the widest that fits, nearest
+                    if (rec.WreckAt != null)
+                    {
+                        var used = new bool[rec.WreckAt.Count];
+                        for (int m = 0; m < rec.WreckAt.Count; m++)
+                        {
+                            if (used[m]) continue;
+                            var c = rec.WreckAt[m]; int n = 1; used[m] = true;
+                            for (int o = m + 1; o < rec.WreckAt.Count; o++)
+                                if (!used[o] && new Vector2(rec.WreckAt[o].X - c.X, rec.WreckAt[o].Z - c.Z).Length() < WreckCluster) { used[o] = true; n++; }
+                            for (int k = k0 + n - 1; k >= k0; k--)
+                            {
+                                int bl = -1, bi = -1; float bd = WreckSnap;
+                                for (int leg = 0; leg < rec.Legs.Count; leg++)
+                                    for (int i = 0; i + k <= rec.Legs[leg].Count; i++)
+                                    {
+                                        if (!Eligible(leg, i, k)) continue;
+                                        var lb = rec.Legs[leg];
+                                        var mid = (r.Posts[r.Bays[lb[i]].A] + r.Posts[r.Bays[lb[i + k - 1]].B]) * 0.5f;
+                                        float dd = new Vector2(mid.X - c.X, mid.Z - c.Z).Length();
+                                        if (dd < bd) { bd = dd; bl = leg; bi = i; }
+                                    }
+                                if (bl >= 0) { Apply(bl, bi, k); break; }
+                            }
+                        }
+                    }
+                    if (rec.Wear <= 0f) continue;
+                    ulong h = rec.Seed ^ 0x9E3779B97F4A7C15UL;
+                    float Next() { h ^= h >> 33; h *= 0xFF51AFD7ED558CCDUL; h ^= h >> 33; h += 0x632BE59BD9B4E5C1UL; return (h >> 40) / (float)(1UL << 24); }
+                    for (int leg = 0; leg < rec.Legs.Count; leg++)
+                        for (int i = 1; i < rec.Legs[leg].Count; i++)
+                        {
+                            if (Next() >= rec.Wear) continue;
+                            // mostly the prop's own width; now and then a bay or two wider
+                            float u = Next();
+                            for (int k = k0 + (u < 0.1f ? 2 : u < 0.35f ? 1 : 0); k >= k0; k--)
+                                if (Eligible(leg, i, k)) { Apply(leg, i, k); i += k; break; }   // (and a whole bay before the next)
+                        }
+                }
             }
 
             /// <summary>Build every line added so far under `parent`: merged meshes and convex colliders, one of each per
@@ -278,12 +359,14 @@ namespace UnturnedGodot
             public int Build(Node3D parent, EditorObjects objs, string name = "Fences", float cellSize = CellSize)
             {
                 if (parent == null || objs == null) return 0;
-                int made = 0, posts = 0, bays = 0, cut = 0, wrecks = 0;
+                ResolveWrecks();
+                int made = 0, posts = 0, bays = 0, cut = 0;
                 foreach (var r in _runs.Values)
                 {
                     var post = Piece.Of(objs, r.Style.PostPiece);
                     var bay = Piece.Of(objs, r.Style.BayPiece);
-                    var wreck = r.Style.Wreck != null ? Piece.Of(objs, r.Style.WreckPiece) : null;
+                    var wreckL = r.Style.Wreck != null ? Piece.Of(objs, r.Style.WreckPiece + "L") : null;
+                    var wreckR = r.Style.Wreck != null ? Piece.Of(objs, r.Style.WreckPiece + "R") : null;
                     if (post == null || bay == null)
                     {
                         Log.Print($"[fence] {r.Style}: piece meshes missing ({r.Style.PostPiece}/{r.Style.BayPiece}) -- run tools/split_fence_parts.py");
@@ -308,6 +391,7 @@ namespace UnturnedGodot
                     var first = new Vector2[r.Posts.Count];
                     foreach (var b in r.Bays)
                     {
+                        if (b.Skip) continue;
                         var d = new Vector2(r.Posts[b.B].X - r.Posts[b.A].X, r.Posts[b.B].Z - r.Posts[b.A].Z);
                         if (d.LengthSquared() < 1e-8f) continue;
                         d = d.Normalized();
@@ -318,6 +402,7 @@ namespace UnturnedGodot
                     }
                     for (int i = 0; i < r.Posts.Count; i++)
                     {
+                        if (r.Hidden.Contains(i)) continue;
                         var a = axis[i];
                         float ang = a.LengthSquared() < 1e-8f ? Mathf.Atan2(first[i].Y, first[i].X) : Mathf.Atan2(a.Y, a.X) * 0.5f;
                         var along = new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang));
@@ -326,13 +411,24 @@ namespace UnturnedGodot
                         c.AddPost(post, r.Posts[i], along, _ground);
                         posts++;
                     }
+                    float wreckSpan = r.Style.Pitch * r.Style.WreckBays;
                     foreach (var b in r.Bays)
                     {
+                        if (b.Skip) continue;
                         var pa = r.Posts[b.A]; var pb = r.Posts[b.B];
-                        // ⭐ a wreck is the broken prop's infill over its whole span, and NO collider: what is left of it is
-                        // boards on the ground and a panel hanging off a post -- the gap is the point of a broken fence
-                        if (b.Wreck && wreck != null) { CellAt((pa + pb) * 0.5f).AddBay(wreck, pa, pb, 1f, r.Style.Pitch * b.Span, false); wrecks++; }
-                        else CellAt((pa + pb) * 0.5f).AddBay(bay, pa, pb, b.Keep, r.Style.Pitch * Mathf.Max(1, b.Span));
+                        var at = CellAt((pa + pb) * 0.5f);
+                        if (b.Wreck && wreckL != null && wreckR != null)
+                        {
+                            // ⭐ THE TWO HALVES, each hung off its own post ALONG ITS OWN BAY: the left laid as if the whole
+                            // prop ran on along the wreck's first bay, the right as if it ran back along its last. On the
+                            // prop's own width those are the same bays and the halves ARE the prop; wider, the gap opens
+                            // between them -- and on a curve each still follows its bay, so a wide wreck needs no straight.
+                            // NO collider: what is left is boards on the ground and a panel off a post -- the gap is the point.
+                            float wb = r.Style.WreckBays;
+                            at.AddBay(wreckL, pa, pa + (r.Posts[b.FirstEnd] - pa) * wb, 1f, wreckSpan, false);
+                            at.AddBay(wreckR, pb - (pb - r.Posts[b.LastStart]) * wb, pb, 1f, wreckSpan, false);
+                        }
+                        else if (!b.Wreck) at.AddBay(bay, pa, pb, b.Keep, r.Style.Pitch);
                         bays++; if (b.Keep < 0.999f) cut++;
                     }
                     var mat = objs.PreviewMaterial(r.Style.Name);
@@ -349,14 +445,14 @@ namespace UnturnedGodot
                         made++;
                     }
                 }
-                Log.Print($"[fence] {Lines} line(s), {Length:0} m: {posts} posts, {bays} bays ({cut} cut short, {wrecks} wrecked) in {made} cell(s)"
-                        + $" -- {string.Join(", ", ListStyles())}");
+                Log.Print($"[fence] {Lines} line(s), {Length:0} m: {posts} posts, {bays} bays ({cut} cut short, {Wrecks} wrecked, "
+                        + $"{WideWrecks} of them wider than the prop) in {made} cell(s) -- {string.Join(", ", ListStyles())}");
                 return made;
             }
 
             IEnumerable<string> ListStyles()
             {
-                foreach (var r in _runs.Values) yield return $"{r.Style.Name} {r.Posts.Count}p/{r.Bays.Count}b";
+                foreach (var r in _runs.Values) yield return $"{r.Style.Name} {r.Posts.Count - r.Hidden.Count}p/{r.Bays.Count}b";
             }
         }
 

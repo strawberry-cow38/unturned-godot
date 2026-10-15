@@ -12,7 +12,8 @@ namespace UnturnedGodot
     /// (EditorObjects.AddFenceSpline), so picking it up and deleting it works like any prop.
     ///
     /// Keys while on: 1-8 pick the fence, C switches a curve through the points / straight legs with a post on every
-    /// corner, B drops a broken section where the cursor is (the fences that have a broken prop), Shift+J off.</summary>
+    /// corner, B drops a broken section where the cursor is (the fences that have a broken prop) -- B again on the same spot
+    /// opens it a bay wider -- Shift+J off.</summary>
     public partial class EditorFenceSpline : Node3D
     {
         readonly Editor _editor;
@@ -39,7 +40,7 @@ namespace UnturnedGodot
         }
 
         public string ModeText => _on
-            ? $"FENCE · {Style.Name} (1-8) · {(_corners ? "corners" : "curve")} (C) · {_path.Count} point(s) · B = broken here ({_wreckAt.Count}{(Style.Wreck == null ? ", none for this fence" : "")}) · ENTER lays it · Backspace drops a point · Esc · Shift+J off"
+            ? $"FENCE · {Style.Name} (1-8) · {(_corners ? "corners" : "curve")} (C) · {_path.Count} point(s) · B = broken here, again = wider ({_wreckAt.Count}{(Style.Wreck == null ? ", none for this fence" : "")}) · ENTER lays it · Backspace drops a point · Esc · Shift+J off"
             : "Shift+J = fence";
 
         public void SetActive(bool on) { if (_on != on) Toggle(); }

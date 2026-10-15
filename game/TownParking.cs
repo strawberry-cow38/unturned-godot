@@ -1487,5 +1487,54 @@ namespace UnturnedGodot
         }
         /// <summary>The lots' kerbs' height over their asphalt, as BuildParkingLots built them.</summary>
         float _lotKerbH = 0.18f;
+
+        /// <summary>How close a lamp, hydrant, signal or sign may stand to a parking meter. ⚠ 2 m, not the 1.2 it was: a meter
+        /// 1.33 m off a lamp's pole passed, and next to a 7 m pole that is ON it as far as anyone looking is concerned.</summary>
+        public static float MeterClear = float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNMETERCLEAR"),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float mc) ? mc : 2f;
+        /// <summary>What the last ClearMeterClashes found and took down.</summary>
+        public int MetersCleared;
+
+        /// <summary>⭐ NOTHING STANDS ON A METER (strawberry 2026-10-15: "prevent street lights or hydrants being placed on top of
+        /// parking meters"). PlaceLights' meters already keep MeterClear off the street lamps and hydrants it puts up first --
+        /// but not off anything placed AFTER them: the signal masts and stop signs at the junctions, and the parking lots'
+        /// own lamps. So once the town is up, a meter with any of those within MeterClear of it gives way: the space keeps
+        /// its paint and loses its meter, the rule the meters already followed. UG_TOWNMETERCLASH=1 only counts (the control).
+        /// Returns the meters taken down.</summary>
+        public int ClearMeterClashes(EditorObjects objs)
+        {
+            MetersCleared = 0;
+            if (objs == null) return 0;
+            var standing = new List<(Vector3 at, string what)>();
+            foreach (var what in new[] { StreetLightProp, HydrantProp, TrafficLightProp, StopSignProp })
+                foreach (var n in objs.PlacedOfNodes(what)) standing.Add((n.GlobalPosition, what));
+            var drop = new List<Node3D>();
+            var by = new Dictionary<string, int>();
+            Vector3 firstAt = Vector3.Zero;
+            var nearest = new List<string>();
+            foreach (var m in objs.PlacedOfNodes(ParkingMeterProp))
+            {
+                var mp = m.GlobalPosition;
+                float nd = float.MaxValue; string nw = "";
+                foreach (var (q, what) in standing) { float dq = Flat(q, mp); if (dq < nd) { nd = dq; nw = what; } }
+                if (nd < 4f) nearest.Add($"{nd:0.00} m {nw} at ({mp.X:0.0},{mp.Z:0.0})");
+                foreach (var (q, what) in standing)
+                {
+                    if (Flat(q, mp) >= MeterClear) continue;
+                    if (drop.Count == 0) firstAt = mp;
+                    drop.Add(m);
+                    by[what] = (by.TryGetValue(what, out int c) ? c : 0) + 1;
+                    break;
+                }
+            }
+            bool control = System.Environment.GetEnvironmentVariable("UG_TOWNMETERCLASH") == "1";
+            if (!control && drop.Count > 0) objs.RemovePlaced(drop);
+            MetersCleared = control ? 0 : drop.Count;
+            Log.Print($"[towngrid] meters: {drop.Count} stood within {MeterClear:0.#} m of "
+                    + (by.Count == 0 ? "nothing" : string.Join(", ", System.Linq.Enumerable.Select(by, kv => $"{kv.Value} x {kv.Key}")))
+                    + (drop.Count > 0 ? $" (the first at {firstAt.X:0.0},{firstAt.Z:0.0}) -- {(control ? "LEFT (control)" : "taken down")}" : ""));
+            if (nearest.Count > 0) Log.Print($"[towngrid] meters within 4 m of something standing: {string.Join("; ", nearest)}");
+            return MetersCleared;
+        }
     }
 }
