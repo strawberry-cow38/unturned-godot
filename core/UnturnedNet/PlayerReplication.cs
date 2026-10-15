@@ -318,6 +318,7 @@ namespace UnturnedGodot.Net
         public const byte EventVehicleMaintenance = 58; // v69: accepted glazing/repair/manual horn facts
         public const byte EventMagazineTransfer = 60; // v71: owner-only exact magazine request completion.
         public const byte EventCraftingContext = 61; // v72: owner-only station access and contextual craft outcome.
+        public const byte EventRespawnPose = 62; // v73: optional owner facing, paired with unchanged PlayerRespawned.
         public const byte EventVehicleDoor = 59; // v70: actual open/close edge, no late-join replay.
         public const byte EventVehicleLighting = 57; // v68: accepted alarm horn/lamp contact facts
         public const byte EventMountedFlight = 56; // v66: accepted source mounted continuation/retirement/blast pictures

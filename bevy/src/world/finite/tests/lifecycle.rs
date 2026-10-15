@@ -85,6 +85,7 @@ fn source_empty_chunk_retires_native_mesh_and_rapier_collision_then_refill_and_s
     .insert_resource(WorldConfig {
         map_root: None,
         finite_path: Some(root.clone()),
+        finite_spawn: Some(Vec3::new(96., 77.5, -96.)),
         map_name: "Island_Lifecycle".into(),
         fixed_camera: Some((bevy::math::DVec3::new(96., 120., -96.), 0., 0.)),
         spawn_radius: 16.,
@@ -102,6 +103,9 @@ fn source_empty_chunk_retires_native_mesh_and_rapier_collision_then_refill_and_s
         crate::world::build_world.run_if(|r: Res<Rebuild>| r.0),
     );
     rebuild(&mut app, true);
+    assert_eq!(app.world().resource::<WorldState>().spawn, Vec3::new(96.,77.5,-96.),
+        "initial authored altitude is not snapped to terrain plus0.5");
+    assert_eq!(app.world().resource::<WorldState>().spawn_yaw, 0.);
     let original =
         terrain_hit(&mut app, Vec2::new(96., -96.)).expect("actual source chunk must collide");
     assert!(app.world().get::<WorldTerrain>(original).is_some());

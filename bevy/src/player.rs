@@ -33,6 +33,7 @@ mod menu_tests;
 mod collision_tests;
 #[cfg(test)]
 mod swoop_tests;
+mod respawn;
 
 pub struct PlayerPlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -110,6 +111,7 @@ struct Session {
     initialized: bool,
     failed: bool,
     correction_version: u64,
+    respawn_look_version: u64,
     connecting_elapsed: f32,
     was_connected: bool,
     reject_retries: u8,
@@ -122,6 +124,7 @@ impl Default for Session {
             initialized: false,
             failed: false,
             correction_version: 0,
+            respawn_look_version: 0,
             connecting_elapsed: 0.,
             was_connected: false,
             reject_retries: 0,
@@ -344,6 +347,9 @@ fn initialize_session(
     model.map_name = options.0.map.clone();
     ui.map = options.0.map.clone();
     let mut request = json!({"contentRoot":options.0.content,"name":options.0.player_name,"mapId":options.0.map,"spawn":world.spawn.to_array(),"origin":[origin.offset.x,origin.offset.y],"yaw":world.spawn_yaw,"seed":options.0.seed});
+    if let Some(path) = options.0.island.as_ref().or(options.0.new_island.as_ref()) {
+        request["finiteDirectory"] = json!(path);
+    }
     request["useLocalProfile"] = json!(profile.is_some_and(|profile| profile.ready));
     options.0.network.configure(&mut request);
     match bridge.request("init", request) {
@@ -357,6 +363,7 @@ fn initialize_session(
             session.correction_version = response["state"]["player"]["correctionVersion"]
                 .as_u64()
                 .unwrap_or(0);
+            session.respawn_look_version = response["state"]["player"]["respawnLook"]["version"].as_u64().unwrap_or(0);
             session.heights = StanceHeights::from_reply(&response["result"]["movementHeights"]);
             *input = PlayerInput {
                 yaw: world.spawn_yaw,
@@ -489,6 +496,7 @@ fn ui_intents(
                     let finite = config.finite_path.is_some() && config.map_name == *map;
                     if !finite {
                         config.finite_path = None;
+                        config.finite_spawn = None;
                         options.0.island = None;
                         options.0.new_island = None;
                     }
@@ -589,6 +597,7 @@ fn ui_intents(
                     }
                 }
                 if matches!(intent, UiIntent::Load) {
+                    session.respawn_look_version = response["state"]["player"]["respawnLook"]["version"].as_u64().unwrap_or(0);
                     *hand_use.0 = default();
                     *trigger = default();
                     hand_use.1.0 = hand_use.1.0.wrapping_add(1);
@@ -1209,6 +1218,7 @@ fn publish_body(
     match bridge.request("tick", request) {
         Ok(response) => {
             let state = &response["state"];
+            respawn::adopt(&mut input, &mut session, state);
             if let Some(held) = state["player"]["heldItemId"].as_u64() {
                 input.held_item_id = held as u16;
             }

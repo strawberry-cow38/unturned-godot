@@ -65,8 +65,12 @@ public sealed partial class BridgeHost
         _client.GrenadeExploded += e => Emit("grenadeExploded", e);
         _client.PlayerDied += e => { if (e.Victim == _client.PlayerId) _client.ClearCombatRing(); Emit("death", e); };
         _client.PlayerRespawned += e => {
-            if (e.PlayerId == _client.PlayerId) { _client.ClearCombatRing(); _movement = new(); _stance = new(); _velocity = Vector3.zero; _held = 0; _correctionVersion++; }
+            if (e.PlayerId == _client.PlayerId) { _client.ClearCombatRing(); _movement = new(); _stance = new(); _velocity = Vector3.zero; _held = 0; _correctionVersion++; _pitch = 0; _respawnLookYaw = null; _respawnLookVersion++; }
             Emit("respawn", e);
+        };
+        _client.RespawnPose += e => {
+            _yaw = e.Yaw; _respawnLookYaw = e.Yaw; _respawnLookVersion++;
+            Emit("respawnPose", new { acceptedTick=e.Tick, yaw=e.Yaw });
         };
         _client.CropPlanted += e => Emit("cropPlanted", e);
         _client.CropHarvested += e => Emit("cropHarvested", e);

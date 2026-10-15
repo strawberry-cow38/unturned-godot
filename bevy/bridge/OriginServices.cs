@@ -39,6 +39,7 @@ public sealed partial class BridgeHost
         _wildlife.TranslateWorld(delta);
         _zombies.TranslateWorld(delta);
         _cosmetic.TranslateWorld(delta);
+        _finiteSpawns?.Translate(delta);
         for (int i = 0; i < _serviceSpecs.Count; i++) _serviceSpecs[i] = CoordinateJson.ServiceSpec(_serviceSpecs[i], delta);
         for (int i = 0; i < _events.Count; i++)
         {
@@ -132,7 +133,7 @@ internal static class CoordinateJson
     public static JsonElement ServiceSpec(JsonElement element, Vector3 d)
     {
         var node = JsonNode.Parse(element.GetRawText()).AsObject();
-        foreach (string key in new[] { "objects", "mapObjects", "mapResources", "resources", "destructibles", "doors", "beds", "objectDoors", "containerDoors", "seats", "npcs", "taps", "fixtures", "containers", "vehicles" })
+        foreach (string key in new[] { "objects", "mapObjects", "mapResources", "resources", "destructibles", "doors", "beds", "objectDoors", "containerDoors", "seats", "npcs", "taps", "fixtures", "containers", "vehicles", "finitePlayerSpawns" })
             if (node[key] is JsonArray entries) foreach (var e in entries.OfType<JsonObject>()) Entry(e, d);
         if (node["deadzones"] is JsonArray zones) foreach (var e in zones.OfType<JsonObject>()) Move(e, "center", d);
         if (node["seaLevel"] != null && d.y != 0) node["seaLevel"] = node["seaLevel"].GetValue<float>() + d.y;

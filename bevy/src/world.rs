@@ -47,6 +47,9 @@ pub struct WorldConfig {
     pub procedural_path: Option<PathBuf>,
     /// Original editor-map descriptor and source-derived native chunk cache.
     pub finite_path: Option<PathBuf>,
+    /// EditorPlayMode's uniformly chosen exact regular point, before authority
+    /// starts. Unlike a respawn, initial entry does not adopt authored yaw.
+    pub finite_spawn: Option<Vec3>,
     pub foliage: bool,
 }
 impl Default for WorldConfig {
@@ -64,6 +67,7 @@ impl Default for WorldConfig {
                 .and_then(|s| parse_capture_camera(&s)),
             procedural_path: None,
             finite_path: None,
+            finite_spawn: None,
             foliage: true,
         }
     }
@@ -604,6 +608,7 @@ fn build_world(
         .fixed_camera
         .map(|c| c.0)
         .or(config.spawn_center.map(Vec3::as_dvec3))
+        .or(config.finite_spawn.map(Vec3::as_dvec3))
         .or_else(|| {
             procedural_start
                 .as_ref()
@@ -843,9 +848,8 @@ fn build_world(
     };
     let player_spawn = if streaming {
         Some((old_spawn, old_yaw))
-    } else if let Some(finite) = &geometry.finite {
-        finite.players().ok().and_then(|points| points.into_iter().min_by(|(a,_),(b,_)|
-            a.xz().distance_squared(center.xz()).total_cmp(&b.xz().distance_squared(center.xz()))))
+    } else if geometry.finite.is_some() {
+        config.finite_spawn.map(|position| (position, 0.))
     } else if config.spawn_center.is_none() && config.procedural_path.is_none() {
         config
             .map_root
@@ -872,14 +876,16 @@ fn build_world(
             .and_then(|v| v.get(2).copied())
             .unwrap_or(0.) as f32,
     ));
-    state.spawn = Vec3::new(
+    state.spawn = if geometry.finite.is_some() && config.finite_spawn.is_some() {
+        spawn_point
+    } else { Vec3::new(
         spawn_point.x,
         geometry
             .terrain_height(spawn_point.x, spawn_point.z)
             .unwrap_or(spawn_point.y)
             + 0.5,
         spawn_point.z,
-    );
+    ) };
     state.spawn_yaw = yaw;
     if streaming {
         state.spawn = old_spawn;

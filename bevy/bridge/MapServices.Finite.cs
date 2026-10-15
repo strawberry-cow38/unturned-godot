@@ -74,6 +74,7 @@ public static partial class MapServices
             : ParseResources(Path.Combine(files.Root, files.Info.Resources), activeHoliday);
         var spec = JsonSerializer.SerializeToElement(new {
             mapRoot = Text(request, "mapRoot"), resourceCount = resources.Count, resources = resources.Metadata,
+            finitePlayerSpawns = FiniteSpawnPool.Load(files.PlayersPath).Points.Select(p => new { position = Array(p.Position), yaw = p.Yaw }).ToArray(),
             containers, objectDoors, fixtures = System.Array.Empty<object>(),
             containerDoors = System.Array.Empty<object>(), seats = System.Array.Empty<object>(),
             npcs = System.Array.Empty<object>(), deadzones = System.Array.Empty<object>()

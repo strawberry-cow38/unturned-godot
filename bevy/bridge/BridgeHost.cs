@@ -100,6 +100,7 @@ public sealed partial class BridgeHost : IDisposable
                 _position = Vec(r, "spawn", new(0, 1, 0));
                 CheckNetworkSpawn(_position);
                 _velocity = Vector3.zero; _held = 0; _yaw = Float(r, "yaw"); _pitch = 0; _grounded = true; _correctionVersion++;
+                PrepareFiniteRespawns(r);
                 Start();
                 if (Bool(r, "starterKit")) SeedStarterKit();
                 for (int n = 0; n < 6; n++) Tick();
@@ -166,7 +167,7 @@ public sealed partial class BridgeHost : IDisposable
                 mapSpec["mapResources"] = JsonSerializer.SerializeToNode(parsed.Resources);
                 var persistedSpec = JsonSerializer.SerializeToElement(mapSpec);
                 if (_originX != 0 || _originZ != 0) persistedSpec = CoordinateJson.ServiceSpec(persistedSpec, new((float)-_originX, 0, (float)-_originZ));
-                var mapResult = _services.Register(persistedSpec); _serviceSpecs.Add(persistedSpec); _worldChanged = true; return mapResult;
+                var mapResult = _services.Register(persistedSpec); AdoptFiniteRespawns(persistedSpec); _serviceSpecs.Add(persistedSpec); _worldChanged = true; return mapResult;
             case "worldServices":
                 RequireSession();
                 var registration = _services.Register(r); _serviceSpecs.Add(r.Clone()); _worldChanged = true; return registration;
@@ -377,7 +378,10 @@ public sealed partial class BridgeHost : IDisposable
         _server.Transactions.ConsumeApplied = (owner, cmd, id) => Emit("consumeAccepted", new { playerId = owner, itemId = id, page = cmd.Page, x = cmd.X, y = cmd.Y, tick = _server.Session.CurrentTick });
         _server.Vitals.SurvivalDrain = true;
         foreach (var spec in _serviceSpecs)
+        {
             if (spec.TryGetProperty("vehicles", out _)) _vehicles.Register(spec); else _services.Register(spec);
+            AdoptFiniteRespawns(spec);
+        }
         _server.Transactions.Blueprints = _catalog.Recipes;
         ConfigureInventoryTransactions();
         _server.PendingSave = save;
@@ -556,6 +560,7 @@ public sealed partial class BridgeHost : IDisposable
             steady = SteadyState(),
             weapon = IsRemote ? _remoteWeapon.Snapshot() : _weapons.Snapshot(_client.PlayerId),
             player = new { position = Array(_position), velocity = Array(_velocity), yaw = _yaw, pitch = _pitch,
+                respawnLook = new { version = _respawnLookVersion, yaw = _respawnLookYaw, pitch = 0f },
                 profile = profile == null ? null : new { name = profile.Name, face = profile.Face, avatarHash = profile.AvatarHash },
                 stance = _movement.Stance.ToString().ToLowerInvariant(), hp = combat?.Health ?? 100, alive = combat?.Alive ?? true, kills = combat?.Kills ?? 0,
                 gesture = combat?.Gesture ?? 0, arrested = combat?.Gesture == (byte)EPlayerGesture.ARREST_START,
@@ -644,5 +649,6 @@ public sealed partial class BridgeHost : IDisposable
         _cosmetic = null; _warheads = null; _mounted = null; _npcHelis = null; _appearance = null; _wildlife = null; _zombies = null;
         _remoteWeapon = null; _remoteMounted = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
         _mapBindings = null;
+        _finiteSpawns = null; _respawnLookVersion = 0; _respawnLookYaw = null;
     }
 }

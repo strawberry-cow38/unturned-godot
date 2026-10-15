@@ -167,7 +167,7 @@ public sealed class CraftingStationTests
         // The last published protocol must fail at join, before silently losing the new request/result.
         var old=new NetClientSession(new UdpClientTransport("127.0.0.1",port),"v71",protocolVersion:71,contentHash:NetContent.Hash);
         try { old.Connect();for(int n=0;n<100&&old.State!=NetSessionState.Disconnected;n++){old.Tick();Call(host,"tick");Thread.Sleep(1);}
-            Assert.That(old.RejectReason,Is.EqualTo(NetRejectReason.VersionMismatch));Assert.That(old.RejectServerVersion,Is.EqualTo(72)); }
+            Assert.That(old.RejectReason,Is.EqualTo(NetRejectReason.VersionMismatch));Assert.That(old.RejectServerVersion,Is.EqualTo(NetProtocol.Version)); }
         finally { old.Disconnect(); }
     }
 }

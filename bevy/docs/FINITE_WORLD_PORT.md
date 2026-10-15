@@ -273,9 +273,9 @@ source/streaming boundary. These are inspected scenes and source-data checks,
 not pixel goldens. The full gameplay save is separate from the authored map;
 the reopen capture starts a new owner rather than claiming a Load-world journey.
 
-Remaining finite scope includes source spawn/respawn pool selection (the current
-entry chooses a nearby authored spawn and grounds it), generated loot/fauna/
-zombie/vehicle population, additional custom fixture authority, original
+Source spawn/respawn pool selection is now implemented and verified in
+[FINITE_RESPAWN_PORT.md](FINITE_RESPAWN_PORT.md). Remaining finite scope includes
+generated loot/fauna/zombie/vehicle population, additional custom fixture authority, original
 editor interactions and custom sidecars, river-water/wet-cell ocean geometry,
 Information chart projection and menu entry, and remote descriptor negotiation.
 Existing generator town/route metadata is intentionally not reconstructed on

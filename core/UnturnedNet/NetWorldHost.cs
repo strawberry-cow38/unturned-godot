@@ -1090,7 +1090,8 @@ namespace UnturnedGodot.Net
             Events.Register<PlayerHurtEvent>(ReplicationIds.EventPlayerHurt, PlayerHurtEvent.TryRead, e => PlayerHurt?.Invoke(e));
             Events.Register<ImpactFxEvent>(ReplicationIds.EventImpactFx, ImpactFxEvent.TryRead, e => ImpactFx?.Invoke(e));
             Events.Register<PlayerDiedEvent>(ReplicationIds.EventPlayerDied, PlayerDiedEvent.TryRead, e => PlayerDied?.Invoke(e));
-            Events.Register<PlayerRespawnedEvent>(ReplicationIds.EventPlayerRespawned, PlayerRespawnedEvent.TryRead, e => PlayerRespawned?.Invoke(e));
+            RegisterRespawnPoseEvents();
+            Events.Register<PlayerRespawnedEvent>(ReplicationIds.EventPlayerRespawned, PlayerRespawnedEvent.TryRead, ReceiveRespawned);
             Events.Register<ZombieHitEvent>(ReplicationIds.EventZombieHit, ZombieHitEvent.TryRead, e => ZombieHit?.Invoke(e));
             Events.Register<ZombieDiedEvent>(ReplicationIds.EventZombieDied, ZombieDiedEvent.TryRead, e => ZombieDied?.Invoke(e));
             Events.Register<AttackSwingEvent>(ReplicationIds.EventAttackSwing, AttackSwingEvent.TryRead, e => ZombieSwung?.Invoke(e));
@@ -1210,7 +1211,11 @@ namespace UnturnedGodot.Net
         /// <summary>wire v53: the server's gamemode; empty = not advertised.</summary>
         public string ServerGamemode => Session.ServerGamemode;
 
-        public void Connect() => Session.Connect();
+        public void Connect()
+        {
+            if (State == NetSessionState.Disconnected) ResetRespawnPose();
+            Session.Connect();
+        }
 
         public void Tick()
         {
@@ -1732,6 +1737,6 @@ namespace UnturnedGodot.Net
 
         ushort _playerStateSeq;
 
-        public void Disconnect() => Session.Disconnect();
+        public void Disconnect() { ResetRespawnPose(); Session.Disconnect(); }
     }
 }

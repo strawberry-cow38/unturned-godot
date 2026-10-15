@@ -53,6 +53,7 @@ pub(crate) fn prepare(
     config.map_root = None;
     config.procedural_path = None;
     config.finite_path = Some(root);
+    config.finite_spawn = crate::player::vector(&reply["result"]["initialSpawn"]);
     Ok(())
 }
 
