@@ -177,3 +177,42 @@ client commands. `worldVehicleExit {netId,seat,clear,position}` publishes a trus
 Rapier door-clearance probe valid for ten simulation ticks. Enter/exit and vehicle
 recovery stay original server events. Raw source fuel capacities persist locally
 and in saves, while existing remote wire quantization is unchanged.
+
+
+`holdItem {page,x,y}` validates an owned address, the source `HandRules.KindOf`
+and the source holster policy before selecting that exact backing item.
+`equipAndHold {page,x,y}` additionally sends the original equip command when a
+bag weapon must move to its preferred slot. It selects only when that same item
+reference appears in the authorized destination; failure never selects another
+same-ID gun. Responses include `queued`, `heldItemId` and (for equipAndHold)
+`pending`. `state.weapon.held` gives `{id,page,x,y,kind}` while held. Removing or
+moving a selected item into an invalid page clears selection. Original unload
+commands update the live ammo counter, so firing cannot restore unloaded rounds.
+
+Catalog `handKind`, `canEquipFromBag`, `preferredSlot`, `tool`, `throwable`,
+`gravityMultiplier` and `consumeAnimation` come from the source dispatcher and
+registries. `consumeAnimation` includes own equip/use clips, seconds, leftHook,
+sound and optional flat color. Catalog `throwMotion` contains the original throw
+speed/lift, weak ratio, clip release fraction, wall clearance, fuse and clip time.
+
+`mapServices` also returns `objectDoors`, `seats`, and editor-authored `npcs`.
+Object-door assemblies retain one independent net ID per source placement and
+all original leaves, hinge pivots/axes, angle, duration, default state, sound and
+easing curves. Seats use original catalog anchors transformed into world space.
+NPC positions use the source editor coordinate frame and carry their character
+definition. Container-converted props keep the source behavior and do not gain a
+second door assembly. Real maps do not gain the disabled demo door/bed furniture.
+Lower-level `worldServices` accepts explicit `doors`, `beds`, `objectDoors` and
+`seats` arrays, with netId and position (doors: owner/locked; beds: yaw;
+objectDoors: open/swingSide). `state.interactables` exposes the original replicated
+tables. `toggleDoor`, `toggleObjectDoor`, `claimBed` and `sitSeat` run through
+existing validators; their events remain in the retained event queue. Prop-door
+open/reverse state is preserved by the save extension.
+
+`worldDynamicGeometry {key,meshes}` replaces only the named dynamic body's host
+triangles, leaving the static BVH intact. Meshes use world vertices, optional
+indices and the same destructible/resource tags. An empty mesh list removes the
+key. Native door animation publishes its actual collider pose through this seam.
+Weather adds `rainWetness` and `rainPuddle`, preserving the source instantaneous
+wetness and gradual 150-second fill / 420-second drain. `UG_PUDDLE` seeds the
+original render-test starting level; `snowCover` already carries accumulation.

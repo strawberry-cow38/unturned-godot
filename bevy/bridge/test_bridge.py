@@ -257,7 +257,7 @@ class BridgeTests(unittest.TestCase):
         item = self.pump()['worldItems'][0]
         self.call('action', name='pickupItem', args=dict(netId=item['netId']))
         self.pump()
-        self.call('tick', input=dict(heldItemId=1198))
+        self.call('action', name='holdItem', args=dict(page=1, x=0, y=0))
         self.pump()
         self.call('action', name='melee', args=dict(strong=True, yawDegrees=0))
         state = self.pump(30)
@@ -266,6 +266,94 @@ class BridgeTests(unittest.TestCase):
         last = [e for e in state['events'] if e['kind'] == 'resourceHit'][-1]
         self.assertEqual(100, last['data']['damage'], 'ore uses unmultiplied Resource_Damage')
         self.assertEqual([], self.pump(100)['resources']['dead'])
+
+    def test_hand_catalog_and_equipping_exact_duplicate_backing_items(self):
+        catalog = self.call('catalog')['result']
+        items = {i['id']: i for i in catalog['items']}
+        self.assertEqual('gun', items[4]['handKind'])
+        self.assertFalse(items[4]['canEquipFromBag'])
+        self.assertEqual('fluid', items[14]['handKind'])
+        self.assertEqual('tool', items[65]['handKind'])
+        self.assertEqual('umbrella', items[1103]['handKind'])
+        self.assertEqual('none', items[1346]['handKind'], 'unsupported flashbang must not turn into frag')
+        self.assertGreater(items[13]['consumeAnimation']['seconds'], 0)
+        self.assertAlmostEqual(1.63, catalog['throwMotion']['useSeconds'], delta=.02)
+        self.call('action', name='fire', args={})
+        self.assertEqual(29, self.pump()['weapon']['ammo'])
+        self.call('worldSpawn', items=[dict(itemId=253, position=[0, 0, -.5])])
+        pack = self.pump()['worldItems'][0]['netId']
+        self.call('action', name='pickupItem', args=dict(netId=pack))
+        self.pump()
+        self.call('worldSpawn', items=[dict(itemId=4, position=[0, 0, -.5])])
+        net_id = self.pump()['worldItems'][0]['netId']
+        self.call('action', name='pickupItem', args=dict(netId=net_id))
+        state = self.pump()
+        page, twin = next((p['index'], i) for p in state['inventory']['pages'] if p['index'] >= 2 for i in p['items'] if i['id'] == 4)
+        address = dict(page=page, x=twin['x'], y=twin['y'])
+        self.assertFalse(self.call('action', name='holdItem', args=address)['result']['queued'])
+        self.assertTrue(self.call('action', name='equipAndHold', args=address)['result']['queued'])
+        state = self.pump()
+        self.assertEqual(30, state['weapon']['ammo'], 'selected the requested fresh twin')
+        self.assertEqual(0, state['weapon']['held']['page'])
+        self.call('action', name='fire', args={})
+        self.pump(8)
+        self.call('action', name='fire', args={})
+        self.assertEqual(28, self.pump()['weapon']['ammo'])
+        self.call('action', name='dropItem', args=dict(page=0, x=0, y=0))
+        state = self.pump()
+        self.assertEqual(0, state['player']['heldItemId'])
+        self.assertNotIn('held', state['weapon'])
+        self.assertEqual(29, next(i['gunAmmo'] for p in state['inventory']['pages'] for i in p['items'] if i['id'] == 4))
+        beans = next((p['index'], i) for p in state['inventory']['pages'] for i in p['items'] if i['id'] == 13)
+        self.assertTrue(self.call('action', name='equipAndHold', args=dict(page=beans[0], x=beans[1]['x'], y=beans[1]['y']))['result']['queued'])
+        self.assertEqual('consumable', self.pump()['weapon']['held']['kind'])
+
+    def test_unloading_held_gun_updates_combat_and_does_not_restore_rounds(self):
+        self.call('action', name='gunUnload', args=dict(page=0, x=0, y=0, roundId=5004, count=10))
+        self.assertEqual(20, self.pump()['weapon']['ammo'])
+        self.call('action', name='fire', args={})
+        state = self.pump()
+        self.assertEqual(19, state['weapon']['ammo'])
+        self.assertEqual(10, sum(i['amount'] for p in state['inventory']['pages'] for i in p['items'] if i['id'] == 5004))
+
+    def test_interactables_authority_reach_occupancy_claim_and_save(self):
+        self.call('worldServices', objectDoors=[dict(netId=1, position=[0, 0, -1], open=False, swingSide=[0, 0, 1]),
+                  dict(netId=2, position=[20, 0, 0])], seats=[dict(netId=1, position=[0, .5, -1])],
+                  beds=[dict(netId=1, position=[0, 0, -2], yaw=90)], doors=[dict(netId=1, position=[0, 0, -1], owner=0)])
+        self.pump()
+        self.call('action', name='toggleObjectDoor', args=dict(netId=2))
+        self.assertFalse(self.pump()['interactables']['objectDoors'][1]['open'])
+        self.call('action', name='toggleObjectDoor', args=dict(netId=1))
+        self.call('action', name='toggleDoor', args=dict(netId=1))
+        self.call('action', name='sitSeat', args=dict(netId=1))
+        self.call('action', name='claimBed', args=dict(netId=1))
+        state = self.pump()
+        self.assertTrue(state['interactables']['objectDoors'][0]['open'])
+        self.assertTrue(state['interactables']['objectDoors'][0]['reverse'])
+        self.assertTrue(state['interactables']['doors'][0]['open'])
+        self.assertNotEqual(0, state['interactables']['seats'][0]['occupant'])
+        self.assertNotEqual(0, state['interactables']['beds'][0]['owner'])
+        self.call('action', name='sitSeat', args=dict(netId=0))
+        self.assertEqual(0, self.pump()['interactables']['seats'][0]['occupant'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'doors.json')
+            self.call('save', path=path)
+            self.call('action', name='toggleObjectDoor', args=dict(netId=1))
+            self.pump()
+            self.call('load', path=path)
+            door = self.pump()['interactables']['objectDoors'][0]
+            self.assertTrue(door['open'])
+            self.assertTrue(door['reverse'])
+
+    def test_dynamic_geometry_replaces_only_the_named_body(self):
+        wall = dict(vertices=[[-2, 0, -4], [2, 0, -4], [0, 4, -4]])
+        leaf = dict(vertices=[[-2, 0, -1], [2, 0, -1], [0, 4, -1]])
+        self.call('worldGeometry', meshes=[wall])
+        self.call('worldDynamicGeometry', key='door:1', meshes=[leaf])
+        ray = {'from': [0, 1.6, 0], 'to': [0, 1.6, -5]}
+        self.assertAlmostEqual(-1, self.call('worldRay', **ray)['result']['point'][2])
+        self.call('worldDynamicGeometry', key='door:1', meshes=[])
+        self.assertAlmostEqual(-4, self.call('worldRay', **ray)['result']['point'][2])
 
     def test_vehicle_authority_seats_recovery_and_blocked_exit(self):
         spec = dict(typeId=0, key='test:0', variant=2, position=[0, 0, -2], yaw=0,
@@ -339,6 +427,8 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(1, result['deadzoneCount'])
         self.assertEqual(len(result['resources']), result['resourceCount'])
         self.assertGreater(result['destructibleCount'], 1000)
+        self.assertGreater(len(result['objectDoors']), 0)
+        self.assertGreater(len(result['seats']), 0)
         self.assertEqual(result, self.call('mapServices', **request)['result'])
         state = self.pump(10)
         self.assertEqual(result['containerCount'], len(state['containers']))

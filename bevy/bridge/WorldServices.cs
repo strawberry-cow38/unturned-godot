@@ -20,6 +20,21 @@ public sealed partial class WorldServices
     readonly Dictionary<int, JsonElement> _drops = new();
     readonly HashSet<int> _broken = new();
     readonly List<Tap> _taps = new();
+    readonly Dictionary<uint, (Vector3 position, Vector3 swingSide)> _objectDoorMeta = new();
+    public sealed record PropDoorSaved(uint NetId, bool Open, bool Reverse);
+    public PropDoorSaved[] CapturePropDoors() => _server.Interactables.ObjectDoors
+        .Select(d => new PropDoorSaved(d.Key, d.Value, _server.Interactables.IsObjectDoorReversed(d.Key))).ToArray();
+    public void RestorePropDoors(PropDoorSaved[] saved)
+    {
+        foreach (var s in saved ?? []) if (_objectDoorMeta.TryGetValue(s.NetId, out var m))
+        {
+            _server.Interactables.ServerRestoreObjectDoor(s.NetId, false);
+            // Existing toggle rule writes Reverse when opening from the chosen
+            // side; this restores both open and closed double-acting states.
+            _server.Interactables.ToggleObjectDoor(s.NetId, m.position + m.swingSide * (s.Reverse ? 1 : -1), out _, out _);
+            if (!s.Open) _server.Interactables.ServerRestoreObjectDoor(s.NetId, false);
+        }
+    }
     sealed record Tap(System.Numerics.Matrix4x4 Transform, System.Numerics.Matrix4x4 Inverse, System.Numerics.Vector3 Min, System.Numerics.Vector3 Max)
     {
         public float Distance(Vector3 p)
@@ -80,6 +95,18 @@ public sealed partial class WorldServices
             _server.DestructibleHost.SetMeta(index, Float(d, "health"), Ticks(Float(d, "resetSeconds")));
             if (Int(d, "dropItemId") > 0) _drops[index] = d.Clone();
         }
+        foreach (var d in Entries(spec, "doors"))
+            _server.Interactables.RegisterDoor(checked((uint)Int(d, "netId")), Vec(d, "position"), checked((ulong)Int(d, "owner")), Bool(d, "locked"));
+        foreach (var d in Entries(spec, "beds"))
+            _server.Interactables.RegisterBed(checked((uint)Int(d, "netId")), Vec(d, "position"), Float(d, "yaw"));
+        foreach (var d in Entries(spec, "objectDoors"))
+        {
+            uint id = checked((uint)Int(d, "netId")); var pos = Vec(d, "position"); var side = Vec(d, "swingSide");
+            _server.Interactables.RegisterObjectDoor(id, pos, Bool(d, "open"), side);
+            _objectDoorMeta[id] = (pos, side);
+        }
+        foreach (var d in Entries(spec, "seats"))
+            _server.Interactables.RegisterSeat(checked((uint)Int(d, "netId")), Vec(d, "position"));
         foreach (var d in Entries(spec, "deadzones"))
         {
             var kind = Enum.TryParse<DeadzoneKind>(Text(d, "kind", "Radiation"), true, out var k) ? k : throw new ArgumentException("Unknown deadzone kind");
@@ -127,12 +154,13 @@ public sealed partial class WorldServices
             }
             MapKey = Text(spec, "mapKey");
             return MapResult = new { objects = mappings, resources = spec.GetProperty("mapResources").Clone(),
+                objectDoors = Entries(spec, "objectDoors").ToArray(), seats = Entries(spec, "seats").ToArray(), npcs = Entries(spec, "npcs").ToArray(),
                 resourceCount = _server.Resources.Count, destructibleCount = _server.Destructibles.Count,
                 containerCount = containers.Count, fixtureCount = fixturesCount(), deadzoneCount = _server.Deadzones.VolumeCount };
         }
         int fixturesCount() => fixtureIds.Count;
         return new { fixtures = entities, resources = _server.Resources.Count, destructibles = _server.Destructibles.Count,
-            containers = _server.Containers.Count, deadzones = _server.Deadzones.VolumeCount, hasWater = _server.HasWater, seaLevel = _server.SeaLevelY };
+            containers = _server.Containers.Count, objectDoors = _server.Interactables.ObjectDoorCount, seats = _server.Interactables.SeatCount, deadzones = _server.Deadzones.VolumeCount, hasWater = _server.HasWater, seaLevel = _server.SeaLevelY };
     }
     static long Ticks(float seconds) => (long)Math.Round(seconds / SimClock.FixedDelta);
     static int Count(JsonElement spec, string key)

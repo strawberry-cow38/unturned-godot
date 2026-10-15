@@ -29,6 +29,10 @@ public sealed class WeaponServices
         if (!_states.TryGetValue(owner, out var s)) _states[owner] = s = new(_server, _catalog, owner, _emit);
         s.Bind(); return s;
     }
+    public (bool queued, ushort heldItemId, bool pending) EquipAndHold(ushort owner, NetWorldClient client, int page, int x, int y)
+        => State(owner).EquipAndHold(client, page, x, y);
+    public ushort? TakeSelectionChange(ushort owner) => State(owner).TakeSelectionChange();
+    public ushort Select(ushort owner, int page, int x, int y) => State(owner).Select(page, x, y);
     public bool SetFiremode(ushort owner, NetWorldClient client, int mode) => State(owner).SetFiremode(client, mode);
     public void Step() { foreach (var player in _server.CombatState.All) State(player.OwnerPlayerId).Step(); }
     public object Snapshot(ushort owner) => State(owner).Snapshot();
@@ -43,7 +47,14 @@ public sealed partial class WeaponState
     readonly Random _random = new();
     PlayerCombatReplication.CombatEntity _combat;
     Item _heldItem;
-    Item _ownedHeld;
+    Item _ownedHeld, _selected;
+    ushort _selectedId;
+    bool _selectionPending;
+    Item _pendingEquip;
+    byte _pendingSlot;
+    long _pendingUntil;
+    ushort? _selectionChange;
+    int _savedAmmo;
     GunDef Gun;
     PlayerInventory Inventory;
     int _loadedMagId;
@@ -66,10 +77,31 @@ public sealed partial class WeaponState
         if (!_server.CombatState.TryGet(_owner, out _combat) || !_server.Inventories.TryGet(_owner, out var inv)) return;
         Inventory = inv.Inventory;
         ushort heldId = _server.Players.TryGetHeldInput(_owner, out var input) ? input.HeldItemId : (ushort)0;
-        _ownedHeld = Inventory.items.Take(PlayerInventory.OWNPAGES).SelectMany(p => p.items)
-            .FirstOrDefault(j => j.item.id == heldId)?.item;
-        Item gun = _ownedHeld != null && _catalog.GunDefs.ContainsKey(heldId) ? _ownedHeld : null;
-        if (ReferenceEquals(gun, _heldItem)) return;
+        if (_selected != null && heldId == _selectedId) _selectionPending = false;
+        if (_selected != null && heldId != _selectedId && !_selectionPending) { _selected = null; _selectedId = 0; }
+        _ownedHeld = null;
+        for (byte page = 0; page < PlayerInventory.OWNPAGES && _ownedHeld == null; page++)
+            foreach (var jar in Inventory.items[page].items)
+            {
+                bool chosen = _selected != null ? ReferenceEquals(jar.item, _selected) : jar.item.id == heldId;
+                var asset = Assets.find(jar.item.id);
+                if (chosen && asset != null && HandRules.CanEquipItemAsset(asset) && asset.slot.CanEquipInPage(page))
+                { _ownedHeld = jar.item; break; }
+            }
+        Item gun = _ownedHeld != null && _catalog.GunDefs.ContainsKey(_ownedHeld.id) ? _ownedHeld : null;
+        if (ReferenceEquals(gun, _heldItem))
+        {
+            // Existing unload/reload/attachment commands can edit this very item
+            // between combat ticks. Distinguish that write from ServerCombat's
+            // in-progress shot decrement, which has not called ShotAccepted yet.
+            if (gun != null && gun.gunAmmo != _savedAmmo)
+            {
+                Ammo = Math.Max(0, gun.gunAmmo); _savedAmmo = gun.gunAmmo;
+                _loadedMagId = gun.gunMagId; _chambered = gun.gunChambered; _chamberedAmmoType = gun.gunChamberedType;
+                UpdateProfile();
+            }
+            return;
+        }
         SaveGunState();
         _heldItem = gun; Gun = gun == null ? null : _catalog.GunDefs[gun.id];
         _reloading = _hammerPending = _hammerActive = false; _cycleReadyTick = 0; _shotCount = 0; _combat.ReloadDoneTick = -1;
@@ -87,6 +119,44 @@ public sealed partial class WeaponState
         foreach (var field in typeof(ServerGunProfile).GetFields()) field.SetValue(Profile, field.GetValue(source));
         SaveGunState(); UpdateProfile();
     }
+    Item At(int page, int x, int y)
+    {
+        if (Inventory == null || page < 0 || page >= PlayerInventory.OWNPAGES || x < 0 || x > 255 || y < 0 || y > 255) return null;
+        var pg = Inventory.items[page]; byte at = pg.getIndex((byte)x, (byte)y);
+        return at == byte.MaxValue ? null : pg.getItem(at)?.item;
+    }
+    public (bool queued, ushort heldItemId, bool pending) EquipAndHold(NetWorldClient client, int page, int x, int y)
+    {
+        var item = At(page, x, y); var asset = item == null ? null : Assets.find(item.id);
+        if (_combat?.Alive != true || !HandRules.CanEquipItemAsset(asset)) return (false, 0, false);
+        if (asset.slot.CanEquipInPage((byte)page))
+        {
+            ushort selected = Select(page, x, y); return (selected != 0, selected, false);
+        }
+        int slot = asset.slot.PreferredSlot();
+        if (slot < 0 || !client.SendEquipItem((byte)page, (byte)x, (byte)y, (byte)slot)) return (false, 0, false);
+        _pendingEquip = item; _pendingSlot = (byte)slot;
+        _pendingUntil = _server.Session.CurrentTick + NetProtocol.TicksPerSecond;
+        return (true, 0, true);
+    }
+    public ushort? TakeSelectionChange() { var id = _selectionChange; _selectionChange = null; return id; }
+    public ushort Select(int page, int x, int y)
+    {
+        if (_combat?.Alive != true || Inventory == null || page < 0 || page >= PlayerInventory.OWNPAGES || x < 0 || x > 255 || y < 0 || y > 255) return 0;
+        var item = At(page, x, y);
+        var asset = item == null ? null : Assets.find(item.id);
+        if (!HandRules.CanEquipItemAsset(asset) || !asset.slot.CanEquipInPage((byte)page)) return 0;
+        _pendingEquip = null; _selected = item; _selectedId = item.id; _selectionPending = true;
+        Bind(); return item.id;
+    }
+    object HeldAddress()
+    {
+        if (_ownedHeld == null || Inventory == null) return null;
+        for (int page = 0; page < PlayerInventory.OWNPAGES; page++)
+            foreach (var jar in Inventory.items[page].items) if (ReferenceEquals(jar.item, _ownedHeld))
+                return new { id = jar.item.id, page, x = jar.x, y = jar.y, kind = HandRules.KindOf(Assets.find(jar.item.id)).ToString().ToLowerInvariant() };
+        return null;
+    }
     void UpdateProfile()
     {
         if (Profile == null) return;
@@ -95,7 +165,7 @@ public sealed partial class WeaponState
     void SaveGunState()
     {
         if (_heldItem == null || Gun == null || _combat == null) return;
-        _heldItem.gunAmmo = Ammo; _heldItem.gunMagId = _loadedMagId;
+        _savedAmmo = Ammo; _heldItem.gunAmmo = Ammo; _heldItem.gunMagId = _loadedMagId;
         _heldItem.gunChambered = _chambered; _heldItem.gunChamberedType = _chamberedAmmoType;
         _server.Inventories.ServerMarkDirty(_owner);
     }
@@ -225,10 +295,18 @@ public sealed partial class WeaponState
     public void Step()
     {
         if (_combat == null) return;
+        if (_pendingEquip != null)
+        {
+            var accepted = Inventory.items[_pendingSlot].items.FirstOrDefault(j => ReferenceEquals(j.item, _pendingEquip));
+            if (accepted != null) _selectionChange = Select(_pendingSlot, accepted.x, accepted.y);
+            else if (_server.Session.CurrentTick >= _pendingUntil || !Inventory.items.Take(PlayerInventory.OWNPAGES).Any(p => p.items.Any(j => ReferenceEquals(j.item, _pendingEquip))))
+            { _pendingEquip = null; _emit("equipRefused", new { playerId = _owner }); }
+        }
+        if (_selected != null && !_selectionPending && _ownedHeld == null) _selectionChange = 0;
         if (!_combat.Alive) { _reloading = false; _combat.ReloadDoneTick = -1; }
         if (Gun == null && _heldItem == null) Ammo = 0;
     }
-    public object Snapshot() => new { reloading = _reloading, rechambering = _server.Session.CurrentTick < _cycleReadyTick,
+    public object Snapshot() => new { held = HeldAddress(), reloading = _reloading, rechambering = _server.Session.CurrentTick < _cycleReadyTick,
         ammo = Gun == null ? 0 : Ammo, capacity = Gun == null ? 0 : MagCapacity, chambered = Gun != null && _chambered,
         firemode = Gun == null ? -1 : _heldItem.gunFiremode, magazineId = _loadedMagId, shellItemId = UsesShells ? ShellAsset?.id ?? 0 : 0 };
     static int Ticks(double seconds) => Math.Max(1, (int)Math.Ceiling(seconds / SimClock.FixedDelta));

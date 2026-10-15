@@ -16,11 +16,13 @@ public sealed class WorldEnvironment
     public WeatherOutlook.Day Today { get; private set; }
     public WeatherOutlook.Day Tomorrow { get; private set; }
     public float SnowCover { get; private set; }
+    public float PuddleLevel { get; private set; }
     public bool IsSnowing => Sim.ActiveTypeIndex == _snowType && Sim.BlendAlpha > .001f;
     public float Severity => Sim.Active is { } t ? Math.Clamp(t.FogDensity, .1f, 1f) : 1f;
 
     public WorldEnvironment(NetWorldServer server, int seed, WorldSave save = null)
     {
+        if (float.TryParse(Environment.GetEnvironmentVariable("UG_PUDDLE"), out float puddle)) PuddleLevel = Math.Clamp(puddle, 0, 1);
         _seed = seed; _baseDay = save?.Day ?? 0;
         server.Clock.ServerConfigure(save?.TimeOfDay01 ?? WorldDefaults.StartTime,
             save?.DayLengthSeconds > 0 ? save.DayLengthSeconds : WorldDefaults.DefaultDayLength, 0);
@@ -61,6 +63,7 @@ public sealed class WorldEnvironment
         if (_day != day) Refresh(day);
         float dt = (float)SimClock.FixedDelta, dayLength = server.Clock.DayLengthSeconds;
         Sim.Step(dt);
+        PuddleLevel = WorldDefaults.StepPuddle(PuddleLevel, Sim.BlendAlpha * Severity, dt);
         if (IsSnowing)
             SnowCover = MathF.Min(1, SnowCover + dt / (WorldDefaults.SnowLayDays * dayLength) * Sim.BlendAlpha);
         else
@@ -70,6 +73,7 @@ public sealed class WorldEnvironment
         }
     }
     public object State() => new { name = Sim.Active?.Name ?? "Clear", stage = Sim.Stage.ToString(),
+        rainWetness = Sim.BlendAlpha * Severity, rainPuddle = PuddleLevel,
         blendAlpha = Sim.BlendAlpha, severity = Severity, rainIntensity = Sim.BlendAlpha * Severity,
         isRaining = Sim.IsRaining && !IsSnowing, isSnowing = IsSnowing, snowCover = SnowCover,
         windMain = Sim.WindMain, fogDensity = Sim.FogDensity, today = Today, tomorrow = Tomorrow,

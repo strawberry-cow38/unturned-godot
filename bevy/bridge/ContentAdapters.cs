@@ -34,7 +34,15 @@ namespace Godot
         public static Vector3 operator +(Vector3 a, Vector3 b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
         public static Vector3 operator *(Vector3 a, float b) => new(a.X * b, a.Y * b, a.Z * b);
     }
-    public struct Color(float r, float g, float b, float a = 1) { public float R = r, G = g, B = b, A = a; }
+    public struct Color(float r, float g, float b, float a = 1)
+    {
+        public float R = r, G = g, B = b, A = a;
+        public Color(string hex) : this(0, 0, 0)
+        {
+            uint rgb = uint.Parse(hex.TrimStart('#'), System.Globalization.NumberStyles.HexNumber);
+            R = (rgb >> 16 & 255) / 255f; G = (rgb >> 8 & 255) / 255f; B = (rgb & 255) / 255f;
+        }
+    }
     // These source callers intentionally use unseeded random streams. Preserve
     // their probability/range contract; portable saves capture the rolled items.
     public sealed class RandomNumberGenerator

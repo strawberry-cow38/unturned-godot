@@ -4,11 +4,12 @@ using UnityEngine;
 
 namespace UnturnedBevy;
 
-/// <summary>Immutable host geometry for authoritative combat. Clients submit aim,
-/// never hits. The bridge receives this table from the local world loader at boot.</summary>
+/// <summary>Host geometry for authoritative combat. Clients submit aim, never
+/// hits. The local world loader supplies static meshes and keyed moving bodies.</summary>
 public sealed class WorldGeometry
 {
     readonly List<Triangle> _triangles = new();
+    readonly Dictionary<string, Node> _dynamic = new();
     Node _root;
     readonly List<Triangle> _terrainTriangles = new();
     Node _terrainRoot;
@@ -22,7 +23,12 @@ public sealed class WorldGeometry
         public Node Left, Right;
         public Triangle[] Leaf;
     }
-    public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _root = null; _terrainRoot = null; }
+    public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _root = null; _terrainRoot = null; _dynamic.Clear(); }
+    public void SetDynamic(string key, WorldGeometry geometry)
+    {
+        if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Dynamic geometry requires a stable key");
+        if (geometry._root == null) _dynamic.Remove(key); else _dynamic[key] = geometry._root;
+    }
     public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false, int resource = -1)
     {
         if (indices.Length % 3 != 0) throw new ArgumentException("Triangle indices must be triples");
@@ -76,6 +82,7 @@ public sealed class WorldGeometry
     {
         float nearest = 1f; int index = -1, resource = -1; bool found = false;
         Visit(_root, from, to - from, ref nearest, ref index, ref resource, ref found);
+        foreach (var tree in _dynamic.Values) Visit(tree, from, to - from, ref nearest, ref index, ref resource, ref found);
         hit = new(from + (to - from) * nearest, index, resource); return found;
     }
     public float GroundHeight(float x, float z)

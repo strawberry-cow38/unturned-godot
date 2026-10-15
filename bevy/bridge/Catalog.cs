@@ -32,7 +32,7 @@ public sealed class Catalog
         Godot.ProjectSettings.ContentRoot = Root;
         // These are linked ORIGINAL source files, including hand-authored overrides,
         // ammo / firewood / salvage recipe generation, bags and consumable effects.
-        ItemCatalog.RegisterAll();
+        ItemCatalog.RegisterAll(); ConsumableRegistry.Load(); VehiclePaints.Clear();
         foreach (var a in Assets.all()) a.iconPath = Existing($"items/icons/{a.id}.png");
         BlueprintRegistry.ResetForTests(); BlueprintRegistry.EnsureLoaded();
         Recipes.Clear(); Recipes.AddRange(BlueprintRegistry.All); Guns.Clear(); GunDefs.Clear(); MeleeDefs.Clear(); _reloadSeconds.Clear(); _visuals.Clear();
@@ -40,6 +40,12 @@ public sealed class Catalog
         _clips.Clear();
         if (rig != null && rig.RootElement.TryGetProperty("anims", out var animations))
             foreach (var clip in animations.EnumerateObject()) _clips[clip.Name] = clip.Value.GetProperty("length").GetDouble();
+        string throwableClips = Path.Combine(Root, "throwable_anims.json");
+        if (File.Exists(throwableClips))
+        {
+            using var clips = System.Text.Json.JsonDocument.Parse(File.ReadAllText(throwableClips));
+            foreach (var clip in clips.RootElement.EnumerateObject()) _clips[clip.Name] = clip.Value.GetProperty("length").GetDouble();
+        }
         foreach (var path in Directory.EnumerateFiles(Root, "*.dat"))
         {
             var text = File.ReadAllText(path); var d = new DatParser().Parse(text);
@@ -83,12 +89,18 @@ public sealed class Catalog
     {
         string asset = a.gunName ?? a.meleeName ?? _visuals.GetValueOrDefault(a.id);
         var def = DeployableDef.ById(a.id);
+        var consumeAnims = ConsumableRegistry.Anims(asset);
         string mesh = asset == null ? null : Existing(asset + (a.gunName != null ? "_gun.txt" : ".txt"));
         if (mesh == null && def?.Model != null) mesh = Existing("objects/" + def.Model + ".obj");
         string texture = asset == null ? null : Existing(asset + "_albedo.png");
         if (texture == null && def?.Model != null) texture = Existing("objects/" + def.Model + "_tex.png");
         return (object)new { id = a.id, name = a.itemName, type = a.type.ToString().ToLowerInvariant(), asset, mesh, texture,
             icon = a.iconPath, width = a.size_x, height = a.size_y, stackSize = a.stackSize, slot = a.slot.ToString(),
+            handKind = HandRules.KindOf(a).ToString().ToLowerInvariant(), canEquipFromBag = a.slot.CanEquipFromBag(),
+            preferredSlot = a.slot.PreferredSlot(), tool = ToolDef.ById(a.id), gravityMultiplier = Umbrellas.For(a.id),
+            throwable = Throwables.Find(a.id),
+            consumeAnimation = a.IsConsumable ? new { equip = consumeAnims.Equip, use = consumeAnims.Use, seconds = consumeAnims.UseLen,
+                leftHook = consumeAnims.LeftHook, sound = ConsumableRegistry.Sound(a.id), color = ConsumableRegistry.FlatColor(asset) } : null,
             gunAmmoMax = a.gunAmmoMax, gun = GunDefs.GetValueOrDefault(a.id), melee = MeleeDefs.GetValueOrDefault(a.id),
             reloadSeconds = _reloadSeconds.GetValueOrDefault(a.id), movementMultiplier = a.equipableMovementSpeedMultiplier,
             consume = a.IsConsumable ? new { health = a.useHealth, food = a.useFood, water = a.useWater,

@@ -9,6 +9,10 @@
   <ItemGroup>
     <ProjectReference Include="../../core/UnturnedNet/UnturnedNet.csproj" />
     <ProjectReference Include="../../core/BugReportCore/BugReportCore.csproj" />
+    <Compile Include="../../game/ToolDef.cs" Link="Source/ToolDef.cs" />
+    <Compile Include="../../game/Umbrellas.cs" Link="Source/Umbrellas.cs" />
+    <Compile Include="../../game/VehiclePaints.cs" Link="Source/VehiclePaints.cs" />
+    <Compile Include="../../game/inventory/ConsumableRegistry.cs" Link="Source/ConsumableRegistry.cs" />
     <Compile Include="../../game/MeleeDef.cs" Link="Source/MeleeDef.cs" />
     <Compile Include="../../game/GunDef.cs" Link="Source/GunDef.cs" />
     <Compile Include="../../game/inventory/ItemCatalog.cs" Link="Source/ItemCatalog.cs" />
@@ -38,6 +42,8 @@
     <Compile Include="$(IntermediateOutputPath)Data/DeadzoneData.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ResourceData.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ResourceRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/HandRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/DoorCatalog.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponClips.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponInventory.g.cs" />
   </ItemGroup>

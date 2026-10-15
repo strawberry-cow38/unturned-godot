@@ -60,6 +60,10 @@ for name in ['SnowLayDays', 'SnowMeltDays', 'MeltRefC']:
     parts.append(match(r'public const float ' + name + r'[^;]+;', weather))
 for name in ['FrequencyMultiplier', 'DurationMultiplier']:
     parts.append(match(r'public static float ' + name + r'[^;]+;', weather))
+parts.append(match(r'const float PuddleFillSeconds[^;]+;', weather).replace('const float', 'public const float'))
+puddle = weather[weather.index('            float pTarget ='):weather.index('            PuddleLevel = _puddleLevel;')]
+puddle = puddle.replace('Mathf.', 'UnityEngine.Mathf.').replace('MoveToward(', 'MoveTowards(')
+parts.append('public static float StepPuddle(float _puddleLevel, float rint, float dt) {' + puddle + 'return _puddleLevel;}')
 parts.append('}}')
 (out / 'WorldDefaults.g.cs').write_text('// Generated original environment defaults; do not edit.\n' + '\n'.join(parts))
 
@@ -76,7 +80,7 @@ shelf = shelf[shelf.index('        class Profile'):shelf.index('        static r
 builder = read('game/WorldBuilder.cs')
 container_table = match(r'static readonly System.Collections.Generic.Dictionary<string, \(string mesh, int table, bool display, string label\)> ContainerShelf = new\(\)\s*\{.*?\n        \};', builder)
 container_kinds = builder[builder.index('        public static System.Collections.Generic.List<(string mesh, bool display, string label)> ContainerKinds()'):builder.index('        // Openable PROP DOORS')]
-(out / 'ContainerKinds.g.cs').write_text('namespace UnturnedGodot { public static class WorldBuilder {\n' + container_table.replace('static readonly', 'public static readonly', 1) + container_kinds + '}}\n')
+(out / 'ContainerKinds.g.cs').write_text('namespace UnturnedGodot { public static partial class WorldBuilder {\n' + container_table.replace('static readonly', 'public static readonly', 1) + container_kinds + '}}\n')
 sync = read('game/ContainerNetSync.cs')
 sync = sync.replace('        readonly Node _host;', '        // No scene node is needed by the original container lifecycle.')
 sync = sync.replace('NetWorldServer server, Node host,', 'NetWorldServer server,')
@@ -135,3 +139,17 @@ for method in ['DropRewards', 'DropScrap']:
     parts.append(body)
 parts.append('}}')
 (out / 'ResourceRules.g.cs').write_text('\n'.join(parts))
+
+# Equipment dispatch is ordered source policy, not inferred from EItemType.
+hand = player[player.index('        public enum HandKind'):player.index('        // Dispatch-equip an item')]
+parts = ['using SDG.Unturned; namespace UnturnedGodot { public static class HandRules {', hand]
+for key in ['CarjackItemId', 'TireItemId']:
+    parts.append(match(r'public const ushort ' + key + r'[^;]+;', player))
+for key in ['ThrowCooldown', 'ThrowSpeed', 'WeakThrowScale', 'ThrowLift', 'ThrowReleaseFraction', 'ThrowClearProbe']:
+    parts.append(match(r'const float ' + key + r'[^;]+;', player).replace('const float', 'public const float'))
+parts.append('}}')
+(out / 'HandRules.g.cs').write_text('\n'.join(parts))
+# Door and seat catalog parsing has no scene dependency.
+doors = builder[builder.index('        public struct DoorCatalogEntry'):builder.index('        /// <summary>Where you can sit on a prop')]
+seats = builder[builder.index('        public static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(Vector3 Pos, Vector3 Face)>> LoadSeatCatalog'):builder.index('        // The full placed world')]
+(out / 'DoorCatalog.g.cs').write_text('using Godot; namespace UnturnedGodot { public static partial class WorldBuilder {\n' + doors + seats + '}}')

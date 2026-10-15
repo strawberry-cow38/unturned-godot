@@ -23,6 +23,8 @@ public static class MapServices
         public int? ContainerOrdinal { get; init; }
         public uint? FixtureNetId { get; set; }
         public uint? ContainerNetId { get; set; }
+        public uint? ObjectDoorNetId { get; set; }
+        public uint[] SeatNetIds { get; set; }
     }
     public static Parsed Parse(JsonElement request)
     {
@@ -40,6 +42,9 @@ public static class MapServices
         var rubble = DestructibleField.LoadCatalog();
         var mappings = new List<ObjectMapping>();
         var fixtures = new List<object>(); var containers = new List<object>(); var destructibles = new List<object>(); var taps = new List<object>();
+        var objectDoors = new List<object>(); var seats = new List<object>(); var npcs = new List<object>();
+        var doorCatalog = WorldBuilder.LoadDoorCatalog(objectDir + Path.DirectorySeparatorChar);
+        var seatCatalog = WorldBuilder.LoadSeatCatalog(objectDir + Path.DirectorySeparatorChar);
         int index = 0, sourceIndex = -1;
         var bounds = new Dictionary<string, (float[] lo, float[] hi)>();
         foreach (string line in File.ReadLines(manifest))
@@ -54,6 +59,7 @@ public static class MapServices
             var pos = new[] { F(p[1]), F(p[2]), -F(p[3]) };
             float yaw = 180 - F(p[5]);
             int? fixtureOrdinal = null, containerOrdinal = null, actualDestructible = null;
+            uint? objectDoorId = null; var seatIds = new List<uint>();
             if (WorldBuilder.ContainerShelf.TryGetValue(guid, out var cfg))
             {
                 containerOrdinal = containers.Count;
@@ -65,6 +71,42 @@ public static class MapServices
                 {
                     fixtureOrdinal = fixtures.Count;
                     fixtures.Add(new { defId = name == "Gas_Pump_0" ? DeployableDef.GasPump.Id : DeployableDef.GridSource.Id, position = pos, yaw });
+                }
+                if (File.Exists(Path.Combine(objectDir, name + ".obj")))
+                {
+                    var rotation = new[] { F(p[4]), yaw, -F(p[6]) }; var scale = new[] { F(p[7]), F(p[8]), F(p[9]) };
+                    var transform = PlacementMatrix(rotation, scale); transform.Translation = new(pos[0], pos[1], pos[2]);
+                    if (doorCatalog.TryGetValue(name, out var leaves))
+                    {
+                        var models = leaves.Where(d => File.Exists(Path.Combine(objectDir, d.MeshFile))).Select(d => {
+                            string curveBase = d.MeshFile.EndsWith("_door.obj") ? d.MeshFile[..^"_door.obj".Length] : name;
+                            return new { mesh = "objects/" + d.MeshFile, pivot = new[] { d.Pivot.X, d.Pivot.Y, d.Pivot.Z },
+                                axis = new[] { d.Axis.X, d.Axis.Y, d.Axis.Z }, angleDegrees = d.AngleDeg,
+                                durationSeconds = d.DurationSec, defaultOpen = d.DefaultOpen, sound = d.Sound,
+                                openCurve = WorldBuilder.LoadDoorCurve(objectDir + Path.DirectorySeparatorChar, curveBase, "open")?.Select(k => new[] { k.X, k.Y }).ToArray(),
+                                closeCurve = WorldBuilder.LoadDoorCurve(objectDir + Path.DirectorySeparatorChar, curveBase, "close")?.Select(k => new[] { k.X, k.Y }).ToArray() };
+                        }).ToArray();
+                        if (models.Length > 0)
+                        {
+                            objectDoorId = checked((uint)objectDoors.Count + 1);
+                            objectDoors.Add(new { netId = objectDoorId.Value, sourceIndex, name, position = pos, rotation, scale,
+                                open = models[0].defaultOpen, leaves = models });
+                        }
+                    }
+                    if (seatCatalog.TryGetValue(name, out var anchors)) foreach (var seat in anchors)
+                    {
+                        var at = Vector3.Transform(new(seat.Pos.X, seat.Pos.Y, seat.Pos.Z), transform);
+                        var forward = Vector3.TransformNormal(new(seat.Face.X, seat.Face.Y, seat.Face.Z), transform); forward.Y = 0;
+                        if (forward.LengthSquared() < .0001f)
+                        {
+                            forward = new(-transform.M31, 0, -transform.M33);
+                            if (forward.LengthSquared() < .0001f) forward = new(0, 0, -1);
+                        }
+                        forward = Vector3.Normalize(forward);
+                        uint seatId = checked((uint)seats.Count + 1); seatIds.Add(seatId);
+                        seats.Add(new { netId = seatId, sourceIndex, name, position = new[] { at.X, at.Y, at.Z },
+                            face = new[] { forward.X, forward.Y, forward.Z }, groundY = pos[1] });
+                    }
                 }
                 // A missing source mesh never acquired a body in WorldBuilder.
                 if (destructible && File.Exists(Path.Combine(objectDir, name + ".obj")))
@@ -80,9 +122,10 @@ public static class MapServices
                     if (b.lo != null) taps.Add(new { position = pos, rotation = new[] { F(p[4]), yaw, -F(p[6]) }, scale = new[] { F(p[7]), F(p[8]), F(p[9]) }, min = b.lo, max = b.hi });
                 }
             }
-            if (fixtureOrdinal != null || containerOrdinal != null || actualDestructible != null)
+            if (fixtureOrdinal != null || containerOrdinal != null || actualDestructible != null || objectDoorId != null || seatIds.Count > 0)
                 mappings.Add(new() { SourceIndex = sourceIndex, Name = name, Position = pos, DestructibleIndex = actualDestructible,
-                    EffectId = actualDestructible.HasValue ? scalar.EffectId : null, FixtureOrdinal = fixtureOrdinal, ContainerOrdinal = containerOrdinal });
+                    EffectId = actualDestructible.HasValue ? scalar.EffectId : null, FixtureOrdinal = fixtureOrdinal, ContainerOrdinal = containerOrdinal,
+                    ObjectDoorNetId = objectDoorId, SeatNetIds = seatIds.Count > 0 ? seatIds.ToArray() : null });
         }
         var resources = new List<object>(); var resourceMetadata = new List<object>(); int resourceIndex = 0;
         string resDir = Path.Combine(root, "resources" + suffix.ToLowerInvariant()), resManifest = Path.Combine(resDir, "resources.txt");
@@ -137,11 +180,23 @@ public static class MapServices
                 resourceIndex++;
             }
         }
+        // Editor-authored NPC coordinates are already in the engine frame (no Z flip).
+        string npcFile = NpcCatalog.PlacementPath(map);
+        if (File.Exists(npcFile)) foreach (string line in File.ReadLines(npcFile))
+        {
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 5 || NpcCatalog.CharacterByKey(parts[0]) is not { } character) continue;
+            if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
+                || !float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
+                || !float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) continue;
+            float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out float yaw);
+            npcs.Add(new { key = parts[0], position = new[] { x, y, z }, yaw, character });
+        }
         var zones = DeadzoneMap.Load("deadzones" + suffix.ToLowerInvariant() + ".tsv").Select(z => new {
             center = new[] { z.Center.X, z.Center.Y, z.Center.Z }, halfExtent = new[] { z.HalfExtent.X, z.HalfExtent.Y, z.HalfExtent.Z },
             kind = z.Kind.ToString(), shape = z.Shape.ToString() });
         var spec = JsonSerializer.SerializeToElement(new { mapRoot = Text(request, "mapRoot"), resourceCount = resourceIndex, resources = resourceMetadata,
-            destructibleCount = index, destructibles, containers, fixtures, taps, deadzones = zones });
+            destructibleCount = index, destructibles, containers, fixtures, taps, objectDoors, seats, npcs, deadzones = zones });
         return new(spec, mappings.ToArray(), resources.ToArray());
     }
     static float F(string s) => float.Parse(s, CultureInfo.InvariantCulture);
