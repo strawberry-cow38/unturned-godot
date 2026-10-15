@@ -13,6 +13,8 @@ fn app() -> App {
         .init_resource::<WorldConfig>()
         .init_resource::<Replicas>()
         .init_resource::<ItemCatalog>()
+        .add_plugins(material::AlphaDepthPlugin)
+        .configure_sets(Update, material::AlphaDepthUpdate.after(sync_world_items))
         .insert_resource(GameSnapshot(json!({"worldItems":[]})))
         .add_systems(Update, sync_world_items);
     for (id, kind, rarity, stack) in [
@@ -174,4 +176,73 @@ fn original_amount_bands_include_lower_boundary_and_zero_means_full_single_model
     assert_eq!(visible_rounds(15, 32, 3), 1);
     assert_eq!(visible_rounds(16, 32, 3), 2);
     assert_eq!(visible_rounds(24, 32, 3), 3);
+}
+
+#[test]
+fn accepted_translucent_item_uses_real_texture_thresholds_and_replacing_with_clothing_retires_both_companions()
+ {
+    let mut app = app();
+    let ids = [9301u16, 9317, 9318, 9319, 9343, 9347];
+    app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"worldItems":ids.into_iter().enumerate()
+        .map(|(i,id)| json!({"netId":i+1,"itemId":id,"position":[i,0,0],"amount":1})).collect::<Vec<_>>()});
+    app.update();
+    for (index, id) in ids.into_iter().enumerate() {
+        let entity = app.world().resource::<Replicas>().entities[&((index + 1) as u32)];
+        assert!(
+            app.world().get::<material::AlphaDepth>(entity).is_some(),
+            "manifest {id}"
+        );
+        assert_eq!(app.world().get::<Children>(entity).unwrap().len(), 2);
+        let source = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(
+                &app.world()
+                    .get::<MeshMaterial3d<StandardMaterial>>(entity)
+                    .unwrap()
+                    .0,
+            )
+            .unwrap();
+        let image = app
+            .world()
+            .resource::<Assets<Image>>()
+            .get(source.base_color_texture.as_ref().unwrap())
+            .unwrap();
+        let pixels = &image.data.as_ref().unwrap()[..(image.width() * image.height() * 4) as usize];
+        let opaque = pixels.chunks_exact(4).filter(|p| p[3] >= 253).count();
+        assert_eq!(opaque > 0, id != 9301 && id != 9347);
+        assert!(
+            pixels.chunks_exact(4).all(|p| p[3] >= 26),
+            "all original {id} texels cast a source shadow"
+        );
+    }
+    let entity = app.world().resource::<Replicas>().entities[&1];
+    let children: Vec<_> = app
+        .world()
+        .get::<Children>(entity)
+        .unwrap()
+        .iter()
+        .collect();
+    app.world_mut().resource_mut::<GameSnapshot>().0 =
+        json!({"worldItems":[{"netId":1,"itemId":24,"position":[2,3,4],"amount":1}]});
+    app.update();
+    assert_eq!(app.world().resource::<Replicas>().entities[&1], entity);
+    assert!(app.world().get::<material::AlphaDepth>(entity).is_none());
+    for child in children {
+        assert!(app.world().get_entity(child).is_err());
+    }
+    assert_eq!(
+        app.world_mut()
+            .query::<&MeshMaterial3d<material::DepthMaterial>>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+    assert_eq!(
+        app.world_mut()
+            .query::<&MeshMaterial3d<material::ShadowMaterial>>()
+            .iter(app.world())
+            .count(),
+        0
+    );
 }

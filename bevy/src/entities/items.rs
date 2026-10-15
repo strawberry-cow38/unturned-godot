@@ -1,4 +1,5 @@
 //! WorldItem.GetModel/BuildReplicaVisual: dropped art is distinct from held art.
+pub(super) mod material;
 use crate::content::{ContentCache, ObjData, mip_chain};
 use bevy::{
     asset::RenderAssetUsages,
@@ -66,6 +67,7 @@ pub(super) struct Art {
     pub mesh: Handle<Mesh>,
     pub material: Handle<StandardMaterial>,
     pub focus: Focus,
+    pub translucent: bool,
 }
 struct Model {
     full: Art,
@@ -160,6 +162,7 @@ impl Models {
                             Vec3::from_array(entry.center),
                             Vec3::from_array(entry.size),
                         ),
+                        translucent: entry.translucent,
                     },
                     data: Some(data),
                     rounds: entry.rounds.clone().unwrap_or_default(),
@@ -175,6 +178,7 @@ impl Models {
                             ..default()
                         }),
                         focus: Focus::new(Vec3::ZERO, Vec3::splat(0.24)),
+                        translucent: false,
                     },
                     data: None,
                     rounds: Vec::new(),

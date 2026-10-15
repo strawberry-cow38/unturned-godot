@@ -144,6 +144,8 @@ impl Plugin for EntityPlugin {
             .init_resource::<InteractionFocus>()
             .init_resource::<Replicas>()
             .init_resource::<items::Models>()
+            .add_plugins(items::material::AlphaDepthPlugin)
+            .configure_sets(Update, items::material::AlphaDepthUpdate.after(sync_world_items))
             .add_message::<CoreEvent>()
             .add_systems(
                 Update,
@@ -505,6 +507,11 @@ fn sync_world_items(
             &mut images,
         );
         let entity = existing.unwrap_or_else(|| commands.spawn_empty().id());
+        if art.translucent {
+            commands.entity(entity).insert(items::material::AlphaDepth);
+        } else {
+            commands.entity(entity).remove::<items::material::AlphaDepth>();
+        }
         commands
             .entity(entity)
             .insert((
