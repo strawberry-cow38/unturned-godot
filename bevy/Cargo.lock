@@ -1098,8 +1098,6 @@ dependencies = [
 [[package]]
 name = "bevy_input_focus"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83c81d369d0ab3ec17ba14bab1e07da7cacf3751a3104a93b1a3cd99d887887b"
 dependencies = [
  "bevy_app",
  "bevy_camera",

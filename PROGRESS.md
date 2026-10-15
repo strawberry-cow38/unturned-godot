@@ -2559,3 +2559,29 @@ separate failing-first engine patch. Nearby-station authority, default search
 context menu, primary selection/middle paste and text drag/drop remain explicit
 Crafting gaps. Inventory still awaits its separate native replacement; finite
 world and broader port milestones remain in progress.
+
+### Bevy focused keyboard modifiers — slow-frame event ordering
+
+Actual PEI search exposed Ctrl+A inserting `a` when modifier press, key and
+modifier release arrived in one frame. The pinned engine's focused dispatcher
+ran after InputSystems, so every widget observed final-frame modifier state.
+Two actual InputPlugin→InputDispatchPlugin→TextInput regressions reproduce both
+that `Birch`→`Bircha` failure and the inverse loss of ordinary text when Ctrl
+arrives later in the batch.
+
+A narrow vendored bevy_input_focus correction snapshots the prior logical and
+physical keys, replays each focused event and restores the exact final resources
+before polled game/UI consumers. Focus target selection, repeat/release messages,
+deferred observer order and unrelated input dispatch remain unchanged. Both
+original licenses and package provenance are retained. Source undo now receives
+the same event-time modifiers without a widget-specific workaround.
+
+Three dispatch regressions, all 40 upstream focus tests, eight search tests,
+the actual system-clipboard test and the combined 134-test native UI suite pass.
+The full native suite passes 637 tests, with 33 opt-in fixtures ignored.
+The actual X11 12ms chord / 500ms frame Vulkan fixture passes all six stages:
+select all, replacement, Shift+caret selection, selected-character replacement,
+undo and redo. Opened `bevy-fast-keyboard-{select,caret,undo,redo}.png`; the sidecar
+records each complete Ctrl chord in one Winit input frame. The isolated Xvfb
+fixture explicitly focuses its window before sending keys. See
+`bevy/vendor/bevy_input_focus/PATCHES.md`.

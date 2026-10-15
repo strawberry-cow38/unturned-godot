@@ -18,6 +18,9 @@ bevy_rapier3d = { version = "=0.37.0", default-features = false, features = ["di
 # previous-frame behavior. See vendor/bevy_picking/PATCHES.md and UI regressions.
 [patch.crates-io]
 bevy_picking = { path = "vendor/bevy_picking" }
+# Focused keyboard observers see each event's modifiers; polled input retains
+# the engine's final frame state. See vendor/bevy_input_focus/PATCHES.md.
+bevy_input_focus = { path = "vendor/bevy_input_focus" }
 
 [profile.dev]
 opt-level = 1

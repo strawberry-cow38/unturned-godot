@@ -22,6 +22,7 @@ Rules of the road:
 | I need to… | Use | Do **not** |
 |---|---|---|
 | preserve native mouse clicks batched into one slow frame | pinned `bevy_picking::events::pointer_events` and `hover::ReleasedPointerCaptures` (`bevy/vendor/bevy_picking`), guarded by `ui::button_input_tests` | keep release activation, explicit capture and touch semantics; final-frame hit testing remains an upstream limit; do not duplicate UI actions on mouse-down |
+| preserve keyboard modifiers on focused events batched into one slow frame | pinned `bevy_input_focus::dispatch_focused_keyboard_input` (`bevy/vendor/bevy_input_focus`), guarded by `ui::crafting::search::tests::dispatch` | replay logical/physical keys only during each focused event; restore exact final polled state and preserve the original batch focus target; do not add per-widget modifier guesses |
 | Decide whether a player's on-foot transform/teleport is allowed while riding a vehicle | `ServerVehicles.IsSeated(playerId)` in `core/UnturnedNet/VehicleReplication.cs`; `IsDriver` is only for vehicle control authority | Treat a passenger as on foot because they do not own the steering/transform stream |
 | damage falling off from a blast | `ExplosionMath.Linear/Squared` (`core/UnturnedSim/CombatMath.cs:12`/`:15`) | write `1 - dist/r` inline (`game/Deployable.cs:318` does; it is the one straggler) |
 | decide if a fall hurts / how much / breaks legs | `FallMath.Hurts/Damage/BreaksLegs` (`core/UnturnedSim/CombatMath.cs:30`–`:36`) | compare against 22 yourself |

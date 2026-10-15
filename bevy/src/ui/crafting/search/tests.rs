@@ -2,6 +2,7 @@ use super::*;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::ui_widgets::TextInputPlugin;
 
+mod dispatch;
 
 fn editor() -> (App, Entity, Entity) {
     let mut app = App::new();
