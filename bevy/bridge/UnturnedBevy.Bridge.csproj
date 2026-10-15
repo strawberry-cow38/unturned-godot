@@ -49,6 +49,8 @@
     <Compile Include="$(IntermediateOutputPath)Data/WeaponClips.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponInventory.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/BodyRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/VehicleLightRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/VehicleLightState.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/AnimalBrain.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NpcHeliBrain.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NpcHeliSpawn.g.cs" />

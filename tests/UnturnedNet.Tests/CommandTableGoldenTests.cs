@@ -122,6 +122,7 @@ namespace UnturnedNet.Tests
             [71] = "CommandSelectHeld",             // v62: authoritative instance selection
             [72] = "CommandWeaponIntent",           // v62: atomic source attachment/selector requests
             [73] = "CommandAttachmentOptions", // v62: owner-only source menu query
+            [75] = "CommandVehicleLighting", // v68 source beam/lightbar/repair intents
             [74] = "CommandMountedInput", // v64 source vehicle gun aim/held-trigger intent
             [70] = "CommandFillAtTap",              // v59: fill a bottle with clean water at a sink / bathtub
         };

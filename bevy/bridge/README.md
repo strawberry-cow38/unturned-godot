@@ -764,3 +764,5 @@ removes it. Remote `bulletExplosion` is emitted only for a host-applied blast,
 including a new blast seen after joining mid-flight. No historical launches are
 replayed. The held-weapon cosmetic/warhead gaps remain separate. See the mounted
 document above for bounds, timing and actual UDP regression evidence.
+
+Vehicle electrical authority is documented in [VEHICLE_LIGHTING_AUTHORITY.md](../docs/VEHICLE_LIGHTING_AUTHORITY.md). Protocol68 adds accepted beam/pattern/lamp state, driver switch intents and alarm/lamp effect facts; `worldVehicleLighting` registers original host mesh centers.

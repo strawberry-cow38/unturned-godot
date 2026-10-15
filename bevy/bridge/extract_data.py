@@ -493,3 +493,7 @@ hit=hit.replace('Humanoid.','NpcCrewRules.').replace('            DamageNumbers.
 hit=hit.replace('                _respawnT = RespawnSeconds;\n','').replace('                if (_visual != null) _visual.Visible = false;\n','')
 hit=hit.replace('                SetCollisionLayerValue(1, false);', '                OnDown?.Invoke();')
 (out/'NpcHeliCrewBody.g.cs').write_text('using Godot; namespace UnturnedBevy { public sealed partial class NpcHeliCrewBody {\n'+hit+'}}')
+
+# Vehicle lighting keeps the original electrical/alarm bodies; native owns lamps.
+from extract_vehicle_lights import extract as extract_vehicle_lights
+extract_vehicle_lights(read, out, match, method)

@@ -343,6 +343,7 @@ namespace UnturnedGodot.Net
             Transactions.Register(Commands);
             RegisterEquipmentCommands();
             RegisterMountedCommands();
+            RegisterVehicleLightingCommands();
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
             // the content table. One hook rather than each growing a copy of the other's half.
@@ -1054,6 +1055,7 @@ namespace UnturnedGodot.Net
                                                                     InteractableState, Profiles, Equipment, VehicleMounts });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
             RegisterEquipmentEvents();
             RegisterMountedEvents();
+            RegisterVehicleLightingEvents();
             RegisterMountedFlightEvents();
             RegisterResourceContactEvents();
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)

@@ -533,7 +533,9 @@ namespace UnturnedNet.Tests
             //
             // If a future field pushes the content past 351 bits this WILL move, and the number to recompute
             // is the one above rather than whatever the code happens to emit.
-            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092D00010009000000050200000C10302040F80306100E8E6F0220308120004220C09EBB6109FAFF0B00000000080000"));
+            // v68 DERIVED: battery offset283 changes14 ones to15-bit biased26384;
+            // retain57 original tail bits; append17 defaultlightingbits.354->372bits,45->47bytes.
+            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092F00010009000000050200000C10302040F80306100E8E6F0220308120004220C09EBB6109823817000000001000000000"));
         }
 
         static ushort Driver(Harness h, uint veh)

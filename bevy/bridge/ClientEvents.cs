@@ -37,6 +37,7 @@ public sealed partial class BridgeHost
             if (_server == null) _events.Add(new(++_eventSequence, EquipmentJson.FactName(e.Kind), EquipmentJson.Fact(_client.PlayerId,e), e.Tick));
         };
         _client.StorageClosed += e => Emit("storageClosed", e);
+        _client.VehicleLighting += e => Emit(e.Kind switch { VehicleLightingKind.AlarmHorn => "vehicleAlarmHorn", VehicleLightingKind.LampBroken => "vehicleLampBroken", _ => "vehicleLampRepaired" }, new { netId=e.NetId, lamp=e.Lamp, label=e.Lamp<VehicleLightRules.LampLabels.Length?VehicleLightRules.LampLabels[e.Lamp]:null, position=Array(e.Position), acceptedTick=e.Tick });
         _client.VehicleEntered += e => Emit("vehicleEntered", e);
         _client.VehicleExited += e => {
             if (e.PlayerId == _client.PlayerId) { _position = e.Pos; _velocity = Vector3.zero; _movement = new(); _correctionVersion++; }

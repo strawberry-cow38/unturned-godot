@@ -145,7 +145,12 @@ public sealed class BodyCombatServices
     }
     public void DamageVehicle(uint id, float amount, float engineShare, ushort attacker, Vector3 point, Vector3 direction, string part = "hull")
     {
-        if (amount <= 0 || !_server.Vehicles.TryGet(id, out var e) || e.Exploded) return;
+        if (!_server.Vehicles.TryGet(id, out var e) || e.Exploded) return;
+        // Source lamps consume any bullet contact, including a zero vehicle-
+        // damage round. HP gates apply only after that material interaction.
+        if (part?.StartsWith("lamp:") == true && int.TryParse(part.AsSpan(5), out int lamp) && _vehicles.Lighting?.BreakLamp(id, lamp) == true) return;
+        if (amount <= 0) return;
+        _vehicles.Lighting?.Damage(id, part, _vehicles.EngineHealth(id));
         bool hull = part is null or "hull";
         _vehicles.DamageParts(id, amount, engineShare, part);
         float health = hull ? Math.Max(0, e.Health - amount) : e.Health;

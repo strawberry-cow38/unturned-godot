@@ -244,6 +244,7 @@ namespace UnturnedGodot.Net
         public const byte CommandSelectHeld = 71;
         public const byte CommandWeaponIntent = 72;
         public const byte CommandAttachmentOptions = 73;
+        public const byte CommandVehicleLighting = 75; // v68: source light switches and lamp repair intents
         public const byte CommandMountedInput = 74; // v64: accepted operator aim/trigger intent
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
@@ -307,6 +308,7 @@ namespace UnturnedGodot.Net
         public const byte EventEquipmentFact = 53; // v62: accepted/refused owner weapon transitions
         public const byte EventResourceContact = 54; // v63: accepted tree/ore hit and fall presentation facts
         public const byte EventMountedShot = 55; // v64: actual mounted muzzle/barrel and launch identity
+        public const byte EventVehicleLighting = 57; // v68: accepted alarm horn/lamp contact facts
         public const byte EventMountedFlight = 56; // v66: accepted source mounted continuation/retirement/blast pictures
         public const byte EventObjectDoorState = 43;   // v37: a prop door's open bit. Its own event rather than reusing EventDoorState(34): that one carries a LOCK and is keyed into Door's id space, and two id spaces sharing one message is how a container's door ends up swinging a player's front door.
         public const byte EventSeatOccupied = 42;      // v35: a furniture seat's occupant changed (0 = freed) -- the EventBedClaimed(35) shape for seats, broadcast so everyone can pose the puppet before the next snapshot lands

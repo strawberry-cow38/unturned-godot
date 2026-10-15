@@ -11,6 +11,8 @@ namespace UnturnedBevy;
 public sealed class VehicleServices
 {
     readonly NetWorldServer _server;
+    public VehicleLightingServices Lighting;
+    public bool HasEngineHealth(uint id) => _parts.TryGetValue(id, out var parts) && parts.EngineMax > 0;
     readonly Dictionary<uint, VehicleStorageShape> _storage = new();
     readonly Dictionary<(uint, int), (long tick, bool clear, Vector3 pos)> _exits = new();
     readonly HashSet<uint> _withDoors = new();
@@ -63,8 +65,9 @@ public sealed class VehicleServices
     public string HitPart(uint id, Vector3 point, string reported)
     {
         if (!_bodySpecs.TryGetValue(id, out var spec) || !_server.Vehicles.TryGet(id, out var e)) return reported ?? "hull";
+        if (reported?.StartsWith("glass:") == true) return reported;
+        if (Lighting?.ResolveLamp(id, point) is int lamp && lamp >= 0) return "lamp:" + lamp;
         if (reported?.StartsWith("tire:") == true && int.TryParse(reported.AsSpan(5), out int tire) && tire is >= 0 and < 8 && (e.PoppedTireMask & (1 << tire)) == 0) return reported;
-        if (reported?.StartsWith("lamp:") == true || reported?.StartsWith("glass:") == true) return reported;
         var rotation = System.Numerics.Quaternion.CreateFromYawPitchRoll(e.YawDegrees * Mathf.Deg2Rad, e.PitchDegrees * Mathf.Deg2Rad, e.RollDegrees * Mathf.Deg2Rad);
         var p = System.Numerics.Vector3.Transform(new(point.x - e.Pos.x, point.y - e.Pos.y, point.z - e.Pos.z), System.Numerics.Quaternion.Inverse(rotation));
         if (spec.TryGetProperty("hitRegions", out var regions)) foreach (var region in regions.EnumerateArray())
@@ -149,6 +152,7 @@ public sealed class VehicleServices
                     case "tailRotor": parts.Tail = parts.TailMax = Float(region, "health"); break;
                 }
             _parts[id.Value] = parts;
+            Lighting?.Registered(id.Value, spec);
             result.Add(new { netId = id.Value, typeId = type, key });
         }
         return new { vehicles = result };
@@ -167,10 +171,13 @@ public sealed class VehicleServices
             flags = (byte)((flags & ~VehicleReplication.FlagExploded) | (e.Flags & VehicleReplication.FlagExploded));
             _fuel[id] = fuel;
             if (Bool(state, "engineDrowned") && _parts.TryGetValue(id, out var parts)) { parts.Drowned = true; parts.Engine = 0; }
+            Lighting?.BodyState(id, state);
+            if (Lighting != null) { flags = Lighting.NormalizeFlags(id, flags); battery = Lighting.BatteryFor(id, battery); }
             if (e.DriverPlayerId == 0)
                 _server.Vehicles.ServerPublish(new(id), Vec(state, "position", e.Pos), Vec(state, "eulerDegrees", new(e.PitchDegrees, e.YawDegrees, e.RollDegrees)),
                     Vec(state, "linVel", e.LinVel), Vec(state, "angVel", e.AngVel), Float(state, "steerDegrees", e.SteerDegrees), fuel, health, battery, flags, tick);
             else _server.Vehicles.ServerPublishVitals(new(id), fuel, health, battery, (flags & VehicleReplication.FlagExploded) != 0, tick);
+            Lighting?.PublishCurrent(id);
             count++;
         }
         return new { updated = count };

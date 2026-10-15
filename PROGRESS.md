@@ -1960,3 +1960,30 @@ switches accepted flags. This is not two native players flying together. Exact
 late-join spool phase, remote part-health pools, collective and landing gear are
 still absent from the wire. Details and capture instructions are in
 `bevy/docs/REMOTE_AIRCRAFT_PORT.md`.
+
+
+### Bevy vehicle electrical authority and protocol 68 (2026-10-15)
+
+Original vehicle switches, road battery drain/charge, one-use alarm and running
+tail decisions now run on the authority through build-time source extraction.
+Protocol 68 adds accepted high beams, lightbar pattern and lens damage, driver
+switch intents and reliable alarm/lamp facts. The original 10,000 battery also
+survives replication: its prior signed encoding clipped it to 8,191. Body
+publications cannot overwrite switches, alarms, battery or lens damage. Current
+swamping and permanent engine drowning stay distinct; a drowned-engine fact
+cuts the accepted engine immediately, while recovered lamps can work ashore.
+
+Host-provided original mesh centers use the full accepted hull rotation and
+source nearest-lamp order. A lens consumes the bullet contact before engine/hull
+damage, including rounds with zero VehicleDamage. Free repair has the existing
+8m vehicle reach validation; repeated geometry uploads cannot heal lenses.
+Save/load retains the exact battery, one-use alarm lifetime and broken mask.
+All 39 original fleet types initialize, including aircraft with null Parts.
+
+Independent source review passed after the fleet/engine-order fixes. The frozen
+final build passes 121 managed tests, 690 core networking tests and 121 JSONL
+regressions; four intentional fault controls fail at their specific assertions.
+Native light/audio/glass rendering is a separate in-progress checkpoint. The
+actual source aircraft early-return behavior is retained; trailer coupling and
+manual horn networking remain explicit follow-ups, not invented electrical
+state. Contract, source details and limits: `bevy/docs/VEHICLE_LIGHTING_AUTHORITY.md`.

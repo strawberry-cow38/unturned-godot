@@ -36,7 +36,7 @@ namespace UnturnedGodot.Net
         // (fuel <= 3000, health <= 40000 since the 10x, battery <= 10000; see Vehicle.cs specs)
         const int FuelIntBits = 12, FuelFracBits = 1;
         const int HealthIntBits = 16, HealthFracBits = 1;   // v24: was 10 (max 1023) -- the tank/ship 4000 was ALREADY clipped on the wire; 10x hp (strawberry 2026-09-03) needs up to 40000
-        const int BatteryIntBits = 14, BatteryFracBits = 0;
+        const int BatteryIntBits = 15, BatteryFracBits = 0; // v68: signed14 clipped original BatteryMax10000 to8191
         public const int SteerBits = 9;   // steer wraps [0,360) like every degree field; real range is +-~35deg (public: VehicleStateCommand rides the same encoding)
 
         // A6 rope-tow relationship: restLen is a signed ClampedFloat clamped to [Vehicle.TowRestMin 2.0,
@@ -94,6 +94,10 @@ namespace UnturnedGodot.Net
             public float Health { get; internal set; }
             public float Battery { get; internal set; }
             public byte Flags { get; internal set; }
+            public bool HighBeam { get; internal set; }
+            public byte LightbarPattern { get; internal set; }
+            public byte LampMask { get; internal set; }
+            public byte BrokenLampMask { get; internal set; }
             // A6 rope tow (published by the disjoint ServerPublishTow writer, never the transform/vitals paths):
             public uint TowedNetId { get; internal set; }   // the vehicle THIS entity tows (0 = not towing). "Am I towed" is DERIVED client-side (being someone else's TowedNetId) -- NEVER replicated (a redundant TowedByNetId would be a hash-divergence footgun).
             public float TowRestLen { get; internal set; }  // the tow rope's rest length (quantized via QuantizeClampedFloat); cosmetic sag on the client rope. 0 when not towing.
@@ -426,21 +430,27 @@ namespace UnturnedGodot.Net
         public void ReadSnapshot(NetPakReader r, bool full)
         {
             if (!r.ReadUInt16(out ushort changedCount)) return;
-            if (full) _vehicles.Clear();
+            // v68: parse the complete row tail/removal list before adopting any
+            // state. A truncated lighting field must not clear a good full view.
+            var changed = new List<VehicleEntity>(); var seen = new HashSet<uint>();
             for (int i = 0; i < changedCount; i++)
             {
-                if (!ReadEntity(r, out var e)) return;
-                _vehicles.Add(new NetId(e.NetIdValue), e);
+                if (!ReadEntity(r, out var e) || e.NetIdValue == 0 || !seen.Add(e.NetIdValue)) return;
+                changed.Add(e);
             }
+            var removed = new List<uint>();
             if (!full)
             {
                 if (!r.ReadUInt16(out ushort removedCount)) return;
                 for (int i = 0; i < removedCount; i++)
                 {
-                    if (!r.ReadUInt32(out uint id)) return;
-                    _vehicles.Remove(new NetId(id));
+                    if (!r.ReadUInt32(out uint id) || id == 0 || !seen.Add(id)) return;
+                    removed.Add(id);
                 }
             }
+            if (full) _vehicles.Clear();
+            foreach (var e in changed) _vehicles.Add(new NetId(e.NetIdValue), e);
+            foreach (uint id in removed) _vehicles.Remove(new NetId(id));
         }
 
         /// <summary>Per-entity field dump, so a StateHash mismatch can name the field that actually differs
@@ -501,6 +511,10 @@ namespace UnturnedGodot.Net
                 // extra 1 distinguishes them so an unpainted car and a black one cannot hash alike.
                 h = NetHash.MixUInt32(h, e.PaintRgb.HasValue ? e.PaintRgb.Value | 0x1000000u : 0u);
                 h = NetHash.MixByte(h, e.PoppedTireMask);
+                h = NetHash.MixByte(h, e.HighBeam ? (byte)1 : (byte)0);
+                h = NetHash.MixByte(h, e.LightbarPattern);
+                h = NetHash.MixByte(h, e.LampMask);
+                h = NetHash.MixByte(h, e.BrokenLampMask);
             }
             return h;
         }
@@ -548,6 +562,8 @@ namespace UnturnedGodot.Net
             bool anyFlat = e.PoppedTireMask != 0;
             w.WriteBit(anyFlat);
             if (anyFlat) w.WriteUInt8(e.PoppedTireMask);
+            w.WriteBit(e.HighBeam); w.WriteBits(e.LightbarPattern, 2);
+            w.WriteBits(e.LampMask, 7); w.WriteBits(e.BrokenLampMask, 7);
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -586,8 +602,12 @@ namespace UnturnedGodot.Net
             byte flatMask = 0;
             if (!r.ReadBit(out bool anyFlat)) return false;
             if (anyFlat && !r.ReadUInt8(out flatMask)) return false;
+            if (!r.ReadBit(out bool highBeam) || !r.ReadBits(2, out uint pattern) || pattern > 2
+                || !r.ReadBits(7, out uint lampMask) || !r.ReadBits(7, out uint brokenMask)
+                || (brokenMask & ~lampMask) != 0 || (highBeam && (flags & FlagHeadlights) == 0)) return false;
             e = new VehicleEntity
             {
+                HighBeam = highBeam, LightbarPattern = (byte)pattern, LampMask = (byte)lampMask, BrokenLampMask = (byte)brokenMask,
                 NetIdValue = id, TypeId = typeId, Variant = variant, DriverPlayerId = driver,
                 Pos = pos, YawDegrees = yaw, PitchDegrees = pitch, RollDegrees = roll,
                 LinVel = lin, AngVel = ang, SteerDegrees = steer,
@@ -1203,6 +1223,10 @@ namespace UnturnedGodot.Net
         /// (U3 InteractableVehicle.cs:3069-3182): seq latest-wins -> recov ack gate -> the plausibility
         /// envelope -> adopt into the entity (observers dead-reckon off the driver's truth) or roll the
         /// driver back. Runs at command-dispatch time inside TickSimulation.</summary>
+        /// <summary>Optional host-owned electrics. Null retains the original
+        /// dressing flag path; installed services protect alarm/power/damage state.</summary>
+        public Func<uint, byte, byte> NormalizeDriverFlags;
+
         void OnVehicleState(ushort sender, VehicleStateCommand cmd)
         {
             if (!_vehicles.TryGet(new NetId(cmd.NetId), out var e)) return;
@@ -1264,6 +1288,8 @@ namespace UnturnedGodot.Net
                 _sendTo?.Invoke(sender, NetMessagePak.Pack(ReplicationIds.EventVehicleRecov, evt.Write));
                 return;
             }
+
+            if (NormalizeDriverFlags != null) cmd.Flags = NormalizeDriverFlags(cmd.NetId, cmd.Flags);
 
             // ---- adopt: the driver's report becomes the vehicle's truth ----
             st.LastAcceptedTick = tick;
