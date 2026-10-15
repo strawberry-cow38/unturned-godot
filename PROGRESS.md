@@ -843,3 +843,18 @@ rim and retained tread. All 38 focused vehicle tests and the consolidated 142
 native tests pass. Final inspected images are `bevy-huey-rotor.png` and
 `bevy-jeep-popped-fixed.png`; the remaining vehicle scope stays explicit in
 `bevy/docs/VEHICLE_PORT.md`.
+
+### 2026-10-14 — Bevy driving hands and seat visibility
+
+The original `Idle_Drive` rig now follows the real steering wheel's pivot, axis
+and angle. Main-camera/viewmodel FOV conversion keeps the same screen target;
+looking behind leaves the hands behind rather than snapping them into view.
+Vehicle passengers and aircraft hide the first-person overlay, and leaving a
+vehicle restores the equipped pose. A source basis-subtraction error that let
+hands drift during head turns is corrected while preserving its 9cm hand drop.
+
+Seven focused viewmodel tests pass, including actual rig enter/driver/passenger/
+exit transitions and different camera/steering orientations. Root and peer review
+inspected live pilot, sideways-steering and look-behind captures; authority
+confirmed seat 0, with 27.42° wheel angle in the steering image. Capture details
+and the separate in-progress water shader finding are in `bevy/docs/VALIDATION.md`.

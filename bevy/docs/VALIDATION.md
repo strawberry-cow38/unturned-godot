@@ -192,3 +192,28 @@ foliage shading and the remaining parity ledger still need further validation.
   original fall damage remained active. Real bridge/Rapier tests cover same-tick
   rebasing, queued teleport recovery, render/physics agreement and stale-coordinate
   rejection. See `WORLD_PORT.md` for the exact scope.
+
+## Native driving arms
+
+- Seven focused viewmodel tests pass. The actual original rig enters
+  `Idle_Drive`, hides the held mesh, disables the overlay for a passenger, and
+  restores the equipped hold after exiting, including driver-to-passenger changes.
+- The wheel pivot, axis and angle come from the same source data as the rendered
+  steering wheel. Projection tests cover different main-camera fields of view,
+  0/70/90/180-degree head turns and both steering directions. Hands remain behind
+  the camera when looking backwards. Peer review checked the native schedule,
+  current camera/body transforms and the driver/passenger/aircraft visibility gates.
+- A source translation error subtracted the hand midpoint before transforming it
+  into the vehicle's camera-space basis. The port applies that basis first, so
+  turning the head preserves the intended wheel pin and original 9cm hand drop.
+  The regression demonstrates the old formula drifting more than half a metre.
+- `bevy-driving-pilot` confirms actual authoritative driver seat 0 with hands
+  around the wheel. `bevy-driving-turn-wheel` retains the pin while looking
+  sideways with 27.42° steering. `bevy-driving-look-behind` leaves the arms behind
+  the camera at a 180° head turn, without snapping them into view. Both root and
+  peer reviewer inspected the original blocky rig geometry. The earlier
+  `bevy-driving-forward` capture is actually passenger seat 2 and correctly has
+  no driving overlay. No pixel-size parity claim is made without a matching
+  original cockpit capture. This run also exposed a shader type error in the
+  concurrently added water renderer; that independent fix and its validation
+  belong to the water milestone.

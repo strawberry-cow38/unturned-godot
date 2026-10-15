@@ -14,6 +14,7 @@ use bevy::{
 };
 use std::{collections::HashMap, fs, path::Path};
 
+mod driving;
 mod motion;
 mod parts;
 const LAYER: usize = 1;
@@ -144,6 +145,8 @@ struct ViewmodelState {
     previous_look: Option<Vec2>,
     hands_off: bool,
     hammer_delay: Option<f32>,
+    driving: bool,
+    seated: bool,
 }
 #[derive(Resource, Default)]
 pub struct ViewmodelStatus {
@@ -176,7 +179,12 @@ impl Plugin for ViewmodelPlugin {
                     .after(crate::entities::ApplyInteractions)
                     .before(RigAnimation),
             )
-            .add_systems(Update, pose_viewmodel.after(RigAnimation));
+            .add_systems(
+                Update,
+                pose_viewmodel
+                    .after(RigAnimation)
+                    .after(crate::player::PlayerCameraUpdate),
+            );
     }
 }
 #[allow(clippy::too_many_arguments)]
@@ -194,10 +202,12 @@ fn build_viewmodel(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut active_cameras: Query<&mut Camera, With<ViewmodelCamera>>,
     hand_use: Res<crate::use_items::HandUse>,
+    occupancy: Res<crate::vehicle::Occupancy>,
 ) {
     let visible = !matches!(ui.screen, Screen::MainMenu | Screen::Dead)
         && snapshot.0["connected"].as_bool().unwrap_or(false)
-        && snapshot.0["player"]["alive"].as_bool().unwrap_or(true);
+        && snapshot.0["player"]["alive"].as_bool().unwrap_or(true)
+        && occupancy.seat.is_none_or(|s| s.driver && !s.aircraft);
     for mut camera in &mut active_cameras {
         camera.is_active = visible;
     }
@@ -342,6 +352,8 @@ fn build_viewmodel(
             state.shot_hold = 0.;
             state.hands_off = false;
             state.hammer_delay = None;
+            state.driving = false;
+            state.seated = false;
             state.motion = default();
             state.previous_look = None;
             state.use_clip = consumable
@@ -593,6 +605,7 @@ fn animate_viewmodel(
     time: Res<Time>,
     ui: Res<UiState>,
     recoil: Res<crate::recoil::Recoil>,
+    occupancy: Res<crate::vehicle::Occupancy>,
 ) {
     let Some(root) = state.arms else {
         events.clear();
@@ -601,7 +614,39 @@ fn animate_viewmodel(
     let Ok(mut rig) = rigs.get_mut(root) else {
         return;
     };
-    let dt = time.delta_secs();
+    rig.paused = crate::player::simulation_paused(&ui);
+    let dt = if rig.paused { 0. } else { time.delta_secs() };
+    if let Some(seat) = occupancy.seat {
+        state.seated = true;
+        let driving = seat.driver && !seat.aircraft;
+        if driving && (!state.driving || rig.clip != "Idle_Drive") {
+            rig.play("Idle_Drive", true);
+        }
+        state.driving = driving;
+        state.aim_progress = 0.;
+        state.sprinting = false;
+        state.hammer_delay = None;
+        state.position_offset = Vec3::ZERO;
+        state.rotation_offset = Vec3::ZERO;
+        rig.additive = None;
+        *status = ViewmodelStatus {
+            held: state.held.unwrap_or(0),
+            ..default()
+        };
+        events.clear();
+        hand_events.clear();
+        return;
+    }
+    if state.seated {
+        state.seated = false;
+        state.driving = false;
+        let clip = state.hold_clip.clone();
+        play_once(&mut rig, &clip, 1.);
+        rig.time = rig.data.anims.get(&clip).map_or(0., |c| c.length);
+        state.equip_elapsed = rig.time;
+        state.motion = default();
+        state.previous_look = None;
+    }
     state.equip_elapsed += dt;
     state.shot_hold = (state.shot_hold - dt).max(0.);
     let held = state.held.unwrap_or(0);
@@ -808,8 +853,12 @@ fn pose_viewmodel(
     hand_use: Res<crate::use_items::HandUse>,
     parents: Query<&ChildOf>,
     mut transforms: ParamSet<(Query<&Transform>, Query<&mut Transform>)>,
-    mut cameras: Query<&mut Projection, With<ViewmodelCamera>>,
+    mut cameras: Query<&mut Projection, (With<ViewmodelCamera>, Without<PlayerCamera>)>,
     mut held_visibility: Query<&mut Visibility, With<HeldMesh>>,
+    occupancy: Res<crate::vehicle::Occupancy>,
+    rigs: Query<&RigPlayback>,
+    main_camera: Query<(Entity, &Projection), (With<PlayerCamera>, Without<ViewmodelCamera>)>,
+    vehicles: Query<&crate::vehicle::VehicleBody>,
 ) {
     for mut projection in &mut cameras {
         if let Projection::Perspective(p) = &mut *projection {
@@ -823,13 +872,13 @@ fn pose_viewmodel(
     let mut aim = None;
     if let Some(gun) = state.gun {
         if let Ok(mut visibility) = held_visibility.get_mut(gun) {
-            *visibility = if state.hands_off || hand_use.hide_item() {
+            *visibility = if state.driving || state.hands_off || hand_use.hide_item() {
                 Visibility::Hidden
             } else {
                 Visibility::Inherited
             };
         }
-        if state.is_gun {
+        if state.is_gun && !state.driving {
             if let Some(parent_pose) = parents
                 .get(gun)
                 .ok()
@@ -855,6 +904,49 @@ fn pose_viewmodel(
             }
         }
     }
+    if state.driving {
+        let rig = rigs.get(root).ok();
+        let t = transforms.p0();
+        let bone = |name: &str| {
+            rig.and_then(|rig| rig.bones.get(name))
+                .and_then(|entity| relative_pose(*entity, root, &t, &parents))
+                .map(|p| p.transform_point3(Vec3::ZERO))
+        };
+        let hands = bone("Left_Hand")
+            .zip(bone("Right_Hand"))
+            .map(|(l, r)| (l + r) * 0.5);
+        let skull = bone("Skull");
+        let pinned = occupancy.seat.and_then(|seat| {
+            let (pivot, axis, steer) = vehicles.get(seat.vehicle).ok()?.steering_wheel()?;
+            let (camera, projection) = main_camera.single().ok()?;
+            let camera = t.get(camera).ok()?;
+            let vehicle = t.get(seat.vehicle).ok()?;
+            let Projection::Perspective(projection) = projection else {
+                return None;
+            };
+            let inverse = camera.to_matrix().inverse();
+            let wheel = inverse.transform_point3(vehicle.transform_point(pivot));
+            let basis = camera.rotation.inverse() * vehicle.rotation;
+            Some(driving::pin(
+                driving::wheel_target(wheel, projection.fov),
+                hands?,
+                basis,
+                basis * axis,
+                steer,
+            ))
+        });
+        let pose = pinned.unwrap_or_else(|| {
+            Transform::from_translation(
+                skull
+                    .filter(|p| p.length_squared() >= 0.01)
+                    .map_or(ARMS_POSITION, |p| -(p + Vec3::new(0., 0.16, -0.10))),
+            )
+        });
+        if let Ok(mut transform) = transforms.p1().get_mut(root) {
+            *transform = pose;
+        }
+        return;
+    }
     if let Ok(mut transform) = transforms.p1().get_mut(root) {
         transform.translation =
             ARMS_POSITION + state.position_offset - aim.unwrap_or(Vec3::ZERO) * status.aim_alpha;
@@ -865,6 +957,90 @@ fn pose_viewmodel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn real_rig_enters_driving_hides_held_item_and_restores_hold_after_passenger_exit() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins,TransformPlugin,AssetPlugin::default()))
+            .init_asset::<Mesh>().init_asset::<Image>().init_asset::<StandardMaterial>()
+            .init_asset::<SkinnedMeshInverseBindposes>()
+            .init_resource::<WorldConfig>().init_resource::<ContentCache>().init_resource::<ItemCatalog>()
+            .init_resource::<Settings>().init_resource::<crate::use_items::HandUse>()
+            .init_resource::<crate::vehicle::Occupancy>().init_resource::<crate::recoil::Recoil>()
+            .init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>()
+            .add_message::<CoreEvent>().add_message::<crate::use_items::HandEvent>()
+            .insert_resource(UiState{screen:Screen::Playing,..default()})
+            .insert_resource(GameSnapshot(serde_json::json!({"connected":true,"playerId":1,"player":{"alive":true,"heldItemId":0,"stance":"stand"}})))
+            .add_plugins((crate::rig::RigPlugin,ViewmodelPlugin));
+        app.world_mut().spawn((
+            PlayerCamera,
+            Camera::default(),
+            Projection::default(),
+            Transform::IDENTITY,
+        ));
+        app.update();
+        app.update();
+        let root = app.world().resource::<ViewmodelState>().arms.unwrap();
+        let camera = app.world().resource::<ViewmodelState>().camera.unwrap();
+        let held = app
+            .world_mut()
+            .spawn((
+                HeldMesh,
+                Visibility::Inherited,
+                Transform::IDENTITY,
+                ChildOf(root),
+            ))
+            .id();
+        app.world_mut().resource_mut::<ViewmodelState>().gun = Some(held);
+        let vehicle = app.world_mut().spawn(Transform::IDENTITY).id();
+        app.world_mut()
+            .resource_mut::<crate::vehicle::Occupancy>()
+            .seat = Some(crate::vehicle::OccupiedSeat {
+            vehicle,
+            net_id: 7,
+            seat: 0,
+            body_pose: Transform::IDENTITY,
+            eye_pose: Transform::IDENTITY,
+            velocity: Vec3::ZERO,
+            driver: true,
+            aircraft: false,
+        });
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().get::<RigPlayback>(root).unwrap().clip,
+            "Idle_Drive"
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(held).unwrap(),
+            Visibility::Hidden
+        );
+        assert!(app.world().get::<Camera>(camera).unwrap().is_active);
+        assert!(!app.world().resource::<ViewmodelStatus>().ready);
+        // Switching to a passenger must hide the overlay; exiting afterwards
+        // still restores the equipped pose rather than leaving driving arms.
+        app.world_mut()
+            .resource_mut::<crate::vehicle::Occupancy>()
+            .seat
+            .as_mut()
+            .unwrap()
+            .driver = false;
+        app.update();
+        assert!(!app.world().get::<Camera>(camera).unwrap().is_active);
+        app.world_mut()
+            .resource_mut::<crate::vehicle::Occupancy>()
+            .seat = None;
+        app.update();
+        assert_eq!(
+            app.world().get::<RigPlayback>(root).unwrap().clip,
+            "Punch_Left"
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(held).unwrap(),
+            Visibility::Inherited
+        );
+        assert!(app.world().get::<Camera>(camera).unwrap().is_active);
+        assert!(app.world().resource::<ViewmodelStatus>().ready);
+    }
     #[test]
     fn aim_ease_and_consumable_hand_clips_match_source() {
         assert_eq!(aim_ease(-1.), 0.);
