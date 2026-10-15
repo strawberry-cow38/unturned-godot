@@ -42,13 +42,49 @@ Normal flash lifetime is 0.05 seconds; casings expire after 1.3 seconds and use
 the original current-foot-surface bounce bank after 0.5 seconds. No audio device
 is present in this environment, so playback has not been verified by listening.
 
+## Native attachment menu and installed parts
+
+The original hold-T menu now uses authority options, exact owned item/gun tokens,
+source icon/rarity colors, projected hooks, simultaneous chord-spaced option
+rings, per-magazine rounds and shell-type/unload choices. It closes on release,
+selection replacement or session change. The original AttachStart clip presents
+the gun; release snaps back to its ready hold. Reload animations can finish in
+the normal hold while the menu stays open, as in the source; reopening presents
+it again and all buttons follow the current hook positions.
+
+Only accepted attachment state replaces native parts. The original source mesh
+and texture mappings drive each slot; factory iron offsets remain distinct from
+rail-mounted optic offsets. Water-bottle seating/scaling uses actual barrel
+geometry. Red-dot, halo and kobra use the source reticle, depth-tested billboard,
+optical axis and per-sight eye relief. Scope bodies and aim hooks are mounted,
+but PiP glass remains the next task. Tactical meshes/textures are present;
+active lens/laser/flashlight effects remain separate.
+
+All206 native tests passed at integration. After review,21 focused viewmodel
+checks and3 attachment UI checks passed, including same-ID physical-gun rig
+replacement, stale shot suppression, exact duplicate-magazine actions, source
+icon alpha bounds, ring spacing and source-roster bottle dimensions. Accepted
+fit/removal events play the original single restarting selector voice; this has
+code validation, not an audible test on this machine.
+
+The actual Vulkan journey fitted barrel7 and sight146, consumed those bag items,
+and showed the centered red dot. A magazine swap changed loaded30 to31 while
+returning the outgoing29-round magazine, preserving the chamber. Detaching both
+returned the same part IDs and restored factory sight5. Inspected paired image/
+authority captures: `bevy-attachment-rings`, `bevy-attachment-magazine-options`,
+`bevy-attachment-silencer-confirmed`, `bevy-attachment-dot-fitted`,
+`bevy-attachment-dot-ads`, `bevy-attachment-magazine-swapped`,
+`bevy-attachment-removal-confirmed`, and
+`bevy-attachment-factory-irons-confirmed` under `artifacts/`. The original Godot
+`godot-eaglefire-attach/rig_00.png` reference confirms the same close diagonal
+AttachStart framing and hook positions. Native arm/gun lighting remains darker
+and is tracked with the first-person environment work.
+
 ## Remaining source behavior
 
 The following are distinct tasks, not completed by the checkpoints above:
 
-- Native attachment fitting/removal UI and native installed-part replacement,
-  all hook rings and attach-view pose/orbit, shell-type and magazine choices.
-- All scope/optic sight pictures and PiP cameras, scoped sway, tactical laser and
+- Scope PiP cameras/glass, scoped sway, tactical laser and
   flashlight presentation, detachable-part animations and special gun furniture.
 - Original cosmetic flight tracers, visible rocket rounds and remote player
   gunfire presentation. Authority projectile collision/damage is already separate.

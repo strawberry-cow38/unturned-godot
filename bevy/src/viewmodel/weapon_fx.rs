@@ -58,6 +58,7 @@ struct Feedback {
     pending: Vec<Shot>,
     hammer: Option<Hammer>,
     swing: Option<Entity>,
+    selector: Option<Entity>,
     flash: Option<Entity>,
     geometry: Option<Geometry>,
     banks: HashMap<&'static str, crate::sound::Bank>,
@@ -187,6 +188,7 @@ fn receive(
         fx.pending.clear();
         fx.hammer = None;
         fx.swing = None;
+        fx.selector = None;
         fx.flash = None;
         fx.last_event = 0;
         fx.epoch = epoch.0;
@@ -247,7 +249,13 @@ fn receive(
                         paused,
                     );
                 }
-                if asset == state.asset && state.is_gun && !state.seated {
+                if asset == state.asset
+                    && state.is_gun
+                    && !state.seated
+                    && (event.data["selectionVersion"].is_null()
+                        || event.data["selectionVersion"]
+                            == snapshot.0["weapon"]["selectionVersion"])
+                {
                     if let (Some(gun), Some(camera), Some(visual)) =
                         (state.gun, state.camera, state.visuals.get(asset))
                     {
@@ -265,6 +273,29 @@ fn receive(
                                 .unwrap_or(false),
                         });
                     }
+                }
+            }
+            "attachmentChanged"
+                if matches!(
+                    event.data["action"].as_str(),
+                    Some("installAttachment" | "removeAttachment")
+                ) =>
+            {
+                if let Some(previous) = fx.selector.take() {
+                    commands.entity(previous).try_despawn();
+                }
+                let path = "sounds/firemode.wav";
+                if config.content_root.join(path).is_file() {
+                    fx.selector = Some(spawn_voice(
+                        &mut commands,
+                        &assets,
+                        &settings,
+                        None,
+                        path.into(),
+                        1.,
+                        1.,
+                        paused,
+                    ));
                 }
             }
             "reload" => {
@@ -735,6 +766,24 @@ mod tests {
     }
     fn count<T: Component>(app: &mut App) -> usize {
         app.world_mut().query::<&T>().iter(app.world()).count()
+    }
+    #[test]
+    fn old_selection_shot_does_not_eject_from_replacement_and_attachment_clicks_restart_once() {
+        let mut app=app();
+        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]=json!({"selectionVersion":42});
+        let mut data=shot(false);data["selectionVersion"]=json!(41);
+        send(&mut app,1,"fire",data);app.update();
+        assert_eq!(count::<Casing>(&mut app),0);assert_eq!(count::<Flash>(&mut app),0);
+        assert_eq!(count::<Voice>(&mut app),1,"accepted old shot can still ring out");
+        send(&mut app,2,"attachmentRejected",json!({"playerId":1,"action":"installAttachment"}));app.update();
+        assert!(app.world().resource::<Feedback>().selector.is_none());
+        for seq in [3,4] {send(&mut app,seq,"attachmentChanged",json!({"playerId":1,"action":"installAttachment"}));}
+        app.update();
+        let voice=app.world().resource::<Feedback>().selector.unwrap();
+        assert_eq!(app.world().get::<Voice>(voice).unwrap().gain,1.);
+        assert_eq!(count::<Voice>(&mut app),2,"selector uses one restarting voice alongside the ringing shot");
+        send(&mut app,4,"attachmentChanged",json!({"playerId":1,"action":"installAttachment"}));app.update();
+        assert_eq!(app.world().resource::<Feedback>().selector,Some(voice));
     }
     #[test]
     fn accepted_shots_overlap_audio_eject_once_and_keep_bottle_suppression_after_break() {

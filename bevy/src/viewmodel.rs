@@ -14,6 +14,7 @@ use bevy::{
 };
 use std::{collections::HashMap, fs, path::Path};
 
+mod attachments;
 mod driving;
 mod motion;
 mod parts;
@@ -31,6 +32,7 @@ pub struct GunVisual {
     pub aim: Vec3,
     pub sight: Option<String>,
     pub sight_position: Vec3,
+    pub sight_hook: Option<Vec3>,
     pub sight_color: Color,
     pub sight_texture: Option<String>,
     pub magazine: Option<String>,
@@ -69,6 +71,7 @@ pub fn load_gun_visuals(root: &Path) -> Result<HashMap<String, GunVisual>, Conte
                 aim: vector(f[2])?,
                 sight: None,
                 sight_position: Vec3::ZERO,
+                sight_hook: None,
                 sight_color: Color::srgb(0.3, 0.3, 0.3),
                 sight_texture: None,
                 magazine: f
@@ -124,6 +127,16 @@ pub fn load_gun_visuals(root: &Path) -> Result<HashMap<String, GunVisual>, Conte
             }
         }
     }
+    if let Ok(source) = fs::read_to_string(root.join("guns_sighthook.tsv")) {
+        for line in source.lines() {
+            let fields: Vec<_> = line.split('\t').collect();
+            if fields.len() >= 2 && !fields[1].trim().is_empty() {
+                if let Some(gun) = result.get_mut(fields[0]) {
+                    gun.sight_hook = Some(vector(fields[1])?);
+                }
+            }
+        }
+    }
     Ok(result)
 }
 #[derive(Resource, Default)]
@@ -132,6 +145,7 @@ struct ViewmodelState {
     frame: Option<Entity>,
     arms: Option<Entity>,
     held: Option<u16>,
+    selection: serde_json::Value,
     gun: Option<Entity>,
     visuals: HashMap<String, GunVisual>,
     pending: Option<PendingHeld>,
@@ -152,6 +166,7 @@ struct ViewmodelState {
     hammer_delay: Option<(f32, f32)>,
     driving: bool,
     seated: bool,
+    attaching: bool,
     tool_active: bool,
     tool_random: u64,
 }
@@ -179,19 +194,41 @@ struct ViewmodelCamera;
 struct ViewmodelFrame;
 #[derive(Component)]
 struct HeldMesh;
+#[derive(Resource, Default)]
+pub struct AttachmentAnchors(pub HashMap<String, Vec2>);
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProjectAttachmentHooks;
 pub struct ViewmodelPlugin;
 impl Plugin for ViewmodelPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ViewmodelState>()
+        app.init_resource::<AttachmentAnchors>()
+            .init_resource::<ViewmodelState>()
             .init_resource::<ViewmodelStatus>()
+            .init_resource::<attachments::Mounted>()
             .add_plugins((tools::ToolPlugin, weapon_fx::WeaponEffectsPlugin))
             .add_systems(
                 Update,
-                (build_viewmodel, attach_held_mesh, animate_viewmodel)
+                (
+                    build_viewmodel,
+                    attach_held_mesh,
+                    attachments::sync,
+                    animate_viewmodel,
+                )
                     .chain()
                     .after(PlayerUpdate)
                     .after(crate::entities::ApplyInteractions)
                     .before(RigAnimation),
+            )
+            .add_systems(
+                PostUpdate,
+                project_attachment_hooks
+                    .in_set(ProjectAttachmentHooks)
+                    .after(bevy::camera::CameraUpdateSystems)
+                    .after(bevy::transform::TransformSystems::Propagate),
+            )
+            .add_systems(
+                PostUpdate,
+                attachments::billboard.after(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(
                 Update,
@@ -284,7 +321,7 @@ fn build_viewmodel(
     let held = hand_use
         .visual_item()
         .unwrap_or_else(|| snapshot.0["player"]["heldItemId"].as_u64().unwrap_or(0) as u16);
-    if state.held == Some(held) {
+    if state.held == Some(held) && state.selection == snapshot.0["weapon"]["selectionVersion"] {
         return;
     }
     if held != 0 && !catalog.items.contains_key(&held) {
@@ -367,6 +404,8 @@ fn build_viewmodel(
             commands.entity(root).insert(ChildOf(state.frame.unwrap()));
             state.arms = Some(root);
             state.held = Some(held);
+            state.selection = snapshot.0["weapon"]["selectionVersion"].clone();
+            state.attaching = false;
             state.hold_clip = clip;
             state.asset = asset.clone();
             state.is_gun = gun.is_some();
@@ -508,56 +547,6 @@ fn attach_held_mesh(
         }
     }
     if let Some(gun) = pending.gun {
-        for (mesh, position, texture, color) in [
-            (
-                gun.sight,
-                gun.sight_position,
-                gun.sight_texture,
-                gun.sight_color,
-            ),
-            (
-                gun.magazine,
-                gun.magazine_position,
-                None,
-                Color::srgb(0.07, 0.07, 0.08),
-            ),
-        ] {
-            let Some(mesh) = mesh else {
-                continue;
-            };
-            let Ok((handle, _)) = cache.load_mesh(&config.content_root.join(&mesh), &mut meshes)
-            else {
-                continue;
-            };
-            let texture = texture.or_else(|| {
-                let candidate = mesh.replace(".txt", "_albedo.png");
-                config
-                    .content_root
-                    .join(&candidate)
-                    .is_file()
-                    .then_some(candidate)
-            });
-            let material = materials.add(StandardMaterial {
-                base_color: if texture.is_some() {
-                    Color::WHITE
-                } else {
-                    color
-                },
-                base_color_texture: texture.map(|p| assets.load(p)),
-                perceptual_roughness: 1.,
-                reflectance: 0.,
-                cull_mode: None,
-                ..default()
-            });
-            commands.spawn((
-                Name::new(mesh),
-                Mesh3d(handle),
-                MeshMaterial3d(material),
-                Transform::from_translation(position),
-                RenderLayers::layer(LAYER),
-                ChildOf(gun_entity),
-            ));
-        }
         let extra = gun.mesh.replace("_gun.txt", "_barrel.txt");
         if extra != gun.mesh && config.content_root.join(&extra).is_file() {
             if let Ok((handle, _)) = cache.load_mesh(&config.content_root.join(&extra), &mut meshes)
@@ -727,7 +716,8 @@ fn animate_viewmodel(
             "rechamber" => {
                 state.hammer_delay = weapon_fx::hammer_timing(&rig, &state.asset, &event.data)
             }
-            "fire" => {
+            "fire" if (event.data["selectionVersion"].is_null() || event.data["selectionVersion"]==state.selection)
+                && event.data["gun"].as_str().is_none_or(|gun|gun==state.asset) => {
                 state.shot_hold = 0.25;
                 if let Some(item) = item {
                     let value = |key: &str| item.gun[key].as_f64().unwrap_or(0.) as f32;
@@ -758,6 +748,20 @@ fn animate_viewmodel(
             let clip = own_clip(&rig, &state.asset, "_Hammer", "");
             play_once(&mut rig, &clip, speed);
         }
+    }
+    let attaching = ui.screen == Screen::Attachments && state.is_gun;
+    if attaching != state.attaching {
+        if attaching {
+            let clip = own_clip(&rig, &state.asset, "_AttachStart", "");
+            if !clip.is_empty() {
+                play_once(&mut rig, &clip, 1.);
+            }
+        } else {
+            let clip = state.hold_clip.clone();
+            play_once(&mut rig, &clip, 1.);
+            rig.time = rig.data.anims.get(&clip).map_or(0., |c| c.length);
+        }
+        state.attaching = attaching;
     }
     let reloading = snapshot.0["weapon"]["reloading"].as_bool().unwrap_or(false);
     let hammering = snapshot.0["weapon"]["rechambering"]
@@ -819,6 +823,7 @@ fn animate_viewmodel(
         weight: status.aim_alpha,
     });
     let sprint = state.is_gun
+        && !attaching
         && status.ready
         && !status.aiming
         && !reloading
@@ -828,7 +833,7 @@ fn animate_viewmodel(
     if sprint && !state.sprinting {
         let clip = own_clip(&rig, &state.asset, "_Sprint_Start", "");
         play_once(&mut rig, &clip, 1.);
-    } else if !sprint && state.sprinting && !reloading && !hammering {
+    } else if !sprint && state.sprinting && !reloading && !hammering && !attaching {
         let clip = state.hold_clip.clone();
         play_once(&mut rig, &clip, 1.);
         rig.time = rig.data.anims.get(&clip).map_or(0., |c| c.length);
@@ -878,6 +883,35 @@ fn animate_viewmodel(
         .update(dt, stance, movement, status.aim_alpha, delta);
     state.position_offset = position;
     state.rotation_offset = rotation;
+}
+fn project_attachment_hooks(
+    state: Res<ViewmodelState>,
+    ui: Res<UiState>,
+    cameras: Query<(&Camera, &GlobalTransform), With<ViewmodelCamera>>,
+    transforms: Query<&GlobalTransform>,
+    mut anchors: ResMut<AttachmentAnchors>,
+) {
+    anchors.0.clear();
+    if ui.screen != Screen::Attachments {
+        return;
+    }
+    let Some(gun) = state.gun.and_then(|e| transforms.get(e).ok()) else {
+        return;
+    };
+    let Ok((camera, view)) = cameras.single() else {
+        return;
+    };
+    for (slot, hook) in [
+        ("Sight", Vec3::new(0., -0.2398, -0.1386)),
+        ("Tactical", Vec3::new(-0.0601, 0.3815, -0.0851)),
+        ("Barrel", Vec3::new(0., 0.7307, -0.0818)),
+        ("Grip", Vec3::new(0., 0.2595, -0.0226)),
+        ("Magazine", Vec3::new(0., 0.0166, 0.0238)),
+    ] {
+        if let Ok(screen) = camera.world_to_viewport(view, gun.transform_point(hook)) {
+            anchors.0.insert(slot.into(), screen);
+        }
+    }
 }
 fn relative_pose(
     entity: Entity,
@@ -1091,6 +1125,19 @@ mod tests {
         );
         assert!(app.world().get::<Camera>(camera).unwrap().is_active);
         assert!(app.world().resource::<ViewmodelStatus>().ready);
+        // Two physical rifles sharing an asset still need separate equip and
+        // attachment lifecycles; the first rig must not survive the replacement.
+        let item=serde_json::from_value(serde_json::json!({"id":4,"name":"Rifle","type":"gun","asset":"eaglefire","gun":{}})).unwrap();
+        app.world_mut().resource_mut::<ItemCatalog>().items.insert(4,item);
+        app.world_mut().resource_mut::<GameSnapshot>().0["player"]["heldItemId"]=serde_json::json!(4);
+        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]=serde_json::json!({"selectionVersion":1});
+        app.update();app.update();
+        let first=app.world().resource::<ViewmodelState>().arms.unwrap();
+        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["selectionVersion"]=serde_json::json!(2);
+        app.update();app.update();
+        assert_ne!(app.world().resource::<ViewmodelState>().arms,Some(first));
+        assert!(app.world().get_entity(first).is_err());
+        assert_eq!(app.world().resource::<ViewmodelState>().held,Some(4));
     }
     #[test]
     fn aim_ease_and_consumable_hand_clips_match_source() {

@@ -11,6 +11,8 @@ use bevy::{
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 
+mod attachments;
+
 const TEXT: Color = Color::srgb(0.88, 0.88, 0.91);
 const DIM: Color = Color::srgb(0.55, 0.56, 0.60);
 const ACCENT: Color = Color::srgb(0.62, 0.78, 0.94);
@@ -192,6 +194,7 @@ pub enum Screen {
     Dead,
     Inventory,
     Crafting,
+    Attachments,
     Settings,
     Console,
     Chat,
@@ -303,6 +306,7 @@ impl Plugin for GameUiPlugin {
             .init_resource::<UiModel>()
             .init_resource::<Settings>()
             .add_message::<UiIntent>()
+            .add_plugins(attachments::AttachmentMenuPlugin)
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(Startup, spawn_hud)
             .add_systems(
@@ -810,7 +814,7 @@ fn rebuild_overlay(
     for root in &roots {
         commands.entity(root).despawn();
     }
-    if state.screen == Screen::Playing {
+    if matches!(state.screen, Screen::Playing | Screen::Attachments) {
         return;
     }
     commands
@@ -864,7 +868,7 @@ fn rebuild_overlay(
                 Screen::Crafting => crafting_panel(panel, &state, &model),
                 Screen::Settings => settings_panel(panel, &state, &settings),
                 Screen::Console | Screen::Chat => console_panel(panel, &state, &model),
-                Screen::Playing => {}
+                Screen::Playing | Screen::Attachments => {}
             });
         });
 }

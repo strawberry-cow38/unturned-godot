@@ -25,6 +25,10 @@ pub struct ItemVisual {
     pub texture: Option<String>,
     pub icon: Option<String>,
     #[serde(default)]
+    pub attachment_mesh: Option<String>,
+    #[serde(default)]
+    pub attachment_texture: Option<String>,
+    #[serde(default)]
     pub gun: Value,
     #[serde(default)]
     pub melee: Value,
