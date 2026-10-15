@@ -1,6 +1,11 @@
 //! Source foliage wind, shared disturbance field, up-normal lighting and erosion.
 mod batch;
 mod disturbance;
+mod reaction;
+mod fall;
+mod resources;
+mod timber;
+pub(super) use resources::ResourcePresentationPlugin;
 use crate::world::{
     WorldReady,
     origin::WorldOrigin,
@@ -15,7 +20,10 @@ use bevy::{
     shader::{ShaderRef, load_shader_library},
     transform::TransformSystems,
 };
-pub(super) use disturbance::shift_origin;
+pub(super) fn shift_origin(world: &mut World, shift: Vec3) {
+    disturbance::shift_origin(world, shift);
+    resources::shift_origin(world, shift);
+}
 use std::collections::HashMap;
 
 pub struct FoliagePlugin;
@@ -32,7 +40,7 @@ impl Plugin for FoliagePlugin {
             .add_systems(Update, convert.after(WorldReady).after(RainUpdate))
             .add_systems(
                 PostUpdate,
-                (disturbance::gather, update)
+                (disturbance::gather, update, reaction::apply)
                     .chain()
                     .after(TransformSystems::Propagate),
             );
@@ -87,6 +95,8 @@ pub struct MotionUniform {
     wind: Vec4,
     origin: Vec4,
     settings: Vec4,
+    gust: Vec4,
+    base: Vec4,
     positions: [Vec4; disturbance::MAX],
     responses: [Vec4; disturbance::MAX],
 }
@@ -95,7 +105,9 @@ impl MotionUniform {
         Self {
             wind: Vec4::ZERO,
             origin: Vec4::ZERO,
-            settings: Vec4::new(kind as u8 as f32, 0., 0., 0.),
+            settings: Vec4::new(kind as u8 as f32, 0.05, 0., 0.),
+            gust: Vec4::ZERO,
+            base: Vec4::ZERO,
             positions: [Vec4::ZERO; disturbance::MAX],
             responses: [Vec4::ZERO; disturbance::MAX],
         }

@@ -1335,3 +1335,11 @@ show decoded, absent and corrupt pictures plus full and partial wall occlusion;
 independent code/image review found no blocker. The render fixture uses fixed
 accepted profile values; appearance editing and a full live profile-update
 journey remain separate work. See bevy/docs/NAMEPLATE_PORT.md.
+
+
+### 2026-10-15 — Bevy accepted tree shake, felling and stump lifecycle
+
+- Accepted resource hits now shake only the addressed original tree instance. Original stump/debris OBJ/PNG content, world-layer stump box collision, slow accelerating base-pivot fall, horizontal landing/rebound, canopy/trunk springs and 11-second debris cleanup are ported from ResourceField. ResourceServices remains the sole damage/reward/regrowth authority. Original name+instance identity survives holiday index changes; origin/session cleanup and early-regrowth debris lifetime are guarded.
+- Actual GPU verification caught reliable resourceFelled arriving before the dead bitmap: the native adapter now retains the exact accepted direction until the matching state arrives, preserving elapsed lifetime. No random remote fall is inferred; existing remote dead-state replicas produce stumps pending a typed resource event.
+- Timber uses the measured original 8.256s clip and source max(0, predicted fall minus clip length) scheduling, original pitch/impact volume and shared unchanged footstep distance attenuation. The current 90-degree integrator measures 5.9167s / 1.15519 rad/s; stale source comments describe its older 84-degree result. Audio-device-free pause/retirement is tested; listening is unavailable here.
+- Fifteen focused foliage/resource tests pass (two opt-in render fixtures ignored), including a real accepted authority shot and proof native animation cannot award logs. Final Vulkan/lavapipe standing/falling/landed/cleanup images and authority JSON in bevy/artifacts/bevy-tree-fall were opened and independently reviewed: ammo 30→29, visible horizontal trunk and separate stump, then debris gone and five original item drops. No shader validation errors. Remote event metadata and managed stump bullet geometry remain explicit boundaries in bevy/docs/RESOURCES_PORT.md.

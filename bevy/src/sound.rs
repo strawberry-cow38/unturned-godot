@@ -36,3 +36,11 @@ impl Bank {
         Some(&self.clips[self.last])
     }
 }
+
+// Godot 4.6 AudioStreamPlayer3D::_get_attenuation_db/_update_panning:
+// inverse distance, default +3 dB cap, then linear fade to MaxDistance.
+// https://github.com/godotengine/godot/blob/4.6-stable/scene/3d/audio_stream_player_3d.cpp
+pub(crate) fn distance_gain(db: f32, unit: f32, range: f32, distance: f32) -> f32 {
+    (10_f32.powf(db / 20.) / (distance / unit + 0.00001)).min(10_f32.powf(3. / 20.))
+        * (1. - distance / range).max(0.)
+}

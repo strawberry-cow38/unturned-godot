@@ -72,7 +72,7 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
     var local_height=vertex.position.y;
 @if(VERTEX_UVS_B)
     local_height=vertex.uv_b.x;
-    out.world_position=vec4<f32>(displaced(out.world_position.xyz,local_height,vertex.uv),1.0);
+    out.world_position=vec4<f32>(displaced(out.world_position.xyz,vec3<f32>(vertex.position.x,local_height,vertex.position.z),vertex.uv),1.0);
 @if(VERTEX_POSITIONS)
     out.position = position_world_to_clip(out.world_position.xyz);
 

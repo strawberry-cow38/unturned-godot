@@ -71,8 +71,10 @@ original coast/grass/tree/props and ocean, with no shader errors.
 
 ## Remaining work
 
-Per-instance axe-hit canopy shake and felled-tree gust/impact shudder are not yet
-wired to the source resource events/debris lifecycle. The native settings UI does
+Per-instance accepted-hit shake, felled-tree gust/impact shudder and original
+stump/debris lifetimes are implemented in the [resource adapter](RESOURCES_PORT.md).
+Its remaining remote-event and collision-publication boundaries are recorded there.
+The native settings UI does
 not yet expose the source GrassDisplacement graphics toggle. The material field
 has an enable switch for that eventual adapter. Source tree impostor/LOD rings
 and non-foliage distance fades remain separate streaming work. Current cameras do

@@ -84,6 +84,7 @@ impl Plugin for WorldPlugin {
         bevy::shader::load_shader_library!(app, "world/water_optics.wesl");
         app.add_plugins((
             foliage::FoliagePlugin,
+            foliage::ResourcePresentationPlugin,
             terrain::TerrainPlugin,
             interactables::InteractablePlugin,
             origin::OriginPlugin,

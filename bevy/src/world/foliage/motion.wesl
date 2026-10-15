@@ -4,6 +4,8 @@ struct Motion {
     wind: vec4<f32>,
     origin: vec4<f32>, // xy phase offset, z disturbance count
     settings: vec4<f32>, // x mode: 0 static, 1 grass, 2 flowers, 3 canopy
+    gust: vec4<f32>,
+    base: vec4<f32>,
     positions: array<vec4<f32>,32>,
     responses: array<vec4<f32>,32>,
 };
@@ -31,7 +33,7 @@ fn disturb(world:vec3<f32>,weight:f32,flat:f32)->vec3<f32>{
     }
     return offset;
 }
-fn displaced(world:vec3<f32>,local_height:f32,uv:vec2<f32>)->vec3<f32>{
+fn displaced(world:vec3<f32>,local:vec3<f32>,uv:vec2<f32>)->vec3<f32>{
     let kind=motion.settings.x;
     let wind=motion.wind;
     let dir=vec3<f32>(wind.x,0.0,wind.y);
@@ -44,7 +46,7 @@ fn displaced(world:vec3<f32>,local_height:f32,uv:vec2<f32>)->vec3<f32>{
         moved+=dir*bend-vec3<f32>(0.0,abs(bend)*0.15,0.0);
         return moved;
     }
-    let height=max(local_height,0.0);
+    let height=max(local.y,0.0);
     let absolute=world.xz+motion.origin.xy;
     if kind>1.5 && kind<2.5 {
         let gust=sin(wind.w*1.6+absolute.x*0.2+absolute.y*0.17);
@@ -52,7 +54,9 @@ fn displaced(world:vec3<f32>,local_height:f32,uv:vec2<f32>)->vec3<f32>{
     }
     if kind>2.5 {
         let gust=sin(wind.w*1.3+absolute.x*0.16+absolute.y*0.14);
-        return world+dir*(height*0.05*(0.4+wind.z)*(0.7+0.3*gust))
+        let jitter=vec3<f32>(sin(local.x*3.7+local.y*2.3),sin(local.z*4.1-local.y*1.9),cos(local.x*2.9+local.z*3.3));
+        return world+dir*(height*motion.settings.y*(0.4+wind.z)*(0.7+0.3*gust))
+            +motion.gust.xyz*height+motion.base.xyz+jitter*(motion.settings.z*height*0.018)
             +disturb(world,min(height,1.0),0.18);
     }
     return world;
