@@ -545,3 +545,6 @@ extract_island_save(read, out, match, method)
 
 from extract_inventory import extract as extract_inventory
 extract_inventory(read, out, match, method)
+
+from extract_island_chart import extract as extract_island_chart
+extract_island_chart(read, out, match, method)

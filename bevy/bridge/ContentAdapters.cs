@@ -34,7 +34,7 @@ namespace Godot
         public static Vector3 operator +(Vector3 a, Vector3 b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
         public static Vector3 operator *(Vector3 a, float b) => new(a.X * b, a.Y * b, a.Z * b);
     }
-    public struct Color(float r, float g, float b, float a = 1)
+    public partial struct Color(float r, float g, float b, float a = 1)
     {
         public float R = r, G = g, B = b, A = a;
         public Color(string hex) : this(0, 0, 0)

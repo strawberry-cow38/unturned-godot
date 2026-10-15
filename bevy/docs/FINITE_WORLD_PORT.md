@@ -165,3 +165,26 @@ then does not run. That source behavior must be handled explicitly during the
 upcoming host-session integration; this adapter does not invent saved entities
 or silently regenerate over edited terrain. Existing baked charts must be reused
 on reopen, as ProcIslandMap.Rebind requires.
+
+The original chart data stage now extracts ProcIslandMap's complete raster,
+road-point and town-pad loops, LayerColor table, and unique seeded town labels.
+It returns RGB8 pixels, label TSV, original filenames and the square frame.
+Godot's RGB8 conversion multiplies float channels by double `255.0`, clamps and
+truncates, without a gamma transform; the bridge retains that exact conversion.
+References: [Godot Image](https://github.com/godotengine/godot/blob/4.6-stable/core/io/image.cpp)
+and [Color.Lerp](https://github.com/godotengine/godot/blob/4.6-stable/modules/mono/glue/GodotSharp/GodotSharp/Core/Color.cs).
+
+The optional `verify_island_source.py --chart --chart-engine <Godot>` path runs
+the source in an actual Vulkan Godot process using native Image.SetPixel. All37
+outputs match the immutable `finite-island-chart-tests` bridge, including every
+RGB8 byte, label and frame across three distinct layouts and a repeated seed.
+Four tests cover those full original outputs, same-seed repaint invalidation and
+Rebind's existing-image/optional-label behavior. Rebind derives only the frame
+from saved bounds; it never redraws missing roads/towns or overwrites saved art.
+
+Opened original PNGs `godot-finite-chart-1234.png`,
+`godot-finite-chart-9876-rectangular.png` and `godot-finite-chart-771177.png` under
+`bevy/artifacts/`. Root independently opened all three and passed the coast,
+relief, original point-road/town overlays and square framing. These verify the
+source raster data; native PNG persistence, Information projection and finite
+world rendering remain the following integration stage, not a completed claim.

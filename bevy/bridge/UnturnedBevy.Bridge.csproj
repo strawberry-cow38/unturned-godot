@@ -23,6 +23,8 @@
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandSurfaceAssets.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandObjectsSave.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandRoadsSave.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandChart.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandLayerColor.g.cs" />
     <Compile Include="../../game/NetContent.cs" Link="Source/NetContent.cs" />
     <Compile Include="../../game/Umbrellas.cs" Link="Source/Umbrellas.cs" />
     <Compile Include="../../game/VehiclePaints.cs" Link="Source/VehiclePaints.cs" />

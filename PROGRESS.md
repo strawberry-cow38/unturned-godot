@@ -2585,3 +2585,18 @@ undo and redo. Opened `bevy-fast-keyboard-{select,caret,undo,redo}.png`; the sid
 records each complete Ctrl chord in one Winit input frame. The isolated Xvfb
 fixture explicitly focuses its window before sending keys. See
 `bevy/vendor/bevy_input_focus/PATCHES.md`.
+
+### Bevy finite-world chart — original raster and reopen frame
+
+Ported the original chart raster/road-point/town-pad loops, terrain colors and
+seeded unique town names. The data result carries RGB8 pixels, labels, original
+filenames and the same square frame used by map projection. Rebind preserves
+existing chart art and optional node semantics; reopening never rebakes empty
+route/town lists over a previously correct map.
+
+Actual Vulkan Godot Image.SetPixel versus engine-free bridge comparison passes
+all 37 outputs, including every RGB8 byte for four cases. Four focused chart tests
+pass, including same-seed repaint and non-mutating reopen. Three source PNGs were
+opened and independently reviewed by root. Native finite-world consumers, PNG
+persistence and Information framing remain the next integration, with retail and
+Infinite paths retained. See `bevy/docs/FINITE_WORLD_PORT.md`.

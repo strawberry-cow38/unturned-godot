@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Compare the bridge's finite layout against unchanged source + real GodotSharp.
 
-This is a numerical source comparison, not a visual golden. Both complete grids
-and every layout record are compared; no engine/render process is needed because
-ProcIsland uses only managed Godot math. Outputs stay in the requested work dir.
+This is a numerical source comparison, not a visual golden. Complete grids and
+layout records use managed Godot math. Optional --chart-engine verifies native
+Image RGB8 conversion through an actual Vulkan process. Outputs stay in work dir.
 """
 import argparse
 import hashlib
@@ -122,6 +122,12 @@ def main():
     parser.add_argument('--math-only', action='store_true')
     parser.add_argument('--paths-environment', type=Path,
                         help='Also compare original road/conform passes using this PEI Environment directory')
+    parser.add_argument('--chart', action='store_true',
+                        help='Compare original chart pixels, names and map frame')
+    parser.add_argument('--chart-engine', type=Path,
+                        help='Run source chart with real Godot Image.SetPixel (claims renderer)')
+    parser.add_argument('--prepare-source', action='store_true',
+                        help='Build the engine chart reference without claiming the renderer yet')
     parser.add_argument('--saved-data', action='store_true',
                         help='Compare original prop/road save and reopen, plus Godot Basis save operations')
     parser.add_argument('--scatter', action='store_true',
@@ -131,6 +137,9 @@ def main():
     parser.add_argument('--dotnet', default=shutil.which('dotnet'))
     args = parser.parse_args()
     assert args.dotnet, 'Pass --dotnet or add dotnet to PATH'
+    assert not args.prepare_source or args.chart_engine, 'Prepare source requires --chart-engine'
+    assert not args.chart_engine or args.chart, 'Chart engine requires --chart'
+    assert not args.chart or args.placements_content, 'Chart requires --placements-content'
     assert not args.saved_data or args.placements_content, 'Saved data requires --placements-content'
     assert not args.scatter or args.placements_content, 'Scatter requires --placements-content'
     assert not args.placements_content or args.paths_environment, 'Placements require --paths-environment'
@@ -160,6 +169,19 @@ def main():
                 from extract_island_placement import extract as extract_placement
                 extract_placement(lambda p: (REPO / p).read_text(), folder, match, method)
                 source_files += ['bevy/bridge/FiniteIslandObjects.cs']
+            if args.chart:
+                from extract_island_chart import extract as extract_chart
+                extract_chart(lambda p: (REPO / p).read_text(), folder, match, method)
+                chart = (REPO / 'bevy/bridge/FiniteIslandChart.cs').read_text()
+                if args.chart_engine:
+                    chart = chart[:chart.index('// Image.SetPixel')] + '''internal sealed class ChartPixels(int width,int height)
+{
+    readonly Image image=Image.CreateEmpty(width,height,false,Image.Format.Rgb8);
+    public byte[] Bytes => image.GetData();
+    public void SetPixel(int x,int y,Color color) => image.SetPixel(x,y,color);
+}
+'''
+                (folder / 'FiniteIslandChart.cs').write_text(chart)
             if args.saved_data:
                 from extract_island_save import extract as extract_save
                 extract_save(lambda p: (REPO / p).read_text(), folder, match, method)
@@ -252,21 +274,44 @@ if (args.Length > 1 && args[1] == "--math-only") return;''')
             paths=restoredSurface.Rivers.Select(r => restoredSurface.RiverPathPoints(r.Anchors)).ToArray()
         },options));
         using (var writer = new BinaryWriter(File.Create(path + "-surface.bin")))''')
+        if args.chart:
+            program = program.replace('        roads.SavePaths', r'''        var chart = FiniteIslandChart.Bake(surface,seed);
+        File.WriteAllBytes(path+"-chart.rgb",chart.Rgb);
+        File.WriteAllText(path+"-nodes.tsv",chart.Nodes);
+        File.WriteAllText(path+"-chart.json",JsonSerializer.Serialize(new {
+            chart.Width,chart.Height,chart.Centre,chart.Size,chart.ImageName,chart.NodesName },options));
+        roads.SavePaths''')
         if args.scatter:
             program = program.replace('        roads.SavePaths', '''        string assets = path + "-assets";
         FiniteIslandScatter.Bake(surface, seed, $"island_{seed}", args[3], assets);
         FiniteIslandScatter.BakeResources(surface, seed, $"island_{seed}", args[3], assets);
         roads.SavePaths''')
-        (folder / 'Program.cs').write_text(program)
+        if mode == 'source' and args.chart_engine:
+            program = program.replace('        File.WriteAllBytes(path+"-chart.rgb",chart.Rgb);', '        File.WriteAllBytes(path+"-chart.rgb",chart.Rgb);\n        Image.CreateFromData(chart.Width,chart.Height,false,Image.Format.Rgb8,chart.Rgb).SavePng(path+"-chart.png");')
+            # Top-level declarations become a small Node harness. Original data
+            # methods use actual GodotSharp; ChartPixels uses native RGB8 Image.
+            using_end = program.index('var options =')
+            program = program[:using_end] + 'public partial class Main:Node { public override void _Ready() {\nvar args=OS.GetCmdlineUserArgs();\n' + program[using_end:] + '\nGetTree().Quit();\n}}\n'
+            (folder / 'Program.cs').unlink(missing_ok=True)
+            (folder / 'Main.cs').write_text(program)
+            (folder / 'project.godot').write_text('config_version=5\n[application]\nconfig/name="Original finite chart"\nrun/main_scene="res://main.tscn"\n[dotnet]\nproject/assembly_name="Compare"\n[display]\nwindow/size/viewport_width=128\nwindow/size/viewport_height=128\n')
+            (folder / 'main.tscn').write_text('[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://Main.cs" id="1"]\n[node name="Main" type="Node"]\nscript=ExtResource("1")\n')
+        else:
+            (folder / 'Program.cs').write_text(program)
         project = ('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType>'
                    '<TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings>'
                    '</PropertyGroup><ItemGroup>' + includes +
                    f'<Reference Include="{name}"><HintPath>{escape(str(dependency))}</HintPath></Reference>'
                    '</ItemGroup></Project>')
+        if mode == 'source' and args.chart_engine:
+            project = project.replace('Microsoft.NET.Sdk','Godot.NET.Sdk/4.6.2').replace('<OutputType>Exe</OutputType>','<EnableDynamicLoading>true</EnableDynamicLoading>')
         (folder / 'Compare.csproj').write_text(project)
         with (folder / 'build.log').open('w') as log:
             subprocess.run([args.dotnet, 'build', str(folder / 'Compare.csproj'), '--nologo'],
                            stdout=log, stderr=subprocess.STDOUT, check=True)
+        if mode == 'source' and args.prepare_source:
+            print(f'Prepared original chart engine project: {folder}')
+            return
         with (folder / 'run.log').open('w') as log:
             command = [args.dotnet, str(folder / 'bin/Debug/net8.0/Compare.dll'), str(folder)]
             if args.math_only:
@@ -275,7 +320,16 @@ if (args.Length > 1 && args[1] == "--math-only") return;''')
                 command += ['--paths', str(args.paths_environment.resolve())]
                 if args.placements_content:
                     command.append(str(args.placements_content.resolve()))
-            result = subprocess.run(command,
+            if mode == 'source' and args.chart_engine:
+                import os
+                env = dict(os.environ)
+                env.pop('WAYLAND_DISPLAY',None)
+                env['WINIT_UNIX_BACKEND']='x11'
+                env['DOTNET_ROOT']=str(Path(args.dotnet).resolve().parent)
+                command = ['xvfb-run','-a',str(args.chart_engine.resolve()),'--path',str(folder.resolve()),'--rendering-driver','vulkan','--fixed-fps','30','--write-movie',str(folder / 'chart.avi'),'--'] + command[2:]
+            else:
+                env = None
+            result = subprocess.run(command, env=env,
                                     stdout=subprocess.PIPE, stderr=log, text=True, check=True)
         (folder / 'summary.jsonl').write_text(result.stdout)
     errors = []
@@ -283,7 +337,7 @@ if (args.Length > 1 && args[1] == "--math-only") return;''')
     if args.saved_data:
         sources.append(args.work / 'source/basis-save.json')
     if not args.math_only:
-        sources += sorted((args.work / 'source').glob('case*.*'))
+        sources += sorted(p for p in (args.work / 'source').glob('case*.*') if p.suffix != '.png')
     if args.scatter:
         sources += sorted((args.work / 'source').glob('case*-assets/**/*.bin'))
     for source in sources:

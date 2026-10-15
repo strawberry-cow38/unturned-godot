@@ -35,3 +35,11 @@ public partial struct Vector3
         new(Mathf.Lerp(X, to.X, weight), Mathf.Lerp(Y, to.Y, weight), Mathf.Lerp(Z, to.Z, weight));
     public static Vector3 operator *(float scale, Vector3 value) => value * scale;
 }
+
+// Godot Color.Lerp: retained component arithmetic for the original chart bake.
+public partial struct Color
+{
+    public readonly Color Lerp(Color to, float weight) => new(
+        Mathf.Lerp(R,to.R,weight), Mathf.Lerp(G,to.G,weight),
+        Mathf.Lerp(B,to.B,weight), Mathf.Lerp(A,to.A,weight));
+}
