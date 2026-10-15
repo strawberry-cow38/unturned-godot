@@ -1375,6 +1375,16 @@ namespace UnturnedGodot
                     Log.Print($"[BOOTCMD] wait {_bootWait:0.##}s");
                     return;
                 }
+                // `key <Godot Key name>`: pressed and released as the keyboard would (PhysicalKeycode too -- Keybinds match on it),
+                // so a render can show what a KEY does -- the console opening, a menu -- and not only what a command does
+                if (line.StartsWith("key ", System.StringComparison.OrdinalIgnoreCase)
+                    && System.Enum.TryParse<Key>(line.Substring(4).Trim(), true, out var bootKey))
+                {
+                    Log.Print($"[BOOTCMD] key {bootKey}");
+                    Input.ParseInputEvent(new InputEventKey { Keycode = bootKey, PhysicalKeycode = bootKey, Pressed = true });
+                    Input.ParseInputEvent(new InputEventKey { Keycode = bootKey, PhysicalKeycode = bootKey, Pressed = false });
+                    continue;
+                }
                 Log.Print($"[BOOTCMD] {line}");
                 console.DebugRun(line);
             }
