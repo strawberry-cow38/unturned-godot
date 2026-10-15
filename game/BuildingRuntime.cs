@@ -204,26 +204,89 @@ namespace UnturnedGodot
             return fallback;
         }
 
-        /// <summary>How far to move a planned wall so a party wall's outer face lies on its plan line: half its thickness inward, for
-        /// an upright wall (or foundation) standing on the edge of the plan on a side in `party`; nothing for anything else.</summary>
-        static Vector3 PartyInset(WallPlan pl, float wx, float dz, Sides party)
+        /// <summary>⭐ A PLANNED SURFACE FITTED TO THE PARTY LINES (strawberry 2026-10-15: "the walls should butt up against eachother
+        /// with no overlap. shared walls shouldnt exist, just where 2 buildings have walls that meet"). Each building keeps its
+        /// own walls; where another building stands against a side of its plan, nothing of it may pass that side's line:
+        ///   - an upright wall standing ON the line, running along it, goes in by half its thickness, so its OUTER face is on
+        ///     the line (two neighbours' walls then touch there, face to face);
+        ///   - everything else is CLIPPED to the line, along its run and -- for a floor, a flat roof, a porch's slab -- across it
+        ///     too, its openings moved with its start.
+        /// ⚠ MOVING THE PARTY WALL ALONE WAS NOT ENOUGH (master: "its STILL doing the wall overlap"): the generator plans every
+        /// outside wall pre-extended to the plan's outer CORNERS -- a front wall of a 15 m plan runs x -0.35..15.35 (its 0.7 m
+        /// thickness, half each end), and so do the parapets above it, the foundations under it, the floors and the roofs
+        /// (measured: 106 surfaces past a party line in the test town). Each one still reached 0.35 m into the neighbour.
+        /// A pitched roof plane is left as planned.</summary>
+        static void PartyFit(WallPlan pl, float wx, float dz, Sides party, out Vector3 origin, out float length, out float height,
+                             out List<WallOpening> openings, ref int clipped)
         {
-            if (party == Sides.None || pl.Kind != SurfaceKind.Wall && pl.Kind != SurfaceKind.Foundation || Mathf.Abs(pl.Pitch) > 1f) return Vector3.Zero;
-            float yaw = Mathf.DegToRad(pl.Yaw);
-            float ux = Mathf.Cos(yaw), uz = -Mathf.Sin(yaw);       // the wall's run (its local +X), as RotationDegrees turns it
+            origin = new Vector3(pl.X, pl.Y, pl.Z); length = pl.Length; height = pl.Height;
+            openings = pl.Openings != null ? new List<WallOpening>(pl.Openings) : null;
+            if (party == Sides.None) return;
+            bool upright = Mathf.Abs(pl.Pitch) < 1f, flat = Mathf.Abs(Mathf.Abs(pl.Pitch) - 90f) < 1f;
+            if (!upright && !flat) return;
+            var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(pl.Pitch), Mathf.DegToRad(pl.Yaw), 0f));
+            var u = basis * Vector3.Right;          // its run
+            var v = basis * Vector3.Up;             // its height (across, for a slab)
+            float xmin = party.HasFlag(Sides.West) ? 0f : float.NegativeInfinity, xmax = party.HasFlag(Sides.East) ? wx : float.PositiveInfinity;
+            float zmin = party.HasFlag(Sides.South) ? 0f : float.NegativeInfinity, zmax = party.HasFlag(Sides.North) ? dz : float.PositiveInfinity;
             float h = pl.Thickness * 0.5f;
-            if (Mathf.Abs(ux) < 0.1f)          // runs along Z: on the West or East edge?
+            bool moved = false;
+            if (upright && (pl.Kind == SurfaceKind.Wall || pl.Kind == SurfaceKind.Foundation))
             {
-                if (party.HasFlag(Sides.West) && Mathf.Abs(pl.X) < 0.05f) return new Vector3(h, 0f, 0f);
-                if (party.HasFlag(Sides.East) && Mathf.Abs(pl.X - wx) < 0.05f) return new Vector3(-h, 0f, 0f);
+                if (Mathf.Abs(u.X) < 0.1f)
+                {
+                    if (party.HasFlag(Sides.West) && Mathf.Abs(origin.X) < 0.05f) { origin.X += h; moved = true; }
+                    else if (party.HasFlag(Sides.East) && Mathf.Abs(origin.X - wx) < 0.05f) { origin.X -= h; moved = true; }
+                }
+                else if (Mathf.Abs(u.Z) < 0.1f)
+                {
+                    if (party.HasFlag(Sides.South) && Mathf.Abs(origin.Z) < 0.05f) { origin.Z += h; moved = true; }
+                    else if (party.HasFlag(Sides.North) && Mathf.Abs(origin.Z - dz) < 0.05f) { origin.Z -= h; moved = true; }
+                }
             }
-            else if (Mathf.Abs(uz) < 0.1f)     // runs along X: on the South or North edge?
-            {
-                if (party.HasFlag(Sides.South) && Mathf.Abs(pl.Z) < 0.05f) return new Vector3(0f, 0f, h);
-                if (party.HasFlag(Sides.North) && Mathf.Abs(pl.Z - dz) < 0.05f) return new Vector3(0f, 0f, -h);
-            }
-            return Vector3.Zero;
+            bool cut = ClipAxis(ref origin, ref length, u, xmin, xmax, zmin, zmax, openings, true);
+            if (flat) cut |= ClipAxis(ref origin, ref height, v, xmin, xmax, zmin, zmax, openings, false);
+            if (moved || cut) clipped++;
         }
+
+        /// <summary>Clip a surface's extent along one of its own axes (`dir`, which the lattice keeps on +-X or +-Z) to the lines
+        /// [xmin, xmax] / [zmin, zmax]: its start moved forward where it began past a line (and its openings with it), its length
+        /// cut where it ran past one. Returns whether anything changed.</summary>
+        static bool ClipAxis(ref Vector3 origin, ref float len, Vector3 dir, float xmin, float xmax, float zmin, float zmax,
+                             List<WallOpening> ops, bool alongU)
+        {
+            bool alongX = Mathf.Abs(dir.X) > 0.9f;
+            if (!alongX && Mathf.Abs(dir.Z) <= 0.9f) return false;      // vertical (an upright wall's height): nothing to clip
+            float lo = alongX ? xmin : zmin, hi = alongX ? xmax : zmax;
+            if (float.IsNegativeInfinity(lo) && float.IsPositiveInfinity(hi)) return false;
+            float sgn = alongX ? Mathf.Sign(dir.X) : Mathf.Sign(dir.Z);
+            float start = alongX ? origin.X : origin.Z, end = start + sgn * len;
+            float nStart = sgn > 0f ? Mathf.Max(start, lo) : Mathf.Min(start, hi);
+            float nEnd = sgn > 0f ? Mathf.Min(end, hi) : Mathf.Max(end, lo);
+            float shift = (nStart - start) * sgn, nLen = Mathf.Max(0f, (nEnd - nStart) * sgn);
+            if (shift <= 1e-4f && nLen >= len - 1e-4f) return false;
+            if (alongX) origin.X = nStart; else origin.Z = nStart;
+            len = nLen;
+            if (ops != null && shift > 1e-4f)
+                for (int i = ops.Count - 1; i >= 0; i--)
+                {
+                    var o = ops[i];
+                    if (alongU) o.U -= shift; else o.V -= shift;
+                    float at = alongU ? o.U : o.V, size = alongU ? o.Width : o.Height;
+                    if (at + size <= 0f || at >= len) { ops.RemoveAt(i); continue; }
+                    ops[i] = o;
+                }
+            else if (ops != null)
+                for (int i = ops.Count - 1; i >= 0; i--)
+                {
+                    var o = ops[i];
+                    if ((alongU ? o.U : o.V) >= len) ops.RemoveAt(i);
+                }
+            return true;
+        }
+
+        /// <summary>Surfaces the last Build fitted to a party line.</summary>
+        public static int LastClipped;
 
         /// <summary>What the last Build made.</summary>
         public static int LastWalls, LastProps;
@@ -246,10 +309,16 @@ namespace UnturnedGodot
             var walls = new List<WallSurface>();
             float wx = res.CellsX * BuildingGen.Cell, dz = res.CellsZ * BuildingGen.Cell;
             if (System.Environment.GetEnvironmentVariable("UG_NOPARTYINSET") == "1") party = Sides.None;   // (the control: walls stacked)
+            int clipped = 0;
             foreach (var pl in res.Walls)
-                NewWall(root, walls, new Vector3(pl.X, pl.Y, pl.Z) + PartyInset(pl, wx, dz, party), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
-                        pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
+            {
+                PartyFit(pl, wx, dz, party, out var o, out float len, out float hgt, out var ops, ref clipped);
+                if (len < 0.02f || hgt < 0.02f) continue;      // clipped away entirely (a porch post standing past the line)
+                NewWall(root, walls, o, pl.Yaw, len, pl.Thickness, mat, ops,
+                        hgt, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
                         pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.TexelBack >= 0 ? mat : -1, pl.TexelBack);
+            }
+            LastClipped = clipped;
             foreach (var s in res.Stairs)
             {
                 var o = new Vector3(s.X, s.Y, s.Z);

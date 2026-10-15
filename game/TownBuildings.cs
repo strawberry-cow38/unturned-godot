@@ -319,6 +319,53 @@ namespace UnturnedGodot
                 }
                 if (b.Party != Sides.None) partied++;
             }
+            // MEASURED: buildings whose footprints OVERLAP (not just touch) -- the inset cannot butt two walls that cross
+            int overlaps = 0;
+            for (int i = 0; i < rects.Count; i++)
+                for (int j = i + 1; j < rects.Count; j++)
+                {
+                    var (bi, qi) = rects[i]; var (bj, qj) = rects[j];
+                    if (Flat(qi[0], qj[0]) > 80f) continue;
+                    // how deep j's corners and edge points reach inside i (and the other way)
+                    float deep = 0f;
+                    foreach (var (qa, qb) in new[] { (qi, qj), (qj, qi) })
+                        for (int e = 0; e < 4; e++)
+                            for (float f = 0f; f <= 1.001f; f += 0.125f)
+                            {
+                                var pt = qb[e].Lerp(qb[(e + 1) % 4], f);
+                                if (!InConvex(qa, pt.X, pt.Z, -0.05f)) continue;
+                                // its depth: the least distance to qa's edges
+                                float dmin = float.MaxValue;
+                                for (int k = 0; k < 4; k++)
+                                {
+                                    var a = qa[k]; var c = qa[(k + 1) % 4];
+                                    var ab = new Vector2(c.X - a.X, c.Z - a.Z); float t = Mathf.Clamp(((pt.X - a.X) * ab.X + (pt.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
+                                    dmin = Mathf.Min(dmin, new Vector2(a.X + ab.X * t - pt.X, a.Z + ab.Y * t - pt.Z).Length());
+                                }
+                                deep = Mathf.Max(deep, dmin);
+                            }
+                    if (deep < 0.05f)
+                    {
+                        // (MEASURED: two buildings within half a metre of each other, and whether each saw the other as a party side)
+                        float gap = float.MaxValue;
+                        foreach (var (qa, qb) in new[] { (qi, qj), (qj, qi) })
+                            foreach (var pt in qb)
+                                for (int k = 0; k < 4; k++)
+                                {
+                                    var a = qa[k]; var c = qa[(k + 1) % 4];
+                                    var ab = new Vector2(c.X - a.X, c.Z - a.Z); float t = Mathf.Clamp(((pt.X - a.X) * ab.X + (pt.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
+                                    gap = Mathf.Min(gap, new Vector2(a.X + ab.X * t - pt.X, a.Z + ab.Y * t - pt.Z).Length());
+                                }
+                        if (gap < 0.5f && ProbeEverything)
+                            Log.Print($"[towngrid]   NEAR {gap:0.00} m: {bi.Plot.Kind} (party {bi.Party}) and {bj.Plot.Kind} (party {bj.Party}) near ({qi[0].X:0},{qi[0].Z:0})");
+                        continue;
+                    }
+                    overlaps++;
+                    Log.Print($"[towngrid]   OVERLAP {deep:0.00} m: a {bi.Result.Kind} on a {bi.Plot.Kind} plot ({bi.Result.CellsX}x{bi.Result.CellsZ} of {bi.Spec.Width}x{bi.Spec.Depth}, zone {bi.Plot.BuildWidth:0.0}x{bi.Plot.BuildDepth:0.0}) "
+                            + $"and a {bj.Result.Kind} on a {bj.Plot.Kind} plot ({bj.Result.CellsX}x{bj.Result.CellsZ} of {bj.Spec.Width}x{bj.Spec.Depth}, zone {bj.Plot.BuildWidth:0.0}x{bj.Plot.BuildDepth:0.0}) "
+                            + $"near ({(qi[0].X + qj[0].X) * 0.5f:0},{(qi[0].Z + qj[0].Z) * 0.5f:0})");
+                }
+            if (overlaps > 0) Log.Print($"[towngrid] buildings overlapping: {overlaps} pair(s)");
             int ok = 0, fronted = 0; var kinds = new Dictionary<string, int>();
             foreach (var b in Buildings)
             {
@@ -353,7 +400,7 @@ namespace UnturnedGodot
             if (parent == null || Buildings.Count == 0) return 0;
             if (ShowMassing) return BuildBuildingMassing(parent);
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            int made = 0, failed = 0, walls = 0, props = 0;
+            int made = 0, failed = 0, walls = 0, props = 0, clipped = 0;
             foreach (var b in Buildings)
             {
                 if (b.Result == null) continue;
@@ -361,10 +408,10 @@ namespace UnturnedGodot
                 try { node = BuildingRuntime.Build(b.Result, b.Frame, parent, objs, $"Building_{b.Plot.Kind}_{made}", b.Party); }
                 catch (System.Exception e) { if (failed++ == 0) Log.Err($"[towngrid] building on a {b.Plot.Kind} plot failed to build: {e.Message}\n{e.StackTrace}"); }
                 if (node == null) continue;
-                made++; walls += BuildingRuntime.LastWalls; props += BuildingRuntime.LastProps;
+                made++; walls += BuildingRuntime.LastWalls; props += BuildingRuntime.LastProps; clipped += BuildingRuntime.LastClipped;
             }
             Log.Print($"[towngrid] buildings built: {made} in {clock.ElapsedMilliseconds} ms ({clock.ElapsedMilliseconds / Mathf.Max(1, made)} ms a building), "
-                    + $"{walls} surfaces, {props} pieces of furniture{(failed > 0 ? $", {failed} FAILED" : "")}");
+                    + $"{walls} surfaces ({clipped} fitted to a party line), {props} pieces of furniture{(failed > 0 ? $", {failed} FAILED" : "")}");
             return made;
         }
 
