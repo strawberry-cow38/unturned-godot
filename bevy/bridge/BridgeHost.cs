@@ -104,6 +104,7 @@ public sealed partial class BridgeHost : IDisposable
                 }
                 Tick(); return new { fixedDelta = SimClock.FixedDelta };
             case "snapshot": RequireSession(); return null;
+            case "diagnostics": RequireSession(); return new { liveBullets = _server.Combat.LiveBullets, stuckProjectilePoses = _warheads.LivePoseCount };
             case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), bulletVisuals = CosmeticBulletServices.Metadata(), throwMotion = new {
                 speed = HandRules.ThrowSpeed, lift = HandRules.ThrowLift, weakScale = HandRules.WeakThrowScale,
                 releaseFraction = HandRules.ThrowReleaseFraction, cooldown = HandRules.ThrowCooldown,
@@ -404,6 +405,7 @@ public sealed partial class BridgeHost : IDisposable
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity,
                 (byte)((StanceCode(_movement.Stance) << 1) | (_scopeSteady.Steadying ? MoveInput.ButtonSteady : 0)), _grounded, _recov, _held);
         _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step(); _cosmetic.Step();
+        _warheads.Prune();
         if (_weapons.TakeSelectionChange(_client.PlayerId) is ushort selected) _held = selected;
         if(_server.CombatState.TryGet(_client.PlayerId,out var living)&&living.Alive&&!_server.VehicleHost.IsSeated(_client.PlayerId))
         {

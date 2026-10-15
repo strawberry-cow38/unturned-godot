@@ -434,7 +434,7 @@ fn interval<const N: usize>(keys: &[[f32; N]], time: f32) -> Option<(&[f32; N], 
     };
     Some((a, b, t))
 }
-fn sample_track(track: &Track, time: f32, mut transform: Transform) -> Transform {
+pub(crate) fn sample_track(track: &Track, time: f32, mut transform: Transform) -> Transform {
     if let Some((a, b, t)) = track.pos.as_deref().and_then(|k| interval(k, time)) {
         transform.translation = Vec3::new(a[1], a[2], a[3]).lerp(Vec3::new(b[1], b[2], b[3]), t);
     }
@@ -457,7 +457,7 @@ fn clip_time(time: f32, length: f32, looping: bool) -> f32 {
         time.clamp(0., length)
     }
 }
-fn apply_additive(track: &Track, length: f32, weight: f32, mut pose: Transform) -> Transform {
+pub(crate) fn apply_additive(track: &Track, length: f32, weight: f32, mut pose: Transform) -> Transform {
     let start = sample_track(track, 0., Transform::IDENTITY);
     let end = sample_track(track, length, Transform::IDENTITY);
     let weight = weight.clamp(0., 1.);

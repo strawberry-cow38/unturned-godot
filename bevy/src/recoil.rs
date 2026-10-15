@@ -75,6 +75,10 @@ fn roll(seq: u64, salt: u64) -> f32 {
     (x >> 40) as f32 / 16777216.
 }
 impl Recoil {
+    /// Unapplied vertical degrees, used by the original HUD's spread bloom.
+    pub(crate) fn pending_pitch(&self) -> f32 {
+        self.pending.y
+    }
     pub fn stance_multiplier(&self) -> f32 {
         if self.stance_time < 0.35 {
             return 1.;

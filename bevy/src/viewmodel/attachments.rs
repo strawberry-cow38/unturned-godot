@@ -28,36 +28,6 @@ fn dot(mesh: &str) -> Option<Dot> {
         size,
     })
 }
-fn scope_body(mesh: &str) -> Option<(Vec3, Color)> {
-    let (aim, color) = match mesh {
-        "scope_8x_sight.txt" | "scope_16x_sight.txt" => (
-            Vec3::new(0., -0.5122, -0.1086),
-            Color::srgb(0.118, 0.118, 0.118),
-        ),
-        "scope_7x_sight.txt" => (
-            Vec3::new(0., -0.4893, -0.0868),
-            Color::srgb(0.588, 0.588, 0.588),
-        ),
-        "makeshift_scope_sight.txt" => (
-            Vec3::new(-0.0021, -0.4705, -0.1149),
-            Color::srgb(0.235, 0.235, 0.235),
-        ),
-        "cross_scope_sight.txt" => (
-            Vec3::new(0., -0.4667, -0.0724),
-            Color::srgb(0.118, 0.118, 0.118),
-        ),
-        "chevron_scope_sight.txt" => (
-            Vec3::new(0., -0.4541, -0.076),
-            Color::srgb(0.118, 0.118, 0.118),
-        ),
-        "shadowstalker_scope_sight.txt" => (
-            Vec3::new(0., -0.4893, -0.0927),
-            Color::srgb(0.192, 0.18, 0.2),
-        ),
-        _ => return None,
-    };
-    Some((aim, color))
-}
 #[derive(Debug)]
 struct Part {
     slot: &'static str,
@@ -107,7 +77,7 @@ fn parts(visual: &GunVisual, ids: &Value, catalog: &ItemCatalog) -> Vec<Part> {
             match slot {
                 "Sight" if iron => visual.sight_color,
                 "Sight" => {
-                    scope_body(&mesh).map_or(Color::srgb(0.06, 0.065, 0.075), |(_, color)| color)
+                    scopes::calibration(&mesh).map_or(Color::srgb(0.06, 0.065, 0.075), |c| c.color)
                 }
                 "Magazine" => Color::srgb(0.07, 0.07, 0.08),
                 "Tactical" => Color::srgb(0.06, 0.06, 0.065),
@@ -179,6 +149,7 @@ pub(super) fn sync(
     }
     mounted.owner = owner;
     mounted.signature = ids.clone();
+    state.scope_zoom = 0.;
     let Some(owner) = owner else {
         return;
     };
@@ -225,6 +196,11 @@ pub(super) fn sync(
             ))
             .id();
         mounted.parts.push(entity);
+        if part.slot == "Tactical" {
+            commands
+                .entity(entity)
+                .insert((lights::RailEmitter, lights::LightSurface(part.id as u16)));
+        }
         if part.slot == "Sight" {
             if let Some(dot) = dot(&part.mesh) {
                 state.aim_hook = part.position + dot.position + Vec3::Y * dot.relief;
@@ -249,8 +225,15 @@ pub(super) fn sync(
                     ChildOf(entity),
                     bevy::light::NotShadowCaster,
                 ));
-            } else if let Some((aim, _)) = scope_body(&part.mesh) {
-                state.aim_hook = part.position + aim;
+            } else if let Some(calibration) = scopes::calibration(&part.mesh) {
+                if !calibration.integral {
+                    state.aim_hook = part.position + calibration.aim;
+                }
+                state.scope_zoom = 90. / calibration.fov;
+                commands.entity(entity).insert(scopes::ScopeMount {
+                    calibration,
+                    reticle: Some(part.mesh.replace("_sight.txt", "_reticle.png")),
+                });
             }
         }
     }

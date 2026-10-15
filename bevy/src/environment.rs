@@ -12,7 +12,7 @@ use crate::{
 use bevy::{
     asset::embedded_asset,
     audio::{AudioSinkPlayback, Volume},
-    camera::visibility::NoFrustumCulling,
+    camera::visibility::{NoFrustumCulling, RenderLayers},
     image::{
         ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler,
         ImageSamplerDescriptor,
@@ -51,7 +51,8 @@ impl Plugin for EnvironmentPlugin {
                 )
                     .chain()
                     .after(PlayerUpdate)
-                    .after(LightningUpdate),
+                    .after(LightningUpdate)
+                    .after(crate::nightvision::NightVisionUpdate),
             );
     }
 }
@@ -68,6 +69,7 @@ struct Environment {
     offset2: Vec2,
     time_override: Option<f32>,
     fog: bool,
+    ambient_energy: f32,
     ambience_map: String,
     last_reports: HashMap<String, f32>,
 }
@@ -87,6 +89,11 @@ impl Default for Environment {
                 .and_then(|s| s.parse::<f32>().ok())
                 .filter(|v| v.is_finite()),
             fog: std::env::var("UG_NOFOG").as_deref() != Ok("1"),
+            ambient_energy: std::env::var("UG_AMB")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|v| v.is_finite())
+                .unwrap_or(1.),
             ambience_map: String::new(),
             last_reports: default(),
         }
@@ -94,7 +101,7 @@ impl Default for Environment {
 }
 
 #[derive(Component)]
-struct Sun;
+pub(crate) struct Sun;
 #[derive(Component)]
 pub(crate) struct Sky;
 #[derive(Component)]
@@ -301,8 +308,9 @@ fn setup_environment(
     let light = lighting(env.time, env.storm, env.overcast);
     commands.spawn((
         Sun,
+        RenderLayers::from_layers(&[0, 15]),
         DirectionalLight {
-            illuminance: light.energy * 18000.,
+            illuminance: crate::hdr::directional_illuminance(light.energy),
             color: color(light.sun),
             shadow_maps_enabled: true,
             ..default()
@@ -311,7 +319,7 @@ fn setup_environment(
     ));
     commands.insert_resource(GlobalAmbientLight {
         color: color(light.ambient),
-        brightness: 350.,
+        brightness: crate::hdr::ambient_brightness(env.ambient_energy),
         ..default()
     });
     commands.spawn((
@@ -376,6 +384,7 @@ fn update_environment(
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut clear: ResMut<ClearColor>,
     lightning: Res<Lightning>,
+    nightvision: Res<crate::nightvision::NightVision>,
 ) {
     cloud_step(&mut env, time.delta_secs());
     let light = lighting(env.time, env.storm, env.overcast);
@@ -383,7 +392,7 @@ fn update_environment(
     ambient.color = color(light.ambient);
     for (mut sun, mut transform) in &mut sun {
         sun.color = color(light.sun);
-        sun.illuminance = light.energy * 18000.;
+        sun.illuminance = crate::hdr::directional_illuminance(light.energy);
         transform.rotation = light.rotation;
     }
     for (entity, camera) in &cameras {
@@ -391,7 +400,11 @@ fn update_environment(
             DistanceFog {
                 color: color(light.fog_color),
                 falloff: FogFalloff::Exponential {
-                    density: if env.fog { light.fog_density } else { 0. },
+                    density: if env.fog {
+                        light.fog_density * nightvision.fog_scale()
+                    } else {
+                        0.
+                    },
                 },
                 ..default()
             },

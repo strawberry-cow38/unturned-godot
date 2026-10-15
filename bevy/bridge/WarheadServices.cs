@@ -48,6 +48,12 @@ public sealed class WarheadServices
             stuckDirection=pose.Direction,stuckNormal=pose.Normal,stuckEuler=pose.Euler});
     }
     public Pose PoseOf(uint id)=>_stuck.GetValueOrDefault(id);
+    public int LivePoseCount=>_stuck.Count;
+    public void Prune()
+    {
+        foreach(uint id in _stuck.Keys.ToArray())
+            if(!_server.WorldItems.TryGet(id,out _))_stuck.Remove(id);
+    }
     public Saved[] Capture()
     {
         return _server.WorldItems.All.Select((item,index)=>(item,index))

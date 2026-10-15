@@ -12,7 +12,7 @@ mod surface_tags;
 mod terrain;
 mod tunnels;
 pub mod underwater;
-mod water;
+pub(crate) mod water;
 mod wires;
 use bevy::{math::DVec3, prelude::*};
 use bevy_rapier3d::prelude::{Collider, RigidBody};

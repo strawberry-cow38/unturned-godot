@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+mod items;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +41,12 @@ pub struct ItemVisual {
     pub is_deployable: bool,
     #[serde(default)]
     pub hand_kind: String,
+    #[serde(default)]
+    pub has_condition: bool,
+    #[serde(default)]
+    pub stack_size: u16,
+    #[serde(default)]
+    pub rarity: String,
     #[serde(default)]
     pub consume_animation: Value,
     #[serde(default)]
@@ -75,12 +82,37 @@ pub struct InteractionFocus {
     candidate: Option<InteractionCandidate>,
 }
 struct InteractionCandidate {
-    distance: f32, label: String, action: String, args: Value, open_storage: bool,
+    distance: f32,
+    label: String,
+    action: String,
+    args: Value,
+    open_storage: bool,
 }
 impl InteractionFocus {
-    pub fn offer(&mut self, distance: f32, label: impl Into<String>, action: impl Into<String>, args: Value, open_storage: bool) {
-        if !distance.is_finite() || distance < 0. || self.candidate.as_ref().is_some_and(|c| c.distance <= distance) { return; }
-        self.candidate = Some(InteractionCandidate {distance,label:label.into(),action:action.into(),args,open_storage});
+    pub fn offer(
+        &mut self,
+        distance: f32,
+        label: impl Into<String>,
+        action: impl Into<String>,
+        args: Value,
+        open_storage: bool,
+    ) {
+        if !distance.is_finite()
+            || distance < 0.
+            || self
+                .candidate
+                .as_ref()
+                .is_some_and(|c| c.distance <= distance)
+        {
+            return;
+        }
+        self.candidate = Some(InteractionCandidate {
+            distance,
+            label: label.into(),
+            action: action.into(),
+            args,
+            open_storage,
+        });
     }
 }
 #[derive(Resource, Default)]
@@ -111,6 +143,7 @@ impl Plugin for EntityPlugin {
             .init_resource::<ServiceManifest>()
             .init_resource::<InteractionFocus>()
             .init_resource::<Replicas>()
+            .init_resource::<items::Models>()
             .add_message::<CoreEvent>()
             .add_systems(
                 Update,
@@ -125,9 +158,24 @@ impl Plugin for EntityPlugin {
                     .after(crate::player::PlayerUpdate)
                     .before(CollectInteractions),
             )
-            .add_systems(Update, reset_focus.after(crate::player::PlayerUpdate).before(CollectInteractions))
-            .add_systems(Update, interact_items.in_set(CollectInteractions).after(crate::player::PlayerCameraUpdate))
-            .add_systems(Update, apply_interaction.in_set(ApplyInteractions).after(CollectInteractions));
+            .add_systems(
+                Update,
+                reset_focus
+                    .after(crate::player::PlayerUpdate)
+                    .before(CollectInteractions),
+            )
+            .add_systems(
+                Update,
+                interact_items
+                    .in_set(CollectInteractions)
+                    .after(crate::player::PlayerCameraUpdate),
+            )
+            .add_systems(
+                Update,
+                apply_interaction
+                    .in_set(ApplyInteractions)
+                    .after(CollectInteractions),
+            );
     }
 }
 
@@ -146,7 +194,9 @@ fn load_catalog(
             commands.entity(entity).despawn();
         }
         replicas.last_event = 0;
-        if replicas.map_name != config.map_name { replicas.geometry_map.clear(); }
+        if replicas.map_name != config.map_name {
+            replicas.geometry_map.clear();
+        }
         replicas.geometry_revision = 0;
         replicas.session_epoch = epoch.0;
         services.map.clear();
@@ -198,8 +248,14 @@ fn register_world_geometry(
                 if let Some(root) = &config.map_root {
                     let reply = bridge.request("mapServices", json!({"mapRoot":root,"mapName":config.map_name,"contentRoot":config.content_root}))?;
                     let result = &reply["result"];
-                    services.object_doors = result["objectDoors"].as_array().cloned().unwrap_or_default();
-                    services.container_doors = result["containerDoors"].as_array().cloned().unwrap_or_default();
+                    services.object_doors = result["objectDoors"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
+                    services.container_doors = result["containerDoors"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
                     services.seats = result["seats"].as_array().cloned().unwrap_or_default();
                     for object in result["objects"].as_array().into_iter().flatten() {
                         if let Some(index) = object["sourceIndex"].as_u64() {
@@ -394,11 +450,12 @@ fn sync_world_items(
     catalog: Res<ItemCatalog>,
     config: Res<WorldConfig>,
     mut replicas: ResMut<Replicas>,
+    mut models: ResMut<items::Models>,
     mut cache: ResMut<ContentCache>,
-    assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut transforms: Query<&mut Transform, With<WorldItemReplica>>,
+    mut images: ResMut<Assets<Image>>,
+    mut transforms: Query<(&mut Transform, &items::Displayed), With<WorldItemReplica>>,
 ) {
     let Some(items) = snapshot.0["worldItems"].as_array() else {
         return;
@@ -421,51 +478,60 @@ fn sync_world_items(
         if !position.is_finite() {
             continue;
         }
+        let amount = item["amount"]
+            .as_u64()
+            .and_then(|n| u16::try_from(n).ok())
+            .unwrap_or(0);
         live.insert(id);
-        if let Some(&entity) = replicas.entities.get(&id) {
-            if let Ok(mut transform) = transforms.get_mut(entity) {
+        let existing = replicas.entities.get(&id).copied();
+        if let Some(entity) = existing {
+            if let Ok((mut transform, displayed)) = transforms.get_mut(entity) {
                 transform.translation = position;
+                if displayed.item_id == item_id && displayed.amount == amount {
+                    continue;
+                }
             }
-            continue;
         }
-        let Some(visual) = catalog.items.get(&item_id) else {
-            continue;
-        };
-        let Some(path) = visual.mesh.as_ref() else {
-            continue;
-        };
-        let (mesh, _) = match cache.load_mesh(&config.content_root.join(path), &mut meshes) {
-            Ok(mesh) => mesh,
-            Err(error) => {
-                warn!("Item {}: {error}", item_id);
-                continue;
-            }
-        };
-        let material = cache.material(visual.texture.as_deref(), false, &assets, &mut materials);
-        let entity = commands
-            .spawn((
-                Name::new(visual.name.clone()),
+        let visual = catalog.items.get(&item_id);
+        let art = models.art(
+            &config.content_root,
+            item_id,
+            amount,
+            visual.map_or(0, |i| i.stack_size),
+            visual.map_or("", |i| i.rarity.as_str()),
+            &mut cache,
+            &mut meshes,
+            &mut materials,
+            &mut images,
+        );
+        let entity = existing.unwrap_or_else(|| commands.spawn_empty().id());
+        commands
+            .entity(entity)
+            .insert((
+                Name::new(visual.map_or_else(|| format!("Item #{item_id}"), |i| i.name.clone())),
                 WorldItemReplica {
                     net_id: id,
                     item_id,
                 },
-                Mesh3d(mesh),
-                MeshMaterial3d(material),
+                items::Displayed { item_id, amount },
+                art.focus,
+                Mesh3d(art.mesh),
+                MeshMaterial3d(art.material),
                 Transform::from_translation(position).with_rotation(Quat::from_euler(
                     EulerRot::YXZ,
-                    ((id.wrapping_mul(137)) % 360) as f32 * std::f32::consts::PI / 180.0,
+                    ((id.wrapping_mul(137)) % 360) as f32 * std::f32::consts::PI / 180.,
                     std::f32::consts::FRAC_PI_2,
-                    0.0,
+                    0.,
                 )),
             ))
-            .id();
+            .remove::<bevy::camera::primitives::Aabb>();
         replicas.entities.insert(id, entity);
     }
     replicas.entities.retain(|id, entity| {
         if live.contains(id) {
             true
         } else {
-            commands.entity(*entity).despawn();
+            commands.entity(*entity).try_despawn();
             false
         }
     });
@@ -498,7 +564,7 @@ fn interact_items(
     ui: Res<UiState>,
     catalog: Res<ItemCatalog>,
     camera: Query<&Transform, With<PlayerCamera>>,
-    items: Query<(&Transform, &WorldItemReplica)>,
+    items: Query<(&Transform, &WorldItemReplica, &items::Focus)>,
     mut focus: ResMut<InteractionFocus>,
     context: bevy_rapier3d::prelude::ReadRapierContext,
     player: Query<Entity, With<crate::player::PlayerBody>>,
@@ -530,11 +596,10 @@ fn interact_items(
     let wall_distance = obstacle.map_or(6.0, |hit| hit.1);
     let nearest = items
         .iter()
-        .filter_map(|(transform, item)| {
-            let delta = transform.translation - origin;
-            let along = delta.dot(direction);
-            let off_ray = (delta - direction * along).length();
-            (along >= 0.0 && along < wall_distance && off_ray < 0.6).then_some((along, item))
+        .filter_map(|(transform, item, shape)| {
+            shape
+                .ray(transform, origin, direction, wall_distance)
+                .map(|distance| (distance, item))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((distance, item)) = nearest {
@@ -542,7 +607,13 @@ fn interact_items(
             .items
             .get(&item.item_id)
             .map_or("Item", |item| item.name.as_str());
-        focus.offer(distance, format!("Pick up {name}"), "pickupItem", json!({"netId":item.net_id}), false);
+        focus.offer(
+            distance,
+            format!("Pick up {name}"),
+            "pickupItem",
+            json!({"netId":item.net_id}),
+            false,
+        );
     } else {
         let Some((entity, _)) = obstacle else {
             return;
@@ -553,7 +624,13 @@ fn interact_items(
                 .get(&object.source_index)
                 .and_then(|row| row["containerNetId"].as_u64())
             {
-                focus.offer(wall_distance, format!("Open {}", object.asset_name.replace('_', " ")), "openStorage", json!({"netId":id}), true);
+                focus.offer(
+                    wall_distance,
+                    format!("Open {}", object.asset_name.replace('_', " ")),
+                    "openStorage",
+                    json!({"netId":id}),
+                    true,
+                );
             }
         }
         if let Ok(resource) = resources.get(entity) {
@@ -562,27 +639,56 @@ fn interact_items(
                 .get(&(resource.name.clone(), resource.instance_index))
             {
                 if row["rewardItemId"].as_u64().unwrap_or(0) > 0 {
-                    focus.offer(wall_distance, format!("Harvest {}", resource.name.replace('_', " ")), "forageResource", json!({"index":row["index"]}), false);
+                    focus.offer(
+                        wall_distance,
+                        format!("Harvest {}", resource.name.replace('_', " ")),
+                        "forageResource",
+                        json!({"index":row["index"]}),
+                        false,
+                    );
                 }
             }
         }
     }
 }
 
-fn reset_focus(mut focus: ResMut<InteractionFocus>) { focus.candidate = None; }
+fn reset_focus(mut focus: ResMut<InteractionFocus>) {
+    focus.candidate = None;
+}
 fn apply_interaction(
-    bridge: Res<CoreBridge>, focus: Res<InteractionFocus>, settings: Res<Settings>,
-    keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>,
-    mut ui: ResMut<UiState>, mut model: ResMut<UiModel>,
+    bridge: Res<CoreBridge>,
+    focus: Res<InteractionFocus>,
+    settings: Res<Settings>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut ui: ResMut<UiState>,
+    mut model: ResMut<UiModel>,
 ) {
     model.interaction.clear();
-    if ui.captures_input() { return; }
-    let Some(candidate) = &focus.candidate else { return; };
-    model.interaction = format!("[{}] {}", settings.bindings[&GameAction::Interact].label(), candidate.label);
-    if !settings.just_pressed(GameAction::Interact, &keys, &mouse) { return; }
-    match bridge.request("action", json!({"name":candidate.action,"args":candidate.args})) {
+    if ui.captures_input() {
+        return;
+    }
+    let Some(candidate) = &focus.candidate else {
+        return;
+    };
+    model.interaction = format!(
+        "[{}] {}",
+        settings.bindings[&GameAction::Interact].label(),
+        candidate.label
+    );
+    if !settings.just_pressed(GameAction::Interact, &keys, &mouse) {
+        return;
+    }
+    match bridge.request(
+        "action",
+        json!({"name":candidate.action,"args":candidate.args}),
+    ) {
         Ok(_) if candidate.open_storage => {
-            ui.page = model.pages.iter().filter(|p| p.index < 7 && p.width > 0 && p.height > 0).count();
+            ui.page = model
+                .pages
+                .iter()
+                .filter(|p| p.index < 7 && p.width > 0 && p.height > 0)
+                .count();
             ui.screen = crate::ui::Screen::Inventory;
             ui.selected_item = None;
         }

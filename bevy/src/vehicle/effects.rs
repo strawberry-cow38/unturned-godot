@@ -1,7 +1,7 @@
 //! Vehicle.MakeSmoke and UpdateRotorFx, using the original textures and thresholds.
 use super::*;
 use crate::particles::{self, Emitter, ParticleAssets, Spec};
-use crate::projectiles::effects::LIGHT_UNIT;
+use crate::projectiles::effects::light_unit;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kind {
@@ -357,7 +357,7 @@ pub fn update(
                         PointLight {
                             color: Color::srgb(1., 0.55, 0.2),
                             range: 8.,
-                            intensity: energy * LIGHT_UNIT,
+                            intensity: energy * light_unit(),
                             ..default()
                         },
                         Transform::from_xyz(0., 1.24, -1.70),
@@ -368,7 +368,7 @@ pub fn update(
         }
         if let Some(light) = state.light {
             if let Ok(mut light) = lights.get_mut(light) {
-                light.intensity = energy * LIGHT_UNIT;
+                light.intensity = energy * light_unit();
             }
         }
         effects.bodies.insert(entity, state);

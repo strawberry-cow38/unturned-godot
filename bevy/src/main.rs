@@ -1,3 +1,4 @@
+mod avatar;
 mod bridge;
 mod bullets;
 mod character;
@@ -5,6 +6,8 @@ mod cli;
 mod content;
 mod entities;
 mod environment;
+mod hdr;
+mod nightvision;
 mod impact;
 mod locomotion;
 mod particles;
@@ -132,7 +135,14 @@ fn main() -> Result<()> {
             wildlife::WildlifePlugin,
             impact::ImpactPlugin,
         ))
-        .add_plugins((character::CharacterPlugin, zombie::ZombiePlugin, bullets::BulletPlugin))
+        .add_plugins((
+            hdr::HdrPlugin,
+            nightvision::NightVisionPlugin,
+            character::CharacterPlugin,
+            zombie::ZombiePlugin,
+            bullets::BulletPlugin,
+            avatar::AvatarPlugin,
+        ))
         .add_systems(Update, capture_frame.after(entities::CollectInteractions))
         .run();
     Ok(())
@@ -143,6 +153,8 @@ fn capture_frame(
     options: Res<LaunchOptions>,
     world: Res<world::WorldState>,
     snapshot: Res<player::GameSnapshot>,
+    viewmodel: Res<viewmodel::ViewmodelStatus>,
+    lights: Res<viewmodel::lights::Switches>,
     keys: Res<ButtonInput<KeyCode>>,
     mut frames: Local<u32>,
     particles: Query<(&particles::Emitter, &GlobalTransform)>,
@@ -184,7 +196,7 @@ fn capture_frame(
         })
         .collect();
     let event = event.map(|e| json!({"seq":e.sequence,"kind":e.kind,"data":e.data}));
-    let evidence = json!({"map":options.0.map,"fixedFps":options.0.fixed_fps,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0,"particles":effects,"captureEvent":event});
+    let evidence = json!({"map":options.0.map,"fixedFps":options.0.fixed_fps,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0,"presentation":{"held":viewmodel.held,"ready":viewmodel.ready,"aiming":viewmodel.aiming,"aimAlpha":viewmodel.aim_alpha,"scopeZoom":viewmodel.scope_zoom,"lights":{"tacticalId":lights.tactical_id,"tactical":lights.tactical_lit,"held":lights.held_lit,"head":lights.head_lit,"nightvision":lights.nightvision,"military":lights.military}},"particles":effects,"captureEvent":event});
     if let Err(error) = std::fs::write(path.with_extension("json"), evidence.to_string()) {
         warn!("Cannot write capture state: {error}");
     }

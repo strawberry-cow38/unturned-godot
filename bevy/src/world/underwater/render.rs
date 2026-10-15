@@ -41,7 +41,9 @@ pub(super) fn install(app: &mut App) {
                     .in_set(Core3dSystems::MainPass)
                     .after(main_opaque_pass_3d)
                     .before(main_transparent_pass_3d),
-                draw.in_set(Core3dSystems::PostProcess).before(tonemapping),
+                draw.in_set(Core3dSystems::PostProcess)
+                    .in_set(super::UnderwaterPass)
+                    .before(tonemapping),
             ),
         );
 }

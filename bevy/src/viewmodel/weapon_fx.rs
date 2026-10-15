@@ -25,7 +25,8 @@ impl Plugin for WeaponEffectsPlugin {
                 Update,
                 (decay, receive, audio_control)
                     .chain()
-                    .after(animate_viewmodel),
+                    .after(animate_viewmodel)
+                    .after(lights::LightInput),
             )
             .add_systems(
                 PostUpdate,
@@ -59,6 +60,7 @@ struct Feedback {
     hammer: Option<Hammer>,
     swing: Option<Entity>,
     selector: Option<Entity>,
+    native_click: u64,
     flash: Option<Entity>,
     geometry: Option<Geometry>,
     banks: HashMap<&'static str, crate::sound::Bank>,
@@ -133,7 +135,7 @@ fn clip(root: &Path, asset: &str, kind: &str) -> Option<String> {
     let fallback = format!("eaglefire_{kind}.ogg");
     root.join(&fallback).is_file().then_some(fallback)
 }
-fn spawn_voice(
+pub(super) fn spawn_voice(
     commands: &mut Commands,
     assets: &AssetServer,
     settings: &Settings,
@@ -178,6 +180,7 @@ fn receive(
     mut fx: ResMut<Feedback>,
     transient: Query<Entity, With<Transient>>,
     rigs: Query<&RigPlayback>,
+    switches: Option<Res<lights::Switches>>,
 ) {
     let active = snapshot.0["connected"].as_bool().unwrap_or(false)
         && snapshot.0["player"]["alive"].as_bool().unwrap_or(true);
@@ -202,6 +205,27 @@ fn receive(
     }
     let paused = crate::player::simulation_paused(&ui);
     let dt = if paused { 0. } else { time.delta_secs() };
+    if let Some(switches) = switches {
+        if switches.clicks != fx.native_click {
+            fx.native_click = switches.clicks;
+            if let Some(previous) = fx.selector.take() {
+                commands.entity(previous).try_despawn();
+            }
+            if active && config.content_root.join("sounds/firemode.wav").is_file() {
+                fx.selector = Some(spawn_voice(
+                    &mut commands,
+                    &assets,
+                    &settings,
+                    None,
+                    "sounds/firemode.wav".into(),
+                    1.,
+                    1.,
+                    paused,
+                ));
+            }
+        }
+    }
+
     if let Some(mut hammer) = fx.hammer.take() {
         hammer.delay -= dt;
         if hammer.delay <= 0. && active {
@@ -500,7 +524,7 @@ fn spawn_visuals(
                 PointLight {
                     color: Color::srgb(0.941, 0.756, 0.152),
                     range: 4.,
-                    intensity: 1.4 * crate::projectiles::effects::LIGHT_UNIT,
+                    intensity: 1.4 * crate::projectiles::effects::light_unit(),
                     shadow_maps_enabled: false,
                     ..default()
                 },
@@ -769,21 +793,51 @@ mod tests {
     }
     #[test]
     fn old_selection_shot_does_not_eject_from_replacement_and_attachment_clicks_restart_once() {
-        let mut app=app();
-        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]=json!({"selectionVersion":42});
-        let mut data=shot(false);data["selectionVersion"]=json!(41);
-        send(&mut app,1,"fire",data);app.update();
-        assert_eq!(count::<Casing>(&mut app),0);assert_eq!(count::<Flash>(&mut app),0);
-        assert_eq!(count::<Voice>(&mut app),1,"accepted old shot can still ring out");
-        send(&mut app,2,"attachmentRejected",json!({"playerId":1,"action":"installAttachment"}));app.update();
-        assert!(app.world().resource::<Feedback>().selector.is_none());
-        for seq in [3,4] {send(&mut app,seq,"attachmentChanged",json!({"playerId":1,"action":"installAttachment"}));}
+        let mut app = app();
+        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"] = json!({"selectionVersion":42});
+        let mut data = shot(false);
+        data["selectionVersion"] = json!(41);
+        send(&mut app, 1, "fire", data);
         app.update();
-        let voice=app.world().resource::<Feedback>().selector.unwrap();
-        assert_eq!(app.world().get::<Voice>(voice).unwrap().gain,1.);
-        assert_eq!(count::<Voice>(&mut app),2,"selector uses one restarting voice alongside the ringing shot");
-        send(&mut app,4,"attachmentChanged",json!({"playerId":1,"action":"installAttachment"}));app.update();
-        assert_eq!(app.world().resource::<Feedback>().selector,Some(voice));
+        assert_eq!(count::<Casing>(&mut app), 0);
+        assert_eq!(count::<Flash>(&mut app), 0);
+        assert_eq!(
+            count::<Voice>(&mut app),
+            1,
+            "accepted old shot can still ring out"
+        );
+        send(
+            &mut app,
+            2,
+            "attachmentRejected",
+            json!({"playerId":1,"action":"installAttachment"}),
+        );
+        app.update();
+        assert!(app.world().resource::<Feedback>().selector.is_none());
+        for seq in [3, 4] {
+            send(
+                &mut app,
+                seq,
+                "attachmentChanged",
+                json!({"playerId":1,"action":"installAttachment"}),
+            );
+        }
+        app.update();
+        let voice = app.world().resource::<Feedback>().selector.unwrap();
+        assert_eq!(app.world().get::<Voice>(voice).unwrap().gain, 1.);
+        assert_eq!(
+            count::<Voice>(&mut app),
+            2,
+            "selector uses one restarting voice alongside the ringing shot"
+        );
+        send(
+            &mut app,
+            4,
+            "attachmentChanged",
+            json!({"playerId":1,"action":"installAttachment"}),
+        );
+        app.update();
+        assert_eq!(app.world().resource::<Feedback>().selector, Some(voice));
     }
     #[test]
     fn accepted_shots_overlap_audio_eject_once_and_keep_bottle_suppression_after_break() {

@@ -66,6 +66,9 @@ second and a rifle flight can otherwise finish between rendered frames.
 
 Per-bone corpse geometry is not yet exported to the managed cosmetic collision
 world. Authoritative rocket splash and recoverable arrow behavior remain limited
-by the existing server combat implementation; this renderer does not create a
-second damage path to conceal those gaps. Remote multiplayer cosmetic launches
+by the existing server combat implementation. The original unified listen-host
+also exits its `Bullet.Cosmetic` branch before the legacy direct path calls
+`Explode`/`StickProjectile`, so these are direct-path-only source behaviors, not
+an authority implementation this renderer omitted. This renderer does not create
+a second damage path to conceal those gaps. Remote multiplayer cosmetic launches
 need equivalent local visual context when a real external client is integrated.

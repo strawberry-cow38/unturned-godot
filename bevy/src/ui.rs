@@ -12,6 +12,9 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 
 mod attachments;
+mod clothing;
+mod crosshair;
+mod vitals;
 
 const TEXT: Color = Color::srgb(0.88, 0.88, 0.91);
 const DIM: Color = Color::srgb(0.55, 0.56, 0.60);
@@ -73,10 +76,12 @@ pub struct UiModel {
     pub water: f32,
     pub stamina: f32,
     pub infection: f32,
+    pub oxygen: f32,
     pub ammo: i32,
     pub held_item_id: u16,
     pub stance: String,
     pub pages: Vec<InventoryPage>,
+    pub worn: [u16; 7],
     pub recipes: Vec<Recipe>,
     pub notices: Vec<String>,
     pub interaction: String,
@@ -95,10 +100,12 @@ impl Default for UiModel {
             water: 0.0,
             stamina: 0.0,
             infection: 0.0,
+            oxygen: 1.0,
             ammo: -1,
             held_item_id: 0,
             stance: String::new(),
             pages: vec![],
+            worn: [0; 7],
             recipes: vec![],
             notices: vec![],
             interaction: String::new(),
@@ -113,6 +120,7 @@ impl UiModel {
         self.last_event_seq = 0;
         self.notices.clear();
         self.pages.clear();
+        self.worn = [0; 7];
         self.recipes.clear();
     }
     pub fn adopt_snapshot(&mut self, snapshot: &Value) {
@@ -124,6 +132,7 @@ impl UiModel {
         self.water = number(&p["water"]);
         self.stamina = number(&p["stamina"]);
         self.infection = number(&p["infection"]);
+        self.oxygen = p["oxygen"].as_f64().unwrap_or(1.) as f32;
         self.ammo = p["ammo"].as_i64().unwrap_or(-1) as i32;
         self.held_item_id = p["heldItemId"].as_u64().unwrap_or(0) as u16;
         self.stance = p["stance"]
@@ -133,6 +142,8 @@ impl UiModel {
         if let Ok(pages) = serde_json::from_value(snapshot["inventory"]["pages"].clone()) {
             self.pages = pages;
         }
+        self.worn = clothing::SLOTS
+            .map(|slot| snapshot["inventory"]["worn"][slot].as_u64().unwrap_or(0) as u16);
         if let Ok(recipes) = serde_json::from_value(snapshot["recipes"].clone()) {
             self.recipes = recipes;
         }
@@ -266,6 +277,8 @@ enum UiButton {
     Drop,
     Consume,
     Equip,
+    Wear(u8),
+    Unwear(u8),
     Craft(u16),
     Sensitivity(f32),
     Fov(f32),
@@ -283,8 +296,6 @@ enum UiButton {
 pub(crate) struct OverlayRoot;
 #[derive(Component)]
 struct HudRoot;
-#[derive(Component)]
-struct VitalsText;
 #[derive(Component)]
 struct WeaponText;
 #[derive(Component)]
@@ -306,7 +317,11 @@ impl Plugin for GameUiPlugin {
             .init_resource::<UiModel>()
             .init_resource::<Settings>()
             .add_message::<UiIntent>()
-            .add_plugins(attachments::AttachmentMenuPlugin)
+            .add_plugins((
+                attachments::AttachmentMenuPlugin,
+                vitals::VitalsPlugin,
+                crosshair::CrosshairPlugin,
+            ))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(Startup, spawn_hud)
             .add_systems(
@@ -399,17 +414,6 @@ fn spawn_hud(mut commands: Commands) {
         ))
         .with_children(|p| {
             p.spawn((
-                VitalsText,
-                text("", 16.0, TEXT),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(24),
-                    bottom: px(24),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.05, 0.06, 0.07, 0.55)),
-            ));
-            p.spawn((
                 WeaponText,
                 text("", 20.0, TEXT),
                 Node {
@@ -440,15 +444,6 @@ fn spawn_hud(mut commands: Commands) {
                     ..default()
                 },
             ));
-            p.spawn((
-                text("+", 22.0, Color::srgba(0.9, 0.92, 0.95, 0.7)),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(50),
-                    top: percent(50),
-                    ..default()
-                },
-            ));
         });
 }
 
@@ -458,7 +453,6 @@ fn update_hud(
     catalog: Res<crate::entities::ItemCatalog>,
     mut roots: Query<&mut Visibility, With<HudRoot>>,
     mut labels: ParamSet<(
-        Query<&mut Text, With<VitalsText>>,
         Query<&mut Text, With<WeaponText>>,
         Query<&mut Text, With<PromptText>>,
         Query<&mut Text, With<NoticesText>>,
@@ -472,19 +466,6 @@ fn update_hud(
         };
     }
     for mut t in &mut labels.p0() {
-        **t = if model.connected {
-            format!(
-                "HEALTH {:3.0}    FOOD {:3.0}%    WATER {:3.0}%    STAMINA {:3.0}%",
-                model.health,
-                model.food * 100.0,
-                model.water * 100.0,
-                model.stamina * 100.0
-            )
-        } else {
-            model.status.clone()
-        };
-    }
-    for mut t in &mut labels.p1() {
         **t = if let Some(item) = catalog.items.get(&model.held_item_id) {
             if item.item_type == "gun" && model.ammo >= 0 {
                 format!("{}  /  {}", item.name, model.ammo)
@@ -495,10 +476,10 @@ fn update_hud(
             String::new()
         };
     }
-    for mut t in &mut labels.p2() {
+    for mut t in &mut labels.p1() {
         **t = model.interaction.clone();
     }
-    for mut t in &mut labels.p3() {
+    for mut t in &mut labels.p2() {
         **t = model
             .notices
             .iter()
@@ -713,19 +694,31 @@ fn activate_button(
                 state.selected_item = None;
             }
         }
-        UiButton::Drop | UiButton::Consume | UiButton::Equip => {
+        UiButton::Drop | UiButton::Consume | UiButton::Equip | UiButton::Wear(_) => {
             if let Some((page, x, y)) = state.selected_item {
                 let name = match action {
                     UiButton::Drop => "dropItem",
                     UiButton::Consume => "consume",
+                    UiButton::Wear(_) => "wearClothing",
                     _ => "equipAndHold",
                 };
+                let mut args = json!({"page":page,"x":x,"y":y});
+                if let UiButton::Wear(slot) = action {
+                    args["slot"] = json!(slot);
+                }
                 intents.write(UiIntent::Action {
                     name: name.into(),
-                    args: json!({"page":page,"x":x,"y":y,"slot":0}),
+                    args,
                 });
                 state.selected_item = None;
             }
+        }
+        UiButton::Unwear(slot) => {
+            intents.write(UiIntent::Action {
+                name: "unwearClothing".into(),
+                args: json!({"slot":slot}),
+            });
+            state.selected_item = None;
         }
         UiButton::Craft(index) => {
             intents.write(UiIntent::Action {
@@ -794,13 +787,14 @@ fn rebuild_overlay(
     roots: Query<Entity, With<OverlayRoot>>,
     state: Res<UiState>,
     model: Res<UiModel>,
+    catalog: Res<crate::entities::ItemCatalog>,
     settings: Res<Settings>,
     assets: Res<AssetServer>,
     mut cache: Local<String>,
 ) {
     // Do not destroy and rebuild the widgets for every 50 Hz player snapshot.
     let detail = match state.screen {
-        Screen::Inventory => format!("{:?}", model.pages),
+        Screen::Inventory => format!("{:?}|{:?}|{}", model.pages, model.worn, catalog.items.len()),
         Screen::Crafting => format!("{:?}", model.recipes),
         Screen::Console | Screen::Chat => format!("{:?}", model.notices),
         Screen::MainMenu => model.status.clone(),
@@ -842,6 +836,7 @@ fn rebuild_overlay(
         ))
         .with_children(|root| {
             root.spawn((
+                vitals::MenuPanel,
                 Node {
                     width: px(if state.screen == Screen::Inventory {
                         860
@@ -864,7 +859,7 @@ fn rebuild_overlay(
                 Screen::MainMenu => menu_panel(panel, &state, &model, &assets),
                 Screen::Paused => pause_panel(panel),
                 Screen::Dead => death_panel(panel),
-                Screen::Inventory => inventory_panel(panel, &state, &model, &assets),
+                Screen::Inventory => inventory_panel(panel, &state, &model, &assets, &catalog),
                 Screen::Crafting => crafting_panel(panel, &state, &model),
                 Screen::Settings => settings_panel(panel, &state, &settings),
                 Screen::Console | Screen::Chat => console_panel(panel, &state, &model),
@@ -942,12 +937,14 @@ fn inventory_panel(
     state: &UiState,
     model: &UiModel,
     assets: &AssetServer,
+    catalog: &crate::entities::ItemCatalog,
 ) {
     panel.spawn(row()).with_children(|p| {
         p.spawn(text("INVENTORY", 26.0, TEXT));
         button(p, "Crafting", UiButton::Open(Screen::Crafting));
         button(p, "Close", UiButton::Resume);
     });
+    clothing::worn_buttons(panel, model);
     let pages = visible_pages(model);
     if pages.is_empty() {
         panel.spawn(text("Waiting for inventory...", 16.0, DIM));
@@ -1087,8 +1084,16 @@ fn inventory_panel(
                 ACCENT,
             ));
             panel.spawn(row()).with_children(|p| {
-                button(p, "Equip", UiButton::Equip);
-                button(p, "Use", UiButton::Consume);
+                if let Some(slot) = catalog
+                    .items
+                    .get(&item.id)
+                    .and_then(|item| clothing::slot(&item.item_type))
+                {
+                    button(p, "Wear", UiButton::Wear(slot));
+                } else {
+                    button(p, "Equip", UiButton::Equip);
+                    button(p, "Use", UiButton::Consume);
+                }
                 button(p, "Drop", UiButton::Drop);
             });
         }
@@ -1435,7 +1440,7 @@ mod tests {
             .drain()
             .collect();
         assert!(
-            matches!(&messages[0],UiIntent::Action {name,args} if name=="consume" && args==&json!({"page":6,"x":1,"y":2,"slot":0}))
+            matches!(&messages[0],UiIntent::Action {name,args} if name=="consume" && args==&json!({"page":6,"x":1,"y":2}))
         );
         assert_eq!(
             app.world().resource::<UiModel>().pages[0].items[0].amount,

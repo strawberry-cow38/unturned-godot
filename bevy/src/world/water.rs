@@ -51,7 +51,7 @@ pub struct WaterSurface;
 #[derive(Component)]
 pub struct Reflective;
 #[derive(Component)]
-struct ReflectionCamera;
+pub(crate) struct ReflectionCamera;
 #[derive(Component)]
 struct ReflectionLight(Entity);
 #[derive(Component)]

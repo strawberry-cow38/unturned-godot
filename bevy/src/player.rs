@@ -16,6 +16,9 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 use serde_json::{Value, json};
 
+#[cfg(test)]
+mod seated_tests;
+
 pub struct PlayerPlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlayerUpdate;
@@ -132,7 +135,7 @@ fn valid_height(value: &Value) -> Option<f32> {
 }
 
 #[derive(Resource, Default)]
-struct PlayerInput {
+pub(crate) struct PlayerInput {
     movement: Vec2,
     jump: bool,
     jump_held: bool,
@@ -140,6 +143,8 @@ struct PlayerInput {
     fire_pressed: bool,
     secondary_pressed: bool,
     free_look: bool,
+    steady_key: bool,
+    applied_sway: Vec2,
     selector: bool,
     reload: bool,
     yaw: f32,
@@ -153,6 +158,14 @@ struct PlayerInput {
     prop_exit: Option<(Vec3, Vec3)>,
 }
 
+impl PlayerInput {
+    pub(crate) fn yaw(&self) -> f32 {
+        self.yaw
+    }
+    pub(crate) fn pitch(&self) -> f32 {
+        self.pitch
+    }
+}
 #[derive(Component)]
 pub struct PlayerBody {
     velocity: Vec3,
@@ -163,8 +176,15 @@ pub struct PlayerBody {
     locomotion: crate::locomotion::Locomotion,
 }
 impl PlayerBody {
-    pub(crate) fn stance(&self) -> &str { &self.stance }
-    pub(crate) fn grounded(&self) -> bool { self.grounded }
+    pub(crate) fn velocity(&self) -> Vec3 {
+        self.velocity
+    }
+    pub(crate) fn stance(&self) -> &str {
+        &self.stance
+    }
+    pub(crate) fn grounded(&self) -> bool {
+        self.grounded
+    }
 }
 #[derive(Component)]
 pub struct PlayerCamera;
@@ -456,17 +476,35 @@ fn read_input(
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     settings: Res<Settings>,
-    viewmodel: Res<crate::viewmodel::ViewmodelStatus>,
+    perspective:Option<Res<crate::avatar::Perspective>>,
+    mut viewmodel: ResMut<crate::viewmodel::ViewmodelStatus>,
     ui: Res<UiState>,
     mut model: ResMut<UiModel>,
     mut input: ResMut<PlayerInput>,
     mut windows: Query<(&mut CursorOptions, &mut Window), With<PrimaryWindow>>,
-    mut recoil: (ResMut<crate::recoil::Recoil>,Res<GameSnapshot>,Res<crate::entities::ItemCatalog>,Res<WorldSessionEpoch>,Res<Time>),
+    mut recoil: (
+        ResMut<crate::recoil::Recoil>,
+        Res<GameSnapshot>,
+        Res<crate::entities::ItemCatalog>,
+        Res<WorldSessionEpoch>,
+        Res<Time>,
+    ),
 ) {
     let playing = !ui.captures_input() && model.connected;
-    let kick=recoil.0.update(&recoil.1.0,&recoil.2,recoil.3.0,recoil.4.delta_secs(),simulation_paused(&ui));
-    input.yaw=(input.yaw+kick.x).rem_euclid(360.);
-    input.pitch=(input.pitch+kick.y).clamp(-89.,89.);
+    viewmodel.look_delta = Vec2::ZERO;
+    let sway_delta = viewmodel.scope_sway - input.applied_sway;
+    input.pitch = (input.pitch + sway_delta.x).clamp(-89., 89.);
+    input.yaw = (input.yaw + sway_delta.y).rem_euclid(360.);
+    input.applied_sway = viewmodel.scope_sway;
+    let kick = recoil.0.update(
+        &recoil.1.0,
+        &recoil.2,
+        recoil.3.0,
+        recoil.4.delta_secs(),
+        simulation_paused(&ui),
+    );
+    input.yaw = (input.yaw + kick.x).rem_euclid(360.);
+    input.pitch = (input.pitch + kick.y).clamp(-89., 89.);
     for (mut cursor, mut window) in &mut windows {
         cursor.visible = !playing;
         cursor.grab_mode = if playing {
@@ -489,20 +527,24 @@ fn read_input(
         input.jump = false;
         input.jump_held = false;
         input.reload = false;
+        input.steady_key = false;
         return;
     }
     let held = |action| settings.pressed(action, &keys, &mouse);
     let pressed = |action| settings.just_pressed(action, &keys, &mouse);
+    input.steady_key = held(GameAction::Sprint) || std::env::var("UG_STEADY").is_ok_and(|value| value == "1");
     input.movement = Vec2::new(
         (held(GameAction::MoveRight) as i32 - held(GameAction::MoveLeft) as i32) as f32,
         (held(GameAction::MoveForward) as i32 - held(GameAction::MoveBack) as i32) as f32,
     );
     input.jump |= pressed(GameAction::Jump);
     input.jump_held = held(GameAction::Jump);
-    input.free_look = held(GameAction::FreeLook) && occupancy.as_ref().is_none_or(|o| o.seat.is_none());
+    input.free_look =
+        held(GameAction::FreeLook) && occupancy.as_ref().is_none_or(|o| o.seat.is_none());
     input.fire = held(GameAction::Fire) && !input.free_look;
     input.fire_pressed = !input.free_look && (input.fire_pressed || pressed(GameAction::Fire));
-    input.secondary_pressed = !input.free_look && (input.secondary_pressed || pressed(GameAction::Aim));
+    input.secondary_pressed =
+        !input.free_look && (input.secondary_pressed || pressed(GameAction::Aim));
     input.selector |= pressed(GameAction::Firemode);
     input.reload |= pressed(GameAction::Reload);
     if pressed(GameAction::CrouchToggle) {
@@ -528,8 +570,13 @@ fn read_input(
         .and_then(|o| o.seat)
         .is_some_and(|seat| seat.driver && seat.aircraft)
         && !held(GameAction::FreeLook);
-    if !aircraft_controls {
-        let sensitivity = settings.mouse_sensitivity * (1. - 0.35 * viewmodel.aim_alpha);
+    if !aircraft_controls && !input.free_look && !(occupancy.as_ref().is_some_and(|o|o.seat.is_some()) && perspective.as_ref().is_some_and(|p|!p.first_person)) {
+        let sensitivity = settings.mouse_sensitivity * viewmodel.look_sensitivity();
+        if !input.in_seat {
+            // Original AddLookDelta receives mouse deltas after sensitivity,
+            // not changed camera angles (which also contain recoil and sway).
+            viewmodel.look_delta = Vec2::new(motion.delta.y, motion.delta.x) * sensitivity;
+        }
         input.yaw = (input.yaw - motion.delta.x * sensitivity).rem_euclid(360.0);
         let sign = if settings.invert_look_y { 1.0 } else { -1.0 };
         input.pitch = (input.pitch + motion.delta.y * sensitivity * sign).clamp(-89.0, 89.0);
@@ -582,6 +629,8 @@ fn simulate(
     mut hands: (
         ResMut<crate::use_items::HandUse>,
         MessageWriter<crate::use_items::HandEvent>,
+        Res<crate::avatar::Perspective>,
+        Query<&Transform, (With<PlayerCamera>, Without<PlayerBody>)>,
     ),
     ladders: Query<(&crate::world::WorldObject, &GlobalTransform, &Collider), Without<PlayerBody>>,
     mut bodies: Query<(
@@ -599,10 +648,9 @@ fn simulate(
     else {
         return;
     };
-    if occupancy.0.is_some_and(|o| o.seat.is_some())
-        || occupancy.1.is_some_and(|o| o.seat.is_some())
-        || !model.alive
-    {
+    let vehicle_seat = occupancy.0.as_ref().and_then(|o| o.seat);
+    let seated = vehicle_seat.is_some() || occupancy.1.is_some_and(|o| o.seat.is_some());
+    if !model.alive {
         trigger.cancel();
         let mut events = Vec::new();
         hands.0.cancel(&mut events);
@@ -610,221 +658,277 @@ fn simulate(
         controller.translation = None;
         return;
     }
-    let special = context.single().ok().and_then(|physics| {
-        body.locomotion.step(
-            &physics,
-            entity,
-            |id| {
-                let (object, transform, collider) = ladders.get(id).ok()?;
-                if !object.asset_name.starts_with("Ladder_") {
-                    return None;
-                }
-                let transform = transform.compute_transform();
-                Some(crate::locomotion::LadderGeometry {
-                    origin: transform.translation,
-                    face: transform.rotation * Vec3::Y,
-                    top: collider
-                        .aabb(transform.translation, transform.rotation)
-                        .max
-                        .y,
-                })
-            },
-            &mut transform.translation,
-            input.yaw.to_radians(),
-            input.pitch.to_radians(),
-            input.movement,
-            input.jump_held,
-            world.sea_level,
-            0.02,
-        )
-    });
-    let wading = world
-        .sea_level
-        .is_some_and(|sea| transform.translation.y < sea);
-    let wanted_stance =
-        if special.is_some() || (wading && matches!(input.stance.as_str(), "crouch" | "prone")) {
+    // One host body: seat adoption owns its transform. Hand actions and their
+    // accepted timers continue independently of the on-foot movement solve.
+    if seated {
+        controller.translation = None;
+        input.jump = false;
+    } else {
+        let special = context.single().ok().and_then(|physics| {
+            body.locomotion.step(
+                &physics,
+                entity,
+                |id| {
+                    let (object, transform, collider) = ladders.get(id).ok()?;
+                    if !object.asset_name.starts_with("Ladder_") {
+                        return None;
+                    }
+                    let transform = transform.compute_transform();
+                    Some(crate::locomotion::LadderGeometry {
+                        origin: transform.translation,
+                        face: transform.rotation * Vec3::Y,
+                        top: collider
+                            .aabb(transform.translation, transform.rotation)
+                            .max
+                            .y,
+                    })
+                },
+                &mut transform.translation,
+                input.yaw.to_radians(),
+                input.pitch.to_radians(),
+                input.movement,
+                input.jump_held,
+                world.sea_level,
+                0.02,
+            )
+        });
+        let wading = world
+            .sea_level
+            .is_some_and(|sea| transform.translation.y < sea);
+        let wanted_stance = if special.is_some()
+            || (wading && matches!(input.stance.as_str(), "crouch" | "prone"))
+        {
             "stand"
         } else {
             &input.stance
         };
-    let desired_height = session.heights.for_stance(wanted_stance);
-    let headroom = desired_height <= body.height
-        || context.single().is_ok_and(|context| {
-            has_headroom(
-                &context,
-                entity,
-                transform.translation,
-                body.height,
-                desired_height,
-            )
-        });
-    let response = bridge.request("simulate",json!({"input":{
+        let desired_height = session.heights.for_stance(wanted_stance);
+        let headroom = desired_height <= body.height
+            || context.single().is_ok_and(|context| {
+                has_headroom(
+                    &context,
+                    entity,
+                    transform.translation,
+                    body.height,
+                    desired_height,
+                )
+            });
+        let response = bridge.request("simulate",json!({"input":{
         "moveX":input.movement.x,"moveY":input.movement.y,"jump":input.jump,"grounded":body.grounded,
         "stance":wanted_stance,"yaw":input.yaw,"pitch":input.pitch,"velocity":body.velocity.to_array(),"heldItemId":input.held_item_id,
-        "headroom":headroom,"capsuleHeight":body.height,"equipmentAllowsSprint":!viewmodel.aiming
+        "headroom":headroom,"capsuleHeight":body.height,"equipmentAllowsSprint":!viewmodel.aiming,
+        "steadyKey":input.steady_key,"aiming":viewmodel.aiming,"scopeZoom":viewmodel.scope_zoom
     }}));
-    input.jump = false;
-    match response {
-        Ok(response) => {
-            let Some(mut velocity) = vector(&response["result"]["velocity"]) else {
-                fail(
-                    &mut session,
-                    &mut model,
-                    "Core returned invalid movement velocity".into(),
-                );
-                return;
-            };
-            let Some(height) = valid_height(&response["result"]["height"]) else {
-                fail(
-                    &mut session,
-                    &mut model,
-                    "Core returned invalid capsule height".into(),
-                );
-                return;
-            };
-            body.stance = response["result"]["stance"]
-                .as_str()
-                .unwrap_or(&input.stance)
-                .to_owned();
-            body.eye_height = response["result"]["eyeHeight"]
-                .as_f64()
-                .map(|v| v as f32)
-                .filter(|v| v.is_finite() && *v > 0.0 && *v <= height)
-                .unwrap_or_else(|| eye_height(&body.stance));
-            if let Some(special) = &special {
-                velocity = special.velocity;
-                body.stance = special.stance.into();
-                body.eye_height = 1.75;
-                body.grounded = special.stance == "climb";
-                if special.teleported {
-                    controller.translation = None;
-                }
-            }
-            if (height - body.height).abs() > 0.001 {
-                *collider = capsule(height);
-                body.height = height;
-            }
-            body.velocity = velocity;
-            let mut translation = velocity * 0.02;
-            if body.grounded && velocity.y <= 0.0 && special.is_none() {
-                translation.y = -0.025;
-            }
-            controller.translation = Some(translation);
-            trigger.acknowledge(&snapshot.0);
-            let item = catalog.items.get(&input.held_item_id);
-            let buttons = crate::weapons::Buttons {
-                fire: input.fire,
-                press: std::mem::take(&mut input.fire_pressed),
-                strong: std::mem::take(&mut input.secondary_pressed),
-                reload: std::mem::take(&mut input.reload),
-                selector: std::mem::take(&mut input.selector),
-            };
-            let allowed = !ui.captures_input() && !input.free_look && !matches!(body.stance.as_str(), "swim" | "climb");
-            let (uses, events) = hands.0.step(
-                0.02,
-                &snapshot.0,
-                item,
-                &catalog.throw_motion,
-                &buttons,
-                viewmodel.ready && viewmodel.held == input.held_item_id,
-                allowed,
-            );
-            hands.1.write_batch(events);
-            for use_ in uses {
-                use crate::use_items::UseIntent;
-                let request = match use_ {
-                    UseIntent::Consume(cell) => {
-                        json!({"name":"consume","args":{"page":cell.page,"x":cell.x,"y":cell.y}})
-                    }
-                    UseIntent::Hold(cell) => {
-                        json!({"name":"holdItem","args":{"page":cell.page,"x":cell.x,"y":cell.y}})
-                    }
-                    UseIntent::Tool(active) => json!({"name":"toolUse","args":{"active":active}}),
-                    UseIntent::Frozen => {
-                        model.notice("This food is frozen solid");
-                        continue;
-                    }
-                    UseIntent::Throw { item, strong } => {
-                        let direction = Quat::from_euler(
-                            EulerRot::YXZ,
-                            input.yaw.to_radians(),
-                            input.pitch.to_radians(),
-                            0.,
-                        ) * Vec3::NEG_Z;
-                        let eye = transform.translation + Vec3::Y * body.eye_height;
-                        let probe =
-                            catalog.throw_motion["clearProbe"].as_f64().unwrap_or(1.5) as f32;
-                        let gap = catalog.throw_motion["clearGap"].as_f64().unwrap_or(0.5) as f32;
-                        let hit = context
-                            .single()
-                            .ok()
-                            .and_then(|p| {
-                                p.cast_ray(
-                                    eye,
-                                    direction,
-                                    probe,
-                                    true,
-                                    QueryFilter::default().exclude_collider(entity),
-                                )
-                            })
-                            .map(|(_, d)| d);
-                        let origin = crate::use_items::throw_origin(eye, direction, hit, gap);
-                        let velocity = crate::use_items::throw_velocity(
-                            direction,
-                            body.velocity,
-                            strong,
-                            &catalog.throw_motion,
-                        );
-                        json!({"name":"grenade","args":{"origin":origin.to_array(),"velocity":velocity.to_array(),"itemId":item}})
-                    }
+        input.jump = false;
+        match response {
+            Ok(response) => {
+                let Some(mut velocity) = vector(&response["result"]["velocity"]) else {
+                    fail(
+                        &mut session,
+                        &mut model,
+                        "Core returned invalid movement velocity".into(),
+                    );
+                    return;
                 };
-                match bridge.request("action", request) {
-                    Ok(response) => {
-                        if let Some(id) = response["result"]["heldItemId"].as_u64() {
-                            input.held_item_id = id as u16;
-                        }
+                let Some(height) = valid_height(&response["result"]["height"]) else {
+                    fail(
+                        &mut session,
+                        &mut model,
+                        "Core returned invalid capsule height".into(),
+                    );
+                    return;
+                };
+                body.stance = response["result"]["stance"]
+                    .as_str()
+                    .unwrap_or(&input.stance)
+                    .to_owned();
+                body.eye_height = response["result"]["eyeHeight"]
+                    .as_f64()
+                    .map(|v| v as f32)
+                    .filter(|v| v.is_finite() && *v > 0.0 && *v <= height)
+                    .unwrap_or_else(|| eye_height(&body.stance));
+                if let Some(special) = &special {
+                    velocity = special.velocity;
+                    body.stance = special.stance.into();
+                    body.eye_height = 1.75;
+                    body.grounded = special.stance == "climb";
+                    if special.teleported {
+                        controller.translation = None;
                     }
-                    Err(error) => model.notice(error.to_string()),
                 }
+                if (height - body.height).abs() > 0.001 {
+                    *collider = capsule(height);
+                    body.height = height;
+                }
+                body.velocity = velocity;
+                let mut translation = velocity * 0.02;
+                if body.grounded && velocity.y <= 0.0 && special.is_none() {
+                    translation.y = -0.025;
+                }
+                controller.translation = Some(translation);
             }
-            let actions = trigger.step(
-                0.02,
-                input.held_item_id,
-                item.map_or(&Value::Null, |i| &i.gun),
-                item.map_or(&Value::Null, |i| &i.melee),
-                &snapshot.0["weapon"],
-                buttons,
-                allowed && viewmodel.ready && viewmodel.held == input.held_item_id,
-            );
-            for action in actions {
-                let eye = body.eye_height;
-                let direction = Quat::from_euler(
+            Err(error) => {
+                fail(&mut session, &mut model, error.to_string());
+                return;
+            }
+        }
+    }
+    trigger.acknowledge(&snapshot.0);
+    let item = catalog.items.get(&input.held_item_id);
+    let buttons = crate::weapons::Buttons {
+        fire: input.fire,
+        press: std::mem::take(&mut input.fire_pressed),
+        strong: std::mem::take(&mut input.secondary_pressed),
+        reload: std::mem::take(&mut input.reload),
+        selector: std::mem::take(&mut input.selector),
+    };
+    let allowed = !ui.captures_input()
+        && !input.free_look
+        && !matches!(body.stance.as_str(), "swim" | "climb");
+    let (uses, events) = hands.0.step(
+        0.02,
+        &snapshot.0,
+        item,
+        &catalog.throw_motion,
+        &buttons,
+        viewmodel.ready && viewmodel.held == input.held_item_id,
+        allowed && vehicle_seat.is_none(),
+    );
+    hands.1.write_batch(events);
+    for use_ in uses {
+        use crate::use_items::UseIntent;
+        let request = match use_ {
+            UseIntent::Consume(cell) => {
+                json!({"name":"consume","args":{"page":cell.page,"x":cell.x,"y":cell.y}})
+            }
+            UseIntent::Hold(cell) => {
+                json!({"name":"holdItem","args":{"page":cell.page,"x":cell.x,"y":cell.y}})
+            }
+            UseIntent::Tool(active) => json!({"name":"toolUse","args":{"active":active}}),
+            UseIntent::Frozen => {
+                model.notice("This food is frozen solid");
+                continue;
+            }
+            UseIntent::Throw { item, strong } => {
+                let mut direction = Quat::from_euler(
                     EulerRot::YXZ,
                     input.yaw.to_radians(),
                     input.pitch.to_radians(),
-                    0.0,
+                    0.,
                 ) * Vec3::NEG_Z;
-                let request = match action {
-                    crate::weapons::Intent::Fire => {
-                        let origin = transform.translation + Vec3::Y * eye;
-                        json!({"name":"fire","args":{"origin":origin.to_array(),"dir":direction.to_array(),
-                            "visual":crate::bullets::fire_context(viewmodel.aim_alpha,viewmodel.muzzle_offset,origin)}})
-                    }
-                    crate::weapons::Intent::Melee(strong) => {
-                        json!({"name":"melee","args":{"strong":strong,"yawDegrees":input.yaw}})
-                    }
-                    crate::weapons::Intent::Reload => json!({"name":"reload","args":{}}),
-                    crate::weapons::Intent::Selector(mode) => {
-                        json!({"name":"setFiremode","args":{"mode":mode}})
-                    }
-                };
-                if let Err(error) = bridge.request("action", request) {
-                    model.notice(error.to_string());
+                let mut eye = transform.translation + Vec3::Y * body.eye_height;
+                if seated {
+                    let Ok(camera) = hands.3.single() else {
+                        continue;
+                    };
+                    eye = camera.translation;
+                    direction = *camera.forward();
+                }
+                let probe = catalog.throw_motion["clearProbe"].as_f64().unwrap_or(1.5) as f32;
+                let gap = catalog.throw_motion["clearGap"].as_f64().unwrap_or(0.5) as f32;
+                let hit = context
+                    .single()
+                    .ok()
+                    .and_then(|p| {
+                        p.cast_ray(
+                            eye,
+                            direction,
+                            probe,
+                            true,
+                            QueryFilter::default().exclude_collider(entity),
+                        )
+                    })
+                    .map(|(_, d)| d);
+                let origin = crate::use_items::throw_origin(eye, direction, hit, gap);
+                let velocity = crate::use_items::throw_velocity(
+                    direction,
+                    body.velocity,
+                    strong,
+                    &catalog.throw_motion,
+                );
+                json!({"name":"grenade","args":{"origin":origin.to_array(),"velocity":velocity.to_array(),"itemId":item}})
+            }
+        };
+        match bridge.request("action", request) {
+            Ok(response) => {
+                if let Some(id) = response["result"]["heldItemId"].as_u64() {
+                    input.held_item_id = id as u16;
                 }
             }
+            Err(error) => model.notice(error.to_string()),
         }
-        Err(error) => fail(&mut session, &mut model, error.to_string()),
     }
+    let actions = trigger.step(
+        0.02,
+        input.held_item_id,
+        item.map_or(&Value::Null, |i| &i.gun),
+        item.map_or(&Value::Null, |i| &i.melee),
+        &snapshot.0["weapon"],
+        buttons,
+        allowed
+            && seated_weapon_allowed(
+                vehicle_seat,
+                hands.2.first_person,
+                item.is_some_and(|i| !i.gun.is_null()),
+            )
+            && viewmodel.ready
+            && viewmodel.held == input.held_item_id,
+    );
+    for action in actions {
+        let eye = body.eye_height;
+        let mut direction = Quat::from_euler(
+            EulerRot::YXZ,
+            input.yaw.to_radians(),
+            input.pitch.to_radians(),
+            0.0,
+        ) * Vec3::NEG_Z;
+        let world_yaw = if seated {
+            let Ok(camera) = hands.3.single() else {
+                continue;
+            };
+            camera.rotation.to_euler(EulerRot::YXZ).0.to_degrees()
+        } else {
+            input.yaw
+        };
+        let request = match action {
+            crate::weapons::Intent::Fire => {
+                let mut origin = transform.translation + Vec3::Y * eye;
+                if seated {
+                    // Seated look is relative to the moving seat, not the
+                    // owner's walking yaw. Fire from the actual seated eye.
+                    let Ok(camera) = hands.3.single() else {
+                        continue;
+                    };
+                    origin = camera.translation;
+                    direction = *camera.forward();
+                } else if !hands.2.first_person {
+                    if let (Ok(physics), Ok(camera)) = (context.single(), hands.3.single()) {
+                        direction =
+                            crate::avatar::camera::aim(&physics, entity, origin, camera, direction);
+                    }
+                }
+                json!({"name":"fire","args":{"origin":origin.to_array(),"dir":direction.to_array(),
+                    "visual":crate::bullets::fire_context(viewmodel.aim_alpha,viewmodel.muzzle_offset,origin)}})
+            }
+            crate::weapons::Intent::Melee(strong) => {
+                json!({"name":"melee","args":{"strong":strong,"yawDegrees":world_yaw}})
+            }
+            crate::weapons::Intent::Reload => json!({"name":"reload","args":{}}),
+            crate::weapons::Intent::Selector(mode) => {
+                json!({"name":"setFiremode","args":{"mode":mode}})
+            }
+        };
+        if let Err(error) = bridge.request("action", request) {
+            model.notice(error.to_string());
+        }
+    }
+}
+
+fn seated_weapon_allowed(seat: Option<crate::vehicle::OccupiedSeat>, first_person: bool, gun: bool) -> bool {
+    // PlayerController.Fire + VehicleSeatTests: the driver's hands are busy;
+    // passenger gunfire is allowed only from the first-person seated gaze.
+    // MeleeAttack explicitly rejects every vehicle seat. Furniture has no such gate.
+    seat.is_none_or(|s| !s.driver && first_person && gun)
 }
 
 fn publish_body(
@@ -1008,10 +1112,14 @@ fn camera_follow(
     world: Res<WorldState>,
     occupancy: Option<Res<crate::vehicle::Occupancy>>,
     prop_occupancy: Option<Res<crate::world::interactables::PropOccupancy>>,
-    body: Query<(&Transform, &PlayerBody), Without<PlayerCamera>>,
+    body: Query<(Entity, &Transform, &PlayerBody), Without<PlayerCamera>>,
+    mut perspective: ResMut<crate::avatar::Perspective>,
+    time: Res<Time>,
+    context: ReadRapierContext,
+    vehicles:crate::avatar::camera::VehicleCameras,
     mut camera: Query<(&mut Transform, &mut Projection), (With<PlayerCamera>, Without<PlayerBody>)>,
 ) {
-    let Ok((body, posture)) = body.single() else {
+    let Ok((entity, body, posture)) = body.single() else {
         return;
     };
     for (mut transform, mut projection) in &mut camera {
@@ -1023,17 +1131,17 @@ fn camera_follow(
                 p.fov = 70_f32.to_radians();
                 p.far = 6000.;
             }
-            *transform = Transform::from_translation(origin.local(position)).with_rotation(Quat::from_euler(
-                EulerRot::YXZ,
-                yaw.to_radians(),
-                pitch.to_radians(),
-                0.,
-            ));
+            *transform = Transform::from_translation(origin.local(position)).with_rotation(
+                Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.),
+            );
             continue;
         }
         if ui.screen != Screen::MainMenu
             && !(ui.screen == Screen::Settings && ui.settings_return == Screen::MainMenu)
         {
+            if !perspective.first_person {
+                if let Some(pose)=occupancy.as_ref().and_then(|o|o.seat).and_then(|s|vehicles.follow(s,&perspective,context.single().ok().as_ref())) {*transform=pose;continue;}
+            }
             let look = Quat::from_euler(
                 EulerRot::YXZ,
                 input.yaw.to_radians(),
@@ -1054,8 +1162,17 @@ fn camera_follow(
                 transform.translation = eye.translation;
                 transform.rotation = eye.rotation * look;
             } else {
-                transform.translation = body.translation + Vec3::Y * posture.eye_height;
-                transform.rotation = look;
+                *transform = crate::avatar::camera::follow(
+                    &mut perspective,
+                    context.single().ok().as_ref(),
+                    entity,
+                    body.translation,
+                    posture.eye_height,
+                    posture.height,
+                    input.yaw,
+                    input.pitch,
+                    time.delta_secs(),
+                );
             }
         } else {
             *transform = Transform::from_translation(world.focus + Vec3::new(26.0, 17.0, 30.0))
@@ -1072,31 +1189,66 @@ pub(crate) fn simulation_paused(ui: &UiState) -> bool {
 
 /// A queued authority teleport can be drained by the origin barrier itself.
 /// Adopt it before the next movement solve, using the normal correction contract.
-pub(crate) fn adopt_origin_correction(world:&mut World,state:&Value)->Vec<(Entity,Vec3)> {
-    let version=state["player"]["correctionVersion"].as_u64().unwrap_or(0);
-    if world.get_resource::<Session>().is_some_and(|s|s.correction_version==version) {return Vec::new();}
-    let Some(position)=vector(&state["player"]["position"]) else{return Vec::new();};
-    if let Some(mut session)=world.get_resource_mut::<Session>() {session.correction_version=version;}
-    let mut moved=Vec::new();
-    for (entity,mut transform,mut body) in world.query::<(Entity,&mut Transform,&mut PlayerBody)>().iter_mut(world) {
-        transform.translation=position;body.velocity=Vec3::ZERO;body.grounded=false;body.locomotion=default();
-        moved.push((entity,position));
+pub(crate) fn adopt_origin_correction(world: &mut World, state: &Value) -> Vec<(Entity, Vec3)> {
+    let version = state["player"]["correctionVersion"].as_u64().unwrap_or(0);
+    if world
+        .get_resource::<Session>()
+        .is_some_and(|s| s.correction_version == version)
+    {
+        return Vec::new();
+    }
+    let Some(position) = vector(&state["player"]["position"]) else {
+        return Vec::new();
+    };
+    if let Some(mut session) = world.get_resource_mut::<Session>() {
+        session.correction_version = version;
+    }
+    let mut moved = Vec::new();
+    for (entity, mut transform, mut body) in world
+        .query::<(Entity, &mut Transform, &mut PlayerBody)>()
+        .iter_mut(world)
+    {
+        transform.translation = position;
+        body.velocity = Vec3::ZERO;
+        body.grounded = false;
+        body.locomotion = default();
+        moved.push((entity, position));
     }
     moved
 }
 #[cfg(test)]
-pub(crate) fn origin_test_player(world:&mut World,position:Vec3,correction:u64)->Entity {
-    world.insert_resource(Session{correction_version:correction,..default()});
-    world.spawn((Transform::from_translation(position),PlayerBody{velocity:Vec3::X*3.,grounded:true,height:2.,stance:"stand".into(),eye_height:1.75,locomotion:default()})).id()
+pub(crate) fn origin_test_player(world: &mut World, position: Vec3, correction: u64) -> Entity {
+    world.insert_resource(Session {
+        correction_version: correction,
+        ..default()
+    });
+    world
+        .spawn((
+            Transform::from_translation(position),
+            PlayerBody {
+                velocity: Vec3::X * 3.,
+                grounded: true,
+                height: 2.,
+                stance: "stand".into(),
+                eye_height: 1.75,
+                locomotion: default(),
+            },
+        ))
+        .id()
 }
 
 /// Translate private movement anchors; the world-origin pass moves body/camera
 /// transforms and Rapier together exactly once.
-pub fn shift_origin(world:&mut World,shift:Vec3) {
-    if let Some(mut input)=world.get_resource_mut::<PlayerInput>() {
-        if let Some((anchor,exit))=&mut input.prop_exit {*anchor-=shift;*exit-=shift;}
+pub fn shift_origin(world: &mut World, shift: Vec3) {
+    if let Some(mut input) = world.get_resource_mut::<PlayerInput>() {
+        if let Some((anchor, exit)) = &mut input.prop_exit {
+            *anchor -= shift;
+            *exit -= shift;
+        }
     }
-    for mut body in world.query::<&mut PlayerBody>().iter_mut(world) {body.locomotion.shift_origin(shift);}
+    for mut body in world.query::<&mut PlayerBody>().iter_mut(world) {
+        body.locomotion.shift_origin(shift);
+    }
 }
 
 fn physics_configuration(ui: Res<UiState>, mut configs: Query<&mut RapierConfiguration>) {
@@ -1142,13 +1294,23 @@ fn eye_height(stance: &str) -> f32 {
     }
 }
 pub(crate) fn vector(value: &Value) -> Option<Vec3> {
-    let v=if let Some(a)=value.as_array() {
-        if a.len()!=3 {return None;}
-        Vec3::new(a[0].as_f64()? as f32,a[1].as_f64()? as f32,a[2].as_f64()? as f32)
-    }else {
+    let v = if let Some(a) = value.as_array() {
+        if a.len() != 3 {
+            return None;
+        }
+        Vec3::new(
+            a[0].as_f64()? as f32,
+            a[1].as_f64()? as f32,
+            a[2].as_f64()? as f32,
+        )
+    } else {
         // Original network event structs retain their {x,y,z} payload, while
         // bridge snapshot adapters deliberately write compact three-vectors.
-        Vec3::new(value["x"].as_f64()? as f32,value["y"].as_f64()? as f32,value["z"].as_f64()? as f32)
+        Vec3::new(
+            value["x"].as_f64()? as f32,
+            value["y"].as_f64()? as f32,
+            value["z"].as_f64()? as f32,
+        )
     };
     v.is_finite().then_some(v)
 }
@@ -1157,31 +1319,93 @@ pub(crate) fn vector(value: &Value) -> Option<Vec3> {
 mod tests {
     use super::*;
     #[test]
+    fn scope_sway_enters_shared_look_once_and_unwinds_without_consuming_mouse_aim() {
+        let bridge = CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let mut app = App::new();
+        let mut model = UiModel::default();
+        model.connected = true;
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(bridge)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<Settings>()
+            .init_resource::<crate::viewmodel::ViewmodelStatus>()
+            .init_resource::<crate::recoil::Recoil>()
+            .init_resource::<GameSnapshot>()
+            .init_resource::<crate::entities::ItemCatalog>()
+            .init_resource::<WorldSessionEpoch>()
+            .insert_resource(UiState { screen: Screen::Playing, ..default() })
+            .insert_resource(model)
+            .insert_resource(PlayerInput { yaw: 30., pitch: 10., ..default() })
+            .add_systems(Update, read_input);
+        app.world_mut().resource_mut::<crate::viewmodel::ViewmodelStatus>().scope_sway = Vec2::new(0.5, 0.75);
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ShiftLeft);
+        app.update();app.update();
+        let input = app.world().resource::<PlayerInput>();
+        assert_eq!((input.pitch, input.yaw), (10.5, 30.75));
+        assert!(input.steady_key);
+        assert_eq!(app.world().resource::<crate::viewmodel::ViewmodelStatus>().look_delta, Vec2::ZERO);
+        app.world_mut().resource_mut::<PlayerInput>().yaw += 4.;
+        app.world_mut().resource_mut::<crate::viewmodel::ViewmodelStatus>().scope_sway = Vec2::ZERO;
+        app.update();
+        let input = app.world().resource::<PlayerInput>();
+        assert_eq!((input.pitch, input.yaw), (10., 34.));
+        app.world_mut().resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(2., 3.);
+        app.update();
+        let sensitivity = app.world().resource::<Settings>().mouse_sensitivity;
+        assert_eq!(app.world().resource::<crate::viewmodel::ViewmodelStatus>().look_delta, Vec2::new(3., 2.) * sensitivity);
+        app.world_mut().resource_mut::<UiState>().screen = Screen::Inventory;
+        app.update();
+        assert!(!app.world().resource::<PlayerInput>().steady_key);
+        assert_eq!(app.world().resource::<crate::viewmodel::ViewmodelStatus>().look_delta, Vec2::ZERO);
+    }
+    #[test]
     fn alt_look_stops_continuous_tool_fire_and_discards_pending_attack_edges() {
         let bridge = CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
         let mut model = UiModel::default();
         model.connected = true;
         let mut app = App::new();
-        app.add_plugins(MinimalPlugins).insert_resource(bridge)
-            .init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>()
-            .init_resource::<AccumulatedMouseMotion>().init_resource::<Settings>()
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(bridge)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<Settings>()
             .init_resource::<crate::viewmodel::ViewmodelStatus>()
-            .init_resource::<crate::recoil::Recoil>().init_resource::<GameSnapshot>()
-            .init_resource::<crate::entities::ItemCatalog>().init_resource::<WorldSessionEpoch>()
-            .insert_resource(UiState { screen:Screen::Playing, ..default() })
+            .init_resource::<crate::recoil::Recoil>()
+            .init_resource::<GameSnapshot>()
+            .init_resource::<crate::entities::ItemCatalog>()
+            .init_resource::<WorldSessionEpoch>()
+            .insert_resource(UiState {
+                screen: Screen::Playing,
+                ..default()
+            })
             .insert_resource(model)
-            .insert_resource(PlayerInput { fire_pressed:true, secondary_pressed:true, ..default() })
+            .insert_resource(PlayerInput {
+                fire_pressed: true,
+                secondary_pressed: true,
+                ..default()
+            })
             .add_systems(Update, read_input);
-        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
         app.update();
         assert!(app.world().resource::<PlayerInput>().fire);
-        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::AltLeft);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::AltLeft);
         app.update();
         let input = app.world().resource::<PlayerInput>();
         assert!(input.free_look);
         assert!(!input.fire && !input.fire_pressed && !input.secondary_pressed);
-        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::AltLeft);
-        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear_just_pressed(MouseButton::Left);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::AltLeft);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .clear_just_pressed(MouseButton::Left);
         app.update();
         let input = app.world().resource::<PlayerInput>();
         assert!(!input.free_look && input.fire);
@@ -1189,12 +1413,13 @@ mod tests {
     }
     #[test]
     fn source_event_vectors_and_snapshot_vectors_share_one_finite_decoder() {
-        let source=json!({"pos":{"x":0.,"y":0.109375,"z":-1.609375},"radius":9.3125,"itemId":262});
-        let expected=Vec3::new(0.,0.109375,-1.609375);
-        assert_eq!(vector(&source["pos"]),Some(expected));
-        assert_eq!(vector(&json!(expected.to_array())),Some(expected));
-        assert_eq!(vector(&json!({"x":1.,"y":2.})),None);
-        assert_eq!(vector(&json!([0.,0.,1e100])),None);
+        let source =
+            json!({"pos":{"x":0.,"y":0.109375,"z":-1.609375},"radius":9.3125,"itemId":262});
+        let expected = Vec3::new(0., 0.109375, -1.609375);
+        assert_eq!(vector(&source["pos"]), Some(expected));
+        assert_eq!(vector(&json!(expected.to_array())), Some(expected));
+        assert_eq!(vector(&json!({"x":1.,"y":2.})), None);
+        assert_eq!(vector(&json!([0., 0., 1e100])), None);
     }
     #[test]
     fn chair_exit_fans_around_a_wall_and_keeps_the_player_when_surrounded() {

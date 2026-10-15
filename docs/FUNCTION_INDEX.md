@@ -74,9 +74,22 @@ Rules of the road:
 | atomically fit/remove a physical attachment or select magazine/shell ammo | `WeaponState.QueueAttachment` / `AttachmentOptions` (`bevy/bridge/AttachmentServices.cs`), generated `AttachmentTransaction` and `WeaponAmmoActions` | selected-gun and incoming-item tokens; same original placement/round rules; preflight before mutation |
 | render source cosmetic bullet flight without duplicating damage | `CosmeticBulletServices` / generated `CosmeticScatter` / `BallisticsMath` (`bevy/bridge`) | accepted combat sequence joins visual context; `state.bullets` is visual only; ocean boxes never enter solid-world damage geometry |
 | render original tracer strips and project the actual FP muzzle | `bullets::{tracer,muzzle_projection,fire_context}` / `viewmodel::project_muzzle` (`bevy/src`) | accepted visual flight only; muzzle depth0.6m, max strip10m; no damage/impact publication |
+| steady a magnifying optic and show actual player vitals | `ScopeSteadySim` / `BridgeHost.StepSteady`, `motion::ScopeSway`, `ui::vitals` | predictive oxygen must persist between replicas; breath scales phase, not amplitude; infection fill is1−infection |
+| carry passenger combat without moving the seat-owned body | `ServerPlayerAuthority.AcceptSeatedActions` / native `player::simulate` | Opt-in state carrier dispatches deduped actions then stops before motion adoption; FP passenger guns only, driver/vehicle melee refused |
+| place an objective-mounted source optic | `viewmodel::scopes::{ScopeView, mapped_objective}` | rigid optical axis and linear HDR target; activate/position before directional shadow cascades |
+| apply accepted gun warheads and recover single-round projectiles | `WarheadServices` / `CombatBulletImpact` (`bevy/bridge/WarheadServices.cs`; `core/UnturnedNet/CombatBulletImpact.cs`) | immutable launch payload and actual contact normal; ordinary world-item pickup ownership; no guessed normal for approximate contacts |
+| recover an analytic capsule contact normal | `ZombieCombat.CapsuleNormal` (`core/UnturnedSim/ZombieCombat.cs`) | use the same foot position, radius and height as `RayCapsule` |
+| share local tactical, handheld and worn-light state | `viewmodel::lights::{Switches, LightSurface, LightInput}` | actual accepted equipment; ignition consumes its shared key for drivers; third-person laser emitter uses `avatar::AvatarMuzzle` |
+| render accepted dropped items and real stack prefixes | `entities::items::{Models, Focus}` (`bevy/src/entities/items.rs`) | original dropped manifest, not held art; source .24m rarity fallback and transformed15% focus box |
+| dress the local body and rebuilt first-person arms from accepted state | `avatar::{LocalAvatar, FirstPersonArms}`, `character::{Appearance, CharacterLayers, CharacterUpdate}` | source fixed skin/profile face; do not create another owner body or mutate worn items |
+| find the actual third-person held muzzle after transforms | `avatar::{AvatarMuzzle, AvatarMuzzleUpdate}` | world-space presentation only, never replace authoritative eye origin |
+| read unapplied camera recoil for the original third-person HUD bloom | `recoil::Recoil::pending_pitch()` | vertical degrees after the native 18/s drain; do not create a separate shot/recoil accumulator |
+| use source shoulder/vehicle chase cameras and eye-plane convergence | `avatar::camera::{follow, sweep, aim, VehicleCameras}`, `avatar::Perspective` | radius0.39, length2m on foot; collide against world/vehicle and exclude owner/dropped items |
+| enter real player damage for debug death rendering | `BridgeHost.PlayerDebugConsole` (`bevy/bridge/PlayerDebugConsole.cs`) | `kill`/`sethp` obey cheats and queue `DamagePlayerExternal`; no direct health mutation |
 | emit host hearing with original rain masking | `ZombieServices.Noise(position,radius)` | zero is silent; source radius and authority weather |
 | render filtered weather audio, shared canopy targets and source lightning | `world::rain::audio::{filter::FilteredClip, MaterialTargets}`, `world::rain::lightning::Lightning` (`bevy/src`) | four Godot low-pass stages; cosmetic emitters never enter hearing; lightning flash uses render time, interval uses authority ticks |
-
+| convert original nonphysical light energy into native renderer units | `hdr::{directional_illuminance,point_lumens,ambient_brightness}` (`bevy/src/hdr.rs`) | derived Godot pi factors and Bevy default exposure; do not restore the old visual18klux calibration |
+| apply goggles to world/arms while preserving HUD colors | `nightvision::NightVision`, `hdr::CompositePass` (`bevy/src`) | consumes actual local switch; source-sRGB tube pass follows independent world/VM ACES and precedes HUD; overlay dim/tint remain separate |
 
 ## 2. Sentinels that lie
 

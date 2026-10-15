@@ -16,8 +16,11 @@ use std::{collections::HashMap, fs, path::Path};
 
 mod attachments;
 mod driving;
+mod lighting;
+pub(crate) mod lights;
 mod motion;
 mod parts;
+pub(crate) mod scopes;
 mod tools;
 mod weapon_fx;
 const LAYER: usize = 1;
@@ -158,10 +161,11 @@ struct ViewmodelState {
     shot_hold: f32,
     use_clip: String,
     aim_hook: Vec3,
+    scope_zoom: f32,
+    scope_sway: motion::ScopeSway,
     motion: motion::Motion,
     position_offset: Vec3,
     rotation_offset: Vec3,
-    previous_look: Option<Vec2>,
     hands_off: bool,
     hammer_delay: Option<(f32, f32)>,
     driving: bool,
@@ -176,6 +180,9 @@ pub struct ViewmodelStatus {
     pub ready: bool,
     pub aiming: bool,
     pub aim_alpha: f32,
+    pub scope_zoom: f32,
+    pub scope_sway: Vec2,
+    pub look_delta: Vec2,
     pub muzzle_offset: Option<Vec3>,
     tool: tools::Kind,
     tool_active: bool,
@@ -188,17 +195,22 @@ struct PendingHeld {
     left_hook: bool,
 }
 #[derive(Component)]
-struct ViewmodelCamera;
+pub(crate) struct ViewmodelCamera;
 /// The original viewport world. Head-look rotates its camera independently;
 /// already-ejected casings and sparks remain in this torso frame.
 #[derive(Component)]
 struct ViewmodelFrame;
 #[derive(Component)]
-struct HeldMesh;
+pub(crate) struct HeldMesh;
 #[derive(Resource, Default)]
 pub struct AttachmentAnchors(pub HashMap<String, Vec2>);
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProjectAttachmentHooks;
+impl ViewmodelStatus {
+    pub fn look_sensitivity(&self) -> f32 {
+        scopes::sensitivity(self.aim_alpha, self.scope_zoom)
+    }
+}
 pub struct ViewmodelPlugin;
 impl Plugin for ViewmodelPlugin {
     fn build(&self, app: &mut App) {
@@ -206,7 +218,13 @@ impl Plugin for ViewmodelPlugin {
             .init_resource::<ViewmodelState>()
             .init_resource::<ViewmodelStatus>()
             .init_resource::<attachments::Mounted>()
-            .add_plugins((tools::ToolPlugin, weapon_fx::WeaponEffectsPlugin))
+            .add_plugins((
+                tools::ToolPlugin,
+                weapon_fx::WeaponEffectsPlugin,
+                scopes::ScopePlugin,
+                lights::LightPlugin,
+                lighting::LightingPlugin,
+            ))
             .add_systems(
                 Update,
                 (
@@ -233,7 +251,8 @@ impl Plugin for ViewmodelPlugin {
             )
             .add_systems(
                 Update,
-                pose_viewmodel
+                (head_look, pose_viewmodel)
+                    .chain()
                     .after(RigAnimation)
                     .after(crate::player::PlayerCameraUpdate),
             );
@@ -255,13 +274,14 @@ fn build_viewmodel(
     mut active_cameras: Query<&mut Camera, With<ViewmodelCamera>>,
     hand_use: Res<crate::use_items::HandUse>,
     occupancy: Res<crate::vehicle::Occupancy>,
+    perspective: Option<Res<crate::avatar::Perspective>>,
 ) {
-    let visible = !matches!(ui.screen, Screen::MainMenu | Screen::Dead)
+    let body_enabled = !matches!(ui.screen, Screen::MainMenu | Screen::Dead)
         && snapshot.0["connected"].as_bool().unwrap_or(false)
-        && snapshot.0["player"]["alive"].as_bool().unwrap_or(true)
-        && occupancy.seat.is_none_or(|s| s.driver && !s.aircraft);
+        && snapshot.0["player"]["alive"].as_bool().unwrap_or(true);
+    let visible = body_enabled && occupancy.seat.is_none_or(|s| !s.driver || !s.aircraft);
     for mut camera in &mut active_cameras {
-        camera.is_active = visible;
+        camera.is_active = visible && perspective.as_ref().is_none_or(|p| p.first_person);
     }
     let Ok(main_camera) = cameras.single() else {
         return;
@@ -283,7 +303,7 @@ fn build_viewmodel(
                 Camera {
                     order: 1,
                     clear_color: ClearColorConfig::None,
-                    is_active: visible,
+                    is_active: visible && perspective.as_ref().is_none_or(|p| p.first_person),
                     ..default()
                 },
                 Projection::Perspective(PerspectiveProjection {
@@ -298,17 +318,7 @@ fn build_viewmodel(
                 ViewmodelCamera,
             ))
             .id();
-        commands.spawn((
-            Name::new("Viewmodel fill"),
-            DirectionalLight {
-                illuminance: 2500.,
-                shadow_maps_enabled: false,
-                ..default()
-            },
-            Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.5, -0.6, 0.)),
-            RenderLayers::layer(LAYER),
-            ChildOf(frame),
-        ));
+        lighting::spawn(&mut commands, frame, camera);
         state.camera = Some(camera);
         state.frame = Some(frame);
         match load_gun_visuals(&config.content_root) {
@@ -316,7 +326,7 @@ fn build_viewmodel(
             Err(e) => warn!("viewmodel table: {e}"),
         }
     }
-    if !visible {
+    if !body_enabled {
         return;
     }
     let held = hand_use
@@ -402,7 +412,10 @@ fn build_viewmodel(
         &clip,
     ) {
         Ok(root) => {
-            commands.entity(root).insert(ChildOf(state.frame.unwrap()));
+            commands.entity(root).insert((
+                ChildOf(state.frame.unwrap()),
+                crate::avatar::FirstPersonArms,
+            ));
             state.arms = Some(root);
             state.held = Some(held);
             state.selection = snapshot.0["weapon"]["selectionVersion"].clone();
@@ -420,7 +433,6 @@ fn build_viewmodel(
             state.seated = false;
             state.tool_active = false;
             state.motion = default();
-            state.previous_look = None;
             state.use_clip = consumable
                 .as_ref()
                 .map_or_else(String::new, |clips| clips.1.clone());
@@ -445,6 +457,7 @@ fn build_viewmodel(
 fn attach_held_mesh(
     mut commands: Commands,
     config: Res<WorldConfig>,
+    catalog: Res<ItemCatalog>,
     mut state: ResMut<ViewmodelState>,
     mut rigs: Query<(&mut RigPlayback, &RigSkin)>,
     mut cache: ResMut<ContentCache>,
@@ -497,11 +510,18 @@ fn attach_held_mesh(
         return;
     };
     let texture = texture.filter(|p| config.content_root.join(p).is_file());
+    let light_item = catalog
+        .items
+        .get(&state.held.unwrap_or(0))
+        .filter(|i| i.melee["light"].as_bool() == Some(true));
     let cached = cache.material(texture, false, &assets, &mut materials);
     let material = if let Some(gun) = &pending.gun {
         let mut material = materials.get(&cached).cloned().unwrap_or_default();
         material.base_color = gun.tint;
         material.cull_mode = None;
+        materials.add(material)
+    } else if light_item.is_some() {
+        let material = materials.get(&cached).cloned().unwrap_or_default();
         materials.add(material)
     } else {
         cached
@@ -546,6 +566,11 @@ fn attach_held_mesh(
                 Err(error) => warn!("Held item hierarchy {}: {error}", pending.asset),
             }
         }
+    }
+    if let Some(item) = light_item {
+        commands
+            .entity(gun_entity)
+            .insert(lights::LightSurface(item.id));
     }
     if let Some(gun) = pending.gun {
         let extra = gun.mesh.replace("_gun.txt", "_barrel.txt");
@@ -622,6 +647,7 @@ fn animate_viewmodel(
     recoil: Res<crate::recoil::Recoil>,
     occupancy: Res<crate::vehicle::Occupancy>,
 ) {
+    status.scope_zoom = state.scope_zoom;
     let Some(root) = state.arms else {
         events.clear();
         return;
@@ -631,7 +657,7 @@ fn animate_viewmodel(
     };
     rig.paused = crate::player::simulation_paused(&ui);
     let dt = if rig.paused { 0. } else { time.delta_secs() };
-    if let Some(seat) = occupancy.seat {
+    if let Some(seat) = occupancy.seat.filter(|seat| seat.driver) {
         state.seated = true;
         let driving = seat.driver && !seat.aircraft;
         if driving && (!state.driving || rig.clip != "Idle_Drive") {
@@ -661,7 +687,6 @@ fn animate_viewmodel(
         rig.time = rig.data.anims.get(&clip).map_or(0., |c| c.length);
         state.equip_elapsed = rig.time;
         state.motion = default();
-        state.previous_look = None;
     }
     state.equip_elapsed += dt;
     state.shot_hold = (state.shot_hold - dt).max(0.);
@@ -717,8 +742,13 @@ fn animate_viewmodel(
             "rechamber" => {
                 state.hammer_delay = weapon_fx::hammer_timing(&rig, &state.asset, &event.data)
             }
-            "fire" if (event.data["selectionVersion"].is_null() || event.data["selectionVersion"]==state.selection)
-                && event.data["gun"].as_str().is_none_or(|gun|gun==state.asset) => {
+            "fire"
+                if (event.data["selectionVersion"].is_null()
+                    || event.data["selectionVersion"] == state.selection)
+                    && event.data["gun"]
+                        .as_str()
+                        .is_none_or(|gun| gun == state.asset) =>
+            {
                 state.shot_hold = 0.25;
                 if let Some(item) = item {
                     let value = |key: &str| item.gun[key].as_f64().unwrap_or(0.) as f32;
@@ -768,7 +798,9 @@ fn animate_viewmodel(
     let hammering = snapshot.0["weapon"]["rechambering"]
         .as_bool()
         .unwrap_or(false);
-    let moving = !ui.captures_input()
+    let moving = occupancy.seat.is_none()
+        && !matches!(stance, "sitting" | "driving")
+        && !ui.captures_input()
         && [
             GameAction::MoveLeft,
             GameAction::MoveRight,
@@ -788,6 +820,7 @@ fn animate_viewmodel(
                     .map_or(0., |c| c.length));
     status.tool = if snapshot.0["connected"].as_bool().unwrap_or(false)
         && snapshot.0["player"]["alive"].as_bool().unwrap_or(true)
+        && occupancy.seat.is_none()
         && !matches!(stance, "swim" | "climb")
     {
         tools::Kind::of(item)
@@ -813,7 +846,7 @@ fn animate_viewmodel(
         && !settings.pressed(GameAction::FreeLook, &keys, &mouse)
         && !reloading
         && !hammering
-        && !matches!(stance, "swim" | "climb" | "driving" | "sitting")
+        && !matches!(stance, "swim" | "climb" | "driving")
         && !(stance == "sprint" && moving)
         && settings.pressed(GameAction::Aim, &keys, &mouse);
     state.aim_progress =
@@ -859,17 +892,6 @@ fn animate_viewmodel(
         }
     }
     state.hands_off = hands_off;
-    let look = Vec2::new(
-        snapshot.0["player"]["pitch"].as_f64().unwrap_or(0.) as f32,
-        snapshot.0["player"]["yaw"].as_f64().unwrap_or(0.) as f32,
-    );
-    let delta = state.previous_look.map_or(Vec2::ZERO, |last| {
-        Vec2::new(
-            look.x - last.x,
-            (look.y - last.y + 180.).rem_euclid(360.) - 180.,
-        )
-    });
-    state.previous_look = Some(look);
     let pressed = |a| settings.pressed(a, &keys, &mouse) as i32;
     let movement = if moving {
         Vec2::new(
@@ -879,9 +901,23 @@ fn animate_viewmodel(
     } else {
         Vec2::ZERO
     };
-    let (position, rotation) = state
-        .motion
-        .update(dt, stance, movement, status.aim_alpha, delta);
+    let (position, rotation) = state.motion.update(
+        dt,
+        stance,
+        movement,
+        status.aim_alpha,
+        status.look_delta,
+        status.aiming && status.scope_zoom > 1.,
+    );
+    status.scope_sway = state.scope_sway.update(
+        dt,
+        status.aiming,
+        status.scope_zoom,
+        stance,
+        item.and_then(|i| i.gun["scopeSwayScale"].as_f64())
+            .unwrap_or(1.) as f32,
+        snapshot.0["steady"]["rateScale"].as_f64().unwrap_or(1.) as f32,
+    );
     state.position_offset = position;
     state.rotation_offset = rotation;
 }
@@ -1076,11 +1112,106 @@ fn pose_viewmodel(
         transform.rotation = Quat::from_euler(EulerRot::YXZ, r.y, r.x, r.z);
     }
 }
+fn head_look(
+    view: Option<Res<crate::avatar::Perspective>>,
+    input: Option<Res<crate::player::PlayerInput>>,
+    occupancy: Res<crate::vehicle::Occupancy>,
+    mut frames: Query<&mut Transform, (With<ViewmodelFrame>, Without<ViewmodelCamera>)>,
+    mut cameras: Query<&mut Transform, (With<ViewmodelCamera>, Without<ViewmodelFrame>)>,
+) {
+    let rotation = view
+        .zip(input)
+        .filter(|(view, _)| view.first_person && occupancy.seat.is_none())
+        .map_or(Quat::IDENTITY, |(view, input)| {
+            let body = Quat::from_euler(
+                EulerRot::YXZ,
+                input.yaw().to_radians(),
+                input.pitch().to_radians(),
+                0.,
+            );
+            let head = Quat::from_euler(
+                EulerRot::YXZ,
+                (input.yaw() + view.head.x).to_radians(),
+                (input.pitch() + view.head.y).clamp(-89., 89.).to_radians(),
+                0.,
+            );
+            body.inverse() * head
+        });
+    for mut frame in &mut frames {
+        frame.rotation = rotation.inverse();
+    }
+    for mut camera in &mut cameras {
+        camera.rotation = rotation;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn real_rig_enters_driving_hides_held_item_and_restores_hold_after_passenger_exit() {
+    fn alt_look_rotates_view_camera_while_held_frame_remains_on_body_heading() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin))
+            .init_resource::<crate::avatar::Perspective>()
+            .init_resource::<crate::player::PlayerInput>()
+            .init_resource::<crate::vehicle::Occupancy>()
+            .add_systems(Update, head_look);
+        let main = app
+            .world_mut()
+            .spawn(Transform::from_rotation(Quat::from_rotation_y(
+                90_f32.to_radians(),
+            )))
+            .id();
+        let frame = app
+            .world_mut()
+            .spawn((ViewmodelFrame, Transform::IDENTITY, ChildOf(main)))
+            .id();
+        let camera = app
+            .world_mut()
+            .spawn((ViewmodelCamera, Transform::IDENTITY, ChildOf(frame)))
+            .id();
+        app.world_mut()
+            .resource_mut::<crate::avatar::Perspective>()
+            .head = Vec2::new(90., 0.);
+        app.update();
+        let world_frame = app
+            .world()
+            .get::<GlobalTransform>(frame)
+            .unwrap()
+            .rotation();
+        let world_camera = app
+            .world()
+            .get::<GlobalTransform>(camera)
+            .unwrap()
+            .rotation();
+        assert!(
+            (world_frame * Vec3::NEG_Z - Vec3::NEG_Z).length() < 1e-5,
+            "gun stays on original body heading while head turns"
+        );
+        assert!(
+            (world_camera * Vec3::NEG_Z - Vec3::NEG_X).length() < 1e-5,
+            "camera follows the ninety-degree head turn"
+        );
+        assert!(
+            (world_camera * Vec3::Y - Vec3::Y).length() < 1e-5,
+            "head turn preserves camera up"
+        );
+        app.world_mut()
+            .resource_mut::<crate::avatar::Perspective>()
+            .head = Vec2::ZERO;
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(frame).unwrap().rotation,
+            Quat::IDENTITY
+        );
+        assert_eq!(
+            app.world().get::<Transform>(camera).unwrap().rotation,
+            Quat::IDENTITY
+        );
+    }
+
+    #[test]
+    fn real_rig_enters_driving_then_restores_visible_ready_weapon_in_passenger_seat() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins,TransformPlugin,AssetPlugin::default()))
             .init_asset::<Mesh>().init_asset::<Image>().init_asset::<StandardMaterial>()
@@ -1140,8 +1271,8 @@ mod tests {
         );
         assert!(app.world().get::<Camera>(camera).unwrap().is_active);
         assert!(!app.world().resource::<ViewmodelStatus>().ready);
-        // Switching to a passenger must hide the overlay; exiting afterwards
-        // still restores the equipped pose rather than leaving driving arms.
+        // The source Fire/VehicleSeatTests contract permits armed passengers.
+        // Switching seat must restore the held rig immediately, not wait for exit.
         app.world_mut()
             .resource_mut::<crate::vehicle::Occupancy>()
             .seat
@@ -1149,7 +1280,16 @@ mod tests {
             .unwrap()
             .driver = false;
         app.update();
-        assert!(!app.world().get::<Camera>(camera).unwrap().is_active);
+        assert!(app.world().get::<Camera>(camera).unwrap().is_active);
+        assert_eq!(
+            app.world().get::<RigPlayback>(root).unwrap().clip,
+            "Punch_Left"
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(held).unwrap(),
+            Visibility::Inherited
+        );
+        assert!(app.world().resource::<ViewmodelStatus>().ready);
         app.world_mut()
             .resource_mut::<crate::vehicle::Occupancy>()
             .seat = None;
@@ -1166,17 +1306,53 @@ mod tests {
         assert!(app.world().resource::<ViewmodelStatus>().ready);
         // Two physical rifles sharing an asset still need separate equip and
         // attachment lifecycles; the first rig must not survive the replacement.
-        let item=serde_json::from_value(serde_json::json!({"id":4,"name":"Rifle","type":"gun","asset":"eaglefire","gun":{}})).unwrap();
-        app.world_mut().resource_mut::<ItemCatalog>().items.insert(4,item);
-        app.world_mut().resource_mut::<GameSnapshot>().0["player"]["heldItemId"]=serde_json::json!(4);
-        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]=serde_json::json!({"selectionVersion":1});
-        app.update();app.update();
-        let first=app.world().resource::<ViewmodelState>().arms.unwrap();
-        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["selectionVersion"]=serde_json::json!(2);
-        app.update();app.update();
-        assert_ne!(app.world().resource::<ViewmodelState>().arms,Some(first));
+        let item = serde_json::from_value(
+            serde_json::json!({"id":4,"name":"Rifle","type":"gun","asset":"eaglefire","gun":{}}),
+        )
+        .unwrap();
+        app.world_mut()
+            .resource_mut::<ItemCatalog>()
+            .items
+            .insert(4, item);
+        app.world_mut().resource_mut::<GameSnapshot>().0["player"]["heldItemId"] =
+            serde_json::json!(4);
+        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"] =
+            serde_json::json!({"selectionVersion":1});
+        app.update();
+        app.update();
+        let first = app.world().resource::<ViewmodelState>().arms.unwrap();
+        app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["selectionVersion"] =
+            serde_json::json!(2);
+        app.update();
+        app.update();
+        assert_ne!(app.world().resource::<ViewmodelState>().arms, Some(first));
         assert!(app.world().get_entity(first).is_err());
-        assert_eq!(app.world().resource::<ViewmodelState>().held,Some(4));
+        assert_eq!(app.world().resource::<ViewmodelState>().held, Some(4));
+        app.world_mut()
+            .resource_mut::<crate::vehicle::Occupancy>()
+            .seat = Some(crate::vehicle::OccupiedSeat {
+            vehicle,
+            net_id: 7,
+            seat: 1,
+            body_pose: Transform::IDENTITY,
+            eye_pose: Transform::IDENTITY,
+            velocity: Vec3::ZERO,
+            driver: false,
+            aircraft: false,
+        });
+        app.world_mut().resource_mut::<GameSnapshot>().0["player"]["stance"] =
+            serde_json::json!("sitting");
+        app.world_mut()
+            .resource_mut::<ViewmodelState>()
+            .equip_elapsed = 100.;
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Right);
+        app.update();
+        assert!(
+            app.world().resource::<ViewmodelStatus>().aiming,
+            "armed passenger can aim the held gun"
+        );
     }
     #[test]
     fn aim_ease_and_consumable_hand_clips_match_source() {

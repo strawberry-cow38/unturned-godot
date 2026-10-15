@@ -56,9 +56,8 @@ Only accepted attachment state replaces native parts. The original source mesh
 and texture mappings drive each slot; factory iron offsets remain distinct from
 rail-mounted optic offsets. Water-bottle seating/scaling uses actual barrel
 geometry. Red-dot, halo and kobra use the source reticle, depth-tested billboard,
-optical axis and per-sight eye relief. Scope bodies and aim hooks are mounted,
-but PiP glass remains the next task. Tactical meshes/textures are present;
-active lens/laser/flashlight effects remain separate.
+optical axis and per-sight eye relief. Scope bodies and aim hooks are mounted.
+The scope glass and active tactical effects are covered by the next checkpoint.
 
 All206 native tests passed at integration. After review,21 focused viewmodel
 checks and3 attachment UI checks passed, including same-ID physical-gun rig
@@ -80,20 +79,71 @@ authority captures: `bevy-attachment-rings`, `bevy-attachment-magazine-options`,
 AttachStart framing and hook positions. Native arm/gun lighting remains darker
 and is tracked with the first-person environment work.
 
+## Scope and light integration in progress
+
+`viewmodel/scopes.rs` ports the original objective-mounted camera and rigid ocular
+glass for the eight source optic meshes, including AUG's integral cross/donut.
+The original lens, objective, eye relief, FOV, polygon mask and reticle assets
+drive the result. Each scope uses a linear HDR 720-pixel target, the source High
+quality default; a quality selector remains pending. Detachable scopes have no
+glow; the integral AUG environment is part of the common HDR adapter. Scoped
+sensitivity and breath-hold sway are described in `SCOPE_STEADY_PORT.md`.
+
+The live first-fit test exposed a camera activation ordering crash in Bevy's
+directional shadow preparation. Scope positioning now precedes cascade creation.
+A regression runs Bevy's actual cascade builder and checks the new active camera
+has shadow entries in its first frame. This is additional coverage beyond camera
+geometry, attachment cleanup, missing-reticle fallback and input sensitivity.
+The corrected live journey fitted the real owned 8x scope (accepted sight21),
+then captured both hip and fully aimed views. `bevy-scope-fitted-hip` and
+`bevy-scope-fitted-ads` show the actual magnified world inside the mounted lens;
+their snapshots record zoom8 and aimed alpha1. Both images were opened, including
+peer review of the HDR path, with no renderer panic or shader error. The original
+Godot `godot-scope-8x/rig_00.png` reference was also opened. Its harness resizes an
+oversized viewport, so it is a visual reference rather than a pixel-match test.
+Other scope variants still need their individual live checks.
+
+`viewmodel/lights.rs` ports N-key tactical/headlamp/NVG priority, RMB handheld
+light switching, original lens emission masks and source spot-light settings.
+The rail switch resets on equip or changed attachment fit. Worn switches retain
+their intent across temporary removal, while active effects follow actual worn
+equipment. Tactical laser rays hit world/vehicle/prop surfaces and exclude enemies;
+the first-person emitter follows the live tactical attachment, and third person
+uses the body weapon's muzzle. A real Rapier regression checks the surface hit,
+enemy exclusion, both emitters and removal cleanup. An actual input-system test
+covers reload gates, key priority, changed fit, inventory, death and session reset.
+The inspect-specific straight beam remains pending the original inspect gesture.
+The live journey fitted151 then152 and toggled each accepted tactical state;
+`bevy-tactical-laser-on` and `bevy-tactical-lamp-on` retain their authority and
+switch sidecars. Wear/Unwear then exercised military334, civilian1044 and
+headlamp1199 through the real inventory controls, with the expected N-key mode
+and HUD-preserving overlay. These images were opened. Fixed-night intensity,
+source distance/cone attenuation, handheld light and third-person laser visuals
+remain pending; this daylight journey does not establish audible parity.
+
+`viewmodel/lighting.rs` now uses the source final `MatchWorldLight` mapping: one
+camera-space sun, two complementary fills, world ambient color, and the original
+night readability floors. It uses the common renderer-derived energy conversion
+and an independent viewmodel ambient override. A real transform schedule tests
+changed sun direction, overhead sun, source floors and render-layer isolation.
+The fresh `bevy-gun-source-lighting` capture was opened with the world reviewer;
+source dynamic world-light mirrors remain separate work.
+
 ## Remaining source behavior
 
 The following are distinct tasks, not completed by the checkpoints above:
 
-- Scope PiP cameras/glass, scoped sway, tactical laser and
-  flashlight presentation, detachable-part animations and special gun furniture.
-- Original cosmetic flight tracers, visible rocket rounds and remote player
-  gunfire presentation. Authority projectile collision/damage is already separate.
+- Live verification of scope glass, tactical laser and flashlight presentation;
+  detachable-part animations and special gun furniture.
+- Remote player gunfire presentation. Local accepted cosmetic tracers and rockets
+  are documented in `BULLET_PORT.md`; authority collision/damage remains separate.
 - Remaining source trigger gates and special actions (sprint/air delay, minigun
   spin, inspect/unload and mounted weapons); empty-trigger UI feedback.
-- Original first-person ambient/key/fill/world-light mapping, HDR glow and
-  complete camera modes, lean/free-look and third-person clothing/body/weapon pose.
+- Dynamic world-light mirrors in the first-person viewport; remaining camera
+  modes, lean and complete third-person weapon effects. Local body/clothing and
+  head-look work is tracked in `AVATAR_PORT.md`, HDR in `HDR_NIGHTVISION_PORT.md`.
 - Complete soundscape and audible hardware validation.
 
 The original Godot chainsaw harness confirms the very close authored forearm
-pose. It does not establish lighting parity: the current native viewmodel is
-darker in the inspected captures, and its viewport lacks the original HDR glow.
+pose. Its earlier native capture predates the common HDR and source lighting
+adapter, so it does not establish current chainsaw lighting parity.

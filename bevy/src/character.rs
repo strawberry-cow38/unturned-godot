@@ -7,7 +7,7 @@ use crate::{
 };
 use bevy::{
     asset::embedded_asset,
-    camera::visibility::VisibilityRange,
+    camera::visibility::{RenderLayers, VisibilityRange},
     image::{ImageLoaderSettings, ImageSampler},
     light::NotShadowCaster,
     pbr::{ExtendedMaterial, MaterialExtension},
@@ -26,10 +26,22 @@ impl Plugin for CharacterPlugin {
             ragdoll::RagdollPlugin,
         ))
         .init_resource::<Wardrobe>()
-        .add_systems(Update, dress.after(RigAnimation));
+        .add_systems(
+            Update,
+            (dress, layers)
+                .chain()
+                .in_set(CharacterUpdate)
+                .after(RigAnimation),
+        );
     }
 }
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CharacterUpdate;
 #[derive(Component, Clone)]
+pub struct CharacterLayers(pub RenderLayers);
+#[derive(Component)]
+pub struct GearItem(pub i32);
+#[derive(Component, Clone, PartialEq)]
 pub struct Appearance {
     pub skin: Color,
     pub shirt: i32,
@@ -55,6 +67,8 @@ impl Default for Appearance {
 #[derive(Component)]
 struct Dressed {
     parts: Vec<Entity>,
+    material: Handle<ClothesMaterial>,
+    appearance: Appearance,
 }
 #[derive(Clone, Debug)]
 pub struct Garment {
@@ -245,6 +259,17 @@ fn dress(
     }
     for (root, appearance, rig, skin, previous) in &rigs {
         if let Some(previous) = previous {
+            let mut identity = appearance.clone();
+            identity.wear = previous.appearance.wear;
+            identity.first_person_clip = previous.appearance.first_person_clip;
+            if identity == previous.appearance {
+                if let Some(mut material) = clothing.get_mut(&previous.material) {
+                    material.extension.settings.x = appearance.wear.x;
+                    material.extension.settings.y = appearance.wear.y;
+                    material.extension.settings.z = appearance.first_person_clip;
+                }
+                continue;
+            }
             for e in &previous.parts {
                 commands.entity(*e).try_despawn();
             }
@@ -335,6 +360,7 @@ fn dress(
                     let gear = commands
                         .spawn((
                             Name::new(format!("{} #{id}", entry.slot)),
+                            GearItem(*id),
                             Mesh3d(mesh),
                             MeshMaterial3d(material),
                             Transform::from_translation(entry.offset),
@@ -351,9 +377,26 @@ fn dress(
                 Err(e) => warn!("Cannot load source clothing {id}: {e}"),
             }
         }
-        commands.entity(root).insert(Dressed { parts });
+        commands.entity(root).insert(Dressed {
+            parts,
+            material,
+            appearance: appearance.clone(),
+        });
     }
 }
 
+fn layers(
+    mut commands: Commands,
+    rigs: Query<
+        (&CharacterLayers, &RigSkin, &Dressed),
+        Or<(Changed<CharacterLayers>, Changed<Dressed>)>,
+    >,
+) {
+    for (layers, skin, dressed) in &rigs {
+        for entity in std::iter::once(&skin.0).chain(&dressed.parts) {
+            commands.entity(*entity).insert(layers.0.clone());
+        }
+    }
+}
 #[cfg(test)]
 mod tests;

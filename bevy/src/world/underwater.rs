@@ -2,6 +2,9 @@
 //! The world camera receives the pass; first-person arms and UI composite later.
 mod render;
 
+#[derive(bevy::prelude::SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct UnderwaterPass;
+
 use super::WorldState;
 use crate::player::{GameSnapshot, PlayerCamera, PlayerCameraUpdate};
 use bevy::{

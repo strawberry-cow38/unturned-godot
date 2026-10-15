@@ -54,9 +54,10 @@ struct Flare {
 }
 #[derive(Component)]
 struct Flash(f32);
-// Match the native daylight conversion (one source sun-energy unit = 18klux).
-// Bevy points are lumens: 4pi converts intensity at one metre to total flux.
-pub(crate) const LIGHT_UNIT: f32 = 18000. * 4. * std::f32::consts::PI;
+// Shared source omni/spot energy conversion, derived from both renderers.
+pub(crate) fn light_unit() -> f32 {
+    crate::hdr::point_lumens(1.)
+}
 fn color(v: Vec3, alpha: f32) -> Vec4 {
     Color::srgba(v.x, v.y, v.z, alpha).to_linear().to_vec4()
 }
@@ -271,7 +272,7 @@ fn resolve_palette(
                             .spawn((
                                 PointLight {
                                     color: Color::srgb(c.x, c.y, c.z),
-                                    intensity: energy * LIGHT_UNIT,
+                                    intensity: energy * light_unit(),
                                     range,
                                     shadow_maps_enabled: false,
                                     ..default()
@@ -336,7 +337,7 @@ pub fn blast(
         Flash(0.),
         PointLight {
             color: Color::srgb(1., 0.72, 0.35),
-            intensity: 14. * LIGHT_UNIT,
+            intensity: 14. * light_unit(),
             range: 14. * k + 8.,
             shadow_maps_enabled: false,
             ..default()
@@ -428,7 +429,7 @@ fn age_effects(
             commands.entity(entity).despawn();
         } else if f.0 >= 0.08 {
             if let Ok(mut light) = lights.get_mut(entity) {
-                light.intensity = 5. * LIGHT_UNIT;
+                light.intensity = 5. * light_unit();
             }
         }
     }
@@ -450,7 +451,7 @@ fn age_effects(
             + 0.06 * (particles::random(&mut f.seed) * 2. - 1.);
         for (i, entity) in f.lights.iter().enumerate() {
             if let Ok(mut light) = lights.get_mut(*entity) {
-                light.intensity = if i == 0 { 9. } else { 4.05 } * LIGHT_UNIT * flicker * fade;
+                light.intensity = if i == 0 { 9. } else { 4.05 } * light_unit() * flicker * fade;
                 if i == 0 {
                     light.range = 22. * (0.92 + 0.08 * flicker) * fade.max(0.2);
                 }

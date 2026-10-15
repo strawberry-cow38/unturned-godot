@@ -64,6 +64,7 @@ class WarheadTests(unittest.TestCase):
         self.call('worldGeometry',meshes=[self.wall()]);self.fire();state=self.pump(30)
         arrows=[w for w in state['worldItems'] if w['itemId']==347]
         self.assertEqual(1,len(arrows));arrow=arrows[0]
+        self.assertEqual(1,self.call('diagnostics')['result']['stuckProjectilePoses'])
         self.assertEqual((1,100,True),(arrow['amount'],arrow['quality'],arrow['settled']))
         self.assertAlmostEqual(-2.95,arrow['position'][2],places=2)
         self.assertEqual([0,0,1],arrow['stuckNormal']);self.assertLess(arrow['stuckDirection'][2],-.99)
@@ -79,6 +80,7 @@ class WarheadTests(unittest.TestCase):
         self.assertEqual(1,len(arrows));self.assertTrue(arrows[0]['settled']);self.assertEqual(arrow['stuckDirection'],arrows[0]['stuckDirection'])
         self.call('action',name='pickupItem',args=dict(netId=arrows[0]['netId']));state=self.pump(12)
         self.assertEqual([],state['worldItems']);self.assertEqual(1,sum(i['amount'] for p in state['inventory']['pages'] for i in p['items'] if i['id']==347))
+        self.assertEqual(0,self.call('diagnostics')['result']['stuckProjectilePoses'],'removed items must release retained pose metadata')
 
     def test_nailgun_does_not_mint_a_whole_magazine_for_each_nail(self):
         self.configure(gun=dict(Id=1165,GunAmmo=20,GunMagId=1166))

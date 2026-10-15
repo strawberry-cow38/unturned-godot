@@ -103,7 +103,7 @@ impl Trigger {
                 if buttons.press || (repeated && buttons.fire) {
                     return vec![Intent::Melee(false)];
                 }
-                if buttons.strong && !repeated {
+                if buttons.strong && !repeated && !melee["light"].as_bool().unwrap_or(false) {
                     return vec![Intent::Melee(true)];
                 }
             }
