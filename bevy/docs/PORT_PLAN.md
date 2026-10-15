@@ -15,6 +15,12 @@ replication follows mutations. Singleplayer continues to use a real server and
 client over the existing memory transport. Inventory, combat and world changes
 must route through existing authoritative commands.
 
+Each native launch copies the built bridge and its dependencies into an owned
+temporary directory. The child runs from that immutable copy, which is removed
+after it exits, so later builds cannot overwrite mapped .NET assemblies. Build
+the complete output before launching; `UG_BRIDGE_DLL` may select a separately
+built bridge DLL in its own output directory. `DOTNET` selects the runtime host.
+
 Original assets and GUIDs remain the content contract. Bevy loaders read the
 existing runtime mesh, texture, rig, animation and map data. Preserve source
 coordinate conversion and validate winding/UVs by rendering. Retail data absent

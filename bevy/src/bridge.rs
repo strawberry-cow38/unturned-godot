@@ -1,7 +1,10 @@
 //! Engine-independent game host. The child owns the original authoritative core;
 //! Bevy owns presentation and the local collision body.
+mod runtime;
+
 use anyhow::{Context, Result, anyhow, bail};
 use bevy::prelude::Resource;
+use runtime::RuntimeCopy;
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -31,14 +34,25 @@ impl CoreBridge {
         }
     }
     pub fn launch(manifest: &Path) -> Result<Self> {
-        let dll = manifest.join("bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll");
+        let dll = std::env::var_os("UG_BRIDGE_DLL")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| manifest.join("bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll"));
         if !dll.is_file() {
             bail!(
                 "Game bridge is missing at {}. Run bevy/run.sh to build it.",
                 dll.display()
             );
         }
-        Self::launch_command(Command::new(dotnet_path()).arg(dll))
+        Self::launch_from_dll(&dll)
+    }
+
+    fn launch_from_dll(dll: &Path) -> Result<Self> {
+        // .NET maps assemblies for the process lifetime. Building or promoting
+        // the shared output in place must never change those mapped inodes.
+        let runtime_copy = RuntimeCopy::from_dll(dll)?;
+        let bridge = Self::launch_command(Command::new(dotnet_path()).arg(runtime_copy.dll()))?;
+        bridge.0.lock().unwrap().runtime_copy = Some(runtime_copy);
+        Ok(bridge)
     }
 
     fn launch_command(command: &mut Command) -> Result<Self> {
@@ -48,9 +62,31 @@ impl CoreBridge {
             .stderr(Stdio::inherit())
             .spawn()
             .context("launching the .NET game core")?;
-        let stdin = child.stdin.take().context("opening core input")?;
-        let stdout = child.stdout.take().context("opening core output")?;
+        let pipes = (|| {
+            Ok((
+                child.stdin.take().context("opening core input")?,
+                child.stdout.take().context("opening core output")?,
+            ))
+        })();
+        let (stdin, stdout) = match pipes {
+            Ok(pipes) => pipes,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
         let (tx, rx) = mpsc::sync_channel(4);
+        let process = BridgeProcess {
+            child,
+            stdin,
+            replies: rx,
+            next_id: 1,
+            failed: false,
+            ack_events: 0,
+            origin_epoch: 0,
+            runtime_copy: None,
+        };
         thread::Builder::new()
             .name("game-core-replies".into())
             .spawn(move || {
@@ -63,15 +99,7 @@ impl CoreBridge {
                     }
                 }
             })?;
-        Ok(Self(Mutex::new(BridgeProcess {
-            child,
-            stdin,
-            replies: rx,
-            next_id: 1,
-            failed: false,
-            ack_events: 0,
-            origin_epoch: 0,
-        })))
+        Ok(Self(Mutex::new(process)))
     }
 
     pub fn request(&self, operation: &str, fields: Value) -> Result<Value> {
@@ -90,6 +118,8 @@ struct BridgeProcess {
     failed: bool,
     ack_events: u64,
     origin_epoch: u64,
+    // Fields drop after BridgeProcess::drop has killed and reaped the child.
+    runtime_copy: Option<RuntimeCopy>,
 }
 
 impl BridgeProcess {
@@ -205,6 +235,43 @@ fn dotnet_path() -> PathBuf {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn running_core_survives_removal_of_its_build_output_and_cleans_up_its_copy() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let build = manifest.join("bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll");
+        let fixture = RuntimeCopy::from_dll(&build).expect("build original core with bevy/run.sh");
+        let fixture_directory = fixture.dll().parent().unwrap().to_path_buf();
+        let bridge = CoreBridge::launch_from_dll(fixture.dll()).unwrap();
+        let running_directory = bridge
+            .0
+            .lock()
+            .unwrap()
+            .runtime_copy
+            .as_ref()
+            .unwrap()
+            .dll()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        assert_ne!(fixture_directory, running_directory);
+        // Delete only the owned fixture, never the repository's build output.
+        drop(fixture);
+        assert!(!fixture_directory.exists());
+        bridge
+            .request(
+                "init",
+                json!({"contentRoot":manifest.join("../game/content"),
+                    "mapId":"Procedural","spawn":[1025.,40.,12.],"origin":[0.,0.]}),
+            )
+            .unwrap();
+        bridge
+            .request("rebase", json!({"shift":[1024.,0.,0.],"expectedEpoch":0}))
+            .unwrap();
+        assert!(running_directory.exists());
+        drop(bridge);
+        assert!(!running_directory.exists());
+    }
 
     #[test]
     fn zombie_host_publications_reject_a_stale_origin_until_native_adoption() {
