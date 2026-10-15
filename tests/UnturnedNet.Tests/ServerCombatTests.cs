@@ -696,5 +696,79 @@ namespace UnturnedNet.Tests
             Assert.That(h.Server.Projectiles.Count, Is.Zero);
         }
 
+        [Test]
+        public void HostWildlifeBullet_UsesCanonicalDamageConditionAndShotOriginFalloff()
+        {
+            var h = new Harness(50908).Connected("hunter"); var c = h.Clients[0];
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            var origin = Eye(player.Pos); var hits = new List<CombatBodyHit>(); int rubble = 0;
+            h.Server.Combat.SetGunProfile(c.PlayerId, new ServerGunProfile {
+                AnimalDamage = 80, ZombieDamage = 999, ObjectDamage = 777,
+                MuzzleVelocity = 1000, GravityMultiplier = 0, FalloffStart = 5, FalloffEnd = 15, FalloffMin = .25f });
+            h.Server.Combat.HeldCondition = _ => 50;
+            h.Server.Combat.DamageBody = hits.Add;
+            h.Server.Combat.DamageObject = (_, _, _) => { rubble++; return false; };
+            h.Server.Combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => {
+                hit = new CombatWorldHit(origin + Vector3.forward * 10, animalNetId: 731); return true;
+            };
+            h.Server.Combat.CanFire = _ => false;
+            c.SendFire(origin, Vector3.forward); h.Step(10); Assert.That(hits, Is.Empty);
+            h.Server.Combat.CanFire = _ => true;
+            c.SendFire(origin, Vector3.forward); h.Step(10);
+            Assert.That(hits.Count, Is.EqualTo(1)); Assert.That(hits[0].Hit.AnimalNetId, Is.EqualTo(731));
+            Assert.That(hits[0].Damage, Is.EqualTo(80 * Durability.DamageMultiplier(50) * .625f).Within(.001f));
+            Assert.That(hits[0].Attacker, Is.EqualTo(c.PlayerId)); Assert.That(rubble, Is.Zero);
+        }
+
+        [Test]
+        public void HostWildlifeMelee_UsesAcceptedDeferredSwing_AndBlastCarriesCanonicalAnimalDamage()
+        {
+            var h = new Harness(50909).Connected("hunter"); var c = h.Clients[0];
+            int hits = 0; float damage = 0, reach = 0; Vector3 direction = Vector3.zero;
+            h.Server.Combat.ResolveHeldMeleeProfile = (_, _) => new ServerMeleeProfile {
+                ZombieDamage = 19, StrongMult = 2, Range = 2, HitDelayTicks = 4, CooldownTicks = 10 };
+            h.Server.Combat.DamageAnimalMelee = (owner, origin, dir, range, amount, tick) => {
+                Assert.That(owner, Is.EqualTo(c.PlayerId)); hits++; damage = amount; reach = range; direction = dir; return true;
+            };
+            h.Server.Combat.CanMelee = (_, _) => false;
+            c.SendMelee(true, 0); h.Step(10); Assert.That(hits, Is.Zero);
+            h.Server.Combat.CanMelee = (_, _) => true;
+            c.SendMelee(true, 0); h.Step(2); Assert.That(hits, Is.Zero, "hit delay is authoritative");
+            h.Server.Combat.ResolveHeldMeleeProfile = (_, _) => new ServerMeleeProfile { ZombieDamage = 999 };
+            h.Step(10); Assert.That(hits, Is.EqualTo(1)); Assert.That(damage, Is.EqualTo(38));
+            Assert.That(reach, Is.EqualTo(2.5)); Assert.That(direction.z, Is.EqualTo(-1));
+            CombatBlast? blast = null;
+            h.Server.Combat.DamageHostBlast = b => blast = b;
+            h.Server.Combat.PvPEnabled = false;
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            c.SendGrenade(Eye(player.Pos), Vector3.zero, 254); h.Step(160);
+            Assert.That(blast.HasValue, Is.True);
+            Assert.That(blast.Value.AnimalDamage, Is.EqualTo(h.Server.Combat.DefaultGrenade.ZombieDamage));
+        }
+
+        [Test]
+        public void HostWildlifeFlight_KeepsShotDamageAndDistanceAcrossEquipmentChangeAndRebase()
+        {
+            var h = new Harness(50910).Connected("hunter"); var c = h.Clients[0];
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            var origin = Eye(player.Pos); var profile = new ServerGunProfile {
+                AnimalDamage = 80, MuzzleVelocity = 100, GravityMultiplier = 0,
+                FalloffStart = 5, FalloffEnd = 15, FalloffMin = .25f };
+            h.Server.Combat.SetGunProfile(c.PlayerId, profile);
+            CombatBodyHit? accepted = null; h.Server.Combat.DamageBody = hit => accepted = hit;
+            h.Server.Combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => {
+                hit = new CombatWorldHit(origin + Vector3.forward * 10, animalNetId: 45);
+                return from.z <= origin.z + 10 && to.z >= origin.z + 10;
+            };
+            c.SendFire(origin, Vector3.forward); h.Step(2); Assert.That(accepted, Is.Null);
+            profile.AnimalDamage = 999; // a shell picker mutates the current profile after this round left
+            var delta = new Vector3(-256, 0, 0);
+            WorldRebase.Translate(h.Server, c, delta); origin += delta;
+            h.Step(10);
+            Assert.That(accepted.HasValue, Is.True);
+            Assert.That(accepted.Value.Damage, Is.EqualTo(50).Within(.001), "original 80 damage at half falloff, despite the new shell and coordinate frame");
+            Assert.That(accepted.Value.Hit.Point.x, Is.EqualTo(origin.x));
+        }
+
     }
 }

@@ -18,12 +18,12 @@ namespace UnturnedGodot.Net
     {
         public readonly Vector3 Point;
         public readonly int DestructibleIndex, ResourceIndex;
-        public readonly uint VehicleNetId, DeployableNetId;
+        public readonly uint VehicleNetId, DeployableNetId, AnimalNetId;
         public readonly string BodyPart;
         public CombatWorldHit(Vector3 point, int destructibleIndex = -1, int resourceIndex = -1,
-            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null)
+            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null, uint animalNetId = 0)
         { Point = point; DestructibleIndex = destructibleIndex; ResourceIndex = resourceIndex;
-          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; }
+          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; }
     }
     public delegate bool CombatWorldRayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit);
     /// <summary>Damage resolved by the server's world ray, never a client hit claim.
@@ -42,11 +42,11 @@ namespace UnturnedGodot.Net
     public readonly struct CombatBlast
     {
         public readonly Vector3 Position;
-        public readonly float Radius, VehicleDamage;
+        public readonly float Radius, VehicleDamage, AnimalDamage;
         public readonly ushort Attacker, ItemId;
         public readonly long Tick;
-        public CombatBlast(Vector3 position, float radius, float vehicleDamage, ushort attacker, ushort itemId, long tick)
-        { Position = position; Radius = radius; VehicleDamage = vehicleDamage; Attacker = attacker; ItemId = itemId; Tick = tick; }
+        public CombatBlast(Vector3 position, float radius, float vehicleDamage, ushort attacker, ushort itemId, long tick, float animalDamage = 0)
+        { Position = position; Radius = radius; VehicleDamage = vehicleDamage; Attacker = attacker; ItemId = itemId; Tick = tick; AnimalDamage = animalDamage; }
     }
     public readonly struct CombatResourceHit
     {
@@ -82,6 +82,8 @@ namespace UnturnedGodot.Net
         public float PlayerDamage = 40f;        // Eaglefire Player_Damage
         public float ZombieDamage = 99f;        // Eaglefire Zombie_Damage (flat vs zombies, like the SP StepBullets path)
         public float ResourceDamage = 40f;       // host canonical bullet damage against tree trunks
+        public float AnimalDamage = 40f;         // source canonical GunDef.Damage; wildlife has no limb multiplier
+        public float FalloffStart, FalloffEnd, FalloffMin = 1f;
         public float ObjectDamage = 25f;        // Eaglefire Object_Damage -- vs destructible props (rubble)
         // .dat Vehicle_Damage. Barricades (doors/beds) take THIS, not Object_Damage, because that is what the
         // singleplayer bullet path uses on them -- a door that takes 25 per shot in MP and 35 in SP is the
@@ -196,6 +198,9 @@ namespace UnturnedGodot.Net
         public Action<CombatResourceHit> DamageResource;
         public Action<CombatBodyHit> DamageBody;
         public Action<CombatBlast> DamageHostBlast;
+        /// <summary>Optional host wildlife melee query: attacker, origin, forward, reach including
+        /// source's .5m allowance, final damage, tick. True consumes this fallback world swing.</summary>
+        public Func<ushort, Vector3, Vector3, float, float, long, bool> DamageAnimalMelee;
         public Func<Vector3, Vector3, bool> BlastOccluded;
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
         // destructible props (rubble): (index, amount, tick) -> destroyed? Set by the host to ServerDestructibles.DamageObject.
@@ -244,13 +249,24 @@ namespace UnturnedGodot.Net
 
         sealed class Bullet
         {
-            public Vector3 Pos, Vel;
+            public Vector3 Pos, Vel, Origin;
             public int StepsLeft;
             public float Gravity;
             public ushort Shooter;
             public ushort Seq;
             public ServerGunProfile Gun;
             public float Condition = 1f;   // Durability.DamageMultiplier of the gun that fired it
+            public float AnimalDamage;   // source ShotDamage captured before shells/equipment can change
+            // PlayerController.Bullet.FalloffAt: distance from this shot's original
+            // position, not from the shooter after they move or change weapons.
+            public float FalloffAt(Vector3 point)
+            {
+                if (Gun.FalloffStart <= 0 || Gun.FalloffEnd <= Gun.FalloffStart) return 1;
+                float distance = (point - Origin).magnitude;
+                if (distance <= Gun.FalloffStart) return 1;
+                if (distance >= Gun.FalloffEnd) return Gun.FalloffMin;
+                return 1 + (Gun.FalloffMin - 1) * ((distance - Gun.FalloffStart) / (Gun.FalloffEnd - Gun.FalloffStart));
+            }
         }
         readonly List<Bullet> _bullets = new List<Bullet>();
 
@@ -385,7 +401,7 @@ namespace UnturnedGodot.Net
             for (int i = 0; i < Math.Max(1, gun.Pellets); i++)
                 _bullets.Add(new Bullet
                 {
-                    Pos = cmd.Origin,
+                    Pos = cmd.Origin, Origin = cmd.Origin,
                     Vel = dir * gun.MuzzleVelocity,
                     StepsLeft = Math.Max(1, gun.BallisticSteps),
                     Gravity = -9.81f * gun.GravityMultiplier,
@@ -393,6 +409,7 @@ namespace UnturnedGodot.Net
                     Seq = cmd.Seq,
                     Gun = gun,
                     Condition = held.HasValue ? Durability.DamageMultiplier(held.Value) : 1f,
+                    AnimalDamage = gun.AnimalDamage,
                 });
             // EVERY OTHER CLIENT HEARS AND SEES THIS. Broadcast after the shot is ACCEPTED, so a rejected
             // trigger pull (reloading, dry, rate-limited, out of range) cannot make a phantom crack across the
@@ -625,7 +642,9 @@ namespace UnturnedGodot.Net
                         case 3:
                             // a destructible prop's collider: whittle its health; the break fx rides the
                             // replicated ObjectDestroyed event (not this local impact), so no double-fx.
-                            if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
+                            if (bodyHit.AnimalNetId != 0)
+                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.AnimalDamage * b.Condition * b.FalloffAt(point), false, dir, tick));
+                            else if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
                                 DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage, false, dir, tick));
                             else if (hitResource >= 0) DamageResource?.Invoke(new CombatResourceHit(hitResource, b.Shooter,
                                 b.Gun.ResourceDamage, b.Gun.ResourceDamage, false, b.Gun.AssetName, point, dir, tick));
@@ -633,7 +652,7 @@ namespace UnturnedGodot.Net
                             // ...or a barricade (door/bed), which is not in that index space. Same segment,
                             // so a shot that stopped at a door is the shot that damages it.
                             else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage, tick);
-                            BroadcastImpact(point, ImpactSurface.World);
+                            BroadcastImpact(point, bodyHit.AnimalNetId != 0 ? ImpactSurface.Flesh : ImpactSurface.World);
                             Diag.BulletHitsWorld++;
                             break;
                     }
@@ -713,6 +732,7 @@ namespace UnturnedGodot.Net
                                       zone: Durability.Zone.Torso, armor: ArmorKind.Weapon);
                     SendHitConfirm(pm.Attacker, pm.Seq, HitTargetKind.Player, bestPlayer, dmg, killed, false);
                 }
+                else if (DamageAnimalMelee?.Invoke(pm.Attacker, origin, fwd, reach, melee.ZombieDamage * mult, tick) == true) { }
                 else if (WorldRay != null || WorldRayDetailed != null)
                 {
                     // no fighter in the cone -> a short forward ray can still land on a destructible prop's
@@ -789,7 +809,7 @@ namespace UnturnedGodot.Net
             float radius = g.Def?.Radius ?? prof.Radius;
             float zombieDamage = g.Def?.ZombieDamage ?? prof.ZombieDamage;
             float playerDamage = g.Def?.PlayerDamage ?? prof.PlayerDamage;
-            DamageHostBlast?.Invoke(new CombatBlast(g.Pos, radius, g.Def?.VehicleDamage ?? 0f, g.Owner, g.ItemId, tick));
+            DamageHostBlast?.Invoke(new CombatBlast(g.Pos, radius, g.Def?.VehicleDamage ?? 0f, g.Owner, g.ItemId, tick, zombieDamage));
             if (ZombieHost != null)
                 foreach (var ze in _zombies.All)
                 {

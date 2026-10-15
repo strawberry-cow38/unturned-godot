@@ -104,7 +104,7 @@ namespace UnturnedGodot.Net
     public sealed partial class ServerCombat
     {
         internal void TranslateWorld(Vector3 d)
-        { foreach (var b in _bullets) b.Pos += d; foreach (var g in _grenades) g.Pos += d; }
+        { foreach (var b in _bullets) { b.Pos += d; b.Origin += d; } foreach (var g in _grenades) g.Pos += d; }
     }
     public sealed partial class ServerInteractables
     {
