@@ -354,6 +354,16 @@ fn real_body_weapon_uses_upper_clip_preserves_walking_legs_and_mirrors_accepted_
             .distance(Vec3::new(4., 5., 6.))
             < 3.
     );
+    assert!(
+        app.world()
+            .get::<AvatarMuzzle>(root)
+            .unwrap()
+            .1
+            .abs_diff_eq(
+                app.world().get::<GlobalTransform>(copy).unwrap().rotation() * Vec3::Y,
+                1e-5
+            )
+    );
     app.world_mut().entity_mut(magazine).despawn();
     app.update();
     assert!(

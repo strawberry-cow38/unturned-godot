@@ -89,6 +89,10 @@ struct InteractionCandidate {
     open_storage: bool,
 }
 impl InteractionFocus {
+    pub fn has_candidate(&self) -> bool {
+        self.candidate.is_some()
+    }
+
     pub fn offer(
         &mut self,
         distance: f32,

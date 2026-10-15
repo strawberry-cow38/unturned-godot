@@ -420,30 +420,39 @@ fn render(
                 .id(),
         );
     }
-    let dir = eye.rotation() * Vec3::NEG_Z;
     let origin = eye.translation();
-    let viewmodel_emitter = vm
+    let viewmodel_emitter_pose = vm
         .single()
         .ok()
         .zip(rail.iter().next())
-        .map(|(vm, rail)| {
-            (eye.to_matrix() * vm.to_matrix().inverse() * rail.to_matrix())
-                .transform_point3(Vec3::ZERO)
-        })
+        .map(|(vm, rail)| eye.to_matrix() * vm.to_matrix().inverse() * rail.to_matrix());
+    let viewmodel_emitter = viewmodel_emitter_pose
+        .map(|pose| pose.transform_point3(Vec3::ZERO))
         .unwrap_or(origin + eye.rotation() * Vec3::new(0.10, -0.06, -0.35));
     // The source keeps the eye ray in both perspectives; only the visible
     // emitter moves to the third-person body's actual weapon muzzle.
-    let emitter = perspective
+    let body_emitter = perspective
         .filter(|view| !view.first_person)
-        .and_then(|_| body_muzzle.single().ok())
-        .map_or(viewmodel_emitter, |muzzle| muzzle.0);
+        .and_then(|_| body_muzzle.single().ok());
+    let mut emitter = body_emitter.map_or(viewmodel_emitter, |muzzle| muzzle.0);
+    let inspect_ray = state.inspect_time.and_then(|_| {
+        body_emitter
+            .map(|muzzle| (muzzle.0, muzzle.1))
+            .or_else(|| viewmodel_emitter_pose.map(super::inspect::laser_ray))
+    });
+    let (ray_origin, dir, range) = if let Some((from, direction)) = inspect_ray {
+        emitter = from;
+        (from, direction, 6.)
+    } else {
+        (origin, eye.rotation() * Vec3::NEG_Z, 2048.)
+    };
     let hit = laser
         .then(|| {
             context.single().ok().and_then(|ctx| {
                 ctx.cast_ray(
-                    origin,
+                    ray_origin,
                     dir,
-                    2048.,
+                    range,
                     true,
                     QueryFilter::default()
                         .exclude_sensors()
@@ -455,8 +464,11 @@ fn render(
             })
         })
         .flatten();
-    let point = hit.map(|(_, distance)| origin + dir * (distance - 0.05));
-    let pose = point.and_then(|p| beam_pose(emitter, p));
+    let point = hit.map(|(_, distance)| ray_origin + dir * (distance - 0.05));
+    // Inspection keeps a six-metre beam visible even when the gun turns toward
+    // the sky. The surface dot still requires a real contact.
+    let end = point.or_else(|| (laser && inspect_ray.is_some()).then_some(emitter + dir * range));
+    let pose = end.and_then(|p| beam_pose(emitter, p));
     if let Some(beam) = visuals.beam {
         set_pose(
             &mut commands,
@@ -475,7 +487,13 @@ fn render(
         let pose_dot = Transform::from_translation(at)
             .with_rotation(eye.rotation())
             .with_scale(Vec3::splat(dot_size(at.distance(origin), fov)));
-        set_pose(&mut commands, &mut nodes, dot, pose_dot, pose.is_some());
+        set_pose(
+            &mut commands,
+            &mut nodes,
+            dot,
+            pose_dot,
+            pose.is_some() && point.is_some(),
+        );
     }
 }
 fn set_pose(

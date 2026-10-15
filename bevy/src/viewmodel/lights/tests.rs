@@ -295,7 +295,7 @@ fn real_laser_hits_vehicle_surface_skips_enemy_and_hides_when_unfitted() {
     app.insert_resource(perspective);
     let body_emitter = Vec3::new(-0.4, 0.7, -1.2);
     app.world_mut()
-        .spawn(crate::avatar::AvatarMuzzle(body_emitter));
+        .spawn(crate::avatar::AvatarMuzzle(body_emitter, Vec3::X));
     app.update();
     let pose = app.world().get::<Transform>(beam).unwrap();
     assert!(
@@ -308,6 +308,29 @@ fn real_laser_hits_vehicle_surface_skips_enemy_and_hides_when_unfitted() {
             .unwrap()
             .translation
             .abs_diff_eq(Vec3::new(0., 1., -9.85), 0.001)
+    );
+    app.world_mut()
+        .resource_mut::<ViewmodelState>()
+        .inspect_time = Some(3.);
+    app.update();
+    let pose = app.world().get::<Transform>(beam).unwrap();
+    assert!(
+        pose.transform_point(Vec3::NEG_Y * 0.5)
+            .abs_diff_eq(body_emitter, 1e-5)
+    );
+    assert!(
+        pose.transform_point(Vec3::Y * 0.5)
+            .abs_diff_eq(body_emitter + Vec3::X * 6., 1e-5),
+        "inspection must follow the visible body's barrel, not the invisible FP hand pose"
+    );
+    assert_eq!(
+        *app.world().get::<Visibility>(beam).unwrap(),
+        Visibility::Visible
+    );
+    assert_eq!(
+        *app.world().get::<Visibility>(dot).unwrap(),
+        Visibility::Hidden,
+        "an inspection miss keeps the beam but never invents a floating surface dot"
     );
     app.world_mut().resource_mut::<Switches>().tactical_lit = false;
     app.update();

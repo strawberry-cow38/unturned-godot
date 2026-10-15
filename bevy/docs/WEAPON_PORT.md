@@ -112,14 +112,16 @@ the first-person emitter follows the live tactical attachment, and third person
 uses the body weapon's muzzle. A real Rapier regression checks the surface hit,
 enemy exclusion, both emitters and removal cleanup. An actual input-system test
 covers reload gates, key priority, changed fit, inventory, death and session reset.
-The inspect-specific straight beam remains pending the original inspect gesture.
+During the original inspect gesture the beam follows the attachment's model +Y
+axis for six metres, including misses; its surface dot still requires a contact.
 The live journey fitted151 then152 and toggled each accepted tactical state;
 `bevy-tactical-laser-on` and `bevy-tactical-lamp-on` retain their authority and
 switch sidecars. Wear/Unwear then exercised military334, civilian1044 and
 headlamp1199 through the real inventory controls, with the expected N-key mode
-and HUD-preserving overlay. These images were opened. Fixed-night intensity,
-source distance/cone attenuation, handheld light and third-person laser visuals
-remain pending; this daylight journey does not establish audible parity.
+and HUD-preserving overlay. These images were opened. Fixed-night and source
+distance/cone attenuation checks are recorded in `HDR_NIGHTVISION_PORT.md`.
+Handheld light and third-person laser visuals remain pending; these journeys
+do not establish audible parity.
 
 `viewmodel/lighting.rs` now uses the source final `MatchWorldLight` mapping: one
 camera-space sun, two complementary fills, world ambient color, and the original
@@ -129,16 +131,51 @@ changed sun direction, overhead sun, source floors and render-layer isolation.
 The fresh `bevy-gun-source-lighting` capture was opened with the world reviewer;
 source dynamic world-light mirrors remain separate work.
 
+## Weapon inspection integration
+
+F reaches inspection only when no world interaction claims it and the player is
+outside a vehicle. Guns and melee use their own positive-length original Inspect
+clip. SKS has the source's explicit Zubeknakov donor; other missing clips and
+non-weapon holdables do nothing. Safety lowering allows inspection, while actual
+sprint movement blocks or cancels it. Aim and the attachment menu replace the
+gesture; cancelling snaps to the ready hold instead of replaying equip. The click
+that cancels a gun inspection cannot also fire. Automatic fire may resume on the
+next held-input frame. Accepted reload/melee actions replace the gesture, and
+world-load/death cleanup prevents a stale inspection from surviving the session.
+
+The body uses the same authored Inspect clip and the gun follows its animated
+hand. The tactical beam follows the rotating model rather than converging toward
+the eye ray. Six native checks exercise the real rig clips, source donor limits,
+focus priority, safety/actual-sprint distinction, cancellation/ADS/menu transitions,
+reload/session gates, timer expiry and model-space laser direction. Live visual
+checks used the actual owned AR-15, fitted 8x optic/laser and Military Knife in
+PEI. Opened captures `bevy-gun-inspect-active`, `bevy-gun-inspect-cancel`,
+`bevy-gun-inspect-laser`, `bevy-gun-inspect-to-ads` and
+`bevy-melee-inspect-active` show the original authored poses and transitions;
+sidecars verify accepted equipment, inspection state and unchanged 30-round
+ammunition on the cancelling click. The first four received peer visual review.
+
+Third-person inspection exposed a floating beam from the invisible first-person
+weapon pose. The original inspect branch unconditionally selected that pose too.
+The native adapter now uses the visible body's muzzle and model +Y barrel axis
+in third person. The existing real-body and Rapier laser tests guard the actual
+hook direction, six-metre miss beam, hit-only dot and normal eye-ray behavior.
+The initial `bevy-gun-inspect-third-person` capture records the defect. Opened
+`bevy-gun-inspect-third-person-fixed` and `bevy-gun-inspect-third-person-side`
+captures no longer show that floating beam. The thin beam is not clearly resolved
+against the daylight scene, so its full third-person visual alignment remains
+unconfirmed; the actual muzzle/beam geometry is covered by the regressions above.
+
 ## Remaining source behavior
 
 The following are distinct tasks, not completed by the checkpoints above:
 
-- Live verification of scope glass, tactical laser and flashlight presentation;
+- Remaining optic variants, handheld and third-person light presentation;
   detachable-part animations and special gun furniture.
 - Remote player gunfire presentation. Local accepted cosmetic tracers and rockets
   are documented in `BULLET_PORT.md`; authority collision/damage remains separate.
 - Remaining source trigger gates and special actions (sprint/air delay, minigun
-  spin, inspect/unload and mounted weapons); empty-trigger UI feedback.
+  spin, unload and mounted weapons); empty-trigger UI feedback.
 - Dynamic world-light mirrors in the first-person viewport; remaining camera
   modes, lean and complete third-person weapon effects. Local body/clothing and
   head-look work is tracked in `AVATAR_PORT.md`, HDR in `HDR_NIGHTVISION_PORT.md`.

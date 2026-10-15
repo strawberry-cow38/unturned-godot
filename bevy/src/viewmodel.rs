@@ -16,7 +16,8 @@ use std::{collections::HashMap, fs, path::Path};
 
 mod attachments;
 mod driving;
-mod lighting;
+mod inspect;
+pub(crate) mod lighting;
 pub(crate) mod lights;
 mod motion;
 mod parts;
@@ -173,6 +174,7 @@ struct ViewmodelState {
     attaching: bool,
     tool_active: bool,
     tool_random: u64,
+    inspect_time: Option<f32>,
 }
 #[derive(Resource, Default)]
 pub struct ViewmodelStatus {
@@ -184,6 +186,9 @@ pub struct ViewmodelStatus {
     pub scope_sway: Vec2,
     pub look_delta: Vec2,
     pub muzzle_offset: Option<Vec3>,
+    pub inspecting: bool,
+    inspect_gun: bool,
+    cancel_inspect: bool,
     tool: tools::Kind,
     tool_active: bool,
 }
@@ -207,6 +212,15 @@ pub struct AttachmentAnchors(pub HashMap<String, Vec2>);
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProjectAttachmentHooks;
 impl ViewmodelStatus {
+    /// Original StartFire consumes the click that cancels a gun inspection.
+    pub fn cancel_inspect_from_fire(&mut self) -> bool {
+        if self.inspecting && self.inspect_gun {
+            self.cancel_inspect = true;
+            true
+        } else {
+            false
+        }
+    }
     pub fn look_sensitivity(&self) -> f32 {
         scopes::sensitivity(self.aim_alpha, self.scope_zoom)
     }
@@ -215,6 +229,7 @@ pub struct ViewmodelPlugin;
 impl Plugin for ViewmodelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AttachmentAnchors>()
+            .init_resource::<crate::entities::InteractionFocus>()
             .init_resource::<ViewmodelState>()
             .init_resource::<ViewmodelStatus>()
             .init_resource::<attachments::Mounted>()
@@ -231,6 +246,7 @@ impl Plugin for ViewmodelPlugin {
                     build_viewmodel,
                     attach_held_mesh,
                     attachments::sync,
+                    inspect::reset_after_session,
                     animate_viewmodel,
                 )
                     .chain()
@@ -432,6 +448,7 @@ fn build_viewmodel(
             state.driving = false;
             state.seated = false;
             state.tool_active = false;
+            state.inspect_time = None;
             state.motion = default();
             state.use_clip = consumable
                 .as_ref()
@@ -646,6 +663,7 @@ fn animate_viewmodel(
     ui: Res<UiState>,
     recoil: Res<crate::recoil::Recoil>,
     occupancy: Res<crate::vehicle::Occupancy>,
+    focus: Res<crate::entities::InteractionFocus>,
 ) {
     status.scope_zoom = state.scope_zoom;
     let Some(root) = state.arms else {
@@ -668,6 +686,7 @@ fn animate_viewmodel(
         state.sprinting = false;
         state.hammer_delay = None;
         state.tool_active = false;
+        state.inspect_time = None;
         state.position_offset = Vec3::ZERO;
         state.rotation_offset = Vec3::ZERO;
         rig.additive = None;
@@ -692,10 +711,20 @@ fn animate_viewmodel(
     state.shot_hold = (state.shot_hold - dt).max(0.);
     let held = state.held.unwrap_or(0);
     let item = catalog.items.get(&held);
+    if std::mem::take(&mut status.cancel_inspect) && state.inspect_time.take().is_some() {
+        inspect::ready_hold(&mut rig, &state.hold_clip);
+    }
+    if let Some(remaining) = &mut state.inspect_time {
+        *remaining -= dt;
+        if *remaining <= 0. {
+            state.inspect_time = None;
+        }
+    }
     for event in hand_events.read() {
         use crate::use_items::HandEvent;
         match event {
             HandEvent::Start(id) if *id == held => {
+                state.inspect_time = None;
                 let clip = state.use_clip.clone();
                 play_once(&mut rig, &clip, 1.);
             }
@@ -718,6 +747,7 @@ fn animate_viewmodel(
     {
         match event.kind.as_str() {
             "melee" if !item.is_some_and(|i| i.melee["repeated"].as_bool() == Some(true)) => {
+                state.inspect_time = None;
                 let strong = event.data["strong"].as_bool().unwrap_or(false);
                 let clip = if held == 0 {
                     if strong { "Punch_Right" } else { "Punch_Left" }.into()
@@ -732,6 +762,7 @@ fn animate_viewmodel(
                 play_once(&mut rig, &clip, 1.);
             }
             "reload" => {
+                state.inspect_time = None;
                 let clip = own_clip(&rig, &state.asset, "_Reload", "Gun_Reload");
                 play_once(
                     &mut rig,
@@ -783,6 +814,7 @@ fn animate_viewmodel(
     let attaching = ui.screen == Screen::Attachments && state.is_gun;
     if attaching != state.attaching {
         if attaching {
+            state.inspect_time = None;
             let clip = own_clip(&rig, &state.asset, "_AttachStart", "");
             if !clip.is_empty() {
                 play_once(&mut rig, &clip, 1.);
@@ -809,6 +841,37 @@ fn animate_viewmodel(
         ]
         .iter()
         .any(|a| settings.pressed(*a, &keys, &mouse));
+    let sprinting_now = stance == "sprint" && moving;
+    let alive = snapshot.0["connected"].as_bool().unwrap_or(false)
+        && snapshot.0["player"]["alive"].as_bool().unwrap_or(true);
+    if state.inspect_time.is_some()
+        && (sprinting_now || !alive || matches!(stance, "swim" | "climb"))
+    {
+        state.inspect_time = None;
+        inspect::ready_hold(&mut rig, &state.hold_clip);
+    }
+    let wants_inspect = alive
+        && !ui.captures_input()
+        && occupancy.seat.is_none()
+        && !focus.has_candidate()
+        && settings.just_pressed(GameAction::Interact, &keys, &mouse);
+    let started_inspect = wants_inspect
+        && !reloading
+        && !sprinting_now
+        && !attaching
+        && !matches!(stance, "swim" | "climb")
+        && state.inspect_time.is_none()
+        && inspect::clip(
+            &rig,
+            &state.asset,
+            state.is_gun,
+            item.is_some_and(|i| !i.melee.is_null()),
+        )
+        .is_some_and(|clip| {
+            state.inspect_time = Some(rig.data.anims[&clip].length);
+            play_once(&mut rig, &clip, 1.);
+            true
+        });
     status.held = held;
     status.ready = !hand_use.busy()
         && (held == 0
@@ -841,6 +904,7 @@ fn animate_viewmodel(
         state.motion.shake.position += shake;
     }
     status.aiming = state.is_gun
+        && !started_inspect
         && status.ready
         && !ui.captures_input()
         && !settings.pressed(GameAction::FreeLook, &keys, &mouse)
@@ -849,6 +913,11 @@ fn animate_viewmodel(
         && !matches!(stance, "swim" | "climb" | "driving")
         && !(stance == "sprint" && moving)
         && settings.pressed(GameAction::Aim, &keys, &mouse);
+    if status.aiming && state.inspect_time.take().is_some() {
+        inspect::ready_hold(&mut rig, &state.hold_clip);
+    }
+    status.inspecting = state.inspect_time.is_some();
+    status.inspect_gun = state.is_gun;
     state.aim_progress =
         (state.aim_progress + if status.aiming { dt / 0.25 } else { -dt / 0.25 }).clamp(0., 1.);
     status.aim_alpha = aim_ease(state.aim_progress);
@@ -862,12 +931,19 @@ fn animate_viewmodel(
         && !status.aiming
         && !reloading
         && !hammering
+        && !status.inspecting
         && state.shot_hold <= 0.
         && ((stance == "sprint" && moving) || snapshot.0["weapon"]["firemode"] == 0);
     if sprint && !state.sprinting {
         let clip = own_clip(&rig, &state.asset, "_Sprint_Start", "");
         play_once(&mut rig, &clip, 1.);
-    } else if !sprint && state.sprinting && !reloading && !hammering && !attaching {
+    } else if !sprint
+        && state.sprinting
+        && !reloading
+        && !hammering
+        && !attaching
+        && !status.inspecting
+    {
         let clip = state.hold_clip.clone();
         play_once(&mut rig, &clip, 1.);
         rig.time = rig.data.anims.get(&clip).map_or(0., |c| c.length);

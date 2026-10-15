@@ -543,6 +543,12 @@ fn read_input(
         held(GameAction::FreeLook) && occupancy.as_ref().is_none_or(|o| o.seat.is_none());
     input.fire = held(GameAction::Fire) && !input.free_look;
     input.fire_pressed = !input.free_look && (input.fire_pressed || pressed(GameAction::Fire));
+    if !input.free_look && pressed(GameAction::Fire) && viewmodel.cancel_inspect_from_fire() {
+        // Keep the cancelling click out of every fixed tick before the next
+        // input frame. Auto fire may resume on the following held-input frame.
+        input.fire = false;
+        input.fire_pressed = false;
+    }
     input.secondary_pressed =
         !input.free_look && (input.secondary_pressed || pressed(GameAction::Aim));
     input.selector |= pressed(GameAction::Firemode);
@@ -775,13 +781,18 @@ fn simulate(
     }
     trigger.acknowledge(&snapshot.0);
     let item = catalog.items.get(&input.held_item_id);
-    let buttons = crate::weapons::Buttons {
+    let mut buttons = crate::weapons::Buttons {
         fire: input.fire,
         press: std::mem::take(&mut input.fire_pressed),
         strong: std::mem::take(&mut input.secondary_pressed),
         reload: std::mem::take(&mut input.reload),
         selector: std::mem::take(&mut input.selector),
     };
+    if viewmodel.inspecting && item.is_some_and(|item| !item.gun.is_null()) {
+        buttons.fire = false;
+        buttons.press = false;
+        trigger.cancel();
+    }
     let allowed = !ui.captures_input()
         && !input.free_look
         && !matches!(body.stance.as_str(), "swim" | "climb");

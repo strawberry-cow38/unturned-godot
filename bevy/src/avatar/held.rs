@@ -24,9 +24,10 @@ pub(super) struct MuzzlePoint {
 pub struct AvatarMuzzleUpdate;
 pub(super) fn muzzle(mut commands: Commands, points: Query<(&MuzzlePoint, &GlobalTransform)>) {
     for (point, global) in &points {
-        commands
-            .entity(point.owner)
-            .insert(AvatarMuzzle(global.transform_point(point.point)));
+        commands.entity(point.owner).insert(AvatarMuzzle(
+            global.transform_point(point.point),
+            global.rotation() * Vec3::Y,
+        ));
     }
 }
 const LOWER: [&str; 7] = [
@@ -52,6 +53,9 @@ fn clip<'a>(rig: &'a RigPlayback, asset: &str, suffix: &str, fallback: &'a str) 
 }
 fn overlay(rig: &RigPlayback, asset: &str, gun: bool, held: u16) -> Option<(String, f32)> {
     let source = &rig.clip;
+    if held != 0 && source.ends_with("_Inspect") {
+        return Some((source.clone(), rig.time));
+    }
     if held == 0 {
         return (source.starts_with("Punch_")
             && rig

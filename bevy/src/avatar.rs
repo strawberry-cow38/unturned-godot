@@ -79,7 +79,7 @@ struct AvatarState {
 /// Third-person weapon attachments populate this; light and shot presentation
 /// can share the same actual hook rather than guessing a muzzle offset.
 #[derive(Component)]
-pub struct AvatarMuzzle(pub Vec3);
+pub struct AvatarMuzzle(pub Vec3, pub Vec3);
 
 fn controls(
     time: Res<Time>,
