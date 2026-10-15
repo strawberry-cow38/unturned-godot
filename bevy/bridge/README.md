@@ -485,10 +485,15 @@ currently selected weapon. Neither addition changes the network packet format.
 
 `state.bullets` is the original client-only cosmetic flight, separate from the
 server's damage flight. Accepted `fire` intents can include `args.visual` with
-`aimAlpha`, optional `patternShot`, and optional world-space `muzzleAnchor`. The
+clamped `aimAlpha` and optional world-space `muzzleAnchor`. The
 bridge joins that context to the actual accepted combat sequence, captures the
 shot's original gun/round/condition before wear or bottle break, and extracts the
 source cone/pattern scatter. Rejected or replayed requests never launch visuals.
+One source sampling pass supplies both cosmetic and authoritative pellet
+directions. The server profile retains count/speed/damage and the validated
+command supplies the authoritative origin. Burst count advances only on accepted
+shots and resets at the original0.35s gap; legacy `visual.patternShot` hints are
+tolerated but ignored. Native never supplies sampled directions or hit claims.
 The source per-axis pattern branch overwrites the initial cone direction; this
 preserves the executed source despite its additive wording.
 

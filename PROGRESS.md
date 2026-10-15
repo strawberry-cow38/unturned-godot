@@ -1077,6 +1077,8 @@ The trusted host now applies original thin-surface/water continuation after dire
 
 Accepted impact facts now carry the actual contact normal, water/thin classification, shot/pellet identity and tick on the existing retained event. This preserves one impact per wire fact, including coincident pellets, and lets native water effects avoid the solid-only collision fallback. Four real-host regressions cover water then solid, shotgun identities, animal capsule normals and rebase draining; all 114 bridge tests pass in the frozen private impact build. The old executable fails the water-metadata regression. Native splash consumption remains a separate rendering task.
 
+The source pellet directions are now sampled once after acceptance and used by both visible flight and the authoritative core. The opt-in core seam preserves defaults and retains server profile control of pellet count/speed/damage plus the accepted command origin; invalid/missing samples fall back to the command axis. Burst count is derived from accepted shots and the original 0.35s reset, so the old cosmetic pattern hint cannot reset damage scatter. The exact executed cone/per-axis source behavior is retained, including its discrepancy with the stale additive comment. Three core cases and three real-host journeys cover acceptance/normalization/defaults, actual per-pellet contacts, off-axis target damage and pattern lifecycle; the old executable fails the off-axis target regression. All 117 bridge and 645 network tests pass in a frozen private build. This explicitly restores direct-source gameplay omitted by the original unified center-aim wire path; see `bevy/docs/BULLET_PORT.md`.
+
 
 ### Bevy source light falloff and fixed-night verification — 2026-10-15
 

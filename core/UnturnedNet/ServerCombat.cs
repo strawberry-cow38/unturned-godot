@@ -347,6 +347,10 @@ namespace UnturnedGodot.Net
         /// No client hit claims or wire changes; null preserves existing host behavior.</summary>
         public Action<CombatBulletImpact> BulletImpact;
         public Func<CombatBulletImpact, CombatBulletContinuation?> ContinueBullet;
+        /// <summary>Optional trusted-host source scatter after shot acceptance. The profile
+        /// still owns pellet count and muzzle speed; null/missing/invalid directions use the
+        /// accepted command axis. This never accepts client-reported hits or velocities.</summary>
+        public Func<ushort, FireCommand, long, IReadOnlyList<Vector3>> ResolveBulletDirections;
         public Action<ushort, bool, long> MeleeAccepted;
         public Func<ushort, long, bool> TryBeginReload;
         public Func<ushort, long, int?> CompleteReload;
@@ -423,11 +427,21 @@ namespace UnturnedGodot.Net
             object hostContext = CaptureBulletContext?.Invoke(sender);
             ShotAccepted?.Invoke(sender, tick);
             ShotCommandAccepted?.Invoke(sender, cmd, tick);
+            var directions = ResolveBulletDirections?.Invoke(sender, cmd, tick);
             for (int i = 0; i < Math.Max(1, gun.Pellets); i++)
+            {
+                var pelletDir = dir;
+                if (directions != null && i < directions.Count)
+                {
+                    var sampled = directions[i];
+                    float length = sampled.magnitude;
+                    if (length > 1e-6f && !float.IsNaN(length) && !float.IsInfinity(length))
+                        pelletDir = sampled / length;
+                }
                 _bullets.Add(new Bullet
                 {
                     Pos = cmd.Origin, Origin = cmd.Origin,
-                    Vel = dir * gun.MuzzleVelocity,
+                    Vel = pelletDir * gun.MuzzleVelocity,
                     StepsLeft = Math.Max(1, gun.BallisticSteps),
                     Gravity = -9.81f * gun.GravityMultiplier,
                     Shooter = sender,
@@ -437,6 +451,7 @@ namespace UnturnedGodot.Net
                     AnimalDamage = gun.AnimalDamage,
                     HostContext = hostContext, Pellet = i,
                 });
+            }
             // EVERY OTHER CLIENT HEARS AND SEES THIS. Broadcast after the shot is ACCEPTED, so a rejected
             // trigger pull (reloading, dry, rate-limited, out of range) cannot make a phantom crack across the
             // map. Once per trigger pull, not once per pellet -- a shotgun is one report and one muzzle flash.

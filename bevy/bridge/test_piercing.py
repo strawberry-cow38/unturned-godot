@@ -62,8 +62,11 @@ class PiercingTests(unittest.TestCase):
         self.assertEqual([0],state['destructibles']['dead'],'source melee mask excludes the splash slab')
 
     def test_water_boundary_tangent_waits_until_gravity_makes_an_actual_entry(self):
+        # Actual crossbow ADS spread is below the original 0.0001rad sampling
+        # threshold, so this remains an exactly tangent shot after scatter ports.
+        self.configure(gun=dict(Id=346,GunAmmo=1,GunMagId=347))
         self.call('worldCosmeticGeometry',waterBoxes=[dict(center=[0,-.1,0],size=[100,.2,100])])
-        self.call('action',name='fire',args=dict(origin=[0,0,0],dir=[0,0,-1]));state=self.pump(12)
+        self.call('action',name='fire',args=dict(origin=[0,0,0],dir=[0,0,-1],visual=dict(aimAlpha=1)));state=self.pump(12)
         fire=next(e['data'] for e in state['events'] if e['kind']=='fire')
         contact=next(e for e in state['events'] if e['kind']=='bulletPierced')
         self.assertGreater(contact['tick'],fire['acceptedTick'],'parallel boundary travel has no surface normal or t=0 contact')

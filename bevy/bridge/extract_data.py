@@ -358,7 +358,7 @@ rarity=rarity[:rarity.index('        // ItemTool.getQualityColor')]+'}}'
 rarity=rarity.replace('Godot.Colors.White','new Godot.Color(1,1,1)')
 (out / 'ItemRarity.g.cs').write_text(rarity)
 
-# Cosmetic-only flight shares the real source integration and per-shot scatter;
+# Accepted source directions feed both the visual and authoritative flight;
 # no damage path is generated here. Source currently replaces the symmetric cone
 # with per-axis scatter when a pattern is active, despite the comment above it.
 start=player.index('            float spread = Gun != null && Gun.SpreadAngleDegrees > 0f')

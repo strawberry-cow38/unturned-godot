@@ -27,7 +27,7 @@ class CosmeticBulletTests(unittest.TestCase):
         self.assertEqual([],self.pump()['bullets'])
         state,seq=self.launch(visual=dict(aimAlpha=1,patternShot=4,muzzleAnchor=[.2,1.4,-.6]))
         launch=next(e['data'] for e in state['events'] if e['kind']=='bulletLaunched')
-        self.assertEqual(seq,launch['sequence']);self.assertEqual(1,launch['aimAlpha']);self.assertEqual(4,launch['patternShot'])
+        self.assertEqual(seq,launch['sequence']);self.assertEqual(1,launch['aimAlpha']);self.assertEqual(1,launch['patternShot'],'server accepted shots own the pattern counter')
         self.assertEqual([.2,1.4,-.6],launch['muzzleAnchor']);self.assertEqual(1,len(state['bullets']))
         first=state['bullets'][0];self.assertEqual(first['origin'],first['position'],'source advances existing bullets before accepting this tick’s shot')
         second=self.call('tick')['state']['bullets'][0]

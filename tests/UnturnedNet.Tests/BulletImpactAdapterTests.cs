@@ -103,4 +103,49 @@ public class BulletImpactAdapterTests
             Assert.That(combat.Diag.BulletsExpired, Is.EqualTo(1));
         }
     }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Optional_source_directions_run_only_after_acceptance_and_keep_profile_speed_and_count(bool enabled)
+    {
+        var h = new Harness(); var combat = h.Server.Combat;
+        combat.DefaultGun.Pellets = 2; combat.DefaultGun.MuzzleVelocity = 100;
+        combat.DefaultGun.GravityMultiplier = 0;
+        var order = new List<string>(); var contacts = new List<CombatBulletImpact>();
+        combat.ShotCommandAccepted = (_, _, _) => order.Add("accepted");
+        if (enabled) combat.ResolveBulletDirections = (owner, command, tick) => {
+            order.Add("sampled");
+            Assert.That(owner, Is.EqualTo(h.Client.PlayerId));
+            return new[] { new Vector3(-3, 0, -4), new Vector3(3, 0, -4), Vector3.up };
+        };
+        combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => {
+            hit = new(to, normal: Vector3.up); return true;
+        };
+        combat.BulletImpact = contacts.Add;
+        h.Client.SendFire(new(100, 1.5f, 0), new(0, 0, -1)); h.Step(5);
+        Assert.That(order, Is.Empty, "rejected requests must not advance the source RNG or pattern");
+        h.Client.SendFire(new(0, 1.5f, 0), new(0, 0, -1)); h.Step(5);
+        Assert.That(order, Is.EqualTo(enabled ? new[] { "accepted", "sampled" } : new[] { "accepted" }));
+        Assert.That(contacts, Has.Count.EqualTo(2), "an extra host sample cannot mint another pellet");
+        foreach (var contact in contacts)
+        {
+            Assert.That(contact.Velocity.magnitude, Is.EqualTo(100).Within(.001));
+            Assert.That(contact.Velocity.x, Is.EqualTo(enabled ? (contact.Pellet == 0 ? -60 : 60) : 0).Within(.001));
+        }
+    }
+
+    [Test]
+    public void Missing_or_nonfinite_host_directions_fall_back_to_accepted_command_axis()
+    {
+        var h = new Harness(); var combat = h.Server.Combat;
+        combat.DefaultGun.Pellets = 4; combat.DefaultGun.GravityMultiplier = 0;
+        combat.ResolveBulletDirections = (_, _, _) => new[] {
+            Vector3.zero, new Vector3(float.NaN, 0, -1), new Vector3(float.PositiveInfinity, 0, -1)
+        };
+        var contacts = new List<CombatBulletImpact>(); combat.BulletImpact = contacts.Add;
+        combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => { hit = new(to); return true; };
+        h.Client.SendFire(new(0, 1.5f, 0), new(0, 0, -1)); h.Step(8);
+        Assert.That(contacts, Has.Count.EqualTo(4));
+        foreach (var contact in contacts) Assert.That(contact.Velocity, Is.EqualTo(new Vector3(0, 0, -500)));
+    }
 }

@@ -8,6 +8,24 @@ Actual local aim/origin and projected muzzle context are retained before wire
 packing, then joined to the accepted command sequence. Rejected shots create no
 visual projectile. Pending and live coordinates cross the origin barrier.
 
+The original source scatter is now sampled once after acceptance and supplied
+to both visual flight and `ServerCombat.ResolveBulletDirections`. That core
+adapter is null by default: existing hosts retain their center-aim behavior.
+The Bevy host restores the original direct-path pellet behavior through this
+explicit adapter; the source unified `NetFire` path previously sent center aim
+and its server did not scatter. Server profile data still owns pellet count,
+muzzle speed, range and damage. Accepted packed commands own authority origins,
+while local visual origins retain pre-wire precision. The optional callback
+cannot add pellets or scale muzzle speed; invalid/missing samples use the
+accepted command axis.
+
+Burst count is computed from accepted host shots with the original0.35s reset.
+The early cosmetic `visual.patternShot` hint no longer changes it. Source ADS
+alpha remains clamped owner input, and shot-time skills/condition scale the
+sample. No JSON input carries sampled directions or hit claims. The extracted
+source currently replaces its cone sample when the per-axis pattern branch is
+active, despite the stale additive comment; that executed behavior is retained.
+
 `src/bullets.rs` ports `PlayerController.UpdateTracer`: two crossed strips,
 16 sections, 10m maximum length, head fraction0.55, caliber width/color, original
 round nose/pointed tail, suppression and the 0.1m visibility threshold. The tail
@@ -42,6 +60,16 @@ rocket identity, thin/water piercing, expiry/save and atomic origin shifts.
 The current complete native suite passes242 tests, including the concurrent
 scope, weather and avatar compile boundary.
 
+The later accepted-scatter checkpoint passes all117 bridge integration tests
+and645 network tests. Three core cases prove the adapter is accepted-only,
+default-compatible, normalized to profile speed/count and robust to missing or
+nonfinite samples. Three actual-host journeys prove every shotgun impact follows
+its published sample, an off-axis pellet destroys a target the former center ray
+missed, and rejected requests/legacy visual hints cannot advance/reset the burst
+counter. The pre-adapter executable fails the off-axis damage regression. The
+water-tangent regression uses the actual ADS crossbow's below-threshold spread
+so its tangent remains exact after shared scatter was enabled.
+
 A real PEI input journey gave/equipped the rifle and RPG through console and
 inventory UI, then fired using the mouse. Inspected captures:
 
@@ -70,6 +98,6 @@ world. Original direct-path rocket splash, recoverable ammunition and piercing
 now have authoritative host adapters; see [WARHEAD_PORT](WARHEAD_PORT.md). Native
 blast presentation and frozen projectile poses still need their accepted-fact
 consumers. Remote multiplayer cosmetic launches need equivalent local visual
-context when a real external client is integrated. Shotgun/cone scatter is still
-cosmetic: the existing server launches its pellets along the accepted center aim,
-so shared authoritative scatter remains a distinct fidelity task.
+context when a real external client is integrated. The optional authoritative
+scatter adapter now closes the earlier center-ray/pellet mismatch for this host;
+external clients still need their accepted ADS input integrated into that seam.

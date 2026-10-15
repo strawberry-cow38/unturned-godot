@@ -8,11 +8,12 @@ using static UnturnedBevy.BridgeHost;
 
 namespace UnturnedBevy;
 
-/// <summary>The source client-only bullet picture. It can retire/pierce a streak,
-/// but never damages anything or emits an authoritative impact/hitmarker.</summary>
+/// <summary>The source bullet picture and its single accepted scatter sample.
+/// It can retire/pierce a streak, but never damages or emits an impact/hitmarker;
+/// ServerCombat consumes the same directions and owns all gameplay contacts.</summary>
 public sealed partial class CosmeticBulletServices
 {
-    public sealed record Context(float AimAlpha,int? PatternShot,UVector? MuzzleAnchor,UVector? Origin=null,UVector? Direction=null);
+    public sealed record Context(float AimAlpha,UVector? MuzzleAnchor,UVector? Origin=null,UVector? Direction=null);
     sealed record Pending(Context Context,long Until);
     sealed class Bullet
     {
@@ -31,6 +32,7 @@ public sealed partial class CosmeticBulletServices
     readonly WorldGeometry _geometry;
     readonly Action<string,object> _emit;
     readonly Dictionary<(ushort,ushort),Pending> _contexts=new();
+    readonly Dictionary<(ushort,ushort),UVector[]> _acceptedDirections=new();
     readonly Dictionary<ushort,(int Shot,long Tick)> _patterns=new();
     readonly List<Bullet> _bullets=new();
     readonly List<WaterBox> _water=new();
@@ -38,7 +40,11 @@ public sealed partial class CosmeticBulletServices
     static long _nextBullet,_nextShot;
     long Tick=>_server.Session.CurrentTick;
     public CosmeticBulletServices(NetWorldServer server,WorldGeometry geometry,WeaponServices weapons,Action<string,object> emit)
-    {_server=server;_geometry=geometry;_emit=emit;weapons.CosmeticLaunch=Launch;}
+    {
+        _server=server;_geometry=geometry;_emit=emit;weapons.CosmeticLaunch=Launch;
+        server.Combat.ResolveBulletDirections=(owner,command,tick)=>
+            _acceptedDirections.Remove((owner,command.Seq),out var directions)?directions:null;
+    }
     static Vector3 G(UVector p)=>new(p.x,p.y,p.z);
     static UVector U(Vector3 p)=>new(p.X,p.Y,p.Z);
     static (Vector3 Right,Vector3 Up) LookAxes(Vector3 aim)
@@ -50,11 +56,11 @@ public sealed partial class CosmeticBulletServices
     }
     public static Context ReadContext(JsonElement args)
     {
-        if(args.ValueKind!=JsonValueKind.Object)return new(0,null,null);
+        if(args.ValueKind!=JsonValueKind.Object)return new(0,null);
         UVector? origin=args.TryGetProperty("origin",out _)?Vec(args,"origin"):null;
         UVector? direction=args.TryGetProperty("dir",out _)?Vec(args,"dir"):null;
-        if(!args.TryGetProperty("visual",out var v)||v.ValueKind!=JsonValueKind.Object)return new(0,null,null,origin,direction);
-        return new(Math.Clamp(Float(v,"aimAlpha"),0,1),v.TryGetProperty("patternShot",out _)?Math.Clamp(Int(v,"patternShot"),0,65535):null,
+        if(!args.TryGetProperty("visual",out var v)||v.ValueKind!=JsonValueKind.Object)return new(0,null,origin,direction);
+        return new(Math.Clamp(Float(v,"aimAlpha"),0,1),
             v.TryGetProperty("muzzleAnchor",out _)?Vec(v,"muzzleAnchor"):null,origin,direction);
     }
     public void Queue(ushort owner,ushort sequence,Context context)
@@ -73,21 +79,28 @@ public sealed partial class CosmeticBulletServices
     }
     void Launch(ushort owner,FireCommand command,WeaponServices.ShotFlight flight)
     {
-        var context=_contexts.Remove((owner,command.Seq),out var queued)?queued.Context:new Context(0,null,null);
+        var context=_contexts.Remove((owner,command.Seq),out var queued)?queued.Context:new Context(0,null);
         var facts=flight.Facts;var gun=flight.Gun;
         var pattern=_patterns.GetValueOrDefault(owner);
         if((facts.Tick-pattern.Tick)*SimClock.FixedDelta>=CosmeticRules.PatternResetSeconds)pattern.Shot=0;
         if(gun.PatternClimb>0){pattern.Shot++;pattern.Tick=facts.Tick;_patterns[owner]=pattern;}
-        int patternShot=context.PatternShot??pattern.Shot;
+        // Burst count now affects damage directions. Only accepted server shots
+        // advance it; the old optional visual.patternShot hint is ignored.
+        int patternShot=pattern.Shot;
         long shotId=Interlocked.Increment(ref _nextShot);
         var aim=G(context.Direction??command.Dir).Normalized();var origin=context.Origin??command.Origin;int pellet=0;
         var color=GunDef.TracerColor(gun.CaliberName);float[] tint=[color.r,color.g,color.b];
         var launched=new List<object>();
-        foreach(var direction in Directions(gun,aim,context.AimAlpha,facts.RecoilMultiplier,patternShot,Math.Max(1,flight.Pellets)))
+        // Sample the original cone/per-axis algorithm ONCE. Core consumes the
+        // same immutable directions immediately after this accepted callback;
+        // it still chooses count, origin, speed, range, damage and collision.
+        var directions=Directions(gun,aim,context.AimAlpha,facts.RecoilMultiplier,patternShot,Math.Max(1,flight.Pellets)).Select(U).ToArray();
+        _acceptedDirections[(owner,command.Seq)]=directions;
+        foreach(var direction in directions)
         {
             var bullet=new Bullet{Id=Interlocked.Increment(ref _nextBullet),ShotId=shotId,LaunchTick=facts.Tick,
                 Owner=owner,Sequence=command.Seq,ItemId=facts.ItemId,Pellet=pellet++,Gun=facts.Gun,
-                Position=origin,Origin=origin,Velocity=U(direction)*facts.MuzzleVelocity,
+                Position=origin,Origin=origin,Velocity=direction*facts.MuzzleVelocity,
                 Anchor=context.MuzzleAnchor,StepsLeft=Math.Max(1,flight.Steps),Gravity=flight.Gravity,
                 Width=CosmeticRules.TracerBaseW*GunDef.TracerScale(gun.CaliberName),Color=tint,
                 Silenced=facts.Silenced,Rocket=gun.Action=="Rocket",BlastRadius=gun.BlastRadius};

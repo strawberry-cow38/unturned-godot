@@ -33,7 +33,7 @@ class ImpactFactsTests(unittest.TestCase):
             self.assertEqual(state['playerId'],fact['playerId'])
             self.assertLessEqual(fact['acceptedTick'],event['tick'])
 
-    def test_same_position_shotgun_pellets_match_ordered_contacts_without_spatial_dedup(self):
+    def test_shotgun_pellets_match_ordered_contacts_without_spatial_dedup(self):
         self.configure(gun=dict(Id=112,GunAmmo=6,GunMagId=113))
         self.call('worldGeometry',meshes=[dict(thin=True,vertices=[[-100,-100,-5],[100,-100,-5],[0,100,-5]])])
         sequence=self.call('action',name='fire',args=dict(origin=[0,1.5,0],dir=[0,0,-1]))['result']['value']
@@ -42,7 +42,6 @@ class ImpactFactsTests(unittest.TestCase):
         contacts=[e['data'] for e in state['events'] if e['kind']=='impact']
         self.assertGreater(launch['pelletCount'],1)
         self.assertEqual(list(range(launch['pelletCount'])),sorted(c['pellet'] for c in contacts))
-        self.assertEqual(1,len({tuple(c['pos'].values()) for c in contacts}),'actual authority pellets share the accepted command ray')
         for fact in contacts:
             self.assertEqual(sequence,fact['sequence']);self.assertTrue(fact['thin']);self.assertFalse(fact['water'])
             self.assertEqual([0,0,1],fact['normal'])
@@ -69,7 +68,9 @@ class ImpactFactsTests(unittest.TestCase):
         state=self.call('rebase',shift=[1024,0,0],expectedEpoch=0)['state']
         impacts=[e for e in state['events'] if e['kind']=='impact']
         self.assertEqual(1,len(impacts));fact=impacts[0]['data']
-        self.assertAlmostEqual(1,fact['pos']['x'],places=3);self.assertEqual([0,0,1],fact['normal'])
+        launch=next(e['data'] for e in state['events'] if e['kind']=='bulletLaunched')
+        velocity=launch['bullets'][0]['velocity'];expected_x=1+velocity[0]*(-5/velocity[2])
+        self.assertAlmostEqual(expected_x,fact['pos']['x'],delta=.018);self.assertEqual([0,0,1],fact['normal'])
         self.assertEqual(before['tick'],state['tick'])
         self.assertLessEqual(fact['acceptedTick'],state['tick'])
         self.assertEqual(1,sum(e['kind']=='impact' for e in self.pump(8)['events']))
