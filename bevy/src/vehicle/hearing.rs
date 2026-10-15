@@ -44,7 +44,7 @@ pub(super) fn publish(
     mut hearing: ResMut<Hearing>,
     bodies: Query<(Entity, &VehicleBody, &Transform, &Velocity)>,
 ) {
-    if simulation_paused(&ui) || snapshot.0["connected"] != true {
+    if simulation_paused(&ui) || snapshot.0["connected"] != true || !crate::network::owns_world(&snapshot.0) {
         return;
     }
     hearing.0.retain(|e, _| bodies.get(*e).is_ok());

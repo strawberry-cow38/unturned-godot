@@ -188,7 +188,10 @@ fn spawn(
         Entity,
         &WorldObject,
         &Transform,
-        AnyOf<(&MeshMaterial3d<StandardMaterial>, &super::rain::wet::WetBase)>,
+        AnyOf<(
+            &MeshMaterial3d<StandardMaterial>,
+            &super::rain::wet::WetBase,
+        )>,
     )>,
     mut cache: ResMut<ContentCache>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -231,7 +234,13 @@ fn spawn(
         }
     }
     for (entity, object, parent_pose, material) in &parents {
-        let material = MeshMaterial3d(material.0.map(|m| m.0.clone()).or_else(|| material.1.map(|m| m.0.clone())).expect("AnyOf base material"));
+        let material = MeshMaterial3d(
+            material
+                .0
+                .map(|m| m.0.clone())
+                .or_else(|| material.1.map(|m| m.0.clone()))
+                .expect("AnyOf base material"),
+        );
         if registry.parents.get(&object.source_index) == Some(&entity) {
             continue;
         }
@@ -491,7 +500,17 @@ fn export_geometry(
     mut registry: ResMut<Registry>,
     mut leaves: Query<(&mut DoorLeaf, &Transform)>,
     session: Res<crate::player::WorldSessionEpoch>,
+    snapshot: Res<GameSnapshot>,
 ) {
+    if snapshot.0.is_null()
+        || snapshot.0["connected"] == false
+        || !crate::network::owns_world(&snapshot.0)
+    {
+        // Never register or retire host BVHs from a remote client. Keeping the
+        // leaves dirty also lets a later host session publish its own geometry.
+        registry.exported.clear();
+        return;
+    }
     let force =
         registry.geometry_revision != geometry.revision || registry.session_epoch != session.0;
     let mut groups: HashMap<(bool, u32), (bool, Vec<Value>)> = HashMap::new();

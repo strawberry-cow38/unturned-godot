@@ -8,6 +8,7 @@ mod entities;
 mod environment;
 mod hdr;
 mod nightvision;
+mod network;
 mod impact;
 mod locomotion;
 mod particles;

@@ -33,7 +33,7 @@ rejected, using the core constants rather than a duplicated range.
 
 `init.connectHost` plus optional `connectPort` creates the original UDP client
 without a local server or host services. Joining is asynchronous. Native code must
-keep polling before creating the owner body; the first actual owner replica
+keep polling before activating owner movement; the first actual owner replica
 provides its spawn and recovery epoch before any position publication. Normal
 movement still has one native physics body and the existing server envelope.
 Inventory, combat, skills, world entities and appearances read client replicas.
@@ -71,7 +71,7 @@ string decoder/sanitizer and ping-refusal helper. Start/poll/cancel operations
 work before any world exists. One worker runs the original1200-byte query;
 replacement tokens discard stale answers and queue behind a running request.
 The UI can keep drawing and owns the original four probe attempts, cancellation
-generation and30-second connection timeout. The source rejected-join policy
+generation and 30-second connection timeout. The source rejected-join policy
 allows four retries (separate from the four status probes). `reconnect` preserves
 the original initial-rejection `Client.Connect` path; a session that previously
 joined must use fresh `init` to prevent old replica state leaking across joins.
@@ -127,8 +127,11 @@ melee facts play the weapon's weak/strong clip and return to that hold; bare fis
 use the original punch clips and unknown items do not invent punches. Looping
 gestures and one-shot gesture facts use the shared source playback rules, preserve
 locomotion legs and low-stance torso posture, and deduplicate retained events.
-Footsteps, nameplates, reclined seats, remote light fixtures and muzzle effects
-remain presentation work; this checkpoint does not establish complete multiplayer.
+Native local and remote footsteps now share source stride, material/gait fallback,
+landing threshold, puddle fields and exact shelter probes; local swim banks and
+voice pause/session cleanup also run (see [FOOTSTEPS_PORT.md](FOOTSTEPS_PORT.md)).
+Actual listening remains unverified without an audio output device. Nameplates,
+reclined seats, remote light fixtures and muzzle effects remain presentation work; this checkpoint does not establish complete multiplayer.
 
 ## Verification
 
@@ -174,13 +177,72 @@ Run with:
 dotnet test tests/UnturnedBevy.Tests/UnturnedBevy.Tests.csproj
 ```
 
+## Native lifecycle and controls
+
+The native main menu now offers the authored official server row, direct connect,
+and an integrated UDP host. The direct form collects host, port and player name;
+its asynchronous status probe must accept the server's content/protocol, ping
+policy and supported map before loading the world or creating a session. The
+original four connection attempts, four retryable initial rejections and 30-second
+link timeout are preserved. Favorites/history/LAN and password submission are
+shown as unavailable instead of presenting invented records or authentication.
+Refresh uses the original five-second cooldown and cancelled probes cannot start
+a stale session. The host form uses the selected retail map, server name, port
+and 1–32 player capacity.
+
+CLI equivalents are `--listen 47872 --server-name "My world" --max-players 8`
+and `--connect 127.0.0.1 --port 47872 --name Survivor`. CLI clients take the same
+status-before-map path. Network sessions explicitly reset to the shared zero
+origin and disable local rebasing. Procedural hosting is refused while that
+origin protocol is absent. The main menu itself creates no authority or socket.
+
+The native owner exists as a reusable presentation/body entity, but neither
+movement simulation nor position publication starts before the accepted owner
+spawn. Pause/settings/inventory keep network ticks running; menus suppress owner
+input. Leaving disposes the real listener or client, clears accepted state and
+presentation, and permits a fresh local or network world. Save is host-only;
+loading a world and explicit remote respawn are unavailable in network menus.
+Local memory-transport play retains its pause and load behavior.
+
+Host-only geometry, services, wildlife, zombies, vehicle spawns, physical damage,
+water cosmetic registration and dynamic vehicle uploads are gated by accepted
+ownership. A remote vehicle uses original 12/s exponential glide, 8m teleport snap
+and 0.5-second extrapolation cap; its wheels stop at the cap. Only the accepted
+local driver activates the single native dynamic body. Remote wildlife uses the
+source 10/s transform interpolation and selected original animation, with no
+host collision capsule. The stale AnimalPuppets comment saying animation is
+frozen contradicts its actual engine-driven AnimationPlayer. Current source
+ClientWorldSession explicitly removed the old remote-zombie renderer; native
+clients do not invent host HOT bodies or wardrobe to fill that source gap.
+
+Opened live Vulkan captures include `bevy-network-no-response` (four failed
+attempts), `bevy-network-remote-joined` (separate UDP host, accepted owner 2),
+`bevy-network-remote-paused` / `-paused-later` (ticks 148→171 while paused),
+`bevy-network-remote-left-confirmed` (cleared state and returned main menu),
+and `bevy-network-native-host` (real listen world with 696 containers and 8 vehicles).
+`bevy-network-host-paused-peer` confirms a separate UDP peer joined that native
+host; `bevy-network-host-left-confirmed` records the cleared session, followed
+by a successful OS bind to the released listener port.
+These PNG+JSON sidecars verify actual native controls and wire ownership, beyond
+the isolated remote-character fixtures. The earlier `bevy-network-remote-left`
+capture only showed a hovered button and does not prove disconnection.
+
+The integrated 349-test native suite passes, including real-UDP status/map ordering,
+owner-spawn adoption, listen port release, pause progression, remote→local session
+replacement, actual Rapier driver ownership, puppet extrapolation and live rig
+animation without a remote animal collider. X11 repeated key edges no longer
+retoggle pause while text fields retain character repetition. The rendered host
+leave also caught dirty door leaves publishing after the authority was disposed;
+closed-session guards now retire the upload cache, with an actual bridge teardown
+regression. The corrected guard changes no rendered geometry.
+
 ## Remaining integration
 
-Managed listen and client-only transport boundaries are implemented. Native
-host/join controls, replica/world adoption, remaining remote-player presentation,
-networking while menus are open, connection failures/reconnection, browser UI,
-moderation UI, dedicated world boot, and cross-process rendered gameplay journeys
-remain to be ported and tested. The explicit wire gaps above require authoritative
-protocol/adaptation work; a client must never construct another local authority
-to fill them. Infinite-world multiplayer needs a separate origin protocol and is
-not established by these bounded UDP tests.
+Read-only remote map bindings are a managed follow-up awaiting native adoption;
+without them remote fixture/container interactions remain unavailable, while
+native static world geometry renders. Remaining remote-player presentation,
+moderation UI, dedicated world boot and the explicit wire gaps above require
+further port work. A client must never construct another local authority to fill
+them. Infinite-world multiplayer needs a separate origin protocol and is not
+established by these bounded UDP tests. Remote vehicle tow ropes, source light/
+alarm dress and visual/audio parity remain separate presentation gaps.

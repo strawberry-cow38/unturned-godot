@@ -7,6 +7,9 @@ pub struct Options {
     pub unturned: Option<PathBuf>,
     pub map: String,
     pub seed: i32,
+    pub network: crate::network::Target,
+    pub player_name: String,
+    pub network_ready: bool,
     pub vehicle: Option<String>,
     pub play: bool,
     pub headless: bool,
@@ -26,6 +29,9 @@ impl Default for Options {
             unturned: detect_retail_install(),
             map: "PEI".into(),
             seed: 1337,
+            network: crate::network::Target::Local,
+            player_name: "Survivor".into(),
+            network_ready: false,
             vehicle: None,
             play: false,
             headless: false,
@@ -44,6 +50,11 @@ impl Options {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
         let mut options = Self::default();
         let mut args = args.into_iter();
+        let mut listen = None;
+        let mut connect = None;
+        let mut port = crate::network::DEFAULT_PORT;
+        let mut server_name = "Bevy world".to_owned();
+        let mut max_players = 24u8;
         while let Some(arg) = args.next() {
             let (key, inline) = arg
                 .split_once('=')
@@ -61,6 +72,12 @@ impl Options {
                 "--stay" => options.exit_after_capture = false,
                 "--map" => options.map = value()?,
                 "--seed" => options.seed = value()?.parse()?,
+                "--listen" => listen = Some(value()?.parse::<u16>()?),
+                "--connect" => connect = Some(value()?),
+                "--port" => port = value()?.parse()?,
+                "--name" => options.player_name = value()?,
+                "--server-name" => server_name = value()?,
+                "--max-players" => max_players = value()?.parse()?,
                 "--vehicle" => options.vehicle = Some(value()?.to_ascii_lowercase()),
                 "--content" => options.content = value()?.into(),
                 "--unturned" => options.unturned = Some(value()?.into()),
@@ -72,6 +89,36 @@ impl Options {
                 "--" => {}
                 _ => bail!("Unknown option {arg}. Use --help."),
             }
+        }
+        if listen.is_some() && connect.is_some() {
+            bail!("--listen and --connect are mutually exclusive");
+        }
+        if listen == Some(0) || port == 0 {
+            bail!("Network port must be 1..65535");
+        }
+        if !(1..=32).contains(&max_players) {
+            bail!("--max-players must be 1..32");
+        }
+        if let Some(host) = connect {
+            let (host, port) = crate::network::parse_address(&host, &port.to_string())
+                .map_err(anyhow::Error::msg)?;
+            options.network = crate::network::Target::Client { host, port };
+            options.play = true;
+        } else if let Some(port) = listen {
+            options.network = crate::network::Target::Listen {
+                port,
+                name: server_name,
+                max_players,
+            };
+            options.play = true;
+        }
+        if options.network.networked() && options.map.eq_ignore_ascii_case("Procedural") {
+            bail!("UDP sessions require a retail map inside the original shared coordinate range");
+        }
+        if options.headless && options.network.networked() {
+            bail!(
+                "--headless is a local simulation check; UDP host/client requires the game world"
+            );
         }
         if options.fixed_fps == Some(0) {
             bail!("--fixed-fps must be greater than zero");
@@ -117,6 +164,10 @@ fn detect_retail_install() -> Option<PathBuf> {
 pub const HELP: &str = "Unturned Bevy\n\
 Usage: bevy/run.sh [options]\n\
   --play                   Enter the world immediately\n\
+  --connect HOST --port 47872  Probe and join an actual UDP server\n\
+  --listen 47872           Host a UDP world and play locally\n\
+  --name Survivor          Local player profile name\n\
+  --server-name NAME --max-players 24  Listen server settings\n\
   --map PEI                Map (PEI, Washington, Yukon, or Procedural)\n\
   --unturned PATH          Retail install root (also UG_UNTURNED_DIR)\n\
   --content PATH           Bundled game/content directory\n\
@@ -191,5 +242,33 @@ mod tests {
         for vehicle in crate::vehicle::data::FLEET.iter() {
             assert!(Options::parse([format!("--vehicle={}", vehicle.key)]).is_ok());
         }
+    }
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+    #[test]
+    fn explicit_modes_validate_ports_and_prevent_ambiguous_or_unbounded_udp_worlds() {
+        for args in [
+            vec!["--listen=0"],
+            vec!["--connect=a", "--listen=47872"],
+            vec!["--connect=a", "--port=0"],
+            vec!["--listen=47872", "--map=Procedural"],
+            vec!["--listen=47872", "--max-players=33"],
+        ] {
+            assert!(Options::parse(args.into_iter().map(str::to_owned)).is_err());
+        }
+        let c = Options::parse(["--connect=localhost".into(), "--port=49000".into()]).unwrap();
+        assert!(c.play);
+        assert!(matches!(
+            c.network,
+            crate::network::Target::Client { port: 49000, .. }
+        ));
+        let h = Options::parse(["--listen=49001".into(), "--server-name=Friends".into()]).unwrap();
+        assert!(matches!(
+            h.network,
+            crate::network::Target::Listen { port: 49001, .. }
+        ));
     }
 }

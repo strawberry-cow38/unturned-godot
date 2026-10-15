@@ -1252,3 +1252,27 @@ absent, so listening parity is not claimed. See bevy/docs/FOOTSTEPS_PORT.md.
 A read-only map query now reuses original full-manifest metadata and server-accepted holiday, joins containers/fixtures to actual replica IDs by kind and exact wire pose, and leaves missing/ambiguous matches unset. Door/seat counters preserve source full-world order; no local registration or loot simulation runs. This also fixes the host's previously empty Accept holiday, captures one world holiday for parsing/NPC checks, and preserves it in saves. All 30 managed UDP/status tests and all 121 bridge regressions pass, including host/client holiday disagreement, all 696 container/11 fixture ID parity, late replicas, duplicate refusal and saved-holiday restoration. Native adoption remains separately owned.
 
 The corrected crossbow/door real-input render also passed: ammo1→0, recovered arrow stops on visible front leaf at z−114.371 rather than the old backwall−121.992, its actual shaft follows accepted travel, and F removes the world item and returns Arrow347 to inventory. Opened captures and an independent agent image review found no blocker; Pause→Quit exited cleanly. `WARHEAD_PORT.md` records the evidence.
+
+### Bevy native multiplayer session lifecycle (2026-10-15)
+
+Native main-menu hosting, direct connect and the original authored server row now
+use the real UDP bridge. Status/content/ping/map checks complete before client
+world loading. The reusable owner body waits for its accepted spawn before any
+movement publication; listen/client menus keep network ticks running, and Leave
+clears replicas and closes the actual transport. Host-only world publishers and
+origin rebasing are gated. Remote vehicles use the original bounded extrapolation
+and glide while the accepted local driver keeps one physical body; remote animals
+use source animation/glide without host colliders. No replacement local authority
+fills missing wire features.
+
+The combined native suite passed 349 tests (one opt-in render fixture ignored),
+including actual UDP lifecycle/probe tests and Rapier ownership tests. A small
+follow-up form-cancellation regression also passes. Rendered/opened native UI
+journeys verified four failed connection attempts, a separate managed UDP host,
+accepted owner spawn, ticks advancing while paused, explicit client leave, then
+native hosting with a separate UDP peer. Host Leave cleared the snapshot and an OS
+socket could bind its former port. Log review caught old door leaves uploading
+after host disposal; a focused real-bridge regression now guards the closed-session
+path. Source/world reviewers found no blocking lifecycle/glide issue, and root
+independently opened the client, host/pause and confirmed-leave captures. See MULTIPLAYER_PORT.md for captures and remaining wire/UI
+work. LEAN_PORT.md now includes the completed original/native roll comparison.

@@ -19,6 +19,8 @@ use serde_json::{Value, json};
 pub(crate) mod lean;
 
 #[cfg(test)]
+mod network_tests;
+#[cfg(test)]
 mod seated_tests;
 
 pub struct PlayerPlugin;
@@ -74,7 +76,9 @@ impl Plugin for PlayerPlugin {
             )
             .add_systems(
                 FixedUpdate,
-                simulate.in_set(SimulatePlayer).before(PhysicsSet::SyncBackend),
+                simulate
+                    .in_set(SimulatePlayer)
+                    .before(PhysicsSet::SyncBackend),
             )
             .add_systems(
                 FixedUpdate,
@@ -94,6 +98,9 @@ struct Session {
     initialized: bool,
     failed: bool,
     correction_version: u64,
+    connecting_elapsed: f32,
+    was_connected: bool,
+    reject_retries: u8,
     heights: StanceHeights,
 }
 
@@ -103,6 +110,9 @@ impl Default for Session {
             initialized: false,
             failed: false,
             correction_version: 0,
+            connecting_elapsed: 0.,
+            was_connected: false,
+            reject_retries: 0,
             heights: default(),
         }
     }
@@ -299,30 +309,59 @@ fn initialize_session(
         &mut KinematicCharacterController,
     )>,
 ) {
-    if session.initialized || session.failed || !world.ready {
+    if session.initialized || session.failed || !world.ready || !options.0.play {
         return;
     }
     model.map_name = options.0.map.clone();
     ui.map = options.0.map.clone();
-    match bridge.request("init", json!({"contentRoot":options.0.content,"name":"Survivor","mapId":options.0.map,"spawn":world.spawn.to_array(),"origin":[origin.offset.x,origin.offset.y],"yaw":world.spawn_yaw,"seed":options.0.seed})) {
+    let mut request = json!({"contentRoot":options.0.content,"name":options.0.player_name,"mapId":options.0.map,"spawn":world.spawn.to_array(),"origin":[origin.offset.x,origin.offset.y],"yaw":world.spawn_yaw,"seed":options.0.seed});
+    options.0.network.configure(&mut request);
+    match bridge.request("init", request) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
             model.reset_session();
-            model.adopt_snapshot(&response["state"]); snapshot.0 = response["state"].clone();
+            model.adopt_snapshot(&response["state"]);
+            snapshot.0 = response["state"].clone();
             model.status = format!("{} · {} objects", world.description, world.object_count);
             session.initialized = true;
-            epoch.0=epoch.0.wrapping_add(1);
-            session.correction_version=response["state"]["player"]["correctionVersion"].as_u64().unwrap_or(0);
-            session.heights=StanceHeights::from_reply(&response["result"]["movementHeights"]);
-            *input=PlayerInput {yaw:world.spawn_yaw,stance:"stand".into(),..default()};
-            for (mut transform, mut body,mut collider,mut controller) in &mut bodies {
-                transform.translation = world.spawn; body.velocity = Vec3::ZERO; body.grounded = false;
-                body.height=session.heights.stand;body.stance="stand".into();body.eye_height=1.75;
-                body.locomotion=default();
-                *collider=capsule(body.height);controller.translation=None;
+            epoch.0 = epoch.0.wrapping_add(1);
+            session.correction_version = response["state"]["player"]["correctionVersion"]
+                .as_u64()
+                .unwrap_or(0);
+            session.heights = StanceHeights::from_reply(&response["result"]["movementHeights"]);
+            *input = PlayerInput {
+                yaw: world.spawn_yaw,
+                stance: "stand".into(),
+                ..default()
+            };
+            for (mut transform, mut body, mut collider, mut controller) in &mut bodies {
+                transform.translation = world.spawn;
+                body.velocity = Vec3::ZERO;
+                body.grounded = false;
+                body.height = session.heights.stand;
+                body.stance = "stand".into();
+                body.eye_height = 1.75;
+                body.locomotion = default();
+                *collider = capsule(body.height);
+                controller.translation = None;
             }
-            if options.0.play { ui.screen = Screen::Playing; }
+            ui.networked = options.0.network.networked();
+            session.was_connected = model.connected;
+            session.connecting_elapsed = 0.;
+            session.reject_retries = 0;
+            ui.screen = if model.connected {
+                Screen::Playing
+            } else {
+                Screen::Connecting
+            };
+            if !model.connected {
+                model.status = format!("Connecting - {}", model.network.state);
+            }
         }
-        Ok(_) => fail(&mut session, &mut model, "Unsupported core bridge protocol".into()),
+        Ok(_) => fail(
+            &mut session,
+            &mut model,
+            "Unsupported core bridge protocol".into(),
+        ),
         Err(error) => fail(&mut session, &mut model, error.to_string()),
     }
 }
@@ -352,6 +391,7 @@ fn ui_intents(
         ResMut<crate::use_items::HandUse>,
         ResMut<WorldSessionEpoch>,
         Res<crate::entities::ItemCatalog>,
+        ResMut<crate::world::origin::WorldOrigin>,
     ),
     mut trigger: ResMut<crate::weapons::Trigger>,
     mut hand_events: MessageWriter<crate::use_items::HandEvent>,
@@ -359,8 +399,26 @@ fn ui_intents(
 ) {
     for intent in intents.read() {
         let result = match intent {
-            UiIntent::Play { map } => {
-                if map != &options.0.map {
+            UiIntent::Play { map } | UiIntent::StartSession { map, .. } => {
+                let target = match intent {
+                    UiIntent::StartSession { target, .. } => target.clone(),
+                    _ => crate::network::Target::Local,
+                };
+                if map != &options.0.map || !model.connected || target != options.0.network {
+                    if session.initialized {
+                        let _ = bridge.request("disconnect", json!({}));
+                    }
+                    model.reset_session();
+                    model.connected = false;
+                    snapshot.0 = Value::Null;
+                    if target.networked() {
+                        hand_use.3.reset_for_network();
+                        world.ready = false;
+                    }
+                    options.0.network_ready = true;
+                    options.0.network = target;
+                    ui.networked = options.0.network.networked();
+                    hand_use.1.0 = hand_use.1.0.wrapping_add(1);
                     *hand_use.0 = default();
                     *trigger = default();
                     *input = default();
@@ -396,6 +454,7 @@ fn ui_intents(
                     } else {
                         config.procedural_path = None;
                     }
+                    let map_changed = options.0.map != *map;
                     config.map_name = map.clone();
                     config.map_root = options
                         .0
@@ -404,11 +463,13 @@ fn ui_intents(
                         .map(|p| p.join("Maps").join(map));
                     options.0.map = map.clone();
                     options.0.play = true;
-                    world.ready = false;
+                    if map_changed {
+                        world.ready = false;
+                    }
                     session.initialized = false;
                     session.failed = false;
                     model.status = format!("Loading {map}");
-                    ui.screen = Screen::MainMenu;
+                    ui.screen = Screen::Connecting;
                 } else if model.connected {
                     ui.screen = Screen::Playing;
                 }
@@ -422,6 +483,24 @@ fn ui_intents(
                 continue;
             }
             UiIntent::Disconnect => {
+                if session.initialized {
+                    let _ = bridge.request("disconnect", json!({}));
+                }
+                session.initialized = false;
+                session.failed = false;
+                session.was_connected = false;
+                options.0.play = false;
+                options.0.network_ready = false;
+                options.0.network = crate::network::Target::Local;
+                *model = UiModel::default();
+                model.status = "Disconnected".into();
+                snapshot.0 = Value::Null;
+                *input = default();
+                *hand_use.0 = default();
+                *trigger = default();
+                hand_use.1.0 = hand_use.1.0.wrapping_add(1);
+                hand_events.write(crate::use_items::HandEvent::Cancel);
+                ui.networked = false;
                 ui.screen = Screen::MainMenu;
                 continue;
             }
@@ -531,7 +610,7 @@ fn read_input(
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     settings: Res<Settings>,
-    perspective:Option<Res<crate::avatar::Perspective>>,
+    perspective: Option<Res<crate::avatar::Perspective>>,
     mut viewmodel: ResMut<crate::viewmodel::ViewmodelStatus>,
     ui: Res<UiState>,
     mut model: ResMut<UiModel>,
@@ -587,7 +666,8 @@ fn read_input(
     }
     let held = |action| settings.pressed(action, &keys, &mouse);
     let pressed = |action| settings.just_pressed(action, &keys, &mouse);
-    input.steady_key = held(GameAction::Sprint) || std::env::var("UG_STEADY").is_ok_and(|value| value == "1");
+    input.steady_key =
+        held(GameAction::Sprint) || std::env::var("UG_STEADY").is_ok_and(|value| value == "1");
     input.movement = Vec2::new(
         (held(GameAction::MoveRight) as i32 - held(GameAction::MoveLeft) as i32) as f32,
         (held(GameAction::MoveForward) as i32 - held(GameAction::MoveBack) as i32) as f32,
@@ -631,7 +711,11 @@ fn read_input(
         .and_then(|o| o.seat)
         .is_some_and(|seat| seat.driver && seat.aircraft)
         && !held(GameAction::FreeLook);
-    if !aircraft_controls && !input.free_look && !(occupancy.as_ref().is_some_and(|o|o.seat.is_some()) && perspective.as_ref().is_some_and(|p|!p.first_person)) {
+    if !aircraft_controls
+        && !input.free_look
+        && !(occupancy.as_ref().is_some_and(|o| o.seat.is_some())
+            && perspective.as_ref().is_some_and(|p| !p.first_person))
+    {
         let sensitivity = settings.mouse_sensitivity * viewmodel.look_sensitivity();
         if !input.in_seat {
             // Original AddLookDelta receives mouse deltas after sensitivity,
@@ -703,7 +787,7 @@ fn simulate(
         &mut KinematicCharacterController,
     )>,
 ) {
-    if !session.initialized || session.failed || simulation_paused(&ui) {
+    if !session.initialized || session.failed || !model.connected || simulation_paused(&ui) {
         return;
     }
     let Ok((entity, mut transform, mut body, mut collider, mut controller)) = bodies.single_mut()
@@ -1010,7 +1094,11 @@ fn aim_eye(
     )
 }
 
-fn seated_weapon_allowed(seat: Option<crate::vehicle::OccupiedSeat>, first_person: bool, gun: bool) -> bool {
+fn seated_weapon_allowed(
+    seat: Option<crate::vehicle::OccupiedSeat>,
+    first_person: bool,
+    gun: bool,
+) -> bool {
     // PlayerController.Fire + VehicleSeatTests: the driver's hands are busy;
     // passenger gunfire is allowed only from the first-person seated gaze.
     // MeleeAttack explicitly rejects every vehicle seat. Furniture has no such gate.
@@ -1019,7 +1107,8 @@ fn seated_weapon_allowed(seat: Option<crate::vehicle::OccupiedSeat>, first_perso
 
 fn publish_body(
     bridge: Res<CoreBridge>,
-    ui: Res<UiState>,
+    mut ui: ResMut<UiState>,
+    time: Res<Time>,
     mut input: ResMut<PlayerInput>,
     mut session: ResMut<Session>,
     mut model: ResMut<UiModel>,
@@ -1038,25 +1127,94 @@ fn publish_body(
     };
     // A disabled seated capsule retains its last on-foot controller output.
     // Reading it would replace the vehicle velocity with an old walking step.
-    if let Some(output) = output.filter(|_| !input.in_seat && model.alive) {
+    if let Some(output) = output.filter(|_| !input.in_seat && model.alive && model.connected) {
         body.grounded = output.grounded;
         body.velocity = output.effective_translation / 0.02;
         if body.grounded && body.velocity.y < 0.0 {
             body.velocity.y = 0.0;
         }
     }
-    match bridge.request("tick",json!({"input":{"position":transform.translation.to_array(),"velocity":body.velocity.to_array(),"grounded":body.grounded,"yaw":input.yaw,"pitch":input.pitch,"stance":body.stance,"heldItemId":input.held_item_id}})) {
+    let request = if model.connected {
+        json!({"input":{"position":transform.translation.to_array(),"velocity":body.velocity.to_array(),"grounded":body.grounded,"yaw":input.yaw,"pitch":input.pitch,"stance":body.stance,"heldItemId":input.held_item_id}})
+    } else {
+        json!({})
+    };
+    match bridge.request("tick", request) {
         Ok(response) => {
             let state = &response["state"];
-            if let Some(held)=state["player"]["heldItemId"].as_u64() {input.held_item_id=held as u16;}
+            if let Some(held) = state["player"]["heldItemId"].as_u64() {
+                input.held_item_id = held as u16;
+            }
             let version = state["player"]["correctionVersion"].as_u64().unwrap_or(0);
             if version != session.correction_version {
-                if let Some(position) = vector(&state["player"]["position"]) { transform.translation = position; body.velocity = Vec3::ZERO; body.grounded = false; body.locomotion=default(); }
+                if let Some(position) = vector(&state["player"]["position"]) {
+                    transform.translation = position;
+                    body.velocity = Vec3::ZERO;
+                    body.grounded = false;
+                    body.locomotion = default();
+                }
                 session.correction_version = version;
             }
-            model.adopt_snapshot(state); snapshot.0 = state.clone();
+            let was_connected = model.connected;
+            model.adopt_snapshot(state);
+            snapshot.0 = state.clone();
+            if model.connected {
+                session.connecting_elapsed = 0.;
+                session.was_connected = true;
+                if !was_connected {
+                    input.yaw = state["player"]["yaw"].as_f64().unwrap_or(0.) as f32;
+                    input.pitch = state["player"]["pitch"].as_f64().unwrap_or(0.) as f32;
+                    ui.screen = Screen::Playing;
+                }
+            } else if ui.networked {
+                session.connecting_elapsed += time.delta_secs();
+                model.status = format!(
+                    "Connecting - {}{}",
+                    model.network.state,
+                    if model.network.awaiting_spawn {
+                        "; waiting for player"
+                    } else {
+                        ""
+                    }
+                );
+                ui.screen = Screen::Connecting;
+                if !model.network.reject_text.is_empty()
+                    && model.network.retryable
+                    && !session.was_connected
+                    && session.reject_retries < 4
+                {
+                    match bridge.request("reconnect", json!({})) {
+                        Ok(_) => {
+                            session.reject_retries += 1;
+                            session.connecting_elapsed = 0.;
+                            model.status = format!(
+                                "{} - retry {} of 4",
+                                model.network.reject_text, session.reject_retries
+                            );
+                        }
+                        Err(error) => {
+                            fail(&mut session, &mut model, error.to_string());
+                            ui.networked = false;
+                            ui.screen = Screen::MainMenu;
+                        }
+                    }
+                } else if !model.network.reject_text.is_empty() || session.connecting_elapsed >= 30.
+                {
+                    let error = if !model.network.reject_text.is_empty() {
+                        model.network.reject_text.clone()
+                    } else if session.was_connected {
+                        "Lost connection: no response for 30 seconds.".into()
+                    } else {
+                        "No response from server.".into()
+                    };
+                    let _ = bridge.request("disconnect", json!({}));
+                    fail(&mut session, &mut model, error);
+                    ui.networked = false;
+                    ui.screen = Screen::MainMenu;
+                }
+            }
         }
-        Err(error) => fail(&mut session,&mut model,error.to_string()),
+        Err(error) => fail(&mut session, &mut model, error.to_string()),
     }
 }
 
@@ -1202,7 +1360,7 @@ fn camera_follow(
     mut perspective: ResMut<crate::avatar::Perspective>,
     time: Res<Time>,
     context: ReadRapierContext,
-    vehicles:crate::avatar::camera::VehicleCameras,
+    vehicles: crate::avatar::camera::VehicleCameras,
     lean: Option<Res<lean::LeanState>>,
     mut camera: Query<(&mut Transform, &mut Projection), (With<PlayerCamera>, Without<PlayerBody>)>,
 ) {
@@ -1227,7 +1385,14 @@ fn camera_follow(
             && !(ui.screen == Screen::Settings && ui.settings_return == Screen::MainMenu)
         {
             if !perspective.first_person {
-                if let Some(pose)=occupancy.as_ref().and_then(|o|o.seat).and_then(|s|vehicles.follow(s,&perspective,context.single().ok().as_ref())) {*transform=pose;continue;}
+                if let Some(pose) = occupancy
+                    .as_ref()
+                    .and_then(|o| o.seat)
+                    .and_then(|s| vehicles.follow(s, &perspective, context.single().ok().as_ref()))
+                {
+                    *transform = pose;
+                    continue;
+                }
             }
             let look = Quat::from_euler(
                 EulerRot::YXZ,
@@ -1278,9 +1443,10 @@ fn camera_follow(
 }
 
 pub(crate) fn simulation_paused(ui: &UiState) -> bool {
-    matches!(ui.screen, Screen::MainMenu | Screen::Paused)
-        || (ui.screen == Screen::Settings
-            && matches!(ui.settings_return, Screen::MainMenu | Screen::Paused))
+    !ui.networked
+        && (matches!(ui.screen, Screen::MainMenu | Screen::Paused)
+            || (ui.screen == Screen::Settings
+                && matches!(ui.settings_return, Screen::MainMenu | Screen::Paused)))
 }
 
 /// A queued authority teleport can be drained by the origin barrier itself.
@@ -1431,30 +1597,61 @@ mod tests {
             .init_resource::<GameSnapshot>()
             .init_resource::<crate::entities::ItemCatalog>()
             .init_resource::<WorldSessionEpoch>()
-            .insert_resource(UiState { screen: Screen::Playing, ..default() })
+            .insert_resource(UiState {
+                screen: Screen::Playing,
+                ..default()
+            })
             .insert_resource(model)
-            .insert_resource(PlayerInput { yaw: 30., pitch: 10., ..default() })
+            .insert_resource(PlayerInput {
+                yaw: 30.,
+                pitch: 10.,
+                ..default()
+            })
             .add_systems(Update, read_input);
-        app.world_mut().resource_mut::<crate::viewmodel::ViewmodelStatus>().scope_sway = Vec2::new(0.5, 0.75);
-        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ShiftLeft);
-        app.update();app.update();
+        app.world_mut()
+            .resource_mut::<crate::viewmodel::ViewmodelStatus>()
+            .scope_sway = Vec2::new(0.5, 0.75);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ShiftLeft);
+        app.update();
+        app.update();
         let input = app.world().resource::<PlayerInput>();
         assert_eq!((input.pitch, input.yaw), (10.5, 30.75));
         assert!(input.steady_key);
-        assert_eq!(app.world().resource::<crate::viewmodel::ViewmodelStatus>().look_delta, Vec2::ZERO);
+        assert_eq!(
+            app.world()
+                .resource::<crate::viewmodel::ViewmodelStatus>()
+                .look_delta,
+            Vec2::ZERO
+        );
         app.world_mut().resource_mut::<PlayerInput>().yaw += 4.;
-        app.world_mut().resource_mut::<crate::viewmodel::ViewmodelStatus>().scope_sway = Vec2::ZERO;
+        app.world_mut()
+            .resource_mut::<crate::viewmodel::ViewmodelStatus>()
+            .scope_sway = Vec2::ZERO;
         app.update();
         let input = app.world().resource::<PlayerInput>();
         assert_eq!((input.pitch, input.yaw), (10., 34.));
-        app.world_mut().resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(2., 3.);
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseMotion>()
+            .delta = Vec2::new(2., 3.);
         app.update();
         let sensitivity = app.world().resource::<Settings>().mouse_sensitivity;
-        assert_eq!(app.world().resource::<crate::viewmodel::ViewmodelStatus>().look_delta, Vec2::new(3., 2.) * sensitivity);
+        assert_eq!(
+            app.world()
+                .resource::<crate::viewmodel::ViewmodelStatus>()
+                .look_delta,
+            Vec2::new(3., 2.) * sensitivity
+        );
         app.world_mut().resource_mut::<UiState>().screen = Screen::Inventory;
         app.update();
         assert!(!app.world().resource::<PlayerInput>().steady_key);
-        assert_eq!(app.world().resource::<crate::viewmodel::ViewmodelStatus>().look_delta, Vec2::ZERO);
+        assert_eq!(
+            app.world()
+                .resource::<crate::viewmodel::ViewmodelStatus>()
+                .look_delta,
+            Vec2::ZERO
+        );
     }
     #[test]
     fn alt_look_stops_continuous_tool_fire_and_discards_pending_attack_edges() {

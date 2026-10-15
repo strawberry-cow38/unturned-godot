@@ -164,6 +164,7 @@ fn register(
     bridge: Res<CoreBridge>,
 ) {
     reset(&mut zombies, epoch.0, &mut commands);
+    if !model.network.owns_world {return;}
     if zombies.registered
         || zombies.failed
         || !world.ready

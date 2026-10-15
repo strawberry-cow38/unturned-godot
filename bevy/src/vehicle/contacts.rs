@@ -134,6 +134,7 @@ fn disc_overlaps(
 }
 pub fn detect(
     ui: Res<UiState>,
+    snapshot: Option<Res<crate::player::GameSnapshot>>,
     context: ReadRapierContext,
     mut bodies: Query<(
         Entity,
@@ -148,7 +149,11 @@ pub fn detect(
     services: Res<ServiceManifest>,
     mut hits: MessageWriter<DamageRequest>,
 ) {
-    if crate::player::simulation_paused(&ui) {
+    if snapshot
+        .as_ref()
+        .is_some_and(|s| !crate::network::owns_world(&s.0))
+        || crate::player::simulation_paused(&ui)
+    {
         return;
     }
     let context = context.single().ok();
@@ -248,10 +253,18 @@ pub fn detect(
 }
 pub fn publish(
     bridge: Res<CoreBridge>,
+    snapshot: Res<crate::player::GameSnapshot>,
     mut hits: MessageReader<DamageRequest>,
     mut feedback: MessageWriter<Feedback>,
     mut serial: Local<u64>,
 ) {
+    if snapshot.0.is_null()
+        || snapshot.0["connected"] == false
+        || !crate::network::owns_world(&snapshot.0)
+    {
+        hits.clear();
+        return;
+    }
     for hit in hits.read() {
         let props: Vec<_> = hit
             .destructibles

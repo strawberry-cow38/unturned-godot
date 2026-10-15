@@ -218,3 +218,38 @@ fn retained_panic_plays_once_even_after_animal_replica_retired() {
         "retained event cannot replay sound twice"
     );
 }
+
+#[test]
+fn remote_animal_uses_source_ten_per_second_glide_and_automatic_clip_without_host_collider() {
+    let mut app = app();
+    let mut row = animal("deer", 41, 1.3);
+    row["remote"] = json!(true);
+    app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"animals":[row.clone()]});
+    app.update();
+    app.update();
+    let entity = app.world().resource::<Wildlife>().entities[&41];
+    let body = app.world().get::<AnimalBody>(entity).unwrap();
+    assert!(app.world().get::<Collider>(body.capsule).is_none());
+    let rig = body.rig;
+    let bone = app.world().get::<RigPlayback>(rig).unwrap().bones["Left_Back"];
+    let before = *app.world().get::<Transform>(bone).unwrap();
+    row["position"] = json!([10, 0, 0]);
+    app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"animals":[row]});
+    app.update();
+    assert!(
+        (app.world().get::<Transform>(entity).unwrap().translation.x - 2.).abs() < 1e-4,
+        "10/s source glide at20ms"
+    );
+    for _ in 0..8 {
+        app.update();
+    }
+    assert_ne!(
+        before,
+        *app.world().get::<Transform>(bone).unwrap(),
+        "source AnimationPlayer advances automatically despite stale frozen-pose comment"
+    );
+    assert!(
+        !hit(&mut app, Vec3::new(8., 0.6, 3.)),
+        "remote view never introduces host collision"
+    );
+}

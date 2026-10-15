@@ -1,5 +1,37 @@
 use super::*;
 #[test]
+fn udp_sessions_never_request_a_local_procedural_rebase() {
+    for mode in ["client", "listen"] {
+        let mut world = World::new();
+        world.insert_resource(WorldConfig {
+            procedural_path: Some("unused-region.json".into()),
+            fixed_camera: Some((DVec3::new(4096., 40., 12.), 0., 0.)),
+            ..default()
+        });
+        world.insert_resource(WorldState {
+            ready: true,
+            ..default()
+        });
+        world.insert_resource(GameSnapshot(json!({
+            "network":{"mode":mode,"ownsWorld":mode=="listen"},
+            "player":{"alive":true}
+        })));
+        world.insert_resource(WorldOrigin::default());
+        // No CoreBridge exists: entering the old rebase request path fails.
+        automatic_rebase(&mut world);
+        assert_eq!(world.resource::<WorldOrigin>().offset, DVec2::ZERO);
+        assert_eq!(world.resource::<WorldOrigin>().epoch, 0);
+    }
+    let mut previous = WorldOrigin {
+        offset: DVec2::new(3072., -4096.),
+        epoch: 8,
+        session_epoch: 3,
+    };
+    previous.reset_for_network();
+    assert_eq!(previous.offset, DVec2::ZERO);
+    assert_eq!((previous.epoch, previous.session_epoch), (0, 0));
+}
+#[test]
 fn source_region_floor_and_double_origin_keep_submetre_precision() {
     assert_eq!(threshold_shift(Vec3::new(1024., 1., 0.), 1024.), None);
     assert_eq!(

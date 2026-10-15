@@ -11,6 +11,7 @@ mod exit;
 mod flight;
 mod geometry;
 mod hearing;
+mod remote;
 mod render;
 mod spawns;
 #[cfg(test)]
@@ -95,6 +96,18 @@ pub struct VehicleBody {
     wreck: damage::Wreck,
 }
 impl VehicleBody {
+    /// Original helicopter downwash used only by foliage presentation.
+    pub(crate) fn foliage_wash(&self) -> Option<(Vec3, f32, f32)> {
+        let spec = &data::definition(self.type_id)?.spec;
+        spec.heli.then(|| {
+            (
+                Vec3::from_array(spec.rotor_hub),
+                spec.rotor_radius.max(3.) * 2.6,
+                self.flight.spool.powi(2) * if self.flags & 32 != 0 { 0. } else { 1. },
+            )
+        })
+    }
+
     /// Original closed passenger cell; intact native panes have zero openness.
     /// Glass fracture adoption will supply broken/total here when ported.
     pub fn cabin_openness(&self) -> Option<f32> {
@@ -134,6 +147,7 @@ struct Replica {
     euler_degrees: [f32; 3],
     lin_vel: [f32; 3],
     ang_vel: [f32; 3],
+    steer_degrees: f32,
     flags: u8,
     fuel: f32,
     health: f32,
@@ -168,6 +182,7 @@ impl Plugin for VehiclePlugin {
                 (
                     register_spawns,
                     sync_vehicles,
+                    remote::update,
                     adopt_occupancy,
                     render::animate_wheels,
                     render::animate_steering,
@@ -231,7 +246,15 @@ fn register_spawns(
     mut commands: Commands,
     mut occupancy: ResMut<Occupancy>,
 ) {
-    if !world.ready || !model.connected {
+    if !model.connected {
+        for (_, entity) in vehicles.entities.drain() {
+            commands.entity(entity).try_despawn();
+        }
+        occupancy.seat = None;
+        vehicles.registered.clear();
+        return;
+    }
+    if !world.ready {
         return;
     }
     let tick = snapshot.0["tick"].as_u64().unwrap_or(0);
@@ -260,6 +283,9 @@ fn register_spawns(
         vehicles.epoch = epoch.0;
     }
     vehicles.tick = tick;
+    if !model.network.owns_world {
+        return;
+    }
     let mut indices = Vec::new();
     let mut requests = Vec::new();
     for point in &vehicles.points {
@@ -524,6 +550,7 @@ fn sync_vehicles(
                     wreck: default(),
                 },
                 pose,
+                remote::Puppet::default(),
                 Visibility::default(),
                 contacts::ContactState::new(spec),
                 RigidBody::Dynamic,
@@ -685,7 +712,9 @@ fn read_controls(
                     Vec3::from_array(d.seats[seat.seat as usize]),
                     &doors,
                 );
-                if bridge.request("worldVehicleExit",json!({"netId":seat.net_id,"seat":seat.seat,"clear":clear,"position":position.to_array()})).is_ok() {
+                if !model.network.owns_world {
+                    let _=bridge.request("action",json!({"name":"exitVehicle","args":{}}));
+                } else if bridge.request("worldVehicleExit",json!({"netId":seat.net_id,"seat":seat.seat,"clear":clear,"position":position.to_array()})).is_ok() {
                     let _=bridge.request("action",json!({"name":"exitVehicle","args":{}}));
                 }
             }
@@ -827,6 +856,7 @@ fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3, limit: f32) -> Option<
 }
 fn step_bodies(
     world: Res<WorldState>,
+    network: Option<Res<crate::player::GameSnapshot>>,
     ui: Option<Res<UiState>>,
     geometry: Option<Res<WorldGeometry>>,
     context: ReadRapierContext,
@@ -864,6 +894,18 @@ fn step_bodies(
         physics_handle,
     ) in &mut query
     {
+        if network.as_ref().is_some_and(|n| {
+            !crate::network::owns_world(&n.0)
+                && n.0["playerId"].as_u64() != Some(body.driver_player_id as u64)
+        }) {
+            *rigid_body = RigidBody::KinematicPositionBased;
+            *force = default();
+            *impulse = default();
+            continue;
+        }
+        if *rigid_body == RigidBody::KinematicPositionBased {
+            *rigid_body = RigidBody::Dynamic;
+        }
         // A saved/streamed car must not fall through terrain that has intentionally
         // left the collision window. The authority retains its parked pose, and the
         // original single body wakes when its region is physically present again.
@@ -1042,7 +1084,7 @@ fn publish_bodies(
         }
     }
     unattended.extend(drowned);
-    if !unattended.is_empty() {
+    if model.network.owns_world && !unattended.is_empty() {
         if let Err(e) = bridge.request("worldVehicleState", json!({"vehicles":unattended})) {
             warn!("Host vehicle states: {e}");
         }

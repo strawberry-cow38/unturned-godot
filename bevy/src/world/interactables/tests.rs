@@ -303,6 +303,7 @@ fn authored_container_leaf_export_hits_the_visible_front_and_follows_opening() {
         .init_resource::<WorldGeometry>()
         .init_resource::<ServiceManifest>()
         .init_resource::<Registry>()
+        .init_resource::<GameSnapshot>()
         .init_resource::<crate::player::WorldSessionEpoch>()
         .add_systems(Update, export_geometry);
     let parent_pose = Transform::from_xyz(7., 2., -11.)
@@ -365,6 +366,17 @@ fn authored_container_leaf_export_hits_the_visible_front_and_follows_opening() {
         false,
         "old uncentred export must reproduce the missed front leaf"
     );
+    app.world_mut().resource_mut::<GameSnapshot>().0 =
+        json!({"network":{"mode":"client","ownsWorld":false}});
+    app.update();
+    assert_eq!(
+        ray(app.world(), closed)["hit"],
+        false,
+        "remote render leaves must not register authority geometry"
+    );
+    assert!(app.world().get::<DoorLeaf>(leaf).unwrap().dirty);
+    app.world_mut().resource_mut::<GameSnapshot>().0 =
+        json!({"network":{"mode":"listen","ownsWorld":true}});
     app.update();
     assert_eq!(
         ray(app.world(), closed)["hit"],
@@ -384,5 +396,22 @@ fn authored_container_leaf_export_hits_the_visible_front_and_follows_opening() {
         ray(app.world(), closed * opened.to_matrix())["hit"],
         true,
         "authority box must rotate around the same extracted hinge"
+    );
+    // Real host disposal previously left dirty static leaves repeatedly sending
+    // worldDynamicGeometry against no session when the menu snapshot became null.
+    app.world()
+        .resource::<CoreBridge>()
+        .request("disconnect", json!({}))
+        .unwrap();
+    app.world_mut().resource_mut::<GameSnapshot>().0 = Value::Null;
+    app.world_mut().get_mut::<DoorLeaf>(leaf).unwrap().dirty = true;
+    app.update();
+    assert!(
+        app.world().resource::<Registry>().exported.is_empty(),
+        "disposed authority must clear publication cache"
+    );
+    assert!(
+        app.world().get::<DoorLeaf>(leaf).unwrap().dirty,
+        "future host must still publish this leaf afresh"
     );
 }

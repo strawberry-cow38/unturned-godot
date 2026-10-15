@@ -96,7 +96,7 @@ fn register_water(
     oceans: Query<(&OceanBox, &Transform)>,
     mut sent: ResMut<WaterUpload>,
 ) {
-    if !model.connected {
+    if !model.connected || !model.network.owns_world {
         return;
     }
     let boxes:Vec<_>=oceans.iter().map(|(shape,pose)|json!({"center":pose.translation.to_array(),"size":shape.size.to_array()})).collect();

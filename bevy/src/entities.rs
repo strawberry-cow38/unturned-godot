@@ -201,9 +201,7 @@ fn load_catalog(
             commands.entity(entity).despawn();
         }
         replicas.last_event = 0;
-        if replicas.map_name != config.map_name {
-            replicas.geometry_map.clear();
-        }
+        replicas.geometry_map.clear();
         replicas.geometry_revision = 0;
         replicas.session_epoch = epoch.0;
         services.map.clear();
@@ -241,6 +239,7 @@ fn register_world_geometry(
 ) {
     if !world.ready
         || !model.connected
+        || !model.network.owns_world
         || (replicas.geometry_map == config.map_name
             && replicas.geometry_revision == geometry.revision)
     {

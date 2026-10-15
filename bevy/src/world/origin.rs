@@ -21,6 +21,11 @@ pub struct WorldOrigin {
     pub(super) session_epoch: u64,
 }
 impl WorldOrigin {
+    /// Session transition only: caller rebuilds the visible world before init.
+    /// UDP uses the shared source zero frame, including after a rebased SP map.
+    pub(crate) fn reset_for_network(&mut self) {
+        *self = Self::default();
+    }
     pub fn to_local(&self, absolute: Vec3) -> Vec3 {
         self.local(absolute.as_dvec3())
     }
@@ -141,6 +146,9 @@ fn automatic_rebase(world: &mut World) {
         return;
     }
     let snapshot = &world.resource::<GameSnapshot>().0;
+    if crate::network::is_networked(snapshot) {
+        return;
+    }
     if snapshot["player"]["alive"].as_bool() != Some(true) {
         return;
     }

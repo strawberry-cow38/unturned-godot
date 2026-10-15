@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 mod attachments;
 mod clothing;
 mod crosshair;
+mod network_menu;
 mod vitals;
 
 const TEXT: Color = Color::srgb(0.88, 0.88, 0.91);
@@ -69,6 +70,7 @@ fn null_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::
 #[derive(Resource, Debug)]
 pub struct UiModel {
     pub connected: bool,
+    pub network: crate::network::State,
     pub map_name: String,
     pub health: f32,
     pub alive: bool,
@@ -93,6 +95,7 @@ impl Default for UiModel {
     fn default() -> Self {
         Self {
             connected: false,
+            network: default(),
             map_name: String::new(),
             health: 0.0,
             alive: true,
@@ -125,6 +128,7 @@ impl UiModel {
     }
     pub fn adopt_snapshot(&mut self, snapshot: &Value) {
         self.connected = snapshot["connected"].as_bool().unwrap_or(false);
+        self.network = crate::network::State::read(snapshot);
         let p = &snapshot["player"];
         self.health = number(&p["hp"]);
         self.alive = p["alive"].as_bool().unwrap_or(true);
@@ -187,19 +191,32 @@ fn number(value: &Value) -> f32 {
 
 #[derive(Clone, Debug, Message)]
 pub enum UiIntent {
-    Play { map: String },
+    Play {
+        map: String,
+    },
+    StartSession {
+        map: String,
+        target: crate::network::Target,
+    },
     Resume,
     Save,
     Load,
     Disconnect,
     Quit,
-    Action { name: String, args: Value },
+    Action {
+        name: String,
+        args: Value,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Screen {
     #[default]
     MainMenu,
+    Connecting,
+    DirectConnect,
+    Servers,
+    Host,
     Playing,
     Paused,
     Dead,
@@ -214,6 +231,8 @@ pub enum Screen {
 #[derive(Resource, Debug)]
 pub struct UiState {
     pub screen: Screen,
+    pub networked: bool,
+    pub network_menu: network_menu::Menu,
     pub map: String,
     pub page: usize,
     pub recipe_page: usize,
@@ -230,6 +249,8 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             screen: Screen::MainMenu,
+            networked: false,
+            network_menu: default(),
             map: "PEI".into(),
             page: 0,
             recipe_page: 0,
@@ -253,6 +274,11 @@ impl UiState {
         self.screen = match self.screen {
             Screen::Settings => self.settings_return,
             Screen::MainMenu => Screen::MainMenu,
+            Screen::Connecting => Screen::Connecting,
+            Screen::DirectConnect | Screen::Servers | Screen::Host => {
+                self.network_menu.cancel();
+                Screen::MainMenu
+            }
             Screen::Dead => Screen::Dead,
             _ => Screen::Playing,
         };
@@ -262,6 +288,7 @@ impl UiState {
 
 #[derive(Clone, Component)]
 enum UiButton {
+    Network(network_menu::Action),
     Open(Screen),
     Play,
     Quit,
@@ -321,9 +348,14 @@ impl Plugin for GameUiPlugin {
                 attachments::AttachmentMenuPlugin,
                 vitals::VitalsPlugin,
                 crosshair::CrosshairPlugin,
+                network_menu::NetworkMenuPlugin,
             ))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(Startup, spawn_hud)
+            .add_systems(
+                PreUpdate,
+                suppress_repeat_edges.after(bevy::input::InputSystems),
+            )
             .add_systems(
                 Update,
                 (
@@ -502,6 +534,26 @@ fn follow_life_state(model: Res<UiModel>, mut state: ResMut<UiState>) {
     }
 }
 
+/// X11 may deliver a release/repeat-press pair while a key is held. Keep the
+/// held resource intact but suppress repeat edges for game toggles; text fields
+/// still read the original event stream and retain keyboard auto-repeat.
+fn suppress_repeat_edges(
+    mut events: MessageReader<KeyboardInput>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+) {
+    let events: Vec<_> = events.read().collect();
+    for event in &events {
+        if event.repeat
+            && event.state.is_pressed()
+            && !events.iter().any(|other| {
+                other.key_code == event.key_code && other.state.is_pressed() && !other.repeat
+            })
+        {
+            keys.clear_just_pressed(event.key_code);
+        }
+    }
+}
+
 fn keyboard_ui(
     mut state: ResMut<UiState>,
     mut settings: ResMut<Settings>,
@@ -549,6 +601,13 @@ fn keyboard_ui(
             state.close_overlay();
         }
         characters.clear();
+        return;
+    }
+    if matches!(
+        state.screen,
+        Screen::DirectConnect | Screen::Servers | Screen::Host
+    ) {
+        network_menu::typed(&mut state, &mut characters);
         return;
     }
     if matches!(state.screen, Screen::Console | Screen::Chat) {
@@ -630,13 +689,36 @@ fn activate_button(
     mut state: ResMut<UiState>,
     mut settings: ResMut<Settings>,
     model: Res<UiModel>,
+    time: Res<Time<Real>>,
+    mut options: ResMut<crate::LaunchOptions>,
     mut intents: MessageWriter<UiIntent>,
 ) {
     let Ok(action) = buttons.get(event.entity) else {
         return;
     };
     match action {
+        UiButton::Network(action) => {
+            let map = state.map.clone();
+            if let Some(intent) = state
+                .network_menu
+                .action(action, &map, time.elapsed_secs_f64())
+            {
+                options.0.player_name = state.network_menu.name.clone();
+                intents.write(intent);
+            }
+        }
         UiButton::Open(screen) => {
+            if matches!(
+                state.screen,
+                Screen::DirectConnect | Screen::Servers | Screen::Host
+            ) {
+                state.network_menu.cancel();
+            }
+            if *screen == Screen::Servers {
+                state.network_menu.host = "claw.bitvox.me".into();
+                state.network_menu.port = crate::network::DEFAULT_PORT.to_string();
+                state.network_menu.request = Some(false);
+            }
             if *screen == Screen::Settings {
                 state.settings_return = state.screen;
             }
@@ -797,7 +879,7 @@ fn rebuild_overlay(
         Screen::Inventory => format!("{:?}|{:?}|{}", model.pages, model.worn, catalog.items.len()),
         Screen::Crafting => format!("{:?}", model.recipes),
         Screen::Console | Screen::Chat => format!("{:?}", model.notices),
-        Screen::MainMenu => model.status.clone(),
+        Screen::MainMenu | Screen::Connecting => model.status.clone(),
         _ => String::new(),
     };
     let signature = format!("{state:?}|{settings:?}|{detail}");
@@ -857,8 +939,15 @@ fn rebuild_overlay(
             ))
             .with_children(|panel| match state.screen {
                 Screen::MainMenu => menu_panel(panel, &state, &model, &assets),
-                Screen::Paused => pause_panel(panel),
-                Screen::Dead => death_panel(panel),
+                Screen::DirectConnect | Screen::Servers | Screen::Host => {
+                    network_menu::panel(panel, &state)
+                }
+                Screen::Connecting => {
+                    panel.spawn(text(&model.status, 20., TEXT));
+                    button(panel, "Cancel", UiButton::Disconnect);
+                }
+                Screen::Paused => pause_panel(panel, &model),
+                Screen::Dead => death_panel(panel, &model),
                 Screen::Inventory => inventory_panel(panel, &state, &model, &assets, &catalog),
                 Screen::Crafting => crafting_panel(panel, &state, &model),
                 Screen::Settings => settings_panel(panel, &state, &settings),
@@ -876,6 +965,11 @@ fn menu_panel(
 ) {
     panel.spawn(text("UNTURNED", 44.0, TEXT));
     panel.spawn(text("SURVIVE. BUILD. EXPLORE.", 13.0, DIM));
+    panel.spawn(row()).with_children(|p| {
+        button(p, "Multiplayer", UiButton::Open(Screen::Servers));
+        button(p, "Direct Connect", UiButton::Open(Screen::DirectConnect));
+        button(p, "Host", UiButton::Open(Screen::Host));
+    });
     panel.spawn(text("World", 16.0, ACCENT));
     panel.spawn(row()).with_children(|p| {
         for map in ["PEI", "Washington", "Yukon", "Procedural"] {
@@ -909,21 +1003,43 @@ fn menu_panel(
     });
 }
 
-fn death_panel(panel: &mut ChildSpawnerCommands) {
+fn death_panel(panel: &mut ChildSpawnerCommands, model: &UiModel) {
     panel.spawn(text("You died", 32.0, TEXT));
-    panel.spawn(text("Respawn now to return to the world.", 15.0, DIM));
+    panel.spawn(text(
+        if model.network.owns_world {
+            "Respawn now to return to the world."
+        } else {
+            "Waiting for the server to respawn you."
+        },
+        15.0,
+        DIM,
+    ));
     panel.spawn(row()).with_children(|p| {
-        button(p, "Respawn", UiButton::Respawn);
+        if model.network.owns_world {
+            button(p, "Respawn", UiButton::Respawn);
+        }
         button(p, "Leave world", UiButton::Disconnect);
     });
 }
 
-fn pause_panel(panel: &mut ChildSpawnerCommands) {
-    panel.spawn(text("PAUSED", 28.0, TEXT));
+fn pause_panel(panel: &mut ChildSpawnerCommands, model: &UiModel) {
+    panel.spawn(text(
+        if model.network.networked() {
+            "MENU - WORLD CONTINUES"
+        } else {
+            "PAUSED"
+        },
+        28.0,
+        TEXT,
+    ));
     panel.spawn(row()).with_children(|p| {
         button(p, "Resume", UiButton::Resume);
-        button(p, "Save world", UiButton::Save);
-        button(p, "Load world", UiButton::Load);
+        if model.network.owns_world {
+            button(p, "Save world", UiButton::Save);
+        }
+        if !model.network.networked() {
+            button(p, "Load world", UiButton::Load);
+        }
     });
     panel.spawn(row()).with_children(|p| {
         button(p, "Settings", UiButton::Open(Screen::Settings));
@@ -1428,6 +1544,8 @@ mod tests {
             .init_resource::<UiModel>()
             .init_resource::<UiState>()
             .add_message::<UiIntent>()
+            .init_resource::<Time<Real>>()
+            .insert_resource(crate::LaunchOptions(crate::cli::Options::default()))
             .add_observer(activate_button);
         app.world_mut().resource_mut::<UiModel>().adopt_snapshot(&json!({"connected":true,
             "inventory":{"pages":[{"index":6,"width":3,"height":3,"items":[{"id":13,"x":1,"y":2,"amount":2}]}]}}));
@@ -1455,6 +1573,8 @@ mod tests {
             .init_resource::<UiModel>()
             .init_resource::<UiState>()
             .add_message::<UiIntent>()
+            .init_resource::<Time<Real>>()
+            .insert_resource(crate::LaunchOptions(crate::cli::Options::default()))
             .add_observer(activate_button);
         {
             let mut state = app.world_mut().resource_mut::<UiState>();
@@ -1483,5 +1603,55 @@ mod tests {
         model.reset_session();
         model.adopt_snapshot(&state);
         assert_eq!(model.notices, ["First", "Second"]);
+    }
+}
+
+#[cfg(test)]
+mod network_input_tests {
+    use super::*;
+    #[test]
+    fn x11_repeat_edges_do_not_retoggle_pause_but_text_repeat_still_types() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin))
+            .init_resource::<Settings>()
+            .insert_resource(UiState {
+                screen: Screen::Playing,
+                ..default()
+            })
+            .add_message::<UiIntent>()
+            .add_systems(
+                PreUpdate,
+                suppress_repeat_edges.after(bevy::input::InputSystems),
+            )
+            .add_systems(Update, keyboard_ui);
+        let event = |state, repeat, key| KeyboardInput {
+            key_code: KeyCode::Escape,
+            logical_key: key,
+            state,
+            text: None,
+            repeat,
+            window: Entity::PLACEHOLDER,
+        };
+        app.world_mut()
+            .write_message(event(bevy::input::ButtonState::Pressed, false, Key::Escape));
+        app.update();
+        assert_eq!(app.world().resource::<UiState>().screen, Screen::Paused);
+        app.world_mut()
+            .write_message(event(bevy::input::ButtonState::Released, true, Key::Escape));
+        app.world_mut()
+            .write_message(event(bevy::input::ButtonState::Pressed, true, Key::Escape));
+        app.update();
+        assert_eq!(app.world().resource::<UiState>().screen, Screen::Paused);
+        app.world_mut().resource_mut::<UiState>().screen = Screen::Console;
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::KeyA,
+            logical_key: Key::Character("a".into()),
+            state: bevy::input::ButtonState::Pressed,
+            text: None,
+            repeat: true,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+        assert_eq!(app.world().resource::<UiState>().console_input, "a");
     }
 }

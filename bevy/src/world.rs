@@ -91,12 +91,21 @@ impl Plugin for WorldPlugin {
         .init_resource::<WorldState>()
         .init_resource::<WorldGeometry>()
         .init_resource::<WorldSourceCache>()
-        .add_systems(Startup, build_world.in_set(WorldReady))
+        .add_systems(
+            Startup,
+            build_world.run_if(world_load_allowed).in_set(WorldReady),
+        )
         .add_systems(
             Update,
-            build_world.run_if(world_needs_reload).in_set(WorldReady),
+            build_world
+                .run_if(world_load_allowed)
+                .run_if(world_needs_reload)
+                .in_set(WorldReady),
         );
     }
+}
+fn world_load_allowed(options: Res<crate::LaunchOptions>) -> bool {
+    !matches!(options.0.network, crate::network::Target::Client { .. }) || options.0.network_ready
 }
 /// Request a rebuild by changing WorldConfig, then setting WorldState.ready = false.
 /// Existing world entities are retired and caches remain shared across reloads.
@@ -568,7 +577,11 @@ fn build_world(
                 .map(|v| DVec3::new(v[0], 0., v[1]))
         });
     if !streaming {
-        origin.offset = if config.procedural_path.is_some() {
+        origin.offset = if options.0.network.networked() {
+            // UDP peers share the source fixed wire frame. A previous local
+            // procedural origin must never leak into a newly joined map.
+            default()
+        } else if config.procedural_path.is_some() {
             let p = absolute_center.unwrap_or(DVec3::new(128., 0., 128.));
             (p.xz() / 256.).floor() * 256.
         } else {
@@ -1773,6 +1786,39 @@ pub fn decode_resource_instances(bytes: &[u8]) -> Result<Vec<Transform>, Content
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_target_defers_world_load_until_successful_probe_start() {
+        #[derive(Resource, Default)]
+        struct Loads(u32);
+        fn load(mut count: ResMut<Loads>) {
+            count.0 += 1;
+        }
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Loads>()
+            .insert_resource(crate::LaunchOptions(crate::cli::Options {
+                play: true,
+                network: crate::network::Target::Client {
+                    host: "localhost".into(),
+                    port: 47872,
+                },
+                ..default()
+            }))
+            .add_systems(Startup, load.run_if(world_load_allowed))
+            .add_systems(Update, load.run_if(world_load_allowed));
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().resource::<Loads>().0,
+            0,
+            "--connect must not load even its initial target before probing"
+        );
+        app.world_mut()
+            .resource_mut::<crate::LaunchOptions>()
+            .0.network_ready = true;
+        app.update();
+        assert_eq!(app.world().resource::<Loads>().0, 1);
+    }
     #[test]
     fn placement_authority_identity_survives_unknown_guids_and_comments() {
         let names = HashMap::from([("known".to_string(), "House_0".to_string())]);

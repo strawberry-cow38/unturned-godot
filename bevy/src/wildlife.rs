@@ -50,6 +50,8 @@ pub struct AnimalBody {
 #[serde(rename_all = "camelCase")]
 struct AnimalState {
     net_id: u32,
+    #[serde(default)]
+    remote: bool,
     species: u8,
     position: [f32; 3],
     yaw: f32,
@@ -100,6 +102,9 @@ fn register(
     mut commands: Commands,
 ) {
     reset_epoch(&mut wildlife, epoch.0, &mut commands);
+    if !model.network.owns_world {
+        return;
+    }
     if wildlife.registered
         || wildlife.failed
         || !world.ready
@@ -143,6 +148,7 @@ fn reset_epoch(wildlife: &mut Wildlife, epoch: u64, commands: &mut Commands) {
 #[allow(clippy::too_many_arguments)]
 fn sync(
     mut commands: Commands,
+    time: Res<Time>,
     snapshot: Res<GameSnapshot>,
     epoch: Res<WorldSessionEpoch>,
     config: Res<WorldConfig>,
@@ -177,18 +183,25 @@ fn sync(
         live.insert(row.net_id);
         if let Some(entity) = wildlife.entities.get(&row.net_id).copied() {
             if let Ok((mut body, mut transform)) = bodies.get_mut(entity) {
-                *transform = row.pose();
-                if row.dead && !body.dead {
+                if row.remote {
+                    let target = row.pose();
+                    let alpha = (time.delta_secs() * 10.).min(1.);
+                    transform.translation = transform.translation.lerp(target.translation, alpha);
+                    transform.rotation = transform.rotation.slerp(target.rotation, alpha);
+                } else {
+                    *transform = row.pose();
+                }
+                if !row.remote && row.dead && !body.dead {
                     commands.entity(body.capsule).insert(ColliderDisabled);
                     body.dead = true;
                 }
                 if let Ok(mut rig) = rigs.get_mut(body.rig) {
-                    if !row.dead {
+                    if !row.dead || row.remote {
                         rig.play(&row.clip, true);
                     }
                     // Shipped animal rigs have no ragdoll entries. Original
                     // RagdollStart therefore stops animation without bodies.
-                    rig.paused = row.dead || simulation_paused(&ui);
+                    rig.paused = (!row.remote && row.dead) || simulation_paused(&ui);
                 }
             }
             continue;
@@ -223,19 +236,20 @@ fn sync(
                 RigidBody::KinematicPositionBased,
             ))
             .id();
-        // Capsule height includes both hemispheres in Godot; Rapier receives
-        // only the half-length of its central segment.
+        // Source AnimalPuppets is visual-only; only the host AnimalAgent has
+        // a player-blocking capsule. Keep a child handle for common cleanup.
         let height = row.body_height.max(0.6);
         let capsule = commands
-            .spawn((
-                source_capsule(height, row.radius),
-                Transform::from_xyz(0., height * 0.5, 0.),
-                CollisionGroups::new(Group::GROUP_5, Group::GROUP_2),
-                ChildOf(body),
-            ))
+            .spawn((Transform::from_xyz(0., height * 0.5, 0.), ChildOf(body)))
             .id();
-        if row.dead {
-            commands.entity(capsule).insert(ColliderDisabled);
+        if !row.remote {
+            commands.entity(capsule).insert((
+                source_capsule(height, row.radius),
+                CollisionGroups::new(Group::GROUP_5, Group::GROUP_2),
+            ));
+            if row.dead {
+                commands.entity(capsule).insert(ColliderDisabled);
+            }
         }
         commands.entity(rig).insert(ChildOf(body));
         commands.entity(body).insert(AnimalBody {
@@ -247,9 +261,14 @@ fn sync(
         });
         // Deferred insertion completes before RigAnimation; a corpse loaded
         // after death must not spend a frame playing its saved locomotion.
-        let paused = row.dead || simulation_paused(&ui);
+        let paused = (!row.remote && row.dead) || simulation_paused(&ui);
+        let remote = row.remote;
         commands.queue(move |world: &mut World| {
-            if let Some(skin) = world.get::<crate::rig::RigSkin>(rig).map(|skin| skin.0) {
+            if let Some(skin) = world
+                .get::<crate::rig::RigSkin>(rig)
+                .map(|skin| skin.0)
+                .filter(|_| !remote)
+            {
                 world
                     .entity_mut(skin)
                     .insert(bevy::camera::visibility::VisibilityRange {

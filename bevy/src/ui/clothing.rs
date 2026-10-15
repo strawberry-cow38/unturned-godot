@@ -39,6 +39,8 @@ mod tests {
             .init_resource::<UiModel>()
             .init_resource::<UiState>()
             .add_message::<UiIntent>()
+            .init_resource::<Time<Real>>()
+            .insert_resource(crate::LaunchOptions(crate::cli::Options::default()))
             .add_observer(activate_button);
         let initial = json!({"inventory":{"worn":{"hat":27},"pages":[
             {"index":2,"width":5,"height":3,"items":[{"id":334,"x":3,"y":1}]}]}});

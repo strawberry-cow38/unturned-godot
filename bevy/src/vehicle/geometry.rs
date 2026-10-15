@@ -71,7 +71,7 @@ pub fn upload(
     meshes: Res<Assets<Mesh>>,
     mut uploaded: ResMut<GeometryUploads>,
 ) {
-    if !world.ready || !model.connected {
+    if !world.ready || !model.connected || !model.network.owns_world {
         uploaded.previous.clear();
         return;
     }
