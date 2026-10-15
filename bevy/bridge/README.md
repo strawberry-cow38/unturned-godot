@@ -108,7 +108,7 @@ Godot API surface those sources use; no Godot engine or SDK is loaded.
 
 Current integration limits: an available client command does not imply its world
 entity or host service is registered. Animal/zombie sensing and movement,
-attachment effects, continuous tools and remaining presentation still need host
+attachment effects, blowtorch repair and remaining presentation still need host
 adapters. Weather timers restart on load as in the original scene lifecycle;
 clock/day, retail loot provenance and resource timers persist.
 
@@ -216,3 +216,8 @@ key. Native door animation publishes its actual collider pose through this seam.
 Weather adds `rainWetness` and `rainPuddle`, preserving the source instantaneous
 wetness and gradual 150-second fill / 420-second drain. `UG_PUDDLE` seeds the
 original render-test starting level; `snowCover` already carries accumulation.
+
+Chainsaws use the original weak-hit path at the extracted 0.225-second interval
+(12 ticks at 50 Hz), without a delayed swing or a strong attack. Catalog exposes
+`repeatedHitSeconds`; native input/animation may continuously request weak cuts.
+Repair tools are excluded from damaging melee and need the separate repair path.

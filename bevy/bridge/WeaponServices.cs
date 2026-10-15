@@ -268,7 +268,7 @@ public sealed partial class WeaponState
     public bool CanMelee(bool strong)
     {
         var melee = Melee;
-        if (melee == null || melee.Repeated || _ownedHeld?.quality == 0) return false;
+        if (melee == null || _ownedHeld?.quality == 0 || (melee.Repeated && (strong || melee.Repair))) return false;
         if (strong && melee.Stamina > 0 && _server.Vitals.TryGet(_owner, out var vitals) && vitals.Sim.Stamina < melee.Stamina / 100) return false;
         return true;
     }
@@ -283,7 +283,8 @@ public sealed partial class WeaponState
             ZombieDamage = melee.ZombieDamage * skill * condition, PlayerDamage = melee.PlayerDamage * skill * condition,
             ObjectDamage = melee.ResourceDamage * 4 * condition, VehicleDamage = melee.VehicleDamage * condition,
             ResourceDamage = melee.ResourceDamage, StrongMult = melee.Strength,
-            CooldownTicks = Ticks(seconds), HitDelayTicks = Ticks(seconds * Math.Clamp(strong ? melee.Strong : melee.Weak, .05f, .95f)) };
+            CooldownTicks = Ticks(melee.Repeated ? HandRules.RepeatedHitInterval : seconds),
+            HitDelayTicks = melee.Repeated ? 0 : Ticks(seconds * Math.Clamp(strong ? melee.Strong : melee.Weak, .05f, .95f)) };
     }
     public void MeleeUsed(bool strong, long tick)
     {

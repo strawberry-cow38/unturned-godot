@@ -355,6 +355,26 @@ class BridgeTests(unittest.TestCase):
         self.call('worldDynamicGeometry', key='door:1', meshes=[])
         self.assertAlmostEqual(-4, self.call('worldRay', **ray)['result']['point'][2])
 
+    def test_chainsaw_accepts_repeated_weak_cuts_but_never_strong(self):
+        self.call('worldServices', resourceCount=1, resources=[dict(index=0, kind='tree', name='Birch_0',
+                  position=[0, 0, -1], health=10000)])
+        self.call('worldGeometry', meshes=[dict(resourceIndex=0,
+                  vertices=[[-2, 0, -1], [2, 0, -1], [0, 4, -1]])])
+        self.call('worldSpawn', items=[dict(itemId=490, position=[0, 0, -.5])])
+        net_id = self.pump()['worldItems'][0]['netId']
+        self.call('action', name='pickupItem', args=dict(netId=net_id))
+        self.pump()
+        self.assertTrue(self.call('action', name='holdItem', args=dict(page=1, x=0, y=0))['result']['queued'])
+        self.pump()
+        self.call('action', name='melee', args=dict(strong=True, yawDegrees=0))
+        self.assertFalse(any(e['kind'] == 'resourceHit' for e in self.pump()['events']))
+        for _ in range(30):
+            self.call('action', name='melee', args=dict(strong=False, yawDegrees=0), includeState=False)
+            state = self.pump(1)
+        hits = [e for e in state['events'] if e['kind'] == 'resourceHit']
+        self.assertEqual(3, len(hits), '50Hz source 0.225s cadence accepts at ticks 0,12,24')
+        self.assertTrue(all(h['data']['damage'] > 0 for h in hits))
+
     def test_vehicle_authority_seats_recovery_and_blocked_exit(self):
         spec = dict(typeId=0, key='test:0', variant=2, position=[0, 0, -2], yaw=0,
                     health=4500, fuel=50000, battery=10000, speedMax=35, seatCount=2, hasDoors=True)

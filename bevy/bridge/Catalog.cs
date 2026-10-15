@@ -102,6 +102,7 @@ public sealed class Catalog
             consumeAnimation = a.IsConsumable ? new { equip = consumeAnims.Equip, use = consumeAnims.Use, seconds = consumeAnims.UseLen,
                 leftHook = consumeAnims.LeftHook, sound = ConsumableRegistry.Sound(a.id), color = ConsumableRegistry.FlatColor(asset) } : null,
             gunAmmoMax = a.gunAmmoMax, gun = GunDefs.GetValueOrDefault(a.id), melee = MeleeDefs.GetValueOrDefault(a.id),
+            repeatedHitSeconds = MeleeDefs.GetValueOrDefault(a.id)?.Repeated == true ? HandRules.RepeatedHitInterval : 0,
             reloadSeconds = _reloadSeconds.GetValueOrDefault(a.id), movementMultiplier = a.equipableMovementSpeedMultiplier,
             consume = a.IsConsumable ? new { health = a.useHealth, food = a.useFood, water = a.useWater,
                 virus = a.useVirus, disinfectant = a.useDisinfectant, energy = a.useEnergy,
