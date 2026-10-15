@@ -25,6 +25,8 @@ namespace UnturnedGodot
             public float PadY; public double Ms; public string Failed;
             /// <summary>Its front door came out on the plan's north side, and the frame is turned half round to put it on the street.</summary>
             public bool TurnedRound;
+            /// <summary>The sides of its plan another building's footprint meets: party walls, butted by the runtime builder.</summary>
+            public Sides Party;
         }
         /// <summary>What the last PlanBuildings generated.</summary>
         public readonly List<TownBuilding> Buildings = new();
@@ -69,12 +71,29 @@ namespace UnturnedGodot
                 // basement in uncut ground is a stair room whose flight runs into the earth
                 Basement = BasementChoice.Forbid,
             };
+            // ⭐ WHAT IS ROUND IT (strawberry 2026-10-15: "give plots some more context about them and their neighbors, and
+            // features around them"): no windows in a party wall; the front door toward its own parking lot where it has one
+            // beside it ("allowing buildings next to a parking lot use the parking lot as their anchor point for the front");
+            // the back door onto a lane behind
+            var ctx = Context.TryGetValue(pl, out var cx) ? cx : null;
+            if (ctx != null)
+            {
+                if (ctx.PartyLeft) spec.NoWindows |= LatticeSide(pl, -1);
+                if (ctx.PartyRight) spec.NoWindows |= LatticeSide(pl, 1);
+                if (ctx.PartyBack) spec.NoWindows |= Sides.North;
+                if (ctx.Parking != null && ctx.ParkingSide != 0) spec.FrontSide = LatticeSide(pl, ctx.ParkingSide);
+                if (ctx.LaneBehind && !ctx.PartyBack) spec.BackSide = Sides.North;
+            }
             switch (pl.Kind)
             {
                 case PlotKind.Shop:
                     spec.Kind = BuildingKind.Commercial; spec.MinFloors = 1; spec.MaxFloors = 2;
-                    spec.BackSide = Sides.North;
-                    if (pl.YardLeft < 1f && pl.YardRight < 1f) spec.NoWindows = Sides.East | Sides.West;
+                    if (ctx == null || !ctx.PartyBack) spec.BackSide = Sides.North;
+                    break;
+                case PlotKind.Triangle:
+                    // a wedge by the avenue: a corner shop as often as a house
+                    spec.Kind = (h >> 33 & 1UL) == 0 ? BuildingKind.Commercial : BuildingKind.Residential;
+                    spec.MinFloors = 1; spec.MaxFloors = 2;
                     break;
                 case PlotKind.Apartments:
                     spec.Kind = BuildingKind.Apartment; spec.MinFloors = 2; spec.MaxFloors = 4;
@@ -85,6 +104,21 @@ namespace UnturnedGodot
                     break;
             }
             return spec;
+        }
+
+        /// <summary>A plot side -- -1 left, +1 right, 0 back, 2 front -- as the side of the building's plan it becomes in FrameFor:
+        /// the back is the plan's North, the front its South, and left and right are East or West by which way +X runs.</summary>
+        static Sides LatticeSide(Plot pl, int plotSide)
+        {
+            var zw = new Vector3(-pl.Facing.X, 0f, -pl.Facing.Z).Normalized();
+            var xw = Vector3.Up.Cross(zw);
+            bool rightIsEast = xw.Dot(new Vector3(pl.Along.X, 0f, pl.Along.Z)) > 0f;
+            return plotSide switch
+            {
+                0 => Sides.North, 2 => Sides.South,
+                1 => rightIsEast ? Sides.East : Sides.West,
+                _ => rightIsEast ? Sides.West : Sides.East,
+            };
         }
 
         /// <summary>The lattice's frame on a plot: +Z away from the street (the plot's -Facing), +X = up x +Z (a proper
@@ -109,7 +143,7 @@ namespace UnturnedGodot
             var outp = new List<Plot>();
             if (BuildingsMode != "block" && BuildingsMode != "all") return outp;
             foreach (var pl in Plots)
-                if (pl.Outline == null && pl.Kind != PlotKind.Parking && pl.BuildWidth >= BuildingGen.Cell && pl.BuildDepth >= BuildingGen.Cell)
+                if (pl.Kind != PlotKind.Parking && pl.BuildWidth >= BuildingGen.Cell - 0.01f && pl.BuildDepth >= BuildingGen.Cell - 0.01f)
                     outp.Add(pl);
             if (BuildingsMode == "all" || outp.Count == 0) return outp;
             Plot seed = null; float best = float.MaxValue;
@@ -154,9 +188,9 @@ namespace UnturnedGodot
                     catch (System.Exception e) { b.Failed ??= e.Message; }
                     if (res == null) continue;
                     first ??= res;
-                    if (FrontEdge(res) == Sides.South) { b.Result = res; b.Spec = spec; if (tryN > 0) FrontRetried++; break; }
+                    if (FrontEdge(res) == spec.FrontSide) { b.Result = res; b.Spec = spec; if (tryN > 0) FrontRetried++; break; }
                 }
-                if (b.Result == null && first != null) { b.Result = first; if (FrontEdge(first) == Sides.North) b.TurnedRound = true; }
+                if (b.Result == null && first != null) { b.Result = first; if (b.Spec.FrontSide == Sides.South && FrontEdge(first) == Sides.North) b.TurnedRound = true; }
                 if (b.Result != null) b.Failed = null;
                 b.Ms = t0.Elapsed.TotalMilliseconds; genMs += b.Ms;
                 if (b.Result == null) { Buildings.Add(b); continue; }
@@ -188,12 +222,44 @@ namespace UnturnedGodot
                 }
                 Buildings.Add(b);
             }
+            // ⭐ PARTY WALLS FROM THE FOOTPRINTS AS GENERATED: a side of a building whose edge another building's footprint meets.
+            // Its walls on that side are pulled in half their thickness by the runtime builder, so the two buildings' outer faces
+            // meet on the lot line -- butted, not one wall drawn inside the other (strawberry: "dont overlap the walls on top of
+            // eachother, have both walls butt up to eachother").
+            var rects = new List<(TownBuilding b, Vector3[] q)>();
+            foreach (var b in Buildings)
+                if (b.Result != null)
+                {
+                    float wx = b.Result.CellsX * BuildingGen.Cell, dz = b.Result.CellsZ * BuildingGen.Cell;
+                    rects.Add((b, new[] { b.Frame * Vector3.Zero, b.Frame * new Vector3(wx, 0f, 0f), b.Frame * new Vector3(wx, 0f, dz), b.Frame * new Vector3(0f, 0f, dz) }));
+                }
+            int partied = 0;
+            foreach (var (b, _) in rects)
+            {
+                float wx = b.Result.CellsX * BuildingGen.Cell, dz = b.Result.CellsZ * BuildingGen.Cell;
+                foreach (var (side, a0, a1, outw) in new[] {
+                    (Sides.West, new Vector3(0f, 0f, 0f), new Vector3(0f, 0f, dz), new Vector3(-1f, 0f, 0f)),
+                    (Sides.East, new Vector3(wx, 0f, 0f), new Vector3(wx, 0f, dz), new Vector3(1f, 0f, 0f)),
+                    (Sides.South, new Vector3(0f, 0f, 0f), new Vector3(wx, 0f, 0f), new Vector3(0f, 0f, -1f)),
+                    (Sides.North, new Vector3(0f, 0f, dz), new Vector3(wx, 0f, dz), new Vector3(0f, 0f, 1f)) })
+                {
+                    bool met = false;
+                    foreach (float f in new[] { 0.2f, 0.5f, 0.8f })
+                    {
+                        var q = b.Frame * (a0.Lerp(a1, f) + outw * 0.15f);
+                        foreach (var (o, oq) in rects) if (!ReferenceEquals(o, b) && InConvex(oq, q.X, q.Z, 0.05f)) { met = true; break; }
+                        if (met) break;
+                    }
+                    if (met) b.Party |= side;
+                }
+                if (b.Party != Sides.None) partied++;
+            }
             int ok = 0, fronted = 0; var kinds = new Dictionary<string, int>();
             foreach (var b in Buildings)
             {
                 if (b.Result == null) continue;
                 ok++;
-                bool front = FrontEdge(b.Result) == Sides.South || b.TurnedRound && FrontEdge(b.Result) == Sides.North;
+                bool front = FrontEdge(b.Result) == b.Spec.FrontSide || b.TurnedRound && FrontEdge(b.Result) == Sides.North;
                 if (front) fronted++;
                 string k = $"{b.Result.Kind}";
                 kinds[k] = (kinds.TryGetValue(k, out int c) ? c : 0) + 1;
@@ -204,7 +270,8 @@ namespace UnturnedGodot
             }
             int failed = Buildings.Count - ok;
             Log.Print($"[towngrid] buildings ({BuildingsMode}): {ok} generated on {pick.Count} plots{(failed > 0 ? $", {failed} FAILED (first: {Buildings.Find(x => x.Failed != null)?.Failed})" : "")}, "
-                    + $"{fronted} with the front door on the street ({FrontRetried} on another seed, {Buildings.FindAll(x => x.TurnedRound).Count} turned round); generator {genMs:0} ms ({genMs / Mathf.Max(1, pick.Count):0} ms a building), "
+                    + $"{fronted} with the front door where it was asked ({FrontRetried} on another seed, {Buildings.FindAll(x => x.TurnedRound).Count} turned round, "
+                    + $"{Buildings.FindAll(x => x.Result != null && x.Spec.FrontSide != Sides.South).Count} toward their parking lot), {partied} with a party wall; generator {genMs:0} ms ({genMs / Mathf.Max(1, pick.Count):0} ms a building), "
                     + $"pads included {clock.ElapsedMilliseconds} ms -- {string.Join(", ", System.Linq.Enumerable.Select(kinds, kv => $"{kv.Value} {kv.Key}"))}");
             return ok;
         }
@@ -226,7 +293,7 @@ namespace UnturnedGodot
             {
                 if (b.Result == null) continue;
                 Node3D node = null;
-                try { node = BuildingRuntime.Build(b.Result, b.Frame, parent, objs, $"Building_{b.Plot.Kind}_{made}"); }
+                try { node = BuildingRuntime.Build(b.Result, b.Frame, parent, objs, $"Building_{b.Plot.Kind}_{made}", b.Party); }
                 catch (System.Exception e) { if (failed++ == 0) Log.Err($"[towngrid] building on a {b.Plot.Kind} plot failed to build: {e.Message}\n{e.StackTrace}"); }
                 if (node == null) continue;
                 made++; walls += BuildingRuntime.LastWalls; props += BuildingRuntime.LastProps;

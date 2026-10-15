@@ -11067,6 +11067,47 @@ namespace UnturnedGodot
                     Log.Print($"[towngrid] building camera over {bn} buildings at {bc}");
                     goto noTown;
                 }
+                // UG_TOWNCLOSE=bk[:k]: the k-th building whose front door is on its parking lot's side, from over that lot
+                if (closeEnv != null && closeEnv.StartsWith("bk") && town.Buildings.Count > 0)
+                {
+                    int kk = 0;
+                    if (closeEnv.Length > 3 && closeEnv[2] == ':') int.TryParse(closeEnv.Substring(3), out kk);
+                    var lotFront = town.Buildings.FindAll(b => b.Result != null && b.Spec.FrontSide != UnturnedSim.Sides.South);
+                    if (lotFront.Count > 0)
+                    {
+                        var kb = lotFront[Mathf.Clamp(kk, 0, lotFront.Count - 1)];
+                        float wx = kb.Result.CellsX * 3f, dz = kb.Result.CellsZ * 3f;
+                        bool east = kb.Spec.FrontSide == UnturnedSim.Sides.East;
+                        var at = kb.Frame * new Vector3(east ? wx : 0f, 0f, dz * 0.5f);
+                        var outw = (kb.Frame.Basis.X.Normalized()) * (east ? 1f : -1f);
+                        tcam.GlobalPosition = at + outw * 18f - kb.Frame.Basis.Z.Normalized() * 8f + Vector3.Up * 9f;
+                        tcam.Fov = 60f;
+                        tcam.LookAt(at + Vector3.Up * 2f, Vector3.Up);
+                        Log.Print($"[towngrid] parking-front camera on building {kk} of {lotFront.Count} ({kb.Plot.Kind}, front {kb.Spec.FrontSide})");
+                        goto noTown;
+                    }
+                }
+                // UG_TOWNCLOSE=bp[:k]: the k-th building that stands against another (a party wall), at the line they share
+                if (closeEnv != null && closeEnv.StartsWith("bp") && town.Buildings.Count > 0)
+                {
+                    int pk = 0;
+                    if (closeEnv.Length > 3 && closeEnv[2] == ':') int.TryParse(closeEnv.Substring(3), out pk);
+                    var party = town.Buildings.FindAll(b => b.Result != null && b.Party != UnturnedSim.Sides.None);
+                    if (party.Count > 0)
+                    {
+                        var pb = party[Mathf.Clamp(pk, 0, party.Count - 1)];
+                        float wx = pb.Result.CellsX * 3f, dz = pb.Result.CellsZ * 3f;
+                        var local = pb.Party.HasFlag(UnturnedSim.Sides.East) ? new Vector3(wx, 0f, dz * 0.3f)
+                                  : pb.Party.HasFlag(UnturnedSim.Sides.West) ? new Vector3(0f, 0f, dz * 0.3f)
+                                  : pb.Party.HasFlag(UnturnedSim.Sides.North) ? new Vector3(wx * 0.5f, 0f, dz) : new Vector3(wx * 0.5f, 0f, 0f);
+                        var at = pb.Frame * local;
+                        tcam.GlobalPosition = at - pb.Frame.Basis.Z.Normalized() * 16f + Vector3.Up * 10f;
+                        tcam.Fov = 60f;
+                        tcam.LookAt(at + Vector3.Up * 3f, Vector3.Up);
+                        Log.Print($"[towngrid] party camera on building {pk} of {party.Count} with a party wall ({pb.Plot.Kind}, {pb.Party})");
+                        goto noTown;
+                    }
+                }
                 if (closeEnv != null && closeEnv.StartsWith("bl") && town.Buildings.Count > 0)
                 {
                     int bk = 0;

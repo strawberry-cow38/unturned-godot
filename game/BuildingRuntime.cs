@@ -204,6 +204,27 @@ namespace UnturnedGodot
             return fallback;
         }
 
+        /// <summary>How far to move a planned wall so a party wall's outer face lies on its plan line: half its thickness inward, for
+        /// an upright wall (or foundation) standing on the edge of the plan on a side in `party`; nothing for anything else.</summary>
+        static Vector3 PartyInset(WallPlan pl, float wx, float dz, Sides party)
+        {
+            if (party == Sides.None || pl.Kind != SurfaceKind.Wall && pl.Kind != SurfaceKind.Foundation || Mathf.Abs(pl.Pitch) > 1f) return Vector3.Zero;
+            float yaw = Mathf.DegToRad(pl.Yaw);
+            float ux = Mathf.Cos(yaw), uz = -Mathf.Sin(yaw);       // the wall's run (its local +X), as RotationDegrees turns it
+            float h = pl.Thickness * 0.5f;
+            if (Mathf.Abs(ux) < 0.1f)          // runs along Z: on the West or East edge?
+            {
+                if (party.HasFlag(Sides.West) && Mathf.Abs(pl.X) < 0.05f) return new Vector3(h, 0f, 0f);
+                if (party.HasFlag(Sides.East) && Mathf.Abs(pl.X - wx) < 0.05f) return new Vector3(-h, 0f, 0f);
+            }
+            else if (Mathf.Abs(uz) < 0.1f)     // runs along X: on the South or North edge?
+            {
+                if (party.HasFlag(Sides.South) && Mathf.Abs(pl.Z) < 0.05f) return new Vector3(0f, 0f, h);
+                if (party.HasFlag(Sides.North) && Mathf.Abs(pl.Z - dz) < 0.05f) return new Vector3(0f, 0f, -h);
+            }
+            return Vector3.Zero;
+        }
+
         /// <summary>What the last Build made.</summary>
         public static int LastWalls, LastProps;
 
@@ -212,7 +233,10 @@ namespace UnturnedGodot
         /// the furniture as meshes (a kit doodad with its stock children, a curtain or rug from its inputs). Returns the root.
         /// ⚠ The furniture is DRAWN, not yet live: no collider, and the switches, outlets and ceiling lights are their meshes
         /// without the stage's wiring (that is the editor's PowerNet plumbing, next).</summary>
-        public static Node3D Build(BuildingGenResult res, Transform3D frame, Node3D parent, EditorObjects objs, string name = "Building")
+        /// <param name="party">Sides of the plan another building stands against: its walls there are pulled in half their thickness,
+        /// so the two buildings' outer faces meet on the line instead of the two walls being drawn one inside the other.</param>
+        public static Node3D Build(BuildingGenResult res, Transform3D frame, Node3D parent, EditorObjects objs, string name = "Building",
+                                   Sides party = Sides.None)
         {
             if (res == null || parent == null) return null;
             var root = new Node3D { Name = name };
@@ -220,8 +244,9 @@ namespace UnturnedGodot
             int mat = MaterialFor(res.Palette);
             int roofTexel = WallMaterials.Count > 0 ? WallMaterials.At(Mathf.PosMod(mat, WallMaterials.Count)).RoofTexel : -1;
             var walls = new List<WallSurface>();
+            float wx = res.CellsX * BuildingGen.Cell, dz = res.CellsZ * BuildingGen.Cell;
             foreach (var pl in res.Walls)
-                NewWall(root, walls, new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
+                NewWall(root, walls, new Vector3(pl.X, pl.Y, pl.Z) + PartyInset(pl, wx, dz, party), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
                         pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
                         pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.TexelBack >= 0 ? mat : -1, pl.TexelBack);
             foreach (var s in res.Stairs)

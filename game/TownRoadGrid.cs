@@ -4594,6 +4594,7 @@ namespace UnturnedGodot
             PlanFences(roads);
             CensusZoning(roads);
             PlanGreens(roads);
+            BuildContext(roads);   // what each plot knows of what is round it, now everything round it is planned
             var counts = new System.Text.StringBuilder();
             foreach (var ps in PlotSizes)
             {
