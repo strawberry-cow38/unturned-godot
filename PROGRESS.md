@@ -1115,3 +1115,8 @@ headlamp on/off and delayed-off images were opened: the main pool dims, but a
 faint residual remains compared with the earlier clean night baseline. That
 render issue stays open; no claim of complete off-state visual parity is made.
 See bevy/docs/HDR_NIGHTVISION_PORT.md for membership and remaining integration.
+
+
+### Bevy integrated UDP transport checkpoint — 2026-10-15
+
+The managed world can now host the original UDP protocol with a local UDP client and remote peers, preserving the same authoritative services and original content identity. Browser status and the actual session agree on capacity/count; listen sessions default to cheats off. Peer replicas are exposed for the next native remote-avatar consumer. Eight real-socket NUnit integration tests cover join/move/chat/leave/reconnect, content/capacity/cheat rejection, browser metadata, startup failure cleanup, origin guards and spawn/respawn lifecycle. Review caught the singleplayer rebase path at valid near-edge respawns and the mutable-host-position spawn closure; both now have regressions using the actual core range. All121 existing bridge tests pass against the frozen new executable. Native host/join controls, remote-client state adoption and remote-player rendering remain separate work; this does not establish playable multiplayer. See bevy/docs/MULTIPLAYER_PORT.md.

@@ -582,3 +582,11 @@ At the floor the hold stops, rate returns to1, and the2.5s lockout counts down
 only after release. Init/load/death reset transient hold state. No wire or core
 rule changes are needed, and `simulate` only records intent while `tick` steps
 steadying exactly once.
+
+Optional `init.listenPort` starts the same integrated world on the original UDP
+transport, with `serverName`, `maxPlayers` and `motd` metadata. It defaults to
+cheats off and a bounded shared origin. The local player also traverses UDP;
+`state.network` reports session metadata and `state.players` exposes peer replicas.
+This is the managed host boundary; native hosting/joining and client-only state
+adoption remain separate work. See [the multiplayer ledger](../docs/MULTIPLAYER_PORT.md)
+for the eight real-socket tests and remaining integration.

@@ -17,6 +17,8 @@ public sealed partial class BridgeHost
     object Rebase(JsonElement request)
     {
         RequireSession();
+        if (_listenPort != 0)
+            throw new InvalidOperationException("Cannot rebase a UDP world without remote origin negotiation");
         long expected = request.GetProperty("expectedEpoch").GetInt64();
         if (expected != _originEpoch) throw new InvalidOperationException($"Origin epoch mismatch: expected {_originEpoch}, received {expected}");
         var shift = Vec(request, "shift");
@@ -51,6 +53,9 @@ public sealed partial class BridgeHost
 
     void PrepareRespawnFrame()
     {
+        // Bounded UDP peers all share this frame. A valid spawn near the edge
+        // must not enter the singleplayer origin barrier during death recovery.
+        if (_listenPort != 0) return;
         if (!_server.CombatState.TryGet(_client.PlayerId, out var combat) || combat.Alive) return;
         var target = _server.Combat.RespawnPositionOf?.Invoke(_client.PlayerId) ?? combat.SpawnPos;
         float margin = NetQuantization.PositionXZRange - InfiniteTerrain.RegionSize;
