@@ -989,6 +989,7 @@ fn rebuild_overlay(
     ) {
         return;
     }
+    let dashboard = matches!(state.screen, Screen::Inventory | Screen::Crafting);
     commands
         .spawn((
             OverlayRoot,
@@ -1005,13 +1006,16 @@ fn rebuild_overlay(
                 0.03,
                 0.04,
                 0.04,
-                if state.screen == Screen::MainMenu {
+                if dashboard {
+                    0.
+                } else if state.screen == Screen::MainMenu {
                     0.62
                 } else {
                     0.48
                 },
             )),
         ))
+        .insert_if(backdrop::Backdrop::dashboard(1.), || dashboard)
         .with_children(|root| {
             root.spawn((
                 vitals::MenuPanel,

@@ -16,9 +16,14 @@ fn to_linear(c:vec3<f32>)->vec3<f32> {return select(c/12.92,pow((c+0.055)/1.055,
         total+=w;
     }}
     c/=total;
-    let d=(in.uv-0.5)*vec2<f32>(px.y/px.x,1.0);
-    let v=smoothstep(0.12,0.80,length(d));
-    c=mix(c*0.80,vec3<f32>(0.025,0.03,0.045),0.30+0.50*v);
+    if settings.parameters.w > 0.5 {
+        // InventoryUI.BACKDROP_BLUR, reused by CraftingMenu/SkillsUI/MapUI.
+        c=mix(c,vec3<f32>(0.03,0.04,0.06),0.40);
+    } else {
+        let d=(in.uv-0.5)*vec2<f32>(px.y/px.x,1.0);
+        let v=smoothstep(0.12,0.80,length(d));
+        c=mix(c*0.80,vec3<f32>(0.025,0.03,0.045),0.30+0.50*v);
+    }
     let fade=settings.parameters.x;
     return vec4<f32>(to_linear(mix(to_srgb(original.rgb),c,fade)),mix(original.a,1.0,fade));
 }

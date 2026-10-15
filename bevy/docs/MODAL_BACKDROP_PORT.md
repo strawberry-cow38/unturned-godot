@@ -1,13 +1,14 @@
 # Source modal screen backdrop
 
-The shared `ui::backdrop::Backdrop::ammo_pie(fade)` component marks a modal UI
-root. The source menu advances/eases its own fade; the renderer does not add
-another animation clock. The first consumer is LightbarRadial's existing AmmoPie.
+The shared `ui::backdrop::Backdrop::{ammo_pie,dashboard}(fade)` component marks a
+UI root with its source backdrop. The source menu supplies its eased fade; the
+renderer does not add another animation clock. AmmoPie uses the original radial
+style; Inventory, Crafting and Information use the dashboard style.
 MechanicsPanel retains its original dim-only background.
 
 The rendering order is world and independent viewmodel composite, night vision,
-ordinary HUD (camera2), source screen-copy blur, modal UI (camera3), lightning,
-and console (camera4). The modal camera has its own explicit target routing;
+ordinary HUD (camera2), dashboard blur/UI and vitals (camera3), modal blur/UI
+(camera4), lightning, and console (camera5). Each backdrop camera has explicit target routing;
 ordinary UI continues using the unique default UI camera. The backdrop reads
 Bevy's completed shared view texture before its own UI pass and writes the other
 ping-pong texture. No second world camera or read/write feedback texture is used.
@@ -28,16 +29,27 @@ and [Godot4.6 non-glow Gaussian](https://raw.githubusercontent.com/godotengine/g
 The adapted kernel retains the existing Godot MIT attribution in
 `bevy/licenses/GODOT_POSTPROCESS.txt`.
 
-The mip chain belongs to the extracted modal camera, is rebuilt for physical
+Each mip chain belongs to its extracted camera, is rebuilt for physical
 window-size changes, and is released with that view. Removed roots disable the
 pass; removing the component restores ordinary routing. A replaced modal camera
 is recreated and roots retarget before UI layout. Pipelines prewarm on inactive
 frames, and no shared-view swap occurs until every pass can run.
 
-Inventory, crafting, skills and map use another source backdrop style at layer11,
-with vitals above them at layer12. They are not routed through this layer60 slice;
-that lower-layer composition remains a separate follow-up. Other source canvas
-blend behavior is outside this screen-backdrop adapter.
+`InventoryUI.BACKDROP_BLUR` uses the same weighted taps at LOD 1.5 with a flat
+40% tint `(0.03, 0.04, 0.06)`, without the radial vignette. CraftingMenu contains
+the same shader; SkillsUI and MapUI reference it. The native Inventory/Crafting
+and Information roots replace their old flat scrims with this style. Vitals carry
+`AboveDashboard`, route into the layer11/12 camera while a dashboard exists and
+use their higher UI order. Ordinary HUD remains beneath the blur. When the
+dashboard closes, vitals return to the ordinary HUD so the higher AmmoPie screen
+copy still includes them. Simultaneous dashboard/modal layers also compose in
+source order. Camera replacement and tab changes keep only one dashboard pass.
+
+The source `MenuSwoop` panel slide and 85 ms opening/closing animation are still
+separate UI work; existing native dashboard callers currently open immediately
+and supply fade 1. The renderer API accepts the caller's fade for that later
+integration. The native skills page and other source canvas blend behavior are
+outside this adapter.
 
 Two routing/clock CPU cases, the complete 59-case UI group and five lightning
 cases pass. Independent source/render-schedule review passed. The actual Vulkan
@@ -51,8 +63,29 @@ fixes the fixture's bounds without changing the production pass.
 Root independently opened the baseline, full-fade and resized frames and approved
 the visual result.
 
+The real integrated `bevy-lightbar-play-wail-frost.png` was subsequently opened by
+root, gameplay and world reviewers: the original radial labels/chip remain sharp
+over the frosted world and vitals. Dashboard validation adds production
+Inventory/Crafting root coverage, map marker coverage, separate camera recreation
+and a simultaneous layer11/12/60 test. All 62 UI tests and five lightning tests
+pass. The dashboard Vulkan fixture and the repeated AmmoPie fixture both pass,
+with all eight images opened. Dashboard vitals variation stays exactly 858,240
+above an overlapping panel; the same control falls to 2,782 under AmmoPie.
+Dashboard HUD/background variation falls below 1% of baseline, its flat tint
+has no radial edge darkening, and both styles restore the baseline and survive
+resizing. Root independently reviewed dashboard source and baseline/full-fade/
+resized images; interfaces approved the separate routing/shader review and
+independently opened both full-fade styles to verify the vitals layering.
+
 Artifacts are `bevy/artifacts/bevy-modal-backdrop-{0,1,2,3}.png` and the accompanying
-JSON report. The real vehicle radial-menu journey is a separate integration check.
+JSON report.
+Dashboard artifacts use `bevy-dashboard-backdrop-*`; the expanded AmmoPie test
+uses `bevy-modal-backdrop-layered-*`. Run the dashboard case by replacing the
+test name below with
+`ui::backdrop::tests::visual::gpu_dashboard_keeps_layer12_vitals_above_panels_without_radial_vignette`.
+The fullgame Inventory/Crafting/Information capture is queued with the next
+application build; this checkpoint's rendering evidence uses real UI/camera
+systems over a controlled scene and its production root hooks have ECS coverage.
 Run the ignored fixture on a display with Vulkan, for example from the repo root:
 
 ```sh

@@ -2092,3 +2092,23 @@ reproduces 32767.5HP ship truncation. Independent source/wire review passed afte
 fixing the wreck contact order and null saved-pane validation. Native glazing,
 repair controls and accepted horn presentation remain separate integration work;
 see `bevy/docs/VEHICLE_MAINTENANCE_PORT.md`.
+
+
+### Native dashboard frost and original vitals layer (2026-10-15)
+
+Inventory, Crafting and Information now use the original dashboard screen shader:
+LOD 1.5, 25 weighted taps and a flat 40% blue-grey tint, replacing their old flat
+scrims. A separate layer11 camera puts those panels below the existing layer12
+vitals, while ordinary HUD stays below the blur. The higher AmmoPie camera still
+samples the completed vitals/dashboard, preserving its distinct vignette. Console
+and lightning remain above both. Root/camera replacement and tab changes retain
+one active dashboard pass without another animation clock.
+
+All 62 UI tests and five lightning tests pass. Both real Vulkan fixture modes
+passed, with all eight screenshots opened. Dashboard vitals stay pixel-identical
+over an overlapping panel; the same stripes blur under AmmoPie. Closing restores
+the exact baseline and both modes survive resizing. Root and interfaces reviewed
+the source and comparison images independently. The real radial fullgame capture
+also passed; root will capture actual Inventory/Crafting/Information on the next
+application build. Source MenuSwoop transitions remain the next separate slice.
+See `bevy/docs/MODAL_BACKDROP_PORT.md` and `bevy-dashboard-backdrop-*` artifacts.

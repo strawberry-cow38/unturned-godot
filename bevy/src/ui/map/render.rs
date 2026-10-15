@@ -225,7 +225,7 @@ pub(super) fn build(
                 ..default()
             },
             GlobalZIndex(20),
-            BackgroundColor(Color::srgba(0.03, 0.04, 0.04, 0.8)),
+            crate::ui::backdrop::Backdrop::dashboard(1.),
         ))
         .with_children(|p| {
             p.spawn((

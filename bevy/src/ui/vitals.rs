@@ -65,6 +65,7 @@ fn spawn(mut commands: Commands, assets: Res<AssetServer>) {
         .spawn((
             Name::new("Original player vitals"),
             Panel,
+            super::backdrop::AboveDashboard,
             Node {
                 position_type: PositionType::Absolute,
                 left: px(24),

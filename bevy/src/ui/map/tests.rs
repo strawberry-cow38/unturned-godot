@@ -221,6 +221,19 @@ fn real_dashboard_systems_preserve_view_across_close_and_clear_session_annotatio
             .count(),
         1
     );
+    let dashboard_root = world
+        .query_filtered::<Entity, With<render::Root>>()
+        .single(world)
+        .unwrap();
+    assert!(
+        world.get::<crate::ui::backdrop::Backdrop>(dashboard_root).is_some()
+    );
+    // Node requires a transparent BackgroundColor even when the bundle omits it.
+    assert_eq!(
+        world.get::<BackgroundColor>(dashboard_root).unwrap().0.alpha(),
+        0.,
+        "source frost replaces the old opaque dark scrim"
+    );
     assert!(
         world
             .query::<&Text>()

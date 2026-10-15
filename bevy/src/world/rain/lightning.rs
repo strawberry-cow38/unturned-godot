@@ -208,7 +208,7 @@ fn setup(
         Name::new("Source console layer100 camera"),
         Camera2d,
         Camera {
-            order: 4,
+            order: crate::ui::backdrop::CONSOLE_ORDER,
             clear_color: ClearColorConfig::None,
             ..default()
         },
