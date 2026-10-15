@@ -116,12 +116,12 @@ public sealed partial class WorldGeometry
     {
         bool found = RayDetailed(from, to, out var result); hit = result.Point; destructible = result.DestructibleIndex; return found;
     }
-    bool RayContact(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle,out Vector3 normal,out string dynamicKey,bool worldOnly=false)
+    bool RayContact(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle,out Vector3 normal,out string dynamicKey,bool worldOnly=false,uint excludedVehicle=0)
     {
         float nearest=1f;triangle=default;bool found=false;dynamicKey=null;
-        Visit(_root,from,to-from,ref nearest,ref triangle,ref found,worldOnly);
+        Visit(_root,from,to-from,ref nearest,ref triangle,ref found,worldOnly,excludedVehicle);
         foreach(var pair in _dynamic)
-            if(Visit(pair.Value,from,to-from,ref nearest,ref triangle,ref found,worldOnly))dynamicKey=pair.Key;
+            if(Visit(pair.Value,from,to-from,ref nearest,ref triangle,ref found,worldOnly,excludedVehicle))dynamicKey=pair.Key;
         normal=Vector3.Cross(triangle.B-triangle.A,triangle.C-triangle.A).normalized;
         if(Vector3.Dot(normal,to-from)>0)normal=-normal;
         float length=(to-from).magnitude;
@@ -131,6 +131,7 @@ public sealed partial class WorldGeometry
             if(VisitCapsules(_capsules,from,direction,length,ref nearest,ref normal))
             { found=true;dynamicKey=null;triangle=new(default,default,default,-1); }
             foreach(var group in _dynamicCapsules)
+                if(excludedVehicle==0||group.Key!="vehicle:"+excludedVehicle)
                 if(VisitCapsules(group.Value,from,direction,length,ref nearest,ref normal))
                 { found=true;dynamicKey=group.Key;triangle=new(default,default,default,-1); }
         }
@@ -151,11 +152,13 @@ public sealed partial class WorldGeometry
     }
     /// <summary>Identity of the nearest host-owned moving collider. A static wall
     /// returns a null key; callers must not ray-test their fixture in isolation.</summary>
-    public bool RayDynamicKey(Vector3 from,Vector3 to,out string key)
-        => RayContact(from,to,out _,out _,out _,out key);
+    public bool RayDynamicKey(Vector3 from,Vector3 to,out string key,uint excludedVehicle=0)
+        => RayContact(from,to,out _,out _,out _,out key,excludedVehicle:excludedVehicle);
     public bool RayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit)
+        => RayExcludingVehicle(0,from,to,out hit);
+    public bool RayExcludingVehicle(uint excludedVehicle,Vector3 from,Vector3 to,out CombatWorldHit hit)
     {
-        bool found=RayContact(from,to,out var point,out var triangle,out var normal,out _);
+        bool found=RayContact(from,to,out var point,out var triangle,out var normal,out _,excludedVehicle:excludedVehicle);
         hit=found?new(point,triangle.Destructible,triangle.Resource,triangle.Vehicle,triangle.Deployable,triangle.Part,
             normal:normal,thin:triangle.Thin,water:triangle.Water):new(to);
         return found;
@@ -175,18 +178,19 @@ public sealed partial class WorldGeometry
         Visit(_terrainRoot, new(x, 10000, z), new(0, -20000, 0), ref t, ref triangle, ref hit);
         return hit ? 10000 - 20000 * t : 0;
     }
-    bool Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref Triangle nearestTriangle, ref bool found, bool worldOnly = false)
+    bool Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref Triangle nearestTriangle, ref bool found, bool worldOnly = false,uint excludedVehicle=0)
     {
         if (node == null || !Box(node.Min, node.Max, origin, dir, nearest)) return false;
         if (node.Leaf == null)
         {
-            bool left = Visit(node.Left, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly);
-            bool right = Visit(node.Right, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly);
+            bool left = Visit(node.Left, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly,excludedVehicle);
+            bool right = Visit(node.Right, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly,excludedVehicle);
             return left || right;
         }
         bool changed = false;
         foreach (var triangle in node.Leaf)
         {
+            if(excludedVehicle!=0&&triangle.Vehicle==excludedVehicle)continue;
             if (worldOnly && (triangle.Vehicle != 0 || triangle.Deployable != 0)) continue;
             if (triangle.Destructible >= 0 && DestructibleAlive?.Invoke(triangle.Destructible) == false) continue;
             if (triangle.Resource >= 0 && ResourceAlive?.Invoke(triangle.Resource) == false) continue;

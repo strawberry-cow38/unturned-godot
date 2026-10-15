@@ -216,9 +216,9 @@ public sealed class MountedWeaponServices
         var context=new WarheadServices.Payload(0,def.GunId,gun?.BlastRadius??0,gun?.BlastPlayerDamage??0,
             gun?.BlastZombieDamage??0,gun?.BlastVehicleDamage??0,gun==null?(ushort)0:WarheadRules.StickAmmoFor(gun),npc,(uint)_server.Session.CurrentTick);
         ushort sequence=++_shotSequence;
-        if(!_server.Combat.ServerLaunchMounted(owner,sequence,muzzle,direction,profile,context,npc))return false;
+        if(!_server.Combat.ServerLaunchMounted(owner,sequence,muzzle,direction,profile,context,npc,id))return false;
         state.Mounts[index]=value with{Ammo=(ushort)(infinite?value.Ammo:value.Ammo-1),CooldownSeconds=def.Cycle};
-        _cosmetic.LaunchMounted(owner,sequence,muzzle,direction,gun,def.GunId,profile,context.Radius);
+        _cosmetic.LaunchMounted(owner,sequence,muzzle,direction,gun,def.GunId,profile,context.Radius,id);
         var shot=new MountedShotEvent{VehicleNetId=id,Mount=(byte)index,RemainingAmmo=state.Mounts[index].Ammo,
             Tick=(uint)_server.Session.CurrentTick,Sequence=sequence,Npc=npc,
             Shot=new PlayerFiredEvent{PlayerId=owner,Origin=muzzle,Dir=direction,Gun=def.GunId}};

@@ -7,7 +7,7 @@ namespace UnturnedBevy;
 
 public sealed partial class ZombieServices
 {
-    bool Ray(CombatWorldRayDetailed previous,UVector from,UVector to,out CombatWorldHit hit)
+    public bool Ray(CombatWorldRayDetailed previous,UVector from,UVector to,out CombatWorldHit hit)
     {
         bool found=previous(from,to,out hit);
         var direction=to-from;float length=direction.magnitude;

@@ -338,6 +338,7 @@ public sealed partial class BridgeHost : IDisposable
         _cosmetic = new CosmeticBulletServices(_server,_geometry,_weapons,Emit);
         _warheads = new WarheadServices(_server,_weapons,_cosmetic,Emit);
         _mounted = new MountedWeaponServices(_server,_catalog,_cosmetic);
+        _server.Combat.MountedRayDetailed=MountedWorldRay;
         _appearance = new PlayerAppearanceNetSync(_server);
         _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
         _movingInput=false;_footNoiseTimer=0;

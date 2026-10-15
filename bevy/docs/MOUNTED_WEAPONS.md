@@ -90,6 +90,38 @@ world geometry. Water continuation is transmitted without giving the remote
 client water geometry or authority; detailed remote impact material/splash facts
 remain a separate wire integration.
 
+## Firing-vehicle collision correction
+
+A playable tank cannon exposed an adapter fault: moving rendered barrel triangles
+could cover the accepted muzzle between publication and the next ballistic step.
+The resulting almost-zero-length contact detonated the warhead against its own
+tank and killed its seated operator. Mounted authority and cosmetic rounds now
+capture the firing vehicle ID at acceptance and exclude only that vehicle from
+their world query for the entire flight, including after the operator exits or
+switches seats. Other vehicles, solid world bodies, animals, zombies, players and
+water keep their existing nearest-contact behavior. The secondary bed/door
+identity lookup receives the same exclusion, so it cannot rediscover the skipped
+barrel and suppress a farther accepted barricade hit. Handheld bullets, melee and
+hosts without the optional mounted callback retain their previous query.
+
+This is an explicit correction for the Bevy host's rendered-triangle collision
+adapter. The inspected Godot ballistic query did not itself exclude the firing
+vehicle; its muzzle placement normally cleared that body's collider. We do not
+claim unchanged query semantics or alter the accepted muzzle, damage, belt,
+blast radius or wire protocol.
+
+The regression embeds a triangle from an actual second playable tank capture at
+a tilted hull pose, with a documented5mm translation along its accepted barrel
+direction. That controlled motion produces a contact about3.9mm from the muzzle.
+It is not mislabeled as the original failed frame222: the second unshifted
+capture did not reproduce that failure. Tests rigidly align the recorded triangle
+to the test's accepted shot. Removing only the mounted query makes that real UDP
+shot self-detonate and injure its operator. With the adapter, both authority and
+cosmetic rounds pass it, retain the captured identity after exit, and hit another
+vehicle80m away with one accepted remote blast. Additional regressions retain
+player targets, ordinary-query compatibility, nearer world obstruction and
+bed/door damage routing.
+
 ## Verification and remaining presentation
 
 The managed tests exercise real UDP driver-to-gunner takeover and return, owner-only controls, exact source belts and muzzles, parent yaw without parent pitch, source rear-deck depression, look-versus-point gates, stale/replayed inputs, crew/player distinctions, persisted state, origin barriers and late joins. Core tests reject every truncated command/event/registry prefix, verify small row deltas among100 idle vehicles, reject old protocol versions, and hit an actual player's head-height band with an NPC round to distinguish the source flat/falloff rule from ordinary2x head damage.

@@ -1,0 +1,97 @@
+{
+  "provenance": "Actual native tank mesh upload at accepted tick71, advanced along barrel by explicit test displacement; this is a moving-geometry regression, not the original failing frame222 payload.",
+  "advance": 0.005,
+  "sourceMeshOrdinal": 6,
+  "sourceTriangleIndex": 2,
+  "vehicle": {
+    "netId": 10,
+    "typeId": 27,
+    "variant": 0,
+    "position": [
+      -522.3828,
+      32.07422,
+      52.984375
+    ],
+    "yaw": 0.3515625,
+    "eulerDegrees": [
+      359.47266,
+      0.3515625,
+      331.875
+    ],
+    "linVel": [
+      0.234375,
+      2.5,
+      -0.046875
+    ],
+    "angVel": [
+      -0.015625,
+      0,
+      1
+    ],
+    "steerDegrees": 0,
+    "fuel": 2000,
+    "health": 16000,
+    "battery": 8191,
+    "flags": 0,
+    "engineHealth": 6400,
+    "mainRotorHealth": 0,
+    "tailRotorHealth": 0,
+    "engineDrowned": false,
+    "onFire": false,
+    "burnSeconds": -1,
+    "wreckSalvageable": false,
+    "driverPlayerId": 1,
+    "passengers": [],
+    "seatCount": 0,
+    "towedNetId": 0,
+    "towRestLen": 0,
+    "poppedTireMask": 0,
+    "recovCounter": 0
+  },
+  "mount": {
+    "index": 0,
+    "yaw": 0.14135742,
+    "pitch": -0.6206586,
+    "ammo": 60,
+    "cooldownSeconds": 0,
+    "crewAlive": true
+  },
+  "shot": {
+    "vehicleNetId": 10,
+    "index": 0,
+    "operatorPlayerId": 1,
+    "npc": false,
+    "gun": "tank_cannon",
+    "muzzle": [
+      -521.1914,
+      34.516613,
+      46.64508
+    ],
+    "direction": [
+      -0.013155536,
+      -0.018036243,
+      -0.99975073
+    ],
+    "tick": 71,
+    "remainingAmmo": 59,
+    "sequence": 1
+  },
+  "vertices": [
+    [
+      -520.871891949555,
+      34.63292449774008,
+      46.63402025880117
+    ],
+    [
+      -521.0978440979925,
+      34.1870436078475,
+      46.6453804272582
+    ],
+    [
+      -521.5438279847112,
+      34.413129270689296,
+      46.648649622814844
+    ]
+  ],
+  "distance": 0.0038980671613086035
+}

@@ -31,6 +31,7 @@ namespace UnturnedGodot.Net
           VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; ZombieNetId = zombieNetId; Normal = normal; Thin = thin; Water = water; }
     }
     public delegate bool CombatWorldRayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit);
+    public delegate bool CombatMountedWorldRay(uint firingVehicle, Vector3 from, Vector3 to, out CombatWorldHit hit);
     /// <summary>Damage resolved by the server's world ray, never a client hit claim.
     /// The host owns each real body's lifecycle and keeps its NetId spaces distinct.</summary>
     public readonly struct CombatBodyHit
@@ -271,6 +272,7 @@ namespace UnturnedGodot.Net
             public int Pierced;
             public bool Npc;
             public bool Mounted;
+            public uint FiringVehicle;
             public float DamageScale = 1f;
             // PlayerController.Bullet.FalloffAt: distance from this shot's original
             // position, not from the shooter after they move or change weapons.
@@ -637,7 +639,9 @@ namespace UnturnedGodot.Net
                         { bestT = t; hitKind = 2; hitZombie = ze; hitRelY = relY; hitTop = top; }
                     }
                 CombatWorldHit worldHit;
-                bool hitWorld = BulletRayDetailed != null ? BulletRayDetailed(b.Pos, next, out worldHit) : RayWorld(b.Pos, next, out worldHit);
+                bool hitWorld = b.FiringVehicle != 0 && MountedRayDetailed != null
+                    ? MountedRayDetailed(b.FiringVehicle, b.Pos, next, out worldHit)
+                    : BulletRayDetailed != null ? BulletRayDetailed(b.Pos, next, out worldHit) : RayWorld(b.Pos, next, out worldHit);
                 if (hitWorld)
                 {
                     var wp = worldHit.Point;
@@ -697,7 +701,12 @@ namespace UnturnedGodot.Net
                             else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage * b.DamageScale, tick);
                             // ...or a barricade (door/bed), which is not in that index space. Same segment,
                             // so a shot that stopped at a door is the shot that damages it.
-                            else if (!bodyHit.Water) DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage * b.DamageScale, tick);
+                            else if (!bodyHit.Water)
+                            {
+                                if (b.FiringVehicle != 0 && DamageMountedBarricadeAlong != null)
+                                    DamageMountedBarricadeAlong(b.FiringVehicle, b.Pos, next, b.Gun.VehicleDamage * b.DamageScale, tick);
+                                else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage * b.DamageScale, tick);
+                            }
                             BroadcastImpact(point, bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0 ? ImpactSurface.Flesh : ImpactSurface.World);
                             Diag.BulletHitsWorld++;
                             break;

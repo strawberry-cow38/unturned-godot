@@ -26,6 +26,7 @@ public sealed partial class CosmeticBulletServices
         public float Gravity,Width,BlastRadius;
         public float[] Color;
         public bool Silenced,Rocket,Mounted;
+        public uint FiringVehicle;
     }
     sealed record WaterBox(UVector Center,UVector Size);
     readonly NetWorldServer _server;
@@ -112,11 +113,11 @@ public sealed partial class CosmeticBulletServices
             silenced=facts.Silenced,tracerWidth=CosmeticRules.TracerBaseW*GunDef.TracerScale(gun.CaliberName),tracerColor=tint,
             rocket=gun.Action=="Rocket",muzzleAnchor=context.MuzzleAnchor.HasValue?Array(context.MuzzleAnchor.Value):null,bullets=launched});
     }
-    public void LaunchMounted(ushort owner,ushort sequence,UVector origin,UVector direction,GunDef gun,string gunId,ServerGunProfile profile,float radius)
+    public void LaunchMounted(ushort owner,ushort sequence,UVector origin,UVector direction,GunDef gun,string gunId,ServerGunProfile profile,float radius,uint firingVehicle=0)
     {
         var color=GunDef.TracerColor(gun?.CaliberName);float[] tint=[color.r,color.g,color.b];
         var bullet=new Bullet{Id=Interlocked.Increment(ref _nextBullet),ShotId=Interlocked.Increment(ref _nextShot),LaunchTick=Tick,
-            Owner=owner,Sequence=sequence,Mounted=true,Gun=gunId,Position=origin,Origin=origin,Velocity=direction*profile.MuzzleVelocity,
+            Owner=owner,Sequence=sequence,Mounted=true,FiringVehicle=firingVehicle,Gun=gunId,Position=origin,Origin=origin,Velocity=direction*profile.MuzzleVelocity,
             StepsLeft=profile.BallisticSteps,Gravity=0,Width=CosmeticRules.TracerBaseW*GunDef.TracerScale(gun?.CaliberName),
             Color=tint,Rocket=gun?.Action=="Rocket",BlastRadius=radius};
         _bullets.Add(bullet);
@@ -131,7 +132,7 @@ public sealed partial class CosmeticBulletServices
             // launched rounds remain at the muzzle until the following tick.
             if(b.LaunchTick>=Tick)continue;
             var next=BallisticsMath.NextPos(b.Position,b.Velocity);
-            if(Ray(b.Position,next,out var point,out bool thin,out bool water))
+            if(Ray(b.Position,next,out var point,out bool thin,out bool water,b.FiringVehicle))
             {
                 if(b.Pierced<CosmeticRules.MaxPierce&&b.BlastRadius<=0&&(thin||water))
                 {
@@ -150,8 +151,13 @@ public sealed partial class CosmeticBulletServices
             if(--b.StepsLeft<=0)Retire(i,"expired");
         }
     }
-    bool Ray(UVector from,UVector to,out UVector point,out bool thin,out bool water)
+    bool Ray(UVector from,UVector to,out UVector point,out bool thin,out bool water,uint firingVehicle=0)
     {
+        if(firingVehicle!=0&&_server.Combat.MountedRayDetailed!=null)
+        {
+            bool hit=_server.Combat.MountedRayDetailed(firingVehicle,from,to,out var mounted);
+            point=mounted.Point;thin=mounted.Thin;water=mounted.Water;return hit;
+        }
         bool found=_geometry.RayCosmetic(from,to,out point,out thin,out water);
         float nearest=found?(point-from).sqrMagnitude:float.PositiveInfinity;
         if(_server.Combat.WorldRayDetailed?.Invoke(from,to,out var host)==true && (host.Point-from).sqrMagnitude<nearest-1e-5f)

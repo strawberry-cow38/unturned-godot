@@ -83,8 +83,10 @@ public sealed partial class WildlifeServices
     void Remove(AnimalBrain a)
     { a.Freed=true; _brains.Remove(a.NetId); _server.Animals.ServerRemove(new(a.NetId),Tick); }
     public bool Ray(UVector from,UVector to,out CombatWorldHit hit)
+        =>RayExcludingVehicle(0,from,to,out hit);
+    public bool RayExcludingVehicle(uint excludedVehicle,UVector from,UVector to,out CombatWorldHit hit)
     {
-        bool found=_geometry.RayDetailed(from,to,out hit);
+        bool found=_geometry.RayExcludingVehicle(excludedVehicle,from,to,out hit);
         var direction=to-from; float length=direction.magnitude;
         if(length<=0)return found;
         direction/=length; float nearest=found?(hit.Point-from).magnitude:length;

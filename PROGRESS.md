@@ -1816,3 +1816,28 @@ request. Full networking675 and bridge mounted/switch11 pass. Independent core
 review passed. Native F1–F12 dispatch, gaze/slot retention, source tank rise/body
 and optic anchors remain grouped with the ongoing playable mounted checkpoint.
 See bevy/docs/VEHICLE_SEATS_PORT.md.
+
+### Bevy: prevent a mounted round from hitting its own moving barrel
+
+A playable tilted tank shot detonated at its muzzle and killed its operator.
+Mounted host and cosmetic rounds now capture the firing vehicle ID and exclude
+only that body for their entire flight, including after its operator exits or
+changes seats. Animal/zombie/player queries, other vehicles, water and ordinary
+world geometry retain their existing behavior. The mounted bed/door secondary
+identity lookup carries the same exclusion; handheld and melee queries remain
+unchanged. This is an explicit rendered-triangle adapter correction, not a claim
+that the original Godot ballistic query had this exclusion.
+
+A real second tank capture supplies the barrel triangle in the regression. An
+explicit5mm movement reproduces a3.9mm muzzle contact; that controlled case is
+not mislabeled as the original failed frame222. Disabling the optional adapter
+self-detonates the accepted UDP shot and hurts the operator. With it, both flights
+survive, retain the old hull identity after exit, and hit another vehicle80m away
+with one accepted remote blast. Separate regressions retain player targets,
+legacy/null paths and nearer-world protection of a downstream bed.
+
+The isolated immutable mounted-muzzle-v66-final candidate includes the committed
+seat-switch fix and excludes the unhooked NPC-controller draft. All96 managed,
+679 networking and121 JSONL tests pass; root and world independently reviewed the
+change. The parent is running the playable mounted visual journey against this
+same candidate. See bevy/docs/MOUNTED_WEAPONS.md for fixture provenance and scope.

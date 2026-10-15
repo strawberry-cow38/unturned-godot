@@ -11,7 +11,7 @@ using UnityEngine;
 namespace UnturnedBevyTests;
 
 [TestFixture,NonParallelizable]
-public sealed class MountedFlightTests
+public sealed partial class MountedFlightTests
 {
     static readonly JsonSerializerOptions Options=new(){PropertyNamingPolicy=JsonNamingPolicy.CamelCase,IncludeFields=true,Converters={new VectorJson(),new ByteArrayJson()}};
     BridgeHost _host,_remote;int _port;
