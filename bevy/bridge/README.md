@@ -46,6 +46,12 @@ the actual outcome appears in subsequent replicated state.
 - `terrain`: `seed,x,z,lod`, even before `init`; original `InfiniteTerrain` output.
 - `catalog`: original item metadata, existing mesh/texture/icon paths, and full
   deployable definitions. Paths are relative to `contentRoot`; absent files are null.
+  `gestures` enumerates the original `GestureRules` table as `id,name,clip,loops,
+  stops,requestable,broadcast,requiredStance`. Optional null fields are omitted.
+  `requestGesture` returns `queued:false,reason` and a retained `gestureRejected`
+  fact with `text` when the original local admission check refuses the request.
+  `queued:true` only sends the original command; accepted state/events still come
+  from the server publisher, with no optimistic native pose.
 - `worldGeometry`: host static collision triangles, described below.
 - `worldLoot`: `mapRoot` points to the real map containing `Spawns/Items.dat` and
   `Spawns/Jars.dat`. Original parsers and weighted rolls feed server-owned loot;

@@ -106,7 +106,7 @@ public sealed partial class BridgeHost : IDisposable
                 Tick(); return new { fixedDelta = SimClock.FixedDelta };
             case "snapshot": RequireSession(); return null;
             case "diagnostics": RequireSession(); return new { liveBullets = _server.Combat.LiveBullets, stuckProjectilePoses = _warheads.LivePoseCount };
-            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), bulletVisuals = CosmeticBulletServices.Metadata(), throwMotion = new {
+            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), gestures = GestureMetadata(), bulletVisuals = CosmeticBulletServices.Metadata(), throwMotion = new {
                 speed = HandRules.ThrowSpeed, lift = HandRules.ThrowLift, weakScale = HandRules.WeakThrowScale,
                 releaseFraction = HandRules.ThrowReleaseFraction, cooldown = HandRules.ThrowCooldown,
                 clearProbe = HandRules.ThrowClearProbe, clearGap = HandRules.ThrowClearGap,
@@ -434,6 +434,7 @@ public sealed partial class BridgeHost : IDisposable
 
     object Action(string name, JsonElement args)
     {
+        if (name == "requestGesture") return RequestGesture(args);
         if (name == "console" && PlayerDebugConsole(Text(args, "text"))) return new { queued = true };
         if (name == "console" && WeatherConsole(Text(args, "text"))) return new { queued = true };
         if (name == "console" && RotorConsole(Text(args, "text"))) return new { queued = true };
