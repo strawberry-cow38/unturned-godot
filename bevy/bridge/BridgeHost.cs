@@ -271,6 +271,8 @@ public sealed partial class BridgeHost : IDisposable
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         _server = new NetWorldServer(new MemServerTransport(_network));
         _server.Transactions.AllowCheats = _allowCheats;
+        _server.PlayerHost.AcceptSeatedActions = true;
+        _server.VehicleHost.RepositionExitedOwner = _server.PlayerHost.RepositionOwner;
         WorldRebase.EnableUnboundedStorage(_server);
         _server.Transactions.RepositionOwner = _server.PlayerHost.RepositionOwner;
         _environment = new WorldEnvironment(_server, _seed, save);
@@ -395,7 +397,7 @@ public sealed partial class BridgeHost : IDisposable
         // Make that target representable before core emits its bounded recovery packet.
         if (_server.CombatState.TryGet(_client.PlayerId, out var life) && !life.Alive
             && life.RespawnAtTick == _server.Session.CurrentTick + 1) PrepareRespawnFrame();
-        if (_client.State == NetSessionState.Connected && !_client.Vehicles.All.Any(v => v.DriverPlayerId == _client.PlayerId || (v.Passengers?.Contains(_client.PlayerId) ?? false)))
+        if (_client.State == NetSessionState.Connected)
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity,
                 (byte)((StanceCode(_movement.Stance) << 1) | (_scopeSteady.Steadying ? MoveInput.ButtonSteady : 0)), _grounded, _recov, _held);
         _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step(); _cosmetic.Step();

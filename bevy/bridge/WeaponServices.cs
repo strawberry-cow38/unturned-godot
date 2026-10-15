@@ -259,6 +259,7 @@ public sealed partial class WeaponState
     }
     public bool CanFire()
     {
+        if (_server.VehicleHost.IsDriver(_owner)) return false;
         if (_unloading || MagazineBusy || Gun == null || _heldItem?.gunFiremode == 0 || _heldItem?.quality == 0 || _server.Session.CurrentTick < _cycleReadyTick) return false;
         if (_reloading && Gun.ShellReload && Ammo > 0)
         { _reloading = false; _combat.ReloadDoneTick = -1; _emit("reloadCancelled", new { playerId = _owner }); }
@@ -360,6 +361,7 @@ public sealed partial class WeaponState
     MeleeDef Melee => _ownedHeld == null ? MeleeDef.Fists : _catalog.MeleeDefs.GetValueOrDefault(_ownedHeld.id);
     public bool CanMelee(bool strong)
     {
+        if (_server.VehicleHost.IsSeated(_owner)) return false;
         var melee = Melee;
         if (melee == null || _ownedHeld?.quality == 0 || (melee.Repeated && (strong || melee.Repair))) return false;
         if (strong && melee.Stamina > 0 && _server.Vitals.TryGet(_owner, out var vitals) && vitals.Sim.Stamina < melee.Stamina / 100) return false;

@@ -26,6 +26,8 @@ the actual outcome appears in subsequent replicated state.
   command, pumps transport/client/server, then publishes replication. No second
   player body is simulated. Authority recovery increments `correctionVersion`;
   Bevy must teleport/reset its body to `player.position` only when that changes.
+  Seated packets still carry held selection and deduplicated combat; the opted-in
+  host ignores their movement fields. Vehicle seats remain the pose authority.
 - `snapshot`: read current replica state. Inventory has all 22 pages.
 - `action`: `name` and `args`, as below. Commands go through `NetWorldClient` and
   the existing server command validators. Most effects appear within 2–4 ticks.
