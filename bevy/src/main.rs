@@ -15,6 +15,7 @@ mod use_items;
 mod vehicle;
 mod viewmodel;
 mod weapons;
+mod wildlife;
 mod world;
 
 use anyhow::Result;
@@ -116,6 +117,7 @@ fn main() -> Result<()> {
             ui::GameUiPlugin,
             player::PlayerPlugin,
             vehicle::VehiclePlugin,
+            wildlife::WildlifePlugin,
         ))
         .add_systems(Update, capture_frame.after(entities::CollectInteractions))
         .run();

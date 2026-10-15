@@ -913,3 +913,10 @@ bevy/docs/WORLD_PORT.md.
 
 - Native recoil consumes the optional accepted-shot `recoilMultiplier` captured by the bridge before weapon wear, holstering or skill changes; older facts retain the replicated-condition fallback.
 - Six native recoil regressions pass, including a worn rifle shot whose condition and skill survive holstering before event delivery (`/tmp/unturned-bevy-shot-recoil-tests.log`).
+
+### Bevy wildlife presentation (2026-10-14)
+
+- Added the native single kinematic animal body/rig adapter over the original managed AnimalField authority: exact host poses, source dimensions/270-degree rig yaw, real clips/textures, 95m visibility and accepted pig/cow panic banks. Dead bodies disable the live capsule and freeze their actual rig; source animal assets have no physical-bone metadata, so no invented ragdoll was substituted. Authority owns the 600-tick corpse retirement and save/load lifetime.
+- Five native integration tests exercise all four real rigs, bone motion, Rapier hit capsules, death freeze, retirement/epoch reset and once-only retained panic audio. World and root read-only reviews found no blocking issue.
+- Rendered real PEI through Vulkan/Xvfb and inspected close rear/side cow captures after original console spawning and idle/wander/flee behavior. Both atlas and articulated silhouette are visible; no live ECS/shader failures. Inspection files: bevy/artifacts/bevy-wildlife-cow-rear.png and bevy-wildlife-cow-side.png.
+- Recorded actual current zombie/human-NPC boundaries in bevy/docs/NPC_AUDIT.md. InfiniteTerrain has no original fauna source; finite ProcIslandSpawn fauna remains explicitly outstanding. Shared flesh/hit feedback follows separately.
