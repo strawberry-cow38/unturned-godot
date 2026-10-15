@@ -1,5 +1,7 @@
 //! Native single-body vehicle host. Seating and owner state use the original wire commands.
+mod audio;
 mod collision;
+mod damage;
 pub mod data;
 mod dynamics;
 mod exit;
@@ -9,6 +11,8 @@ mod render;
 mod spawns;
 #[cfg(test)]
 mod tests;
+mod tires;
+mod water;
 
 use crate::{
     bridge::CoreBridge,
@@ -53,6 +57,12 @@ pub struct VehicleBody {
     pub fuel: f32,
     pub health: f32,
     pub battery: f32,
+    pub engine_health: f32,
+    pub engine_drowned: bool,
+    pub popped_tire_mask: u8,
+    pub on_fire: bool,
+    pub burn_seconds: f32,
+    pub wreck_salvageable: bool,
     pub driver_player_id: u32,
     pub passengers: Vec<u32>,
     recov_counter: u8,
@@ -60,6 +70,19 @@ pub struct VehicleBody {
     drivetrain: Drivetrain,
     buoyancy: Buoyancy,
     flight: flight::Flight,
+    engine: audio::Engine,
+    swamp: water::Swamp,
+    wreck: damage::Wreck,
+}
+impl VehicleBody {
+    /// The original interior wheel pivot/axis and its 1:1 road-wheel angle, in radians.
+    /// Used by both the rendered wheel and the source seated hand anchors.
+    pub fn steering_wheel(&self) -> Option<(Vec3, Vec3, f32)> {
+        let spec = &data::definition(self.type_id)?.spec;
+        let axis = Vec3::from_array(spec.steer_axis).try_normalize()?;
+        let pivot = Vec3::from_array(spec.steer_pivot);
+        (pivot != Vec3::ZERO).then_some((pivot, axis, self.drivetrain.steering.to_radians()))
+    }
 }
 #[derive(Resource, Default)]
 struct Vehicles {
@@ -68,6 +91,7 @@ struct Vehicles {
     registered: HashSet<usize>,
     entities: HashMap<u32, Entity>,
     tick: u64,
+    epoch: u64,
 }
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -83,6 +107,14 @@ struct Replica {
     fuel: f32,
     health: f32,
     battery: f32,
+    engine_health: Option<f32>,
+    main_rotor_health: Option<f32>,
+    tail_rotor_health: Option<f32>,
+    engine_drowned: bool,
+    popped_tire_mask: u8,
+    on_fire: bool,
+    burn_seconds: f32,
+    wreck_salvageable: bool,
     driver_player_id: u32,
     passengers: Option<Vec<u32>>,
     recov_counter: u8,
@@ -94,6 +126,8 @@ impl Plugin for VehiclePlugin {
             .init_resource::<Vehicles>()
             .init_resource::<collision::Hulls>()
             .init_resource::<geometry::GeometryUploads>()
+            .init_resource::<audio::AudioVoices>()
+            .init_resource::<damage::WreckMaterial>()
             .add_systems(
                 Update,
                 (
@@ -101,8 +135,11 @@ impl Plugin for VehiclePlugin {
                     sync_vehicles,
                     adopt_occupancy,
                     render::animate_wheels,
+                    render::animate_steering,
+                    tires::update,
                     render::aircraft::animate,
                     collision::update,
+                    audio::update,
                 )
                     .chain()
                     .in_set(VehicleUpdate)
@@ -116,8 +153,14 @@ impl Plugin for VehiclePlugin {
             )
             .add_systems(FixedUpdate, step_bodies.before(PhysicsSet::SyncBackend))
             .add_systems(
+                Update,
+                (damage::update, damage::hide_wheels, damage::fade_debris)
+                    .chain()
+                    .after(crate::entities::ApplyInteractions),
+            )
+            .add_systems(
                 PostUpdate,
-                geometry::upload.after(TransformSystems::Propagate),
+                (geometry::upload, audio::volume).after(TransformSystems::Propagate),
             )
             .add_systems(
                 FixedUpdate,
@@ -135,6 +178,7 @@ fn register_spawns(
     model: Res<UiModel>,
     options: Res<crate::LaunchOptions>,
     snapshot: Res<GameSnapshot>,
+    epoch: Res<crate::player::WorldSessionEpoch>,
     mut vehicles: ResMut<Vehicles>,
     mut commands: Commands,
     mut occupancy: ResMut<Occupancy>,
@@ -143,7 +187,7 @@ fn register_spawns(
         return;
     }
     let tick = snapshot.0["tick"].as_u64().unwrap_or(0);
-    if vehicles.map != config.map_name || tick < vehicles.tick {
+    if vehicles.map != config.map_name || tick < vehicles.tick || vehicles.epoch != epoch.0 {
         for (_, entity) in vehicles.entities.drain() {
             commands.entity(entity).despawn();
         }
@@ -162,6 +206,7 @@ fn register_spawns(
             })
             .unwrap_or_default();
         vehicles.map = config.map_name.clone();
+        vehicles.epoch = epoch.0;
     }
     vehicles.tick = tick;
     let mut indices = Vec::new();
@@ -264,7 +309,7 @@ fn registration(
         hit_regions.push(json!({"bodyPart":"tailRotor","center":s.tail_rotor_hub,"size":tail,"health":if s.tail_rotor_hp > 0. { s.tail_rotor_hp } else { s.health * 0.28 }}));
     }
     json!({"key":key,"typeId":d.type_id,"variant":variant,
-        "position":at.to_array(),"yaw":yaw,"health":s.health*10.,"fuel":s.fuel,"battery":10000,
+        "position":at.to_array(),"yaw":yaw,"health":s.health*10.,"healthMax":s.health*10.,"fuel":s.fuel,"battery":10000,
         "speedMax":s.speed_max(),"climbMax":s.heli_climb_max,"fallMax":s.heli_fall_max,"seatCount":d.seats.len(),"seatOffsets":d.seats,"hasDoors":true,
         "hitRegions":hit_regions,"engineRegion":{"rear":s.rear_engine,"threshold":s.box_center[2] + if s.rear_engine { 0.15 } else { -0.15 } * s.box_size[2],"health":s.health * 10. * 0.4},
         "storage":{"trunkWidth":if trunk{6}else{0},"trunkHeight":if trunk{4}else{0},"gloveboxWidth":if hood{3}else{0},"gloveboxHeight":if hood{2}else{0},"seats":seats}})
@@ -319,6 +364,21 @@ fn sync_vehicles(
                 body.fuel = row.fuel;
                 body.health = row.health;
                 body.battery = row.battery;
+                body.engine_health = row.engine_health.unwrap_or(d.spec.health * 10. * 0.4);
+                body.engine_drowned = row.engine_drowned;
+                body.popped_tire_mask = row.popped_tire_mask;
+                body.on_fire = row.on_fire;
+                body.burn_seconds = row.burn_seconds;
+                body.wreck_salvageable = row.wreck_salvageable;
+                body.flight.main_health = row
+                    .main_rotor_health
+                    .map_or(1., |hp| (hp / d.spec.rotor_health_max(true)).clamp(0., 1.));
+                body.flight.tail_health = row
+                    .tail_rotor_health
+                    .map_or(1., |hp| (hp / d.spec.rotor_health_max(false)).clamp(0., 1.));
+                if body.engine_health <= 0. || body.health <= 0. {
+                    body.flags &= !1;
+                }
                 body.driver_player_id = row.driver_player_id;
                 body.passengers = row.passengers.clone().unwrap_or_default();
                 // Normal replicas never fight the one host physics body. Only recovery teleports it.
@@ -333,6 +393,14 @@ fn sync_vehicles(
         }
         let pose = replica_pose(&row);
         let spec = &d.spec;
+        let ignition_length = flight::ignition_duration(spec, &config.content_root);
+        let mut flight = flight::Flight::new(spec, ignition_length);
+        flight.main_health = row
+            .main_rotor_health
+            .map_or(1., |hp| (hp / spec.rotor_health_max(true)).clamp(0., 1.));
+        flight.tail_health = row
+            .tail_rotor_health
+            .map_or(1., |hp| (hp / spec.rotor_health_max(false)).clamp(0., 1.));
         let entity = commands
             .spawn((
                 Name::new(format!("Vehicle {} #{}", d.key, row.net_id)),
@@ -344,20 +412,27 @@ fn sync_vehicles(
                     fuel: row.fuel,
                     health: row.health,
                     battery: row.battery,
+                    engine_health: row.engine_health.unwrap_or(spec.health * 10. * 0.4),
+                    engine_drowned: row.engine_drowned,
+                    popped_tire_mask: row.popped_tire_mask,
+                    on_fire: row.on_fire,
+                    burn_seconds: row.burn_seconds,
+                    wreck_salvageable: row.wreck_salvageable,
                     driver_player_id: row.driver_player_id,
                     passengers: row.passengers.unwrap_or_default(),
                     recov_counter: row.recov_counter,
                     controls: default(),
                     drivetrain: Drivetrain::new(spec),
                     buoyancy: Buoyancy::new(spec),
-                    flight: flight::Flight::new(
-                        spec,
-                        flight::ignition_duration(spec, &config.content_root),
-                    ),
+                    flight,
+                    engine: audio::Engine::new(ignition_length, row.flags & 1 != 0),
+                    swamp: water::Swamp::new(spec),
+                    wreck: default(),
                 },
                 pose,
                 Visibility::default(),
                 RigidBody::Dynamic,
+                CollisionGroups::new(Group::GROUP_4, Group::ALL & !Group::GROUP_3),
                 Velocity {
                     linear: Vec3::from_array(row.lin_vel),
                     angular: Vec3::from_array(row.ang_vel),
@@ -529,19 +604,30 @@ fn read_controls(
                 if edge(GameAction::VehicleIgnition) {
                     if body.flags & 1 != 0 {
                         body.flags &= !1;
-                    } else if body.battery >= 400. && body.health > 0. && body.flags & 32 == 0 {
+                    } else if body.battery >= 400.
+                        && body.health > 0.
+                        && body.engine_health > 0.
+                        && body.flags & 32 == 0
+                    {
                         body.flags |= 1;
                     }
                 }
                 if throttle.abs() > 0.01
                     && body.battery >= 400.
                     && body.health > 0.
+                    && body.engine_health > 0.
                     && body.flags & 32 == 0
                 {
                     body.flags |= 1;
                 }
                 if edge(GameAction::VehicleLights) {
                     body.flags ^= 2;
+                }
+                if mouse.just_pressed(MouseButton::Left)
+                    && body.battery > 0.
+                    && body.flags & 128 == 0
+                {
+                    body.engine.horn(spec);
                 }
                 let mut cyclic = Vec2::ZERO;
                 if spec.heli || spec.plane {
@@ -646,6 +732,7 @@ fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3, limit: f32) -> Option<
 }
 fn step_bodies(
     world: Res<WorldState>,
+    ui: Option<Res<UiState>>,
     geometry: Option<Res<WorldGeometry>>,
     context: ReadRapierContext,
     terrain: Query<(), With<crate::world::WorldTerrain>>,
@@ -659,8 +746,15 @@ fn step_bodies(
         &mut ExternalImpulse,
         &mut RigidBody,
         &mut Damping,
+        Option<&RapierRigidBodyHandle>,
     )>,
 ) {
+    if ui
+        .as_ref()
+        .is_some_and(|ui| crate::player::simulation_paused(ui))
+    {
+        return;
+    }
     let context = context.single().ok();
     for (
         entity,
@@ -672,6 +766,7 @@ fn step_bodies(
         mut impulse,
         mut rigid_body,
         mut damping,
+        physics_handle,
     ) in &mut query
     {
         // A saved/streamed car must not fall through terrain that has intentionally
@@ -697,7 +792,16 @@ fn step_bodies(
             *rigid_body = RigidBody::Dynamic;
         }
         let spec = &data::definition(body.type_id).unwrap().spec;
-        let controls = body.controls;
+        let running = body.controls.engine
+            && body.engine_health > 0.
+            && body.health > 0.
+            && body.flags & 32 == 0;
+        body.engine.step(spec, running, 0.02);
+        let mut controls = body.controls;
+        controls.engine = running;
+        if !spec.heli && !spec.plane && body.engine.cranking > 0. {
+            controls.throttle = 0.;
+        }
         *force = ExternalForce::default();
         *impulse = ExternalImpulse::default();
         if !spec.heli && !spec.plane {
@@ -706,8 +810,30 @@ fn step_bodies(
                 .step(spec, &mut wheels, pose, &velocity, controls, 0.02);
             *force = f;
             *impulse = i;
+            tires::apply_physics(
+                spec,
+                body.popped_tire_mask,
+                &mut wheels,
+                body.drivetrain.surface_grip,
+            );
         }
         let mut afloat = false;
+        if !spec.heli && !spec.plane && spec.water != "Boat" {
+            let exploded = body.flags & 32 != 0;
+            let (water, drowned) =
+                body.swamp
+                    .step(spec, pose, &velocity, world.sea_level, exploded, 0.02);
+            force.force += water.force;
+            force.torque += water.torque;
+            if drowned {
+                body.engine_health = 0.;
+                body.engine_drowned = true;
+                body.flags &= !(1 | 2 | 4 | 8 | 64 | 128);
+                for wheel in &mut wheels.wheels {
+                    wheel.engine_force = 0.;
+                }
+            }
+        }
         if spec.water == "Boat" {
             if let Some(sea) = world.sea_level {
                 let (water, wet) =
@@ -770,18 +896,32 @@ fn step_bodies(
                 *velocity = Velocity::default();
             }
         }
+        if body.flags & 32 != 0 {
+            for wheel in &mut wheels.wheels {
+                wheel.engine_force = 0.;
+                wheel.tuning.suspension_stiffness = 0.5;
+                wheel.tuning.max_suspension_force = 0.;
+            }
+        }
+        if let Some(explosion) = physics_handle.and_then(|_| body.wreck.impulse.take()) {
+            *rigid_body = RigidBody::Dynamic;
+            impulse.impulse += explosion.impulse;
+            impulse.torque_impulse += explosion.torque_impulse;
+        }
     }
 }
 fn publish_bodies(
     bridge: Res<CoreBridge>,
     model: Res<UiModel>,
+    ui: Res<UiState>,
     occupancy: Res<Occupancy>,
     query: Query<(&VehicleBody, &Transform, &Velocity)>,
 ) {
-    if !model.connected {
+    if !model.connected || crate::player::simulation_paused(&ui) {
         return;
     }
     let mut unattended = Vec::new();
+    let mut drowned = Vec::new();
     for (body, pose, velocity) in &query {
         let (yaw, pitch, roll) = pose.rotation.to_euler(EulerRot::YXZ);
         let angles = [pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees()];
@@ -789,13 +929,17 @@ fn publish_bodies(
             .seat
             .is_some_and(|s| s.driver && s.net_id == body.net_id)
         {
+            if body.engine_drowned {
+                drowned.push(json!({"netId":body.net_id,"engineDrowned":true}));
+            }
             if let Err(e)=bridge.request("action",json!({"name":"vehicleState","args":{"vehicleNetId":body.net_id,"pos":pose.translation.to_array(),"eulerDegrees":angles,
                 "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),"steerDegrees":body.drivetrain.steering,"throttle":body.controls.throttle,"steer":body.controls.steer,"handbrake":body.controls.handbrake,"flags":body.flags,"recovAck":body.recov_counter}})) {warn!("Vehicle state: {e}");}
         } else {
             unattended.push(json!({"netId":body.net_id,"position":pose.translation.to_array(),"eulerDegrees":angles,"linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),
-            "steerDegrees":body.drivetrain.steering,"flags":body.flags}));
+            "steerDegrees":body.drivetrain.steering,"flags":body.flags,"engineDrowned":body.engine_drowned}));
         }
     }
+    unattended.extend(drowned);
     if !unattended.is_empty() {
         if let Err(e) = bridge.request("worldVehicleState", json!({"vehicles":unattended})) {
             warn!("Host vehicle states: {e}");

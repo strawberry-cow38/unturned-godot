@@ -35,6 +35,12 @@ fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
                 fuel: s.fuel,
                 health: s.health * 10.,
                 battery: 10000.,
+                engine_health: s.health * 10. * 0.4,
+                engine_drowned: false,
+                popped_tire_mask: 0,
+                on_fire: false,
+                burn_seconds: 0.,
+                wreck_salvageable: false,
                 driver_player_id: 1,
                 passengers: vec![],
                 recov_counter: 0,
@@ -45,6 +51,9 @@ fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
                 drivetrain: Drivetrain::new(s),
                 buoyancy: Buoyancy::new(s),
                 flight: flight::Flight::new(s, 0.),
+                engine: audio::Engine::new(0., true),
+                swamp: water::Swamp::new(s),
+                wreck: default(),
             },
             Transform::from_translation(at),
             RigidBody::Dynamic,
@@ -74,6 +83,155 @@ fn ticks(app: &mut App, n: usize) {
     for _ in 0..n {
         app.update();
     }
+}
+#[test]
+fn accepted_explosion_charred_meshes_and_impulse_reach_the_single_native_body_once() {
+    let mut app = physics_app(None);
+    app.add_plugins(bevy::asset::AssetPlugin::default())
+        .init_asset::<Mesh>()
+        .init_asset::<Image>()
+        .init_asset::<StandardMaterial>()
+        .init_asset::<AudioSource>()
+        .init_resource::<ContentCache>()
+        .init_resource::<WorldConfig>()
+        .init_resource::<Settings>()
+        .init_resource::<damage::WreckMaterial>()
+        .add_message::<crate::entities::CoreEvent>()
+        .add_systems(Update, damage::update);
+    let car = body(&mut app, "jeep", Vec3::new(0., 2., 0.));
+    app.world_mut().get_mut::<VehicleBody>(car).unwrap().flags = 32;
+    let material = app
+        .world_mut()
+        .resource_mut::<Assets<StandardMaterial>>()
+        .add(StandardMaterial::default());
+    let child = app
+        .world_mut()
+        .spawn((
+            MeshMaterial3d(material.clone()),
+            Transform::default(),
+            ChildOf(car),
+        ))
+        .id();
+    app.world_mut().write_message(crate::entities::CoreEvent {
+        sequence: 51,
+        kind: "vehicleExploded".into(),
+        data: json!({"netId":1,"impulse":[0,18000,0],"torqueImpulse":[2800,0,0]}),
+    });
+    ticks(&mut app, 3);
+    let native = app.world().get::<VehicleBody>(car).unwrap();
+    assert!(native.wreck.charred && native.wreck.impulse.is_none());
+    let replacement = &app
+        .world()
+        .get::<MeshMaterial3d<StandardMaterial>>(child)
+        .unwrap()
+        .0;
+    assert_ne!(
+        replacement, &material,
+        "the actual rendered child must receive its own charred material"
+    );
+    let charred = app
+        .world()
+        .resource::<Assets<StandardMaterial>>()
+        .get(replacement)
+        .unwrap();
+    assert_eq!(charred.base_color, Color::srgb(0.05, 0.05, 0.05));
+    assert!(
+        app.world()
+            .get::<RayCastVehicleController>(car)
+            .unwrap()
+            .wheels
+            .iter()
+            .all(|w| w.tuning.max_suspension_force == 0.)
+    );
+    let velocity = app.world().get::<Velocity>(car).unwrap();
+    assert!(
+        velocity.linear.y > 8. && velocity.linear.y < 11.,
+        "one source impulse, not every fixed tick: {:?}",
+        velocity.linear
+    );
+    assert!(velocity.angular.x > 0.1);
+}
+#[test]
+fn pause_preserves_native_vehicle_ignition_and_water_clocks() {
+    let mut app = physics_app(Some(0.));
+    let car = body(&mut app, "jeep", Vec3::new(0., -3., 0.));
+    app.world_mut()
+        .get_mut::<VehicleBody>(car)
+        .unwrap()
+        .engine
+        .cranking = 2.;
+    app.insert_resource(UiState {
+        screen: crate::ui::Screen::Paused,
+        ..default()
+    });
+    ticks(&mut app, 10);
+    let native = app.world().get::<VehicleBody>(car).unwrap();
+    assert_eq!(native.engine.cranking, 2.);
+    assert!(!native.engine_drowned && native.swamp.elapsed == 0.);
+}
+#[test]
+fn native_car_drowns_and_cannot_restart_while_its_trapped_air_escapes() {
+    let mut app = physics_app(Some(0.));
+    let car = body(&mut app, "jeep", Vec3::new(0., -3., 0.));
+    app.world_mut().get_mut::<VehicleBody>(car).unwrap().flags = 1 | 2 | 4 | 8 | 64 | 128;
+    app.world_mut()
+        .get_mut::<VehicleBody>(car)
+        .unwrap()
+        .controls
+        .throttle = 1.;
+    ticks(&mut app, 3);
+    let native = app.world().get::<VehicleBody>(car).unwrap();
+    assert!(native.engine_drowned);
+    assert_eq!(native.engine_health, 0.);
+    assert_eq!(
+        native.flags & (1 | 2 | 4 | 8 | 64 | 128),
+        0,
+        "water disables actual engine, lamps, siren and alarm"
+    );
+    assert!(
+        app.world()
+            .get::<RayCastVehicleController>(car)
+            .unwrap()
+            .wheels
+            .iter()
+            .all(|w| w.engine_force == 0.)
+    );
+    // Holding the accelerator cannot restore the drowned engine. After the trapped
+    // air has escaped the actual Rapier body sinks, with drag instead of free fall.
+    ticks(&mut app, 600);
+    let native = app.world().get::<VehicleBody>(car).unwrap();
+    assert_eq!(native.engine_health, 0.);
+    assert!(app.world().get::<Velocity>(car).unwrap().linear.y < -1.);
+    assert!(app.world().get::<Velocity>(car).unwrap().linear.y > -15.);
+}
+#[test]
+fn native_interior_wheel_uses_the_same_axis_and_angle_as_the_hand_anchor() {
+    let mut app = physics_app(None);
+    let car = body(&mut app, "jeep", Vec3::new(0., 2., 0.));
+    let wheel = app
+        .world_mut()
+        .spawn((render::SteeringWheel(car), Transform::default()))
+        .id();
+    app.add_systems(Update, render::animate_steering);
+    app.world_mut()
+        .get_mut::<VehicleBody>(car)
+        .unwrap()
+        .controls
+        .steer = 1.;
+    ticks(&mut app, 30);
+    // Update visuals once after the last physical steer integration.
+    app.world_mut()
+        .run_system_cached(render::animate_steering)
+        .unwrap();
+    let (pivot, axis, angle) = app
+        .world()
+        .get::<VehicleBody>(car)
+        .unwrap()
+        .steering_wheel()
+        .unwrap();
+    assert!(pivot.length() > 0.5 && angle < -0.1);
+    let rotation = app.world().get::<Transform>(wheel).unwrap().rotation;
+    assert!(rotation.abs_diff_eq(Quat::from_axis_angle(axis, angle), 1e-6));
 }
 #[test]
 fn native_wheels_accelerate_brake_and_turn_against_real_rapier_ground() {

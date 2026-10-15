@@ -205,10 +205,7 @@ pub struct FlightStep {
 }
 
 pub fn ignition_duration(spec: &VehicleSpec, root: &Path) -> f32 {
-    if !spec.heli {
-        return 0.;
-    }
-    let Some(path) = spec.ignition_sound.as_deref() else {
+    let Some(path) = super::audio::ignition_path(spec) else {
         return 0.;
     };
     let Ok(bytes) = std::fs::read(root.join(path)) else {

@@ -7,12 +7,14 @@ struct Stamp {
     position: Vec3,
     rotation: Quat,
     articulation: [f32; 4],
+    damage: u16,
 }
 impl Stamp {
     fn of(body: &VehicleBody, pose: &Transform) -> Self {
         Self {
             position: pose.translation,
             rotation: pose.rotation,
+            damage: (body.popped_tire_mask as u16) | ((body.flags as u16) << 8),
             articulation: [
                 body.flight.main_phase,
                 body.flight.tail_phase,
@@ -22,7 +24,8 @@ impl Stamp {
         }
     }
     fn changed(&self, other: &Self) -> bool {
-        self.position.distance_squared(other.position) > 0.000001
+        self.damage != other.damage
+            || self.position.distance_squared(other.position) > 0.000001
             || self.rotation.angle_between(other.rotation).abs() > 0.001
             || self
                 .articulation
@@ -37,11 +40,13 @@ pub struct GeometryUploads {
     revision: u64,
     tick: u64,
     map: String,
+    epoch: u64,
 }
 pub fn upload(
     bridge: Res<CoreBridge>,
     model: Res<UiModel>,
     snapshot: Res<GameSnapshot>,
+    epoch: Res<crate::player::WorldSessionEpoch>,
     world: Res<WorldState>,
     config: Res<WorldConfig>,
     geometry: Res<WorldGeometry>,
@@ -53,6 +58,7 @@ pub fn upload(
         &GlobalTransform,
         &Visibility,
         Option<&render::WheelVisual>,
+        Option<&tires::TireVisual>,
     )>,
     meshes: Res<Assets<Mesh>>,
     mut uploaded: ResMut<GeometryUploads>,
@@ -65,11 +71,13 @@ pub fn upload(
     if uploaded.revision != geometry.revision
         || uploaded.map != config.map_name
         || tick < uploaded.tick
+        || uploaded.epoch != epoch.0
     {
         // The static world upload clears the managed BVH's dynamic subtrees too.
         uploaded.previous.clear();
         uploaded.revision = geometry.revision;
         uploaded.map = config.map_name.clone();
+        uploaded.epoch = epoch.0;
     }
     uploaded.tick = tick;
     let mut changed = HashMap::new();
@@ -106,7 +114,7 @@ pub fn upload(
             uploaded.previous.remove(&id);
         }
     }
-    for (entity, mesh, pose, visibility, wheel) in &parts {
+    for (entity, mesh, pose, visibility, wheel, tire) in &parts {
         if *visibility == Visibility::Hidden {
             continue;
         }
@@ -140,7 +148,9 @@ pub fn upload(
         };
         // Rotor bullets resolve against the tiny source hub regions, not the entire blade.
         // Aircraft/tracked wheels likewise have no separately shootable tire in the source.
-        let part = if let Some(wheel) = wheel.filter(|wheel| {
+        let part = if let Some(tire) = tire {
+            format!("tire:{}", tire.index)
+        } else if let Some(wheel) = wheel.filter(|wheel| {
             bodies.get(wheel.body).is_ok_and(|(_, body, _)| {
                 let spec = &data::definition(body.type_id).unwrap().spec;
                 !spec.plane && !spec.tracked

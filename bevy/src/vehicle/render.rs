@@ -15,6 +15,8 @@ pub struct WheelVisual {
     pub index: usize,
     pub left: bool,
 }
+#[derive(Component)]
+pub struct SteeringWheel(pub Entity);
 fn glass_panes(name: &str, root: &Path) -> Vec<String> {
     let stem = name.strip_suffix(".txt").unwrap_or(name);
     let mut panes: Vec<_> = [
@@ -118,6 +120,17 @@ pub fn build(
             Transform::default(),
         );
     }
+    let steering = Vec3::from_array(s.steer_axis).try_normalize().map(|_| {
+        commands
+            .spawn((
+                Name::new("Steering wheel pivot"),
+                SteeringWheel(entity),
+                Transform::from_translation(Vec3::from_array(s.steer_pivot)),
+                Visibility::default(),
+                ChildOf(entity),
+            ))
+            .id()
+    });
     if let Some(parts) = &s.parts {
         for (name, c) in parts {
             let m = materials.add(StandardMaterial {
@@ -125,15 +138,57 @@ pub fn build(
                 perceptual_roughness: 0.85,
                 ..default()
             });
+            let wheel = name.contains("steer") && steering.is_some();
             spawn_mesh(
                 commands,
-                entity,
+                if wheel { steering.unwrap() } else { entity },
                 name,
                 root,
                 cache,
                 meshes,
                 m,
-                Transform::default(),
+                if wheel {
+                    Transform::from_translation(-Vec3::from_array(s.steer_pivot))
+                } else {
+                    Transform::default()
+                },
+            );
+        }
+    }
+    for (name, target, color, parent) in [
+        (
+            s.seat_model_file.as_deref(),
+            Vec3::from_array(s.seat_model),
+            Color::srgb(0.22, 0.22, 0.24),
+            entity,
+        ),
+        (
+            s.steer_model.as_deref(),
+            Vec3::ZERO,
+            Color::srgb(0.13, 0.11, 0.08),
+            steering.unwrap_or(entity),
+        ),
+    ] {
+        if let Some(name) = name {
+            let centre = cache
+                .load_mesh(&root.join(name), meshes)
+                .ok()
+                .map(|(_, m)| (m.min + m.max) * 0.5)
+                .unwrap_or_default();
+            let material = materials.add(StandardMaterial {
+                base_color: color,
+                perceptual_roughness: 0.85,
+                ..default()
+            });
+            spawn_mesh(
+                commands,
+                parent,
+                name,
+                root,
+                cache,
+                meshes,
+                material,
+                Transform::from_translation(target - centre),
             );
         }
     }
@@ -164,6 +219,11 @@ pub fn build(
     }
     let wheel_mat = cache.material(s.wheel_tex.as_deref(), false, assets, materials);
     if let Some(name) = &s.wheel {
+        let split = if !s.tracked && !s.plane {
+            super::tires::load(&root.join(name), cache, meshes)
+        } else {
+            None
+        };
         for (index, w) in s.wheels().iter().enumerate() {
             let left = w.0 < 0.;
             if s.retract_gear {
@@ -191,6 +251,21 @@ pub fn build(
                     index,
                     left,
                 });
+                if let Some((tire, rim)) = &split {
+                    commands.entity(wheel).insert(Mesh3d(rim.clone()));
+                    commands.spawn((
+                        Name::new(format!("Tire {index}")),
+                        Mesh3d(tire.clone()),
+                        MeshMaterial3d(wheel_mat.clone()),
+                        super::tires::TireVisual {
+                            body: entity,
+                            index,
+                        },
+                        Transform::default(),
+                        Visibility::Inherited,
+                        ChildOf(wheel),
+                    ));
+                }
             }
         }
     }
@@ -306,5 +381,17 @@ pub fn animate_wheels(
             } else {
                 Quat::IDENTITY
             };
+    }
+}
+pub fn animate_steering(
+    bodies: Query<&VehicleBody>,
+    mut wheels: Query<(&SteeringWheel, &mut Transform)>,
+) {
+    for (wheel, mut transform) in &mut wheels {
+        if let Ok(body) = bodies.get(wheel.0) {
+            if let Some((_, axis, angle)) = body.steering_wheel() {
+                transform.rotation = Quat::from_axis_angle(axis, angle);
+            }
+        }
     }
 }

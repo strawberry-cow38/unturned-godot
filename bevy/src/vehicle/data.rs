@@ -41,6 +41,11 @@ pub struct VehicleSpec {
     pub prop_hub: [f32; 3],
     pub missile_mesh: Option<String>,
     pub steer_mesh: Option<String>,
+    pub steer_model: Option<String>,
+    pub steer_pivot: [f32; 3],
+    pub steer_axis: [f32; 3],
+    pub seat_model_file: Option<String>,
+    pub seat_model: [f32; 3],
     pub retract_gear: bool,
     pub rotor_hub: [f32; 3],
     pub tail_rotor_hub: [f32; 3],
@@ -76,6 +81,8 @@ pub struct VehicleSpec {
     pub sound: Option<String>,
     pub ignition_sound: Option<String>,
     pub horn: Option<String>,
+    pub horn_cooldown: f32,
+    pub horn_range: f32,
     pub idle_pitch: f32,
     pub max_pitch: f32,
     pub idle_volume: f32,
@@ -132,6 +139,18 @@ pub fn speed_buff() -> f32 {
         .unwrap_or(2.5)
 }
 impl VehicleSpec {
+    pub fn rotor_health_max(&self, main: bool) -> f32 {
+        let explicit = if main {
+            self.main_rotor_hp
+        } else {
+            self.tail_rotor_hp
+        };
+        if explicit > 0. {
+            explicit
+        } else {
+            self.health * if main { 0.45 } else { 0.28 }
+        }
+    }
     pub fn mass(&self) -> f32 {
         if self.mass > 0. { self.mass } else { 900. }
     }
@@ -251,6 +270,10 @@ impl VehicleSpec {
             })
             .collect();
         RayCastVehicleController {
+            filter_groups: Some(CollisionGroups::new(
+                Group::GROUP_4,
+                Group::ALL & !Group::GROUP_3,
+            )),
             index_forward_axis: 2,
             index_up_axis: 1,
             ..RayCastVehicleController::new(wheels)

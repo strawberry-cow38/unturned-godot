@@ -60,6 +60,25 @@ poses through `worldVehicleState`; the local driver uses the existing
   change. Occupied driver seats no longer reject a free passenger seat; reliable
   enter/exit facts preserve driver identity; every occupant follows the vehicle,
   while passenger movement, drive input and console teleport remain rejected.
+- Original steering parts turn around the declared pivot and normalized disc axis;
+  the same public transform is available to seated hand anchors. Dedicated semi
+  steering/seat meshes retain source AABB-centre placement.
+- Engine, starter and horn clips use source ranges, RPM/spool curves, rotor-size
+  pitch, and master volume. Car drive torque and idle sound wait for the actual
+  starter clip; stopping winds pitch/volume down for 1.4 seconds and removes the
+  stream instead of leaving inaudible decoders running.
+- Engine and main/tail rotor health adopt authoritative persistent pools. Source
+  land-vehicle swamp voxels retain trapped air for five seconds, bleed lift over
+  four, and keep water drag thereafter. Drowning sends a trusted water-contact
+  fact, permanently disables the engine, and switches off drowned electrics.
+- Accepted popped-tire masks hide the source outer radial split, leaving real rims
+  turning. Radius becomes 78% of stock and grip 35%; replacement restores the
+  original per-wheel radius. Moving hit geometry republishes when the mask changes.
+- Accepted explosions launch the single native body once, collapse suspension,
+  char all mesh descendants and remove rotor/wheel presentation. Detached original
+  wheel meshes use 18 kg sphere bodies, source kick ranges, ten-second lifetime and
+  independent last-second fade. Native simulation clocks stop during pause, and
+  explicit session epochs reset geometry/presentation on every load.
 
 ## Verification
 
@@ -94,14 +113,24 @@ the complete source Huey, original main/tail blades, cabin and shadows are visib
 and grounded on the PEI slope. The first close-up exposed a harness placement
 inside the tail; the extent-based clearance is the verified correction.
 
+Further native tests exercise drowning, the actual wheel/hand transform agreement,
+source tire mesh separation, ignition audio timing, stopped decoder lifetime, and
+accepted-explosion propagation into real Rapier velocity and rendered materials.
+The explosion test caught a first-frame impulse lost before Rapier creates a body;
+the adapter now retains that accepted impulse until its physical handle exists.
+All 29 focused vehicle tests passed. `bevy-jeep-tires.png` was captured from the
+fresh Vulkan binary and opened: the full Jeep, actual tread/rim split, interior
+seats and steering wheel are visible on the original PEI slope, with no asset or
+renderer errors. Destruction smoke/fire rendering remains a later verification.
+
 ## Still required for vehicle parity
 
 This milestone is not the whole 11,264-line vehicle shell. The following remains:
 aircraft turbulence, rotor strikes, airframe damage and crash presentation; ship
 deck/superstructure collider details and riding; suspension surface-material
-selection and wheel dust; swamping/drowning; damage, fire, explosions, husks,
-detached wheels and tires; dynamic headlights/sirens/beacons; engine/ignition/horn
-audio; towing, kingpin, sling, winch and cargo; turret weapons/hatches and optics;
+selection and wheel dust; continuous damage smoke/fire and husk settling;
+dynamic headlights/sirens/beacons; towing, kingpin, sling, winch and cargo;
+turret weapons/hatches and optics;
 doors/hood/trunk animations and storage dashboard; repair/refuel/battery/carjack
 interaction tools; remaining vehicle console/test entry points; remote-client
 puppets; seat switching and fully posed seated character cameras. Jet afterburner

@@ -770,3 +770,11 @@ main and tail blades, cabin and shadows present. Parked vehicles also have a
 regression-tested collision-stream boundary: they retain height while terrain is
 unloaded and regain physical wheel contact when the region returns. Detailed
 remaining vehicle work remains explicit in bevy/docs/VEHICLE_PORT.md.
+
+### 2026-10-14 — Bevy vehicle damage, interior controls and audio
+
+Ported the source steering-wheel pivot/axis and 1:1 steering angle, including the semi interior meshes, and exposed the same transform for seated hand anchors. Native engine/ignition/horn playback uses original clips, source ranges and RPM/spool curves; car torque and idle sound wait for the real ignition duration, and engine wind-down stops its decoder after 1.4 seconds. Authoritative engine and rotor subsystem snapshots now drive native failure behavior and retain repair/save results.
+
+Land vehicles use the original swamp voxels: five seconds of trapped-air flotation, four seconds of lift decay, continued water drag, permanent engine drowning and disabled electrics. Accepted tire masks hide the source radial-gap tread split and reduce actual wheel radius/grip while retaining rims. Accepted explosions char all mesh children, shed rotor/wheel presentation, collapse suspension, launch the single Rapier body once and spawn original 18kg wheel debris with ten-second lifetime/fade. A real-body regression caught and fixed first-frame impulse loss before Rapier creates its handle. Pause now stops vehicle timers/publication, and explicit session epochs rebuild bodies/hit geometry on load.
+
+Validation: 29 focused native vehicle tests passed, including native drowning, source ignition timing, actual tire mesh preservation, steering hand/mesh agreement, and explosion event → rendered material/physics impulse. Fresh Vulkan screenshot `bevy/artifacts/bevy-jeep-tires.png` was opened and inspected: full original Jeep, tread/rim, interior and steering wheel on the PEI slope, no renderer/asset errors. Continuous damage smoke/fire and remaining vehicle features stay explicit in `bevy/docs/VEHICLE_PORT.md`.
