@@ -7070,6 +7070,8 @@ namespace UnturnedGodot
             editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
             editor.AddChild(tunnelEd); editor.TunnelEd = tunnelEd;
             editor.AddChild(blockEd); editor.BlockRoadEd = blockEd;
+            var fenceSplineEd = new EditorFenceSpline(editor, cam, editor.Objects);   // Shift+J: a fence solved along a clicked path
+            editor.AddChild(fenceSplineEd); editor.FenceSplineEd = fenceSplineEd;
             editor.Roads = rf;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
@@ -7894,6 +7896,8 @@ namespace UnturnedGodot
             editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
             editor.AddChild(tunnelEd); editor.TunnelEd = tunnelEd;
             editor.AddChild(blockEd); editor.BlockRoadEd = blockEd;
+            var fenceSplineEd = new EditorFenceSpline(editor, cam, editor.Objects);   // Shift+J: a fence solved along a clicked path
+            editor.AddChild(fenceSplineEd); editor.FenceSplineEd = fenceSplineEd;
             editor.Roads = rf;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.
@@ -10741,6 +10745,8 @@ namespace UnturnedGodot
             // the dead space the plots left, filled (strawberry 2026-10-14: "procedural filling for dead space / empty lots /
             // parks. using hedges as splines"): hedgerows down the strips, pocket parks in the bigger pieces
             if (!noWalk) town.PlantGreens(rf, editor.Objects);
+            // the yard fences PlanPlots designated, laid as fences (strawberry 2026-10-14: "work on getting fences as splines")
+            if (!noWalk) town.BuildFences(editor, editor.Objects);
             // the parking lots' street lights, and blocks if they have any (strawberry 2026-10-14: "add streetlight support for
             // parking lots too")
             if (!noWalk) town.PlaceParkingProps(editor.Objects);
@@ -11003,6 +11009,44 @@ namespace UnturnedGodot
                     tcam.LookAt(site, Vector3.Up);
                     Log.Print($"[towngrid] plot camera over the town centre ({town.Plots.Count} plots)");
                     goto noTown;
+                }
+                // UG_TOWNCLOSE=fn[:k]: the k-th longest yard fence, from inside its own lot at a few metres up -- to see the
+                // posts stand plumb, the bays fit between them and the rails rack down the slope (fences as splines)
+                if (closeEnv != null && closeEnv.StartsWith("fn") && town.Fences.Count > 0)
+                {
+                    int fk = 0;
+                    if (closeEnv.Length > 3 && closeEnv[2] == ':') int.TryParse(closeEnv.Substring(3), out fk);
+                    var fruns = new System.Collections.Generic.List<TownRoadGrid.YardFence>(town.Fences);
+                    fruns.Sort((x, y) => new Vector2(y.B.X - y.A.X, y.B.Z - y.A.Z).Length().CompareTo(new Vector2(x.B.X - x.A.X, x.B.Z - x.A.Z).Length()));
+                    var fr = fruns[Mathf.Clamp(fk, 0, fruns.Count - 1)];
+                    var fmid = (fr.A + fr.B) * 0.5f; fmid.Y = terrain.SampleHeight(fmid.X, fmid.Z);
+                    var fdir = new Vector3(fr.B.X - fr.A.X, 0f, fr.B.Z - fr.A.Z); float flen = Mathf.Max(0.1f, fdir.Length()); fdir /= flen;
+                    var fout = new Vector3(-fdir.Z, 0f, fdir.X);
+                    var flot = Vector3.Zero; foreach (var fc in fr.Plot.Corners()) flot += fc; flot /= 4f;
+                    if ((flot - fmid).Dot(fout) < 0f) fout = -fout;
+                    tcam.GlobalPosition = fmid + fout * Mathf.Clamp(flen * 0.45f, 8f, 22f) + fdir * flen * 0.2f + Vector3.Up * 4.5f;
+                    tcam.Fov = 60f;
+                    tcam.LookAt(fmid + Vector3.Up * 1f, Vector3.Up);
+                    Log.Print($"[towngrid] fence camera on run {fk} of {fruns.Count}: {flen:0.0} m {fr.Edge} of a {fr.Plot.Kind} lot, {fr.A} -> {fr.B}");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=view:<x>,<z>,<dist>,<yaw>[,<pitch>]: orbit a point -- yaw 0 is from the south looking north, 90 from
+                // the east looking west; pitch is down from level (30 if not given)
+                if (closeEnv != null && closeEnv.StartsWith("view:"))
+                {
+                    var vp = closeEnv.Substring(5).Split(',');
+                    var ic = System.Globalization.CultureInfo.InvariantCulture;
+                    float VF(int i, float dflt) => vp.Length > i && float.TryParse(vp[i], System.Globalization.NumberStyles.Float, ic, out float vv) ? vv : dflt;
+                    if (vp.Length >= 2)
+                    {
+                        float vx = VF(0, 0f), vz = VF(1, 0f), vd = VF(2, 20f), vyaw = Mathf.DegToRad(VF(3, 0f)), vpitch = Mathf.DegToRad(VF(4, 30f));
+                        var vt = new Vector3(vx, terrain.SampleHeight(vx, vz) + 1f, vz);
+                        tcam.GlobalPosition = vt + new Vector3(Mathf.Sin(vyaw) * Mathf.Cos(vpitch), Mathf.Sin(vpitch), Mathf.Cos(vyaw) * Mathf.Cos(vpitch)) * vd;
+                        tcam.Fov = 55f;
+                        tcam.LookAt(vt, Vector3.Up);
+                        Log.Print($"[towngrid] view camera on {vt}");
+                        goto noTown;
+                    }
                 }
                 // UG_TOWNCLOSE=at:<x>,<z>[,<height>]: a point a probe named -- looking down on it from the south-east
                 if (closeEnv != null && closeEnv.StartsWith("at:"))

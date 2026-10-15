@@ -4748,8 +4748,9 @@ namespace UnturnedGodot
                     Fill(ds, new[] { c + new Vector3(-0.4f, 0f, -0.4f), c + new Vector3(0.4f, 0f, -0.4f), c + new Vector3(0.4f, 0f, 0.4f), c + new Vector3(-0.4f, 0f, 0.4f) }, Lift * 1.6f, Centre.Y);
                 Commit(ds, "Plots_DeadSpace", new Color(0.9f, 0.2f, 0.9f, 0.7f));
             }
-            // the yard fences, designated: a dark line along each run, over the lot lines
-            if (Fences.Count > 0)
+            // the yard fences, designated: a dark line along each run, over the lot lines -- only where the real ones are not
+            // being built (UG_TOWNFENCES=0; BuildFences lays them)
+            if (Fences.Count > 0 && !BuildRealFences)
             {
                 var fs = new SurfaceTool(); fs.Begin(Mesh.PrimitiveType.Triangles);
                 foreach (var f in Fences)

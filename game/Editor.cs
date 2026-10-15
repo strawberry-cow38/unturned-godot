@@ -31,6 +31,7 @@ namespace UnturnedGodot
         public EditorBridgeSpline BridgeEd;                // Shift+B: tile the cut bridge deck along a road spline, piers where it falls away
         public EditorTunnelSpline TunnelEd;                // Shift+U: bore the tunnel along a road spline, portals at both ends
         public EditorBlockRoad BlockRoadEd;                // Shift+K: tile the concrete jersey barrier along a spline
+        public EditorFenceSpline FenceSplineEd;            // Shift+J: a fence of any style solved along a clicked path
         public RoadField Roads;                           // the road graph, so a placed prop can ask what it is standing over
         public PowerLineField PowerLines;                 // the wires themselves (saved/loaded with the map)
         public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, LEGACY paving mode -- Shift+R)

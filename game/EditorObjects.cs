@@ -1198,6 +1198,7 @@ namespace UnturnedGodot
             SaveSigns();
             SaveLaneSigns();
             SaveTunnels();
+            SaveFences();
             SaveBakeOmit();
             Log.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
@@ -1233,6 +1234,7 @@ namespace UnturnedGodot
             LoadSigns();
             LoadLaneSigns();
             LoadTunnels();
+            LoadFences();
         }
 
         void LoadSaved()   // restore previously-saved editor placements on open (custom placeables + main mesh objects from the sidecar)
