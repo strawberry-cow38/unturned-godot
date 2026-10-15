@@ -1,4 +1,4 @@
-//! Original engine/ignition/horn clips, source RPM curves, and starter torque gate.
+//! Original engine/ignition clips, source RPM curves, and starter torque gate.
 use super::{VehicleBody, data::VehicleSpec, flight};
 use crate::{settings::Settings, world::WorldConfig};
 use bevy::{
@@ -13,27 +13,22 @@ const WIND_DOWN_SECONDS: f32 = 1.4;
 #[derive(Clone, Debug)]
 pub struct Engine {
     pub starts: u64,
-    pub horns: u64,
     pub cranking: f32,
     pub exhaust_puff: f32,
     was_running: bool,
     ignition_length: f32,
-    horn_cooldown: f32,
 }
 impl Engine {
     pub fn new(ignition_length: f32, running: bool) -> Self {
         Self {
             starts: 0,
-            horns: 0,
             cranking: 0.,
             exhaust_puff: 0.,
             was_running: running,
             ignition_length,
-            horn_cooldown: 0.,
         }
     }
     pub fn step(&mut self, spec: &VehicleSpec, running: bool, dt: f32) {
-        self.horn_cooldown = (self.horn_cooldown - dt).max(0.);
         if running && !self.was_running {
             self.starts += 1;
             self.exhaust_puff = 1.;
@@ -51,16 +46,7 @@ impl Engine {
             self.exhaust_puff = (self.exhaust_puff - dt).max(0.);
         }
     }
-    pub fn horn(&mut self, spec: &VehicleSpec) {
-        if spec.horn.is_some() && self.horn_cooldown <= 0. {
-            self.horns += 1;
-            self.horn_cooldown = if spec.horn_cooldown > 0. {
-                spec.horn_cooldown
-            } else {
-                0.5
-            };
-        }
-    }
+
 }
 pub fn ignition_path(spec: &VehicleSpec) -> Option<&str> {
     spec.ignition_sound
@@ -72,7 +58,6 @@ pub fn ignition_path(spec: &VehicleSpec) -> Option<&str> {
 struct Voice {
     entity: Option<Entity>,
     starts: u64,
-    horns: u64,
     pitch: f32,
     gain: f32,
     wind: Option<(f32, f32, f32)>,
@@ -191,30 +176,6 @@ pub fn update(
             }
         }
         voice.starts = starts;
-        if body.engine.horns > voice.horns {
-            if let Some(path) = spec.horn.as_deref() {
-                if config.content_root.join(path).is_file() {
-                    let range = if spec.horn_range > 0. {
-                        spec.horn_range
-                    } else {
-                        90.
-                    };
-                    spawn_sound(
-                        &mut commands,
-                        &assets,
-                        entity,
-                        path,
-                        false,
-                        10_f32.powf(4. / 20.),
-                        1.,
-                        range / 7.5,
-                        range,
-                        settings.master_volume,
-                    );
-                }
-            }
-        }
-        voice.horns = body.engine.horns;
         let playing = voice.target(
             spec,
             body.flags & 1 != 0,

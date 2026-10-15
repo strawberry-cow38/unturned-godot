@@ -2216,3 +2216,27 @@ and unchanged vitals. Actual fullgame Inventory/Crafting/Information captures
 also confirm committed dashboard frost/layering. One shared native frost pass
 retains the documented outgoing-panel resampling limit; Skills/original layouts
 remain separate. Details and reproduction: `bevy/docs/MENU_SWOOP_PORT.md`.
+
+### Native indexed vehicle maintenance and accepted manual horns
+
+The original MechanicsPanel now includes GLAZING, LAMPS and TIRES in source order.
+Canonical accepted presence masks choose rows; missing wheel slots stay missing.
+Persistent fix/replace buttons send protocol69 free indexed repair intents, wait
+for accepted masks and leave inventory unchanged. Glass names come from the
+managed source catalog. The summary displays the corrected original fleet fuel
+and hull ranges.
+
+Driver horn input now sends the accepted maintenance action. The shared event
+audio path plays the original clip/pitch/gain; optimistic native horn counters,
+cooldowns, playback and duplicate hearing alerts are removed. Server authority
+retains the original driver/battery/alarm gates, cooldown and single32m alert;
+native engine hearing keeps its original0.4s cadence.
+
+Twelve focused UI tests, one actual driver-input→UDP→audio test and the engine
+hearing regression pass. Separate UDP peers exercise a normal shot into pane17,
+sparse tire3 damage and actual repair observers with no inventory cost. The horn
+test proves no sound before acceptance and one accepted clip from two queued
+presses. The Vulkan production panel asserts all17 rows remain one line; both
+top/bottom captures were opened and independently reviewed. Source/code review
+passed. See `bevy/docs/VEHICLE_CONTROLS_PORT.md` and
+`bevy-mechanics-maintenance-{top,bottom}.png`.

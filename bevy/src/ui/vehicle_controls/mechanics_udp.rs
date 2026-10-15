@@ -24,7 +24,6 @@ fn submit(app: &mut App, peer: &CoreBridge) -> Value {
     let [UiIntent::Action { name, args }] = intents.as_slice() else {
         panic!("one original UI intent");
     };
-    assert_eq!(name, "vehicleLighting");
     action(peer, name, args.clone());
     args.clone()
 }
@@ -180,4 +179,117 @@ fn actual_udp_ctrl_patterns_and_mechanics_fix_wait_for_accepted_vehicle_state() 
             .entity(left)
             .contains::<bevy::ui::InteractionDisabled>()
     );
+}
+
+#[test]
+fn actual_udp_glass_and_sparse_tire_buttons_repair_exact_slots_without_inventory_cost() {
+    let config = WorldConfig::default();
+    let port = std::net::UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let host = bridge();
+    host.request("init",json!({"contentRoot":config.content_root,"listenPort":port,"allowCheats":true,"starterKit":true,"seed":0,"spawn":[0,0,0]})).unwrap();
+    let id=host.request("worldVehicles",json!({"vehicles":[{"typeId":data::named("police").unwrap().type_id,"position":[0,0,0],"health":6000,"fuel":60000,"battery":10000,"seatCount":4}]})).unwrap()["result"]["vehicles"][0]["netId"].as_u64().unwrap()as u32;
+    host.request(
+        "worldVehicleGlazing",
+        json!({"netId":id,"panes":[
+        {"label":"windshield","center":[3,1.6,-2],"size":[1,1,0.02]},
+        {"label":"canopy","center":[0,1.6,-2],"size":[1,1,0.02]}],"tireMask":10}),
+    )
+    .unwrap();
+    host.request("worldDynamicGeometry",json!({"key":format!("vehicle:{id}"),"meshes":[{"vehicleNetId":id,"bodyPart":"glass:17","vertices":[[-1,0,-2],[1,0,-2],[0,3,-2]]}]})).unwrap();
+    for _ in 0..20 {
+        host.request("tick", json!({})).unwrap();
+    }
+    action(
+        &host,
+        "fire",
+        json!({"origin":[0,1.6,0],"dir":[0,0,-1],"visual":{"aimAlpha":1}}),
+    );
+    host.request(
+        "worldVehicleDamage",
+        json!({"netId":id,"bodyPart":"tire:3","amount":1}),
+    )
+    .unwrap();
+    for _ in 0..15 {
+        host.request("tick", json!({})).unwrap();
+    }
+    let peer = bridge();
+    peer.request(
+        "init",
+        json!({"contentRoot":config.content_root,"connectHost":"127.0.0.1","connectPort":port}),
+    )
+    .unwrap();
+    let mut app = setup();
+    let world = app.world_mut();
+    for mut body in world.query::<&mut VehicleBody>().iter_mut(world) {
+        body.net_id = id;
+    }
+    let metadata = host.request("catalog", json!({})).unwrap();
+    {
+        let mut c = app.world_mut().resource_mut::<ItemCatalog>();
+        c.vehicle_maintenance =
+            Some(serde_json::from_value(metadata["result"]["vehicleMaintenance"].clone()).unwrap());
+        c.vehicle_lighting =
+            Some(serde_json::from_value(metadata["result"]["vehicleLighting"].clone()).unwrap());
+    }
+    pump(&host, &peer, &mut app, 30);
+    let state = &app.world().resource::<GameSnapshot>().0;
+    assert_eq!(row(state, id).unwrap()["brokenGlassMask"], 1 << 17);
+    assert_eq!(row(state, id).unwrap()["poppedTireMask"], 8);
+    let inventory = state["inventory"].clone();
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Mechanics;
+    app.world_mut().resource_mut::<Menu>().mechanics = Some(id);
+    render(&mut app);
+    let buttons: Vec<_> = app
+        .world_mut()
+        .query::<(Entity, &Fix)>()
+        .iter(app.world())
+        .map(|(e, f)| (e, f.1, f.2))
+        .collect();
+    assert_eq!(
+        buttons
+            .iter()
+            .filter(|(_, p, _)| *p == Part::Tire)
+            .map(|(_, _, i)| *i)
+            .collect::<Vec<_>>(),
+        [1, 3]
+    );
+    for (kind, index, action_name, key) in [
+        (Part::Glass, 17, "RepairGlass", "brokenGlassMask"),
+        (Part::Tire, 3, "RepairTire", "poppedTireMask"),
+    ] {
+        let button = buttons
+            .iter()
+            .find(|(_, p, i)| *p == kind && *i == index)
+            .unwrap()
+            .0;
+        app.world_mut().trigger(Activate { entity: button });
+        let sent = submit(&mut app, &peer);
+        assert_eq!(sent["action"], action_name);
+        assert_eq!(sent["index"], index);
+        assert_ne!(
+            row(&app.world().resource::<GameSnapshot>().0, id).unwrap()[key],
+            0,
+            "wait for authority before changing masks"
+        );
+        pump(&host, &peer, &mut app, 20);
+        render(&mut app);
+        assert_eq!(
+            row(&app.world().resource::<GameSnapshot>().0, id).unwrap()[key],
+            0
+        );
+        assert!(
+            app.world()
+                .entity(button)
+                .contains::<bevy::ui::InteractionDisabled>()
+        );
+        assert_eq!(
+            app.world().resource::<GameSnapshot>().0["inventory"],
+            inventory,
+            "source indexed repair is free, not spare-tire item use"
+        );
+    }
 }

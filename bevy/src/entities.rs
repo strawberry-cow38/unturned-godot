@@ -67,6 +67,7 @@ pub struct ItemCatalog {
     pub mounted_weapons: HashMap<String, f32>,
     pub(crate) npc_crew: Option<crate::vehicle::turrets::crew::Definition>,
     pub(crate) vehicle_lighting: Option<crate::vehicle::lighting::Definition>,
+    pub(crate) vehicle_maintenance: Option<crate::vehicle::maintenance::Definition>,
 }
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
@@ -297,6 +298,8 @@ fn load_catalog(
             serde_json::from_value(response["result"]["mountedWeapons"].clone())
                 .unwrap_or_default();
         catalog.npc_crew = serde_json::from_value(response["result"]["npcCrew"].clone()).ok();
+        catalog.vehicle_maintenance =
+            serde_json::from_value(response["result"]["vehicleMaintenance"].clone()).ok();
         catalog.vehicle_lighting =
             serde_json::from_value(response["result"]["vehicleLighting"].clone()).ok();
         Ok(serde_json::from_value::<Vec<ItemVisual>>(

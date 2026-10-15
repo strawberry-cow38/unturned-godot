@@ -1,5 +1,6 @@
 //! Native single-body vehicle host. Seating and owner state use the original wire commands.
 pub(crate) mod access;
+pub(crate) mod maintenance;
 mod audio;
 pub(crate) use audio::spawn_sound as spawn_ranged_audio;
 mod collision;
@@ -791,7 +792,8 @@ fn read_controls(
                     && body.battery > 0.
                     && body.flags & 128 == 0
                 {
-                    body.engine.horn(spec);
+                    let _ = bridge.request("action", json!({"name":"vehicleMaintenance",
+                        "args":{"netId":body.net_id,"action":"Horn","index":0}}));
                 }
                 let mut cyclic = Vec2::ZERO;
                 if spec.heli || spec.plane {

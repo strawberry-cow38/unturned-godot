@@ -13,15 +13,10 @@ use std::collections::HashMap;
 #[derive(Default)]
 struct Source {
     timer: f32,
-    horns: u64,
 }
 impl Source {
-    fn advance(&mut self, dt: f32, running: bool, speed_fraction: f32, horns: u64) -> Vec<f32> {
+    fn advance(&mut self, dt: f32, running: bool, speed_fraction: f32) -> Vec<f32> {
         let mut radii = Vec::new();
-        if horns > self.horns {
-            radii.extend((self.horns..horns).map(|_| 32.));
-        }
-        self.horns = horns;
         self.timer -= dt;
         if running && self.timer <= 0. {
             self.timer = 0.4;
@@ -44,7 +39,10 @@ pub(super) fn publish(
     mut hearing: ResMut<Hearing>,
     bodies: Query<(Entity, &VehicleBody, &Transform, &Velocity)>,
 ) {
-    if simulation_paused(&ui) || snapshot.0["connected"] != true || !crate::network::owns_world(&snapshot.0) {
+    if simulation_paused(&ui)
+        || snapshot.0["connected"] != true
+        || !crate::network::owns_world(&snapshot.0)
+    {
         return;
     }
     hearing.0.retain(|e, _| bodies.get(*e).is_ok());
@@ -60,12 +58,7 @@ pub(super) fn publish(
             0.
         };
         let source = hearing.0.entry(entity).or_default();
-        for radius in source.advance(
-            time.delta_secs(),
-            body.flags & 1 != 0,
-            fraction,
-            body.engine.horns,
-        ) {
+        for radius in source.advance(time.delta_secs(), body.flags & 1 != 0, fraction) {
             if let Err(error) = bridge.request(
                 "worldZombieNoise",
                 json!({
@@ -82,18 +75,18 @@ pub(super) fn publish(
 mod tests {
     use super::*;
     #[test]
-    fn accepted_horn_is_once_and_running_forward_noise_keeps_original_cadence() {
+    fn only_running_forward_noise_is_published_horns_are_authority_events() {
         let mut source = Source::default();
-        assert!(source.advance(0.02, true, -0.5, 0).is_empty());
+        assert!(source.advance(0.02, true, -0.5).is_empty());
         // The reverse sample still resets the original timer; accelerating
         // forward cannot generate a fresh alert until that period has elapsed.
         for _ in 0..19 {
-            assert!(source.advance(0.02, true, 0.5, 0).is_empty());
+            assert!(source.advance(0.02, true, 0.5).is_empty());
         }
-        assert_eq!(source.advance(0.02, true, 0.5, 1), vec![32., 24.]);
-        assert!(source.advance(0.02, true, 0.5, 1).is_empty());
-        assert_eq!(source.advance(0.02, false, 1., 2), vec![32.]);
-        assert!(source.advance(1., false, 1., 2).is_empty());
-        assert_eq!(source.advance(0.02, true, 2., 2), vec![48.]);
+        assert_eq!(source.advance(0.02, true, 0.5), vec![24.]);
+        assert!(source.advance(0.02, true, 0.5).is_empty());
+        assert!(source.advance(0.02, false, 1.).is_empty());
+        assert!(source.advance(1., false, 1.).is_empty());
+        assert_eq!(source.advance(0.02, true, 2.), vec![48.]);
     }
 }

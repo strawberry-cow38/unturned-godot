@@ -1,8 +1,8 @@
 # Vehicle controls and mechanics panel
 
 `ui/vehicle_controls` consumes the accepted vehicle snapshot and sends the
-protocol68 `vehicleLighting` actions. It does not change light flags, battery or
-broken-lamp masks locally.
+`vehicleLighting` and protocol69 `vehicleMaintenance` actions. It does not change
+light flags, battery or damage masks locally.
 
 The original `PlayerController`, `LightbarRadial` and `AmmoPie` own the interaction
 rules: an emergency-vehicle driver taps Ctrl for less than220ms to toggle the
@@ -40,12 +40,21 @@ scrolling maximum-height panel keeps the real rows reachable at smaller window
 sizes; source `MechanicsPanel` could extend beyond those windows. F (or its
 rebound interaction key) and Escape close the panel and consume that edge.
 
-Glazing and free per-wheel repair buttons await the protocol69 maintenance
-adapter. The existing spare-tire command is intentionally not reused: it consumes
-an inventory item and repairs the first flat wheel, unlike the original panel's
-free indexed repair. Current tire status is read from real rendered tire entries
-and the accepted popped mask. Current displayed fuel/health may reflect the
-pre69 signed-wire capacity defect; the panel does not invent corrected values.
+The panel now includes original GLAZING, LAMPS and TIRES sections in that order.
+All three use accepted canonical presence/broken masks. Sparse wheel slots remain
+sparse: slot3 stays slot3 and does not manufacture absent slots0 or2. Glass display
+names come from the managed source extraction. `fix` repairs the selected pane or
+lamp; `replace` requests the original free indexed tire repair. Buttons persist
+across accepted damage/repair updates, disable intact parts and never modify the
+local snapshot or consume an inventory spare tire. The summary uses actual
+accepted fuel and hull values with protocol69's source-fleet encoding budgets.
+
+Driver horn input now sends the maintenance intent. Only the accepted
+`vehicleHorn` fact creates the original horn clip, pitch1 and +4dB spatial audio,
+using the same path as the alarm horn. The old native counter, cooldown, optimistic
+audio and duplicate hearing publication are removed; managed source authority
+owns cooldown, battery/alarm/driver gates and the one32m hearing alert. Native
+engine hearing retains its original0.4s cadence and forward-speed range.
 
 Validation against immutable
 `.local/vehicle-lights-v68-final/UnturnedBevy.Bridge.dll` passes all nine focused
@@ -77,3 +86,16 @@ render, `bevy-mechanics-panel-final.png`, passed the actual text-layout assertio
 and was opened and independently reviewed: each status remains on one line,
 working lamps have dimmed repair captions, and all tire rows remain visible. The large driving forearms match the original Godot
 `drivetest` reference and are not a menu regression.
+
+The protocol69 native follow-up passes12 focused controls/maintenance tests, one
+actual driver-input→real UDP→accepted audio test and the engine-hearing cadence
+regression. Two real UDP sessions exercise normal Fire against canonical pane17,
+a sparse tire3 contact, production repair observers and unchanged inventory. The
+native horn test submits two clicks before an authority tick: zero optimistic
+sound, one accepted fact/clip after the original cooldown rejects the duplicate.
+Source/code review by interfaces found no blocker. The expanded panel Vulkan fixture also passes: all17 actual source part rows
+retain one-line text layout and correct disabled-caption contrast. Both
+`bevy-mechanics-maintenance-top.png` and `bevy-mechanics-maintenance-bottom.png`
+were opened; they show source GLAZING/LAMPS/TIRES order, exact fix/replace
+captions, broken-part status and scroll access to the last wheel and close hint.
+The earlier seven-lamp capture above remains its own verified checkpoint.

@@ -4,6 +4,8 @@ use bevy::ecs::system::RunSystemOnce;
 mod udp;
 #[path = "mechanics_visual.rs"]
 mod visual;
+#[path = "maintenance_tests.rs"]
+mod maintenance;
 
 fn setup() -> App {
     let mut app = super::super::tests::setup();
@@ -40,7 +42,8 @@ fn fixes(app: &mut App) -> Vec<(Entity, u8)> {
     let mut result: Vec<_> = world
         .query::<(Entity, &Fix)>()
         .iter(world)
-        .map(|(e, f)| (e, f.1))
+        .filter(|(_, f)| f.1 == Part::Lamp)
+        .map(|(e, f)| (e, f.2))
         .collect();
     result.sort_by_key(|x| x.1);
     result
@@ -53,10 +56,10 @@ fn actual_panel_keeps_buttons_through_damage_changes_and_only_requests_broken_la
     assert_eq!(buttons.len(), 2);
     let world = app.world_mut();
     for (caption, color) in world.query::<(&FixText, &TextColor)>().iter(world) {
-        assert_eq!(color.0.alpha(), if caption.0 == 0 { 1. } else { 0.5 });
+        assert_eq!(color.0.alpha(), if caption.1 == 0 { 1. } else { 0.5 });
     }
     for layout in world
-        .query_filtered::<&TextLayout, With<LampText>>()
+        .query_filtered::<&TextLayout, With<PartText>>()
         .iter(world)
     {
         assert_eq!(layout.linebreak, LineBreak::NoWrap);

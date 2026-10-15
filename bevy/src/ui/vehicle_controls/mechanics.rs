@@ -1,5 +1,5 @@
-//! The original bonnet panel. Persistent rows read accepted facts every frame;
-//! a click requests a free lamp repair and never edits the native lens mask.
+//! Original bonnet panel. Persistent rows read accepted facts; a click requests
+//! the canonical repair and never changes local glass, lamp or tire masks.
 use super::*;
 #[cfg(test)]
 use crate::vehicle::access::focus;
@@ -13,14 +13,77 @@ const ACTION: &str = "openVehicleHood";
 pub(super) struct Root;
 #[derive(Component)]
 pub(super) struct BodyText;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Part {
+    Glass,
+    Lamp,
+    Tire,
+}
+impl Part {
+    fn present(self, v: &Value) -> u32 {
+        mask(
+            v,
+            match self {
+                Self::Glass => "glassMask",
+                Self::Lamp => "lampMask",
+                Self::Tire => "tireMask",
+            },
+        )
+    }
+    fn broken(self, v: &Value) -> u32 {
+        mask(
+            v,
+            match self {
+                Self::Glass => "brokenGlassMask",
+                Self::Lamp => "brokenLampMask",
+                Self::Tire => "poppedTireMask",
+            },
+        ) & self.present(v)
+    }
+    fn title(self) -> &'static str {
+        match self {
+            Self::Glass => "GLAZING",
+            Self::Lamp => "LAMPS",
+            Self::Tire => "TIRES",
+        }
+    }
+    fn status(self, broken: bool) -> &'static str {
+        match (self, broken) {
+            (Self::Glass, true) => "SHATTERED",
+            (Self::Glass, false) => "intact",
+            (Self::Lamp, true) => "SHOT OUT",
+            (Self::Lamp, false) => "working",
+            (Self::Tire, true) => "BLOWN",
+            (Self::Tire, false) => "ok",
+        }
+    }
+    fn display(self, index: u8, count: u8, catalog: &ItemCatalog) -> String {
+        match self {
+            Self::Glass => catalog
+                .vehicle_maintenance
+                .as_ref()
+                .and_then(|d| d.glass_names.get(index as usize))
+                .cloned()
+                .unwrap_or_default(),
+            Self::Lamp => lamp_display(
+                catalog
+                    .vehicle_lighting
+                    .as_ref()
+                    .and_then(|d| d.lamp_labels.get(index as usize))
+                    .map(String::as_str)
+                    .unwrap_or(""),
+            )
+            .into(),
+            Self::Tire => tire_display(index as usize, count as usize),
+        }
+    }
+}
 #[derive(Component)]
-pub(super) struct LampText(u8);
+pub(super) struct PartText(Part, u8, u8);
 #[derive(Component)]
-pub(super) struct TireText(usize, usize);
+pub(super) struct Fix(u32, Part, u8);
 #[derive(Component)]
-pub(super) struct Fix(u32, u8);
-#[derive(Component)]
-pub(super) struct FixText(u8);
+pub(super) struct FixText(Part, u8);
 #[derive(Component)]
 pub(super) struct Scroll;
 
@@ -49,8 +112,7 @@ pub(super) fn consume_interact(
     keys: &mut ButtonInput<KeyCode>,
     mouse: &mut ButtonInput<MouseButton>,
 ) {
-    // Use the binding itself so closing a rebound F or mouse action consumes
-    // exactly that edge, without clearing unrelated held movement keys.
+    // Consume exactly the rebound edge; held movement and unrelated keys remain.
     match settings.bindings.get(&GameAction::Interact) {
         Some(Binding::Key(key)) => {
             let pressed = keys
@@ -96,8 +158,8 @@ fn tire_display(i: usize, n: usize) -> String {
         )
     }
 }
-fn mask(v: &Value, key: &str) -> u8 {
-    v[key].as_u64().unwrap_or(0) as u8
+fn mask(v: &Value, key: &str) -> u32 {
+    v[key].as_u64().unwrap_or(0) as u32
 }
 
 pub(super) fn build(
@@ -108,8 +170,7 @@ pub(super) fn build(
     catalog: Res<ItemCatalog>,
     roots: Query<Entity, With<Root>>,
     bodies: Query<&VehicleBody>,
-    tires: Query<&crate::vehicle::TireVisual>,
-    mut previous: Local<Option<(u64, u32, u8, usize)>>,
+    mut previous: Local<Option<(u64, u32, u32, u32, u32)>>,
 ) {
     let view = menu
         .mechanics
@@ -131,14 +192,16 @@ pub(super) fn build(
     let Some(body) = bodies.iter().find(|b| b.net_id == id) else {
         return;
     };
-    let tire_count = tires
-        .iter()
-        .filter(|t| bodies.get(t.body).is_ok_and(|b| b.net_id == id))
-        .map(|t| t.index + 1)
-        .max()
-        .unwrap_or(0);
-    let lamp_mask = mask(accepted, "lampMask");
-    let key = (menu.epoch, id, lamp_mask, tire_count);
+    let glass = Part::Glass.present(accepted);
+    let lamps = Part::Lamp.present(accepted);
+    let tires = Part::Tire.present(accepted);
+    // Catalog arrival may trail the first owner snapshot. Never freeze empty names.
+    if (glass != 0 && catalog.vehicle_maintenance.is_none())
+        || (lamps != 0 && catalog.vehicle_lighting.is_none())
+    {
+        return;
+    }
+    let key = (menu.epoch, id, glass, lamps, tires);
     if *previous == Some(key) && !roots.is_empty() {
         return;
     }
@@ -146,11 +209,6 @@ pub(super) fn build(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    let labels = catalog
-        .vehicle_lighting
-        .as_ref()
-        .map(|d| d.lamp_labels.clone())
-        .unwrap_or_default();
     commands
         .spawn((
             Root,
@@ -186,25 +244,22 @@ pub(super) fn build(
                     text("MECHANICS", 28., TEXT),
                     TextLayout::justify(Justify::Center),
                 ));
-                p.spawn((
-                    BodyText,
-                    text(stats(body, def, accepted, tire_count), 16., TEXT),
-                ));
-                if lamp_mask != 0 {
-                    p.spawn(text("LAMPS", 18., TEXT));
-                }
-                if lamp_mask != 0 {
+                p.spawn((BodyText, text(stats(body, def, accepted), 16., TEXT)));
+                for kind in [Part::Glass, Part::Lamp, Part::Tire] {
+                    let present = kind.present(accepted);
+                    if present == 0 {
+                        continue;
+                    }
+                    p.spawn(text(kind.title(), 18., TEXT));
                     p.spawn(Node {
                         flex_direction: FlexDirection::Column,
                         row_gap: px(4),
                         ..default()
                     })
                     .with_children(|rows| {
-                        for (i, label) in labels
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| lamp_mask & (1 << i) != 0)
-                        {
+                        // Enumerate canonical accepted bits, not visual max(index)+1:
+                        // a missing middle wheel must not create a repairable phantom.
+                        for index in (0..32u8).filter(|i| present & (1u32 << i) != 0) {
                             rows.spawn(Node {
                                 flex_direction: FlexDirection::Row,
                                 column_gap: px(8),
@@ -212,8 +267,8 @@ pub(super) fn build(
                             })
                             .with_children(|r| {
                                 r.spawn((
-                                    LampText(i as u8),
-                                    text(lamp_display(label), 15., TEXT),
+                                    PartText(kind, index, present.count_ones() as u8),
+                                    text("", 15., TEXT),
                                     TextLayout::new(Justify::Left, LineBreak::NoWrap),
                                     Node {
                                         flex_shrink: 0.,
@@ -223,7 +278,7 @@ pub(super) fn build(
                                 ));
                                 r.spawn((
                                     Button,
-                                    Fix(id, i as u8),
+                                    Fix(id, kind, index),
                                     Node {
                                         min_width: px(70),
                                         padding: UiRect::all(px(5)),
@@ -233,26 +288,16 @@ pub(super) fn build(
                                     BackgroundColor(BUTTON),
                                 ))
                                 .with_children(|b| {
-                                    b.spawn((FixText(i as u8), text("fix", 14., TEXT)));
+                                    b.spawn((
+                                        FixText(kind, index),
+                                        text(
+                                            if kind == Part::Tire { "replace" } else { "fix" },
+                                            14.,
+                                            TEXT,
+                                        ),
+                                    ));
                                 });
                             });
-                        }
-                    });
-                }
-                if tire_count > 0 {
-                    p.spawn(text("TIRES", 18., TEXT));
-                    p.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(4),
-                        ..default()
-                    })
-                    .with_children(|rows| {
-                        for i in 0..tire_count {
-                            rows.spawn((
-                                TireText(i, tire_count),
-                                text("", 15., TEXT),
-                                TextLayout::new(Justify::Left, LineBreak::NoWrap),
-                            ));
                         }
                     });
                 }
@@ -263,29 +308,23 @@ pub(super) fn build(
             });
         });
 }
-fn stats(
-    body: &VehicleBody,
-    def: &data::VehicleDefinition,
-    accepted: &Value,
-    tires: usize,
-) -> String {
-    let lamp = mask(accepted, "lampMask");
-    let broken = mask(accepted, "brokenLampMask") & lamp;
-    let flat = (mask(accepted, "poppedTireMask") as u32 & ((1u32 << tires.min(8)) - 1)).count_ones()
-        as usize;
+fn stats(body: &VehicleBody, def: &data::VehicleDefinition, v: &Value) -> String {
+    let panes = Part::Glass.present(v);
+    let lamps = Part::Lamp.present(v);
+    let tires = Part::Tire.present(v);
     format!(
-        "{}\n\nengine      {}\nhealth      {:.0} / {:.0}\nfuel        {:.0} / {:.0}\nbattery     {:.0}\ngears       {}\nseats       {}\ntrunk       {}\nlamps       {} / {} working\ntires       {} / {} inflated",
+        "{}\n\nengine      {}\nhealth      {:.0} / {:.0}\nfuel        {:.0} / {:.0}\nbattery     {:.0}\ngears       {}\nseats       {}\ntrunk       {}\nglass       {} / {} intact\nlamps       {} / {} working\ntires       {} / {} inflated",
         def.spec.name,
-        if mask(accepted, "flags") & 1 != 0 {
+        if mask(v, "flags") & 1 != 0 {
             "running"
         } else {
             "off"
         },
-        accepted["health"].as_f64().unwrap_or(0.),
+        v["health"].as_f64().unwrap_or(0.),
         def.spec.health * 10.,
-        accepted["fuel"].as_f64().unwrap_or(0.),
+        v["fuel"].as_f64().unwrap_or(0.),
         def.spec.fuel,
-        accepted["battery"].as_f64().unwrap_or(0.),
+        v["battery"].as_f64().unwrap_or(0.),
         body.gear_count(),
         def.seats.len(),
         if def.access.iter().any(|z| z.kind == "Trunk") {
@@ -293,10 +332,12 @@ fn stats(
         } else {
             "none"
         },
-        lamp.count_ones() - broken.count_ones(),
-        lamp.count_ones(),
-        tires - flat,
-        tires
+        panes.count_ones() - Part::Glass.broken(v).count_ones(),
+        panes.count_ones(),
+        lamps.count_ones() - Part::Lamp.broken(v).count_ones(),
+        lamps.count_ones(),
+        tires.count_ones() - Part::Tire.broken(v).count_ones(),
+        tires.count_ones()
     )
 }
 pub(super) fn refresh(
@@ -306,17 +347,12 @@ pub(super) fn refresh(
     snapshot: Res<GameSnapshot>,
     catalog: Res<ItemCatalog>,
     bodies: Query<&VehicleBody>,
-    tires: Query<&crate::vehicle::TireVisual>,
-    mut body_text: Query<&mut Text, (With<BodyText>, Without<LampText>, Without<TireText>)>,
-    mut lamps: Query<
-        (&LampText, &mut Text, &mut TextColor),
-        (Without<BodyText>, Without<TireText>, Without<FixText>),
+    mut body_text: Query<&mut Text, (With<BodyText>, Without<PartText>)>,
+    mut labels: Query<
+        (&PartText, &mut Text, &mut TextColor),
+        (Without<BodyText>, Without<FixText>),
     >,
-    mut tire_labels: Query<
-        (&TireText, &mut Text, &mut TextColor),
-        (Without<BodyText>, Without<LampText>, Without<FixText>),
-    >,
-    mut captions: Query<(&FixText, &mut TextColor), (Without<LampText>, Without<TireText>)>,
+    mut captions: Query<(&FixText, &mut TextColor), Without<PartText>>,
     mut fixes: Query<(
         Entity,
         &Fix,
@@ -342,27 +378,16 @@ pub(super) fn refresh(
     let Some(def) = data::definition(body.type_id) else {
         return;
     };
-    let total = tires
-        .iter()
-        .filter(|t| bodies.get(t.body).is_ok_and(|b| b.net_id == id))
-        .map(|t| t.index + 1)
-        .max()
-        .unwrap_or(0);
     for mut text in &mut body_text {
-        **text = stats(body, def, v, total);
+        **text = stats(body, def, v);
     }
-    for (label, mut text, mut color) in &mut lamps {
-        let dead = mask(v, "brokenLampMask") & (1 << label.0) != 0;
-        let name = catalog
-            .vehicle_lighting
-            .as_ref()
-            .and_then(|d| d.lamp_labels.get(label.0 as usize))
-            .map(String::as_str)
-            .unwrap_or("");
+    for (label, mut text, mut color) in &mut labels {
+        let dead = label.0.broken(v) & (1 << label.1) != 0;
         **text = format!(
-            "{:<16} {}",
-            lamp_display(name),
-            if dead { "SHOT OUT" } else { "working" }
+            "{:<width$} {}",
+            label.0.display(label.1, label.2, &catalog),
+            label.0.status(dead),
+            width = if label.0 == Part::Glass { 14 } else { 16 }
         );
         color.0 = if dead {
             Color::srgb(1., 0.55, 0.5)
@@ -370,21 +395,8 @@ pub(super) fn refresh(
             Color::srgba(1., 1., 1., 0.75)
         };
     }
-    for (label, mut text, mut color) in &mut tire_labels {
-        let flat = mask(v, "poppedTireMask") & (1 << label.0) != 0;
-        **text = format!(
-            "{:<16} {}",
-            tire_display(label.0, label.1),
-            if flat { "BLOWN" } else { "ok" }
-        );
-        color.0 = if flat {
-            Color::srgb(1., 0.55, 0.5)
-        } else {
-            Color::srgba(1., 1., 1., 0.75)
-        };
-    }
     for (entity, fix, mut bg, disabled) in &mut fixes {
-        let broken = mask(v, "brokenLampMask") & (1 << fix.1) != 0;
+        let broken = fix.1.broken(v) & (1 << fix.2) != 0;
         bg.0 = if broken {
             BUTTON
         } else {
@@ -400,10 +412,9 @@ pub(super) fn refresh(
                 .insert(bevy::ui::InteractionDisabled);
         }
     }
-    // MechanicsPanel uses the engine's default Button theme. Godot4.6:
-    // font_color=.875 RGB, disabled font uses the same RGB at alpha .5.
+    // Original Godot default Button font .875 RGB; disabled uses alpha .5.
     for (caption, mut color) in &mut captions {
-        let broken = mask(v, "brokenLampMask") & (1 << caption.0) != 0;
+        let broken = caption.0.broken(v) & (1 << caption.1) != 0;
         color.0 = Color::srgba(0.875, 0.875, 0.875, if broken { 1. } else { 0.5 });
     }
     let delta = wheels
@@ -434,7 +445,12 @@ pub(super) fn repair(
     if ui.screen != Screen::Mechanics || menu.mechanics != Some(fix.0) {
         return;
     }
-    if row(&snapshot.0, fix.0).is_some_and(|v| mask(v, "brokenLampMask") & (1 << fix.1) != 0) {
-        intent(&mut intents, fix.0, "RepairLamp", fix.1.into());
+    if !row(&snapshot.0, fix.0).is_some_and(|v| fix.1.broken(v) & (1 << fix.2) != 0) {
+        return;
+    }
+    if fix.1 == Part::Lamp {
+        intent(&mut intents, fix.0, "RepairLamp", fix.2.into());
+    } else {
+        intents.write(UiIntent::Action{name:"vehicleMaintenance".into(),args:json!({"netId":fix.0,"action":if fix.1==Part::Glass{"RepairGlass"}else{"RepairTire"},"index":fix.2})});
     }
 }

@@ -21,6 +21,9 @@ use serde_json::json;
 use std::collections::HashSet;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "horn_tests.rs"]
+mod horn_tests;
 
 #[derive(Clone, Copy)]
 enum Role {
@@ -437,7 +440,7 @@ pub(super) fn events(
     config: Res<WorldConfig>,
     settings: Res<Settings>,
 ) {
-    for event in events.read().filter(|e| e.kind == "vehicleAlarmHorn") {
+    for event in events.read().filter(|e| matches!(e.kind.as_str(), "vehicleAlarmHorn" | "vehicleHorn")) {
         let Some(id) = event.data["netId"].as_u64() else {
             continue;
         };
