@@ -1014,3 +1014,29 @@ forward-quad versus Godot box-projector edge differences.
 - Ported actual hold-T/release-close controls, original AttachStart/ready poses, hook-projected slot icons, source rarity colors, simultaneous option rings and one choice per carried physical item. Tokens retain the selected gun and exact incoming item; native UI never spends or previews an unaccepted attachment. Original alpha bounds orient only lying-down magazine icons.
 - Native held parts follow accepted IDs and original mesh/texture tables. Rail optics use raw per-gun hooks while factory irons retain composed mounts; bottle mufflers seat on actual muzzle geometry and grow only for larger barrels. Red-dot/halo/kobra reticles retain source size, optical axis, depth occlusion and eye relief. Same-ID gun replacement now rebuilds its rig, stale old-shot facts cannot eject from its replacement, and accepted fits/removals use the original restarting selector click.
 - All206 native checks passed before review polish;21 viewmodel and3 attachment UI checks pass afterward. Live Vulkan mouse clicks fitted silencer7 and sight146 and consumed their exact bag items. A tactical magazine swap preserved the chamber (loaded30→31, returned29-round old mag). Removing both parts returned them to inventory and restored factory sight5, visually verified. Original Godot attachment capture confirms native pose/hook framing; first-person lighting still differs. Peer review found no blocking issue; rebound-key help text was corrected. Full PiP scopes and tactical emitters remain next work, with details/evidence in bevy/docs/WEAPON_PORT.md.
+
+
+### Bevy current zombie bodies, shared wardrobe and physical death
+
+Ported the actual ZombieBody to one native Rapier solve with original capsule,
+gravity/slope/snap, contact-normal escape, net-progress window and50Hz clip
+cadence. Managed field decisions remain authoritative; body results publish
+before the core tick and preserve motion state across save/load and origin
+shifts. Added current-frame guards for zombie body/noise publications; a real
+managed-host regression fails stale requests after a rebase.
+
+Shared native human dressing now composites original clothing albedo/emission/
+metallic maps, source tatter math, fixed zombie face19 and item-slot Skull/Spine
+accessories. Original11-bone ragdolls preserve extracted masses, colliders,
+damping, joint limits and accepted death impulses. Vehicle horns and moving
+engine noise reach the original zombie field at source radii/cadence.
+
+Validation: five native zombie physics tests, two actual-content character tests,
+one hearing cadence test and one real-host origin regression pass. An inspected
+PEI session loaded1403 original zombie points and43 HOT bodies; medic/chef
+wardrobe and accepted five-shot death (100→0, ammo30→25) rendered with physical
+head/body tilt. Independent review found no wardrobe/skinning/joint blocker.
+Clothing shader compiled cleanly; session quit normally. See
+`bevy/docs/ZOMBIE_PORT.md` and `bevy/artifacts/bevy-zombie-{medic-live,chef-live,accepted-death}.png`.
+No zombie attacks/loot or infinite-world spawn points were invented where the
+selected source has none. Player appearance/third-person integration follows.

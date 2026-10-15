@@ -20,12 +20,23 @@ use std::{
 };
 
 pub struct RigPlugin;
+/// Skeletons whose original AnimationPlayer runs at the 50 Hz physics cadence.
+#[derive(Component)]
+pub struct RigFixedAnimation;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RigFixedUpdate;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RigAnimation;
 impl Plugin for RigPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RigLibrary>()
-            .add_systems(Update, animate_rigs.in_set(RigAnimation));
+            .add_systems(Update, animate_rigs.in_set(RigAnimation))
+            .add_systems(
+                FixedUpdate,
+                animate_fixed_rigs
+                    .in_set(RigFixedUpdate)
+                    .after(bevy_rapier3d::plugin::PhysicsSet::Writeback),
+            );
     }
 }
 #[derive(Clone, Deserialize, Debug)]
@@ -316,13 +327,13 @@ pub struct RigSkin(pub Entity);
 /// Spawn a complete skin + skeleton. Returned root owns all bone/mesh entities and
 /// carries RigPlayback. Materials and clip names are caller-selected game state.
 #[allow(clippy::too_many_arguments)]
-pub fn spawn_rig(
+pub fn spawn_rig<M: bevy::pbr::Material>(
     commands: &mut Commands,
     library: &mut RigLibrary,
     meshes: &mut Assets<Mesh>,
     bindposes: &mut Assets<SkinnedMeshInverseBindposes>,
     path: &Path,
-    material: Handle<StandardMaterial>,
+    material: Handle<M>,
     transform: Transform,
     arms_only: bool,
     clip: &str,
@@ -459,72 +470,85 @@ fn apply_additive(track: &Track, length: f32, weight: f32, mut pose: Transform) 
 }
 fn animate_rigs(
     time: Res<Time>,
-    mut players: Query<&mut RigPlayback>,
+    mut players: Query<&mut RigPlayback, Without<RigFixedAnimation>>,
     mut transforms: Query<&mut Transform>,
 ) {
     for mut player in &mut players {
-        if player.paused {
+        advance_rig(&mut player, &mut transforms, time.delta_secs());
+    }
+}
+fn animate_fixed_rigs(
+    time: Res<Time<Fixed>>,
+    mut players: Query<&mut RigPlayback, With<RigFixedAnimation>>,
+    mut transforms: Query<&mut Transform>,
+) {
+    for mut player in &mut players {
+        advance_rig(&mut player, &mut transforms, time.delta_secs());
+    }
+}
+fn advance_rig(player: &mut RigPlayback, transforms: &mut Query<&mut Transform>, delta: f32) {
+    if player.paused {
+        return;
+    }
+    player.time += delta * player.speed;
+    let dt = delta * player.speed;
+    if let Some(overlay) = &mut player.overlay {
+        overlay.time += dt;
+    }
+    let clip = player.data.anims.get(&player.clip);
+    let t = clip.map_or(0., |c| clip_time(player.time, c.length, player.looping));
+    for bone in &player.data.bones {
+        let Some(entity) = player.bones.get(&bone.name) else {
             continue;
+        };
+        let Ok(mut transform) = transforms.get_mut(*entity) else {
+            continue;
+        };
+        let mut pose = bone.transform();
+        if let Some(track) = clip.and_then(|c| c.tracks.get(&bone.name)) {
+            pose = sample_track(track, t, pose);
         }
-        player.time += time.delta_secs() * player.speed;
-        let dt = time.delta_secs() * player.speed;
-        if let Some(overlay) = &mut player.overlay {
-            overlay.time += dt;
-        }
-        let clip = player.data.anims.get(&player.clip);
-        let t = clip.map_or(0., |c| clip_time(player.time, c.length, player.looping));
-        for bone in &player.data.bones {
-            let Some(entity) = player.bones.get(&bone.name) else {
-                continue;
-            };
-            let Ok(mut transform) = transforms.get_mut(*entity) else {
-                continue;
-            };
-            let mut pose = bone.transform();
-            if let Some(track) = clip.and_then(|c| c.tracks.get(&bone.name)) {
-                pose = sample_track(track, t, pose);
-            }
-            if let Some(overlay) = &player.overlay {
-                if overlay.mask.is_empty() || overlay.mask.contains(&bone.name) {
-                    if let Some(c) = player.data.anims.get(&overlay.clip) {
-                        if let Some(track) = c.tracks.get(&bone.name) {
-                            let other = sample_track(
-                                track,
-                                clip_time(overlay.time, c.length, overlay.looping),
-                                pose,
-                            );
-                            let w = overlay.weight.clamp(0., 1.);
-                            pose.translation = pose.translation.lerp(other.translation, w);
-                            pose.rotation = pose.rotation.slerp(other.rotation, w);
-                            pose.scale = pose.scale.lerp(other.scale, w);
-                        }
+        if let Some(overlay) = &player.overlay {
+            if overlay.mask.is_empty() || overlay.mask.contains(&bone.name) {
+                if let Some(c) = player.data.anims.get(&overlay.clip) {
+                    if let Some(track) = c.tracks.get(&bone.name) {
+                        let other = sample_track(
+                            track,
+                            clip_time(overlay.time, c.length, overlay.looping),
+                            pose,
+                        );
+                        let w = overlay.weight.clamp(0., 1.);
+                        pose.translation = pose.translation.lerp(other.translation, w);
+                        pose.rotation = pose.rotation.slerp(other.rotation, w);
+                        pose.scale = pose.scale.lerp(other.scale, w);
                     }
                 }
             }
-            if let Some(additive) = &player.additive {
-                if let Some(clip) = player.data.anims.get(&additive.clip) {
-                    if let Some(track) = clip.tracks.get(&bone.name) {
-                        pose = apply_additive(track, clip.length, additive.weight, pose);
-                    }
+        }
+        if let Some(additive) = &player.additive {
+            if let Some(clip) = player.data.anims.get(&additive.clip) {
+                if let Some(track) = clip.tracks.get(&bone.name) {
+                    pose = apply_additive(track, clip.length, additive.weight, pose);
                 }
             }
-            *transform = pose;
         }
-        if let Some(clip) = clip {
-            for (path, track) in &clip.tracks {
-                if !path.starts_with("Item_Root") {
-                    continue;
-                }
-                let Some(entity) = player.bones.get(path) else {
-                    continue;
-                };
-                if let Ok(mut transform) = transforms.get_mut(*entity) {
-                    *transform = sample_track(track, t, *transform);
-                }
+        *transform = pose;
+    }
+    if let Some(clip) = clip {
+        for (path, track) in &clip.tracks {
+            if !path.starts_with("Item_Root") {
+                continue;
+            }
+            let Some(entity) = player.bones.get(path) else {
+                continue;
+            };
+            if let Ok(mut transform) = transforms.get_mut(*entity) {
+                *transform = sample_track(track, t, *transform);
             }
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

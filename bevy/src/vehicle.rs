@@ -10,6 +10,7 @@ mod effects;
 mod exit;
 mod flight;
 mod geometry;
+mod hearing;
 mod render;
 mod spawns;
 #[cfg(test)]
@@ -94,6 +95,17 @@ pub struct VehicleBody {
     wreck: damage::Wreck,
 }
 impl VehicleBody {
+    /// Original closed passenger cell; intact native panes have zero openness.
+    /// Glass fracture adoption will supply broken/total here when ported.
+    pub fn cabin_openness(&self) -> Option<f32> {
+        let definition = data::definition(self.type_id)?;
+        let spec = &definition.spec;
+        (definition.roof.is_some()
+            || spec.tracked
+            || spec.plane
+            || (spec.heli && spec.frame == "Pod"))
+            .then_some(0.)
+    }
     /// The original interior wheel pivot/axis and its 1:1 road-wheel angle, in radians.
     /// Used by both the rendered wheel and the source seated hand anchors.
     pub fn steering_wheel(&self) -> Option<(Vec3, Vec3, f32)> {
@@ -146,6 +158,7 @@ impl Plugin for VehiclePlugin {
             .init_resource::<collision::Hulls>()
             .init_resource::<geometry::GeometryUploads>()
             .init_resource::<audio::AudioVoices>()
+            .init_resource::<hearing::Hearing>()
             .init_resource::<damage::WreckMaterial>()
             .init_resource::<effects::Effects>()
             .add_message::<contacts::DamageRequest>()
@@ -197,7 +210,7 @@ impl Plugin for VehiclePlugin {
             )
             .add_systems(
                 FixedUpdate,
-                (publish_bodies, contacts::publish)
+                (publish_bodies, contacts::publish, hearing::publish)
                     .chain()
                     .after(PhysicsSet::Writeback)
                     .in_set(VehiclePublish),

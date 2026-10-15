@@ -34,3 +34,6 @@ interaction wiring. `NpcHeli` and its turret tests are another explicit subsyste
 
 Wildlife implementation and its verified asset limitations are recorded in
 `WILDLIFE_PORT.md`.
+
+The current managed/native zombie implementation, physics and inspected capture
+evidence are now recorded in `ZOMBIE_PORT.md`.

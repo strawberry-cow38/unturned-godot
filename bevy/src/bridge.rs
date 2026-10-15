@@ -114,6 +114,8 @@ impl BridgeProcess {
                 | "worldGeometry"
                 | "worldDynamicGeometry"
                 | "worldVehicleState"
+                | "worldZombieState"
+                | "worldZombieNoise"
                 | "worldVehicleDamage"
                 | "worldServices"
                 | "worldLoot"
@@ -202,6 +204,39 @@ fn dotnet_path() -> PathBuf {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn zombie_host_publications_reject_a_stale_origin_until_native_adoption() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let bridge = CoreBridge::launch(manifest).expect("build original core with bevy/run.sh");
+        bridge
+            .request(
+                "init",
+                json!({"contentRoot":manifest.join("../game/content"),
+            "mapId":"Procedural","spawn":[1025.,40.,12.],"origin":[0.,0.]}),
+            )
+            .unwrap();
+        let shifted = bridge
+            .request("rebase", json!({"shift":[1024.,0.,0.],"expectedEpoch":0}))
+            .unwrap();
+        let epoch = shifted["state"]["origin"]["epoch"].as_u64().unwrap();
+        for (operation, fields) in [
+            ("worldZombieState", json!({"bodies":[]})),
+            (
+                "worldZombieNoise",
+                json!({"position":[1.,40.,12.],"radius":32.}),
+            ),
+        ] {
+            let error = bridge.request(operation, fields.clone()).unwrap_err();
+            assert!(
+                error.to_string().contains("Origin epoch mismatch"),
+                "{operation}: {error}"
+            );
+            bridge.adopt_origin(epoch);
+            bridge.request(operation, fields).unwrap();
+            bridge.adopt_origin(0);
+        }
+    }
 
     #[test]
     fn consecutive_replies_remain_individually_framed() {

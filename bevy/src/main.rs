@@ -1,4 +1,5 @@
 mod bridge;
+mod character;
 mod cli;
 mod content;
 mod entities;
@@ -19,6 +20,7 @@ mod viewmodel;
 mod weapons;
 mod wildlife;
 mod world;
+mod zombie;
 
 use anyhow::Result;
 use bevy::{
@@ -122,6 +124,7 @@ fn main() -> Result<()> {
             wildlife::WildlifePlugin,
             impact::ImpactPlugin,
         ))
+        .add_plugins((character::CharacterPlugin, zombie::ZombiePlugin))
         .add_systems(Update, capture_frame.after(entities::CollectInteractions))
         .run();
     Ok(())

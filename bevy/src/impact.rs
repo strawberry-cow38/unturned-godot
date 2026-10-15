@@ -426,7 +426,7 @@ fn receive(
                     .exclude_sensors()
                     .groups(CollisionGroups::new(
                         Group::ALL,
-                        Group::ALL & !Group::GROUP_2 & !Group::GROUP_5,
+                        Group::ALL & !Group::GROUP_2 & !Group::GROUP_5 & !Group::GROUP_6,
                     )),
             )
         });

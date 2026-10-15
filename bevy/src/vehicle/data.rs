@@ -35,6 +35,7 @@ pub struct VehicleSpec {
     pub parts: Option<Vec<(String, [f32; 4])>>,
     pub glass_mesh: Option<String>,
     pub glass_tint: Option<[f32; 4]>,
+    pub frame: String,
     pub heli_body_meshes: Option<Vec<String>>,
     pub heli_rotor_mesh_prefix: Option<String>,
     pub prop_mesh_prefix: Option<String>,
