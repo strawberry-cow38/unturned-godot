@@ -79,3 +79,9 @@ accepted player roster and shared quest pin/tracker. Real listen/UDP navigation
 and opened captures passed; nine map regressions cover source geometry, original
 assets, input and lifecycle. Skills, dashboard blur/transition effects and finite
 generated-island charts remain pending. See [INFORMATION_PORT.md](INFORMATION_PORT.md).
+
+Accepted damage and blast events now drive the original local camera spring,
+including the existing accepted gun impulse in third person. Actual camera/ray
+ordering, collision and lifecycle regressions plus a rendered kick/recovery
+sequence passed. The separate pain overlay/directional hurt HUD remains pending;
+see [CAMERA_FLINCH_PORT.md](CAMERA_FLINCH_PORT.md).

@@ -11,6 +11,7 @@ pub struct Recoil {
     shot: u32,
     idle: f32,
     pending: Vec2,
+    shot_pitch: f32,
     stance: String,
     stance_time: f32,
     last_shot_tick: Option<u64>,
@@ -23,6 +24,7 @@ impl Default for Recoil {
             shot: 0,
             idle: 0.,
             pending: Vec2::ZERO,
+            shot_pitch: 0.,
             stance: String::new(),
             stance_time: 0.,
             last_shot_tick: None,
@@ -75,6 +77,12 @@ fn roll(seq: u64, salt: u64) -> f32 {
     (x >> 40) as f32 / 16777216.
 }
 impl Recoil {
+    /// Accepted vertical shot impulse for this update, before the aim drain.
+    /// Source third-person camera uses 35% of this same roll, never a reroll.
+    pub(crate) fn shot_pitch(&self) -> f32 {
+        self.shot_pitch
+    }
+
     /// Unapplied vertical degrees, used by the original HUD's spread bloom.
     pub(crate) fn pending_pitch(&self) -> f32 {
         self.pending.y
@@ -121,7 +129,9 @@ impl Recoil {
                 sample("recoilMinY", "recoilMaxY", 5),
             )
         };
-        self.pending += delta * multiplier * self.stance_multiplier();
+        let impulse = delta * multiplier * self.stance_multiplier();
+        self.pending += impulse;
+        self.shot_pitch += impulse.y;
     }
     fn drain(&mut self, dt: f32) -> Vec2 {
         let result = self.pending * (18. * dt).min(1.);
@@ -136,6 +146,7 @@ impl Recoil {
         dt: f32,
         paused: bool,
     ) -> Vec2 {
+        self.shot_pitch = 0.;
         if self.epoch != epoch {
             *self = Self {
                 epoch,
@@ -223,6 +234,44 @@ impl Recoil {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn third_person_camera_reads_the_same_new_shot_impulse_once_before_aim_drain() {
+        let mut catalog = ItemCatalog::default();
+        catalog.items.insert(
+            4,
+            serde_json::from_value(json!({
+                "id":4,"name":"test","type":"Gun","asset":"eaglefire",
+                "gun":{"recoilMinY":4.,"recoilMaxY":4.}
+            }))
+            .unwrap(),
+        );
+        let mut recoil = Recoil::default();
+        let mut snapshot = json!({"playerId":1,"events":[],"player":{"stance":"stand"}});
+        recoil.update(&snapshot, &catalog, 1, 0.02, false);
+        snapshot["events"] = json!([{"seq":1,"kind":"fire","data":{
+            "playerId":1,"gun":"eaglefire","recoilMultiplier":1.5
+        }}]);
+        assert!((recoil.update(&snapshot, &catalog, 1, 0.02, false).y - 2.16).abs() < 1e-5);
+        assert_eq!(
+            recoil.shot_pitch(),
+            6.,
+            "camera consumes the accepted roll, not its 18/s aim drain"
+        );
+        assert!(recoil.update(&snapshot, &catalog, 1, 0.02, false).y > 0.);
+        assert_eq!(
+            recoil.shot_pitch(),
+            0.,
+            "retained event and leftover aim cannot kick the camera twice"
+        );
+        snapshot["events"][0]["seq"] = json!(2);
+        snapshot["events"][0]["data"]["playerId"] = json!(2);
+        recoil.update(&snapshot, &catalog, 1, 0.02, false);
+        assert_eq!(
+            recoil.shot_pitch(),
+            0.,
+            "remote shots never kick the local camera"
+        );
+    }
     #[test]
     fn accepted_shot_keeps_condition_and_skill_after_holstering() {
         let mut catalog = ItemCatalog::default();

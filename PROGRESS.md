@@ -1750,6 +1750,31 @@ retain the null-provider hull-origin behavior. Independent source review passed.
 Native tank body/camera validation
 and seat switching are separate ongoing checkpoints.
 
+### Bevy: accepted camera flinch
+
+The native camera now applies the original perpendicular angular spring for
+accepted owner hurt, frag/explosive-round, vehicle and deployable events. Source
+falloff, damage caps and 4/s recovery are retained. Third-person gun feedback
+reuses 35% of the exact accepted recoil impulse before its existing aim drain,
+without rerolling the pattern or modifying authority. The shared ExplosionFlinch
+message supports the original local cannon 40m/4degree call. Native seated cameras
+can apply that call visibly; the original drive/ride camera overwrote it, so this
+is an explicitly documented source correction.
+
+Review caught and fixed camera/interaction order: CoreEventsReady precedes the
+spring, FlinchUpdate follows the rebuilt camera, then real interaction rays see
+the final kicked pose. The mounted adapter will emit before FlinchUpdate.
+Third-person shoulder placement uses the existing radius 0.39 sweep. Ten focused
+flinch and seven recoil tests pass, including a real ray hit that fails with the
+old ordering, actual Rapier wall clearance, pause/network/death/session behavior
+and one-shot accepted impulses. The production spring rendered cleanly through
+baseline/kick/recovery; all three bevy-flinch PNGs were opened and independently
+reviewed. Sidecars show a 22.209degree kick with unchanged aim and eye position.
+
+Playable mounted firing remains a separate integration journey. Pain/directional
+hurt HUD and unported SAM blast call sites remain in the ledger. See
+bevy/docs/CAMERA_FLINCH_PORT.md.
+
 ### Bevy: accepted mounted flight and blast presentation over UDP
 
 Protocol66 appends Event56 for source mounted-flight continuation, retirement and

@@ -17,6 +17,7 @@ use bevy_rapier3d::prelude::*;
 use serde_json::{Value, json};
 
 pub(crate) mod lean;
+pub(crate) mod flinch;
 
 #[cfg(test)]
 mod network_tests;
@@ -38,7 +39,8 @@ pub struct SimulatePlayer;
 pub struct WorldSessionEpoch(pub u64);
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Session>()
+        app.add_plugins(flinch::FlinchPlugin)
+            .init_resource::<Session>()
             .init_resource::<WorldSessionEpoch>()
             .init_resource::<crate::recoil::Recoil>()
             .init_resource::<crate::weapons::Trigger>()

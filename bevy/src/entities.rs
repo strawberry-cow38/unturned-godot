@@ -118,6 +118,8 @@ impl ServiceManifest {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorldServicesReady;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct CoreEventsReady;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CollectInteractions;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ApplyInteractions;
@@ -226,7 +228,7 @@ impl Plugin for EntityPlugin {
                     register_world_geometry.in_set(WorldServicesReady),
                     sync_static_life,
                     sync_world_items,
-                    forward_events,
+                    forward_events.in_set(CoreEventsReady),
                 )
                     .chain()
                     .after(crate::player::PlayerUpdate)
