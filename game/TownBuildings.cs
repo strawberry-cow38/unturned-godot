@@ -206,6 +206,34 @@ namespace UnturnedGodot
             return ok;
         }
 
+        /// <summary>The generator's runtime builder: a BuildingGenResult and the frame it stands in, to the building's nodes. Set
+        /// by whoever owns it (the editor's stage and the town share it); null until then, and the town shows massing.</summary>
+        public static System.Func<BuildingGenResult, Transform3D, Node3D> RuntimeBuilder;
+
+        /// <summary>Every generated building, built: through RuntimeBuilder where there is one, as massing where not. Returns
+        /// the buildings put up, and logs what they cost to build -- the half of the whole-town decision the generator's own
+        /// time is not.</summary>
+        public int BuildBuildings(Node3D parent)
+        {
+            if (parent == null || Buildings.Count == 0) return 0;
+            if (RuntimeBuilder == null) return BuildBuildingMassing(parent);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            int made = 0, failed = 0;
+            foreach (var b in Buildings)
+            {
+                if (b.Result == null) continue;
+                Node3D node = null;
+                try { node = RuntimeBuilder(b.Result, b.Frame); }
+                catch (System.Exception e) { if (failed++ == 0) Log.Err($"[towngrid] building on a {b.Plot.Kind} plot failed to build: {e.Message}"); }
+                if (node == null) continue;
+                if (node.GetParent() == null) parent.AddChild(node);
+                made++;
+            }
+            Log.Print($"[towngrid] buildings built: {made} in {clock.ElapsedMilliseconds} ms ({clock.ElapsedMilliseconds / Mathf.Max(1, made)} ms a building)"
+                    + (failed > 0 ? $", {failed} FAILED" : ""));
+            return made;
+        }
+
         /// <summary>Until the runtime builder lands: each generated building as its MASSING -- one translucent box per floor
         /// over that floor's own footprint, and a red post at the front door -- in its frame. Returns the buildings shown.</summary>
         public int BuildBuildingMassing(Node3D parent)
