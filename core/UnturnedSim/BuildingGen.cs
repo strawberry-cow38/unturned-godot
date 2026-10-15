@@ -26,6 +26,22 @@ namespace UnturnedSim
     /// cafe pallette"): no retail building is a donut shop, so there is no palette of its own to wear.</summary>
     public enum Business { None, Cafe, Clothes, Diner, Grocer, Guns, Hardware, Botanist }
 
+    /// <summary>Whether a building has a basement (strawberry: "anything can get a basement, they can be specificially asked
+    /// for by the building plot, or specifically rejected, if neither specified, its just a random chance for one"): Auto
+    /// for the seeded chance (BuildingGen.BasementChance), Forbid for none, Require for one.</summary>
+    public enum BasementChoice { Auto, Forbid, Require }
+
+    /// <summary>What a basement is like ("a mixture of different types and styles of basement"): bare concrete with odds and
+    /// ends; a store, racks of it; a finished rec room; a workshop -- each with a utility room for the laundry, but for the
+    /// bare one, whose laundry stands in the open. Auto for a seeded one.</summary>
+    public enum BasementStyle { Auto, Unfinished, Storage, Finished, Workshop }
+
+    /// <summary>How a basement is reached ("basements can spawn with an outdoor hatch, or with an indoor staircase, usually in
+    /// its own self-contained room with just the staircase"): Stairs, a flight down from a small room of its own on the ground
+    /// floor; Hatch, a flight down from outside, in a walled well against the house, its cellar doors standing open, to a
+    /// door in the basement wall. Auto for a seeded one.</summary>
+    public enum BasementAccess { Auto, Stairs, Hatch }
+
     /// <summary>What to generate: a building from a seed (strawberry 2026-10-11: "make the map editor buildings tool
     /// procgen. to make buildings from a seed. certain min number of rooms, min number of each type, max number per floor,
     /// max number of floors, consider the building's type, what colors it should use. which openings are relevant, which
@@ -74,6 +90,11 @@ namespace UnturnedSim
         internal bool NoGarage;
         /// <summary>A Commercial building's shop (its palettes are that shop's); None for a seeded one.</summary>
         public Business Business;
+        /// <summary>A basement: the plot's say (Require, Forbid), else a seeded chance -- and, for one, its style and its way
+        /// down, Auto for seeded ones.</summary>
+        public BasementChoice Basement;
+        public BasementStyle BasementStyle;
+        public BasementAccess BasementAccess;
 
         internal BuildingGenSpec Copy()
         {
@@ -165,6 +186,9 @@ namespace UnturnedSim
         public float X, Y, Z, Yaw, Run, Width; public int Floor;
         /// <summary>How far it climbs: a storey, or half of one for a switchback's flights. 0 reads as a storey.</summary>
         public float Rise;
+        /// <summary>Cast concrete (a basement hatch's, outdoors), its treads the palette's concrete texel; else the building's
+        /// own colour, as every flight was.</summary>
+        public bool Concrete;
         /// <summary>Unit vectors in plan: the way it climbs, and the way its width runs (AddStairs' back and right).</summary>
         public (float X, float Z) Back { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
         public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
@@ -267,6 +291,29 @@ namespace UnturnedSim
         /// <summary>The spec the plan was drawn from when FitPlot changed it to fit (fewer rooms, more floors, smaller
         /// rooms...), else null: what the building actually answers to.</summary>
         public BuildingGenSpec Fitted;
+        /// <summary>Its basement's style, None (Auto) for no basement: storey -1, under the whole ground floor
+        /// (BuildingGenBasement.cs). Its rooms are in Layout on floor -1, its walls, floor and flight in Walls and Stairs.</summary>
+        public BasementStyle Basement;
+        public bool HasBasement => Basement != BasementStyle.Auto;
+        /// <summary>How the basement is reached: Stairs (from BasementStairs, a room of the ground floor) or Hatch (from the
+        /// well, outside).</summary>
+        public BasementAccess BasementAccess;
+        /// <summary>The ground-floor room that holds only the flight down (strawberry: "usually in its own self-contained room
+        /// with just the staircase"), null for a basement reached by its hatch.</summary>
+        public GenRoom BasementStairs;
+        /// <summary>The basement's utility room -- the laundry -- null for a bare basement, whose laundry stands in the open.</summary>
+        public GenRoom BasementUtility;
+        /// <summary>The hatch's well in plan metres, its retaining walls' outer faces: the flight down from the ground beside
+        /// the house to the door in the basement wall. All zero for none.</summary>
+        public (float X0, float Z0, float X1, float Z1) HatchWell;
+        /// <summary>What has to be dug out of the ground for the basement, in plan metres: the basement under the ground floor
+        /// to its outside walls' outer faces (one rectangle, or an L's or a T's two), and the hatch's well. Empty for none.</summary>
+        public List<(float X0, float Z0, float X1, float Z1)> Dig = new List<(float, float, float, float)>();
+        /// <summary>The generator's own: the stair room's flight, and the hatch's well, as planned (BuildingGenBasement.cs);
+        /// and where the cellar door lies thrown open, for the yard to keep off.</summary>
+        internal BuildingGen.StairStrip? BasementFlight;
+        internal BuildingGen.HatchSpot? Hatch;
+        internal (float X0, float Z0, float X1, float Z1) HatchLeafRect;
     }
 
     /// <summary>
@@ -376,6 +423,9 @@ namespace UnturnedSim
             if (res.Shape != FootprintShape.Rect) res.Wing = (cx - res.Wing.X1, cz - res.Wing.Z1, cx - res.Wing.X0, cz - res.Wing.Z0);
             for (int i = 0; i < res.Porches.Count; i++) { var q = res.Porches[i]; res.Porches[i] = (W - q.X1, D - q.Z1, W - q.X0, D - q.Z0); }
             if (res.Chimney.X1 > res.Chimney.X0) res.Chimney = (W - res.Chimney.X1, D - res.Chimney.Z1, W - res.Chimney.X0, D - res.Chimney.Z0);
+            (float, float, float, float) Rect((float X0, float Z0, float X1, float Z1) q) => (W - q.X1, D - q.Z1, W - q.X0, D - q.Z0);
+            if (res.HatchWell.X1 > res.HatchWell.X0) { res.HatchWell = Rect(res.HatchWell); res.HatchLeafRect = Rect(res.HatchLeafRect); }
+            for (int i = 0; i < res.Dig.Count; i++) res.Dig[i] = Rect(res.Dig[i]);
             LabelRecords(res);
             res.NoWindowSides = Turned(res.NoWindowSides);
         }
@@ -787,7 +837,8 @@ namespace UnturnedSim
             var miss = new List<(string What, int Weight)>();
             bool Has(GenRoom g, params string[] ns) => r.Furniture.Any(m => m.Room == g && ns.Any(n => m.Name.StartsWith(n)));
             void Need(GenRoom g, string what, bool ok, int weight = 2) { if (!ok) { miss.Add(($"{g.Kind}: {what}", weight)); unfurnished?.Add(g); } }
-            foreach (var g in r.Layout)
+            // (a basement's rooms are not what the building is for: its rec room needs no couch and gets no window)
+            foreach (var g in r.Layout.Where(g => g.Floor >= 0))
                 switch (g.Kind)
                 {
                     case RoomKind.Bedroom: Need(g, "bed", Has(g, "Bed")); break;
@@ -820,7 +871,7 @@ namespace UnturnedSim
                     if (o.Archetype == ArchGarage) vehicle.Add(g);
                 }
             }
-            foreach (var g in r.Layout)
+            foreach (var g in r.Layout.Where(g => g.Floor >= 0))
             {
                 // (a building with a side asked to have no windows is let off its daylight: a room may face only that side)
                 if (Habitable(g.Kind) && r.NoWindowSides == Sides.None && !lit.Contains(g)) { miss.Add(($"{g.Kind}: window", 2)); unlit?.Add(g); }
@@ -1394,6 +1445,8 @@ namespace UnturnedSim
                     d.Wide = rng.Chance(WideDoorway) && !new[] { d.A, d.B }.Any(r => r.Kind == RoomKind.Kitchen && r.Cells < 12);
                 }
             res.NoWindowSides = turn ? Turned(spec.NoWindows) : spec.NoWindows;
+            // a basement, now and then or when asked for, and its way down (BuildingGenBasement.cs)
+            PlanBasement(res, spec, grids);
             // walls, porches, the chimney, furniture -- and now and then the wall between two of them left out altogether
             BuildOut(res, grids, k1, L, spec, spec.Porches, chimney: true);
             // last: a parapet on each flat roof as built, after everything that reads the walls -- joined where it meets a
@@ -2244,6 +2297,8 @@ namespace UnturnedSim
                         continue;
                     }
                 }
+                // the basement, once the chimney has settled (it keeps off the hatch's well, which was planned with the rooms)
+                BuildBasement(res);
                 Furnish(res, spec.Seed);
                 var unfurnished = new HashSet<GenRoom>(); int shortBy = Shortfall(res, unfurnished).Sum(x => x.Weight);
                 if (res.OpenPlan.Count > 0)
@@ -2518,7 +2573,8 @@ namespace UnturnedSim
                         continue;
                     }
                     var iw = inner.First(q => q.AlongX == d.AlongX && q.Line == d.Line && q.S0 * Cell <= d.At && d.At <= q.S1 * Cell);
-                    float width = ArchSizes[ArchDoor].W;
+                    // (narrower where it was planned so: a basement's stair room's, as wide as its landing)
+                    float width = MathF.Min(d.Width, ArchSizes[ArchDoor].W);
                     if (d.Wide)
                     {
                         // as wide as the stretch where these two rooms face each other allows, off the walls meeting it and
@@ -2724,6 +2780,8 @@ namespace UnturnedSim
                         _ => TraitOf(room.Kind, res.Kind).Window,
                     };
                     if (win == ArchGarage) win = ArchWindow;
+                    // the stair room down to a basement: the flight against solid wall, as every flight is
+                    if (room == res.BasementStairs) win = -1;
                     // a side asked to have none
                     var runSide = SideOfRun(run);
                     if ((runSide & res.NoWindowSides) != 0) win = -1;
@@ -2767,7 +2825,8 @@ namespace UnturnedSim
 
                 foreach (var o in outs) res.Walls.Add(o.W);
                 if (f == floors - 1) tops.AddRange(outs.Select(o => o.W));
-                if (f == 0)   // footings under the outside walls, as the editor's auto-fit lays them
+                // footings under the outside walls, as the editor's auto-fit lays them (under a basement's walls, BuildBasement)
+                if (f == 0 && !res.HasBasement)
                     foreach (var w in outs.Select(o => o.W))
                         res.Walls.Add(new WallPlan { X = w.X, Y = -WallOpenings.FoundationDepth, Z = w.Z, Yaw = w.Yaw, Length = w.Length,
                                                      Height = WallOpenings.FoundationDepth, Thickness = w.Thickness, Kind = SurfaceKind.Foundation });
@@ -3183,7 +3242,11 @@ namespace UnturnedSim
                 var box = Span(inner, inner - e * ChimneyDeep, half);
                 var stackBox = Span(outer, outer + e * ChimneyOut, half);
                 var baseBox = Span(outer, outer + e * ChimneyOut, baseHalf);
-                bool ok = true;
+                // (and off a basement's hatch: its well, and its cellar door thrown open, a metre clear)
+                var well = res.HatchWell; var leaf = res.HatchLeafRect;
+                bool Near((float X0, float Z0, float X1, float Z1) a, (float X0, float Z0, float X1, float Z1) b)
+                    => b.X1 > b.X0 && a.X0 < b.X1 + 1f && a.X1 > b.X0 - 1f && a.Z0 < b.Z1 + 1f && a.Z1 > b.Z0 - 1f;
+                bool ok = !Near(baseBox, well) && !Near(baseBox, leaf);
                 for (int f = 0; f < res.Floors && ok; f++)
                 {
                     // (the stack's half width on this floor: its base's on the ground floor)

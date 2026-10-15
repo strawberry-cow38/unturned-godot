@@ -564,6 +564,8 @@ namespace UnturnedSim
                     d.Wide = rng.Chance(WideDoorway) && !new[] { d.A, d.B }.Any(r => r.Kind == RoomKind.Kitchen && r.Cells < 12);
                 }
             res.NoWindowSides = turn ? Turned(spec.NoWindows) : spec.NoWindows;
+            // a basement, as a house's (its stair room off the shared space, never out of a flat)
+            PlanBasement(res, spec, grids);
             // walls, furniture -- no porch unless one was asked for (a canopy over the lobby door, then), and no chimney --
             // and inside a flat, now and then its living room open to its kitchen or its vestibule (OpenPlan: never the
             // corridor, never a party wall)

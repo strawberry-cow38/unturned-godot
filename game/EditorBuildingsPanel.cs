@@ -579,6 +579,19 @@ namespace UnturnedGodot
             _genChimney = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "a fireplace in the living room, its chimney out through the roof (houses)" };
             foreach (var (n, v) in new[] { ("any", ChimneyChoice.Auto), ("none", ChimneyChoice.None), ("yes", ChimneyChoice.Yes) }) _genChimney.AddItem(n, (int)v);
             types.AddChild(_genChimney);
+            // a basement: the plot's say (yes / none), else the seed's chance; its style and its way down
+            types.AddChild(Dim("basement"));
+            _genBasement = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "a basement under the ground floor: yes, none, or by the seed (about a third)" };
+            foreach (var (n, v) in new[] { ("any", BasementChoice.Auto), ("none", BasementChoice.Forbid), ("yes", BasementChoice.Require) }) _genBasement.AddItem(n, (int)v);
+            types.AddChild(_genBasement);
+            types.AddChild(Dim("basement is"));
+            _genBasementStyle = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "what a basement is like: bare concrete, a store, a finished rec room, a workshop" };
+            foreach (var (n, v) in new[] { ("any", BasementStyle.Auto), ("bare", BasementStyle.Unfinished), ("store", BasementStyle.Storage), ("finished", BasementStyle.Finished), ("workshop", BasementStyle.Workshop) }) _genBasementStyle.AddItem(n, (int)v);
+            types.AddChild(_genBasementStyle);
+            types.AddChild(Dim("way down"));
+            _genBasementWay = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "how a basement is reached: stairs from a room of their own, or a hatch outside" };
+            foreach (var (n, v) in new[] { ("any", BasementAccess.Auto), ("stairs", BasementAccess.Stairs), ("hatch", BasementAccess.Hatch) }) _genBasementWay.AddItem(n, (int)v);
+            types.AddChild(_genBasementWay);
             types.AddChild(Dim("front door")); types.AddChild(_genFront = SidePick("the side the front door goes in (north is +Z)"));
             types.AddChild(Dim("back door")); types.AddChild(_genBack = SidePick("the side a back door goes in; picking one always makes one"));
             foreach (var (n, v) in new[] { ("no win N", Sides.North), ("no win E", Sides.East), ("no win S", Sides.South), ("no win W", Sides.West) })
@@ -622,7 +635,7 @@ namespace UnturnedGodot
         Label _bakeMsg;
         OptionButton _genKind, _genShop;
         SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors, _genWidth, _genDepth;
-        OptionButton _genFront, _genBack, _genShape, _genPorch, _genChimney;
+        OptionButton _genFront, _genBack, _genShape, _genPorch, _genChimney, _genBasement, _genBasementStyle, _genBasementWay;
         CheckBox _genFit;
         readonly System.Collections.Generic.Dictionary<Sides, CheckBox> _genNoWin = new();
         readonly System.Collections.Generic.Dictionary<RoomKind, SpinBox> _genMin = new();
@@ -649,6 +662,9 @@ namespace UnturnedGodot
                 Shape = (FootprintShape)_genShape.GetSelectedId(),
                 Porches = (PorchChoice)_genPorch.GetSelectedId(),
                 Chimney = (ChimneyChoice)_genChimney.GetSelectedId(),
+                Basement = (BasementChoice)_genBasement.GetSelectedId(),
+                BasementStyle = (BasementStyle)_genBasementStyle.GetSelectedId(),
+                BasementAccess = (BasementAccess)_genBasementWay.GetSelectedId(),
             };
             foreach (var kv in _genNoWin) if (kv.Value.ButtonPressed) spec.NoWindows |= kv.Key;
             foreach (var kv in _genMin) if (kv.Value.Value > 0) spec.MinOfKind[kv.Key] = (int)kv.Value.Value;
@@ -658,8 +674,14 @@ namespace UnturnedGodot
             // the notes go to the log in full; the panel says only that there are some, so a long one cannot
             // stretch the panel across the screen
             Say($"{res.Kind}{(res.Business != Business.None ? $" ({res.Business})" : "")} #{spec.Seed}: {res.Floors} floor(s), {rooms} rooms, {res.Palette}"
+                + (res.HasBasement ? $", a {BasementWords(res)}" : "")
                 + (res.Notes.Count > 0 ? $" — {res.Notes.Count} note(s) in the log" : " — Ctrl+Z to undo"));
         }
+        /// <summary>A basement in a few words: "finished basement, by stairs".</summary>
+        public static string BasementWords(BuildingGenResult res) => (res.Basement switch
+        {
+            BasementStyle.Unfinished => "bare", BasementStyle.Storage => "store", BasementStyle.Finished => "finished", _ => "workshop",
+        }) + " basement, by " + (res.BasementAccess == BasementAccess.Hatch ? "a hatch" : "stairs");
         Label _pitchLbl;
         OptionButton _importPick;
 

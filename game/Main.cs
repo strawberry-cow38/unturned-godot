@@ -7763,9 +7763,10 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
-                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop]]]]]]]]] (sides
-                // as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
-                // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...) generates a building from a seed instead
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop[,basement[,style[,way]]]]]]]]]]]]
+                // (sides as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
+                // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...; basement Y/N, its style U/S/F/W -- bare, store,
+                // finished, workshop -- and its way down S/H, stairs or hatch) generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
@@ -7781,7 +7782,7 @@ namespace UnturnedGodot
                             sd |= ch switch { 'N' => UnturnedSim.Sides.North, 'E' => UnturnedSim.Sides.East, 'S' => UnturnedSim.Sides.South, 'W' => UnturnedSim.Sides.West, _ => UnturnedSim.Sides.None };
                         return sd;
                     }
-                    buildings.Generate(new UnturnedSim.BuildingGenSpec
+                    var genRes = buildings.Generate(new UnturnedSim.BuildingGenSpec
                     {
                         Kind = UnturnedSim.RoomDesignations.ParseBuilding(g[0]), Seed = Arg(1, 0), MinRooms = Arg(2, 0),
                         MaxFloors = Arg(3, 2), MaxRoomsPerFloor = Arg(4, 6), Width = Arg(5, 0), Depth = Arg(6, 0),
@@ -7802,7 +7803,85 @@ namespace UnturnedGodot
                         } : UnturnedSim.ChimneyChoice.Auto,
                         FitPlot = g.Length > 13 && g[13].ToUpperInvariant() == "F",
                         Business = g.Length > 14 && System.Enum.TryParse<UnturnedSim.Business>(g[14], true, out var shop) ? shop : UnturnedSim.Business.None,
+                        Basement = g.Length > 15 ? g[15].ToUpperInvariant() switch
+                        {
+                            "Y" => UnturnedSim.BasementChoice.Require, "N" => UnturnedSim.BasementChoice.Forbid, _ => UnturnedSim.BasementChoice.Auto,
+                        } : UnturnedSim.BasementChoice.Auto,
+                        BasementStyle = g.Length > 16 ? g[16].ToUpperInvariant() switch
+                        {
+                            "U" => UnturnedSim.BasementStyle.Unfinished, "S" => UnturnedSim.BasementStyle.Storage, "F" => UnturnedSim.BasementStyle.Finished,
+                            "W" => UnturnedSim.BasementStyle.Workshop, _ => UnturnedSim.BasementStyle.Auto,
+                        } : UnturnedSim.BasementStyle.Auto,
+                        BasementAccess = g.Length > 17 ? g[17].ToUpperInvariant() switch
+                        {
+                            "S" => UnturnedSim.BasementAccess.Stairs, "H" => UnturnedSim.BasementAccess.Hatch, _ => UnturnedSim.BasementAccess.Auto,
+                        } : UnturnedSim.BasementAccess.Auto,
                     });
+                    // UG_TERRAINBASEMENT=x,z,yaw cuts the generated building's basement (BuildingGenResult.Dig) out of the MAP's
+                    // terrain (Terrain.AddBasementCut: the ground bent to the outline, the inside dug), as if the building stood at
+                    // the nearest spot to (x, z) flat enough for it, its floor GroundClearance over the ground and turned by yaw.
+                    // The ground only: a building placed there comes from the run-time builder. UG_TERRAINBASEMENT2=dx,dz,dyaw cuts
+                    // a second copy that far off the first, in its frame (two cuts merged into one outline); UG_TERRAINCAM=
+                    // px,py,pz,lx,ly,lz puts the camera at p looking at l, both in the first building's frame.
+                    var tb = System.Environment.GetEnvironmentVariable("UG_TERRAINBASEMENT")?.Split(',');
+                    var ic = System.Globalization.CultureInfo.InvariantCulture; var nf = System.Globalization.NumberStyles.Float;
+                    if (tb is { Length: 3 } && res.Terr != null && float.TryParse(tb[0], nf, ic, out var tx) && float.TryParse(tb[1], nf, ic, out var tz)
+                        && float.TryParse(tb[2], nf, ic, out var tyaw))
+                    {
+                        var turn = new Basis(Vector3.Up, Mathf.DegToRad(tyaw));
+                        float w = genRes.CellsX * UnturnedSim.BuildingGen.Cell, d = genRes.CellsZ * UnturnedSim.BuildingGen.Cell;
+                        Vector3 site = new Vector3(tx, 0f, tz); float best = float.MaxValue;
+                        for (int ring = 0; ring <= 30 && best > 1f; ring++)
+                            for (int ix = -ring; ix <= ring; ix++)
+                                for (int iz = -ring; iz <= ring; iz++)
+                                {
+                                    if (System.Math.Max(System.Math.Abs(ix), System.Math.Abs(iz)) != ring) continue;
+                                    var o = new Vector3(tx + ix * 24f, 0f, tz + iz * 24f);
+                                    float lo = float.MaxValue, hi = float.MinValue;
+                                    foreach (var (cx, cz) in new[] { (0f, 0f), (w, 0f), (w, d), (0f, d), (w * 0.5f, d * 0.5f), (w + 4f, d * 0.5f) })
+                                    {
+                                        var p = o + turn * new Vector3(cx, 0f, cz);
+                                        float h = res.Terr.SampleHeight(p.X, p.Z);
+                                        lo = System.Math.Min(lo, h); hi = System.Math.Max(hi, h);
+                                    }
+                                    if (lo < Terrain.SeaLevelY + 1f || hi - lo >= best) continue;
+                                    best = hi - lo; site = o;
+                                }
+                        site.Y = res.Terr.SampleHeight(site.X, site.Z) + EditorBuildings.GroundClearance;
+                        var at = new Transform3D(turn, site);
+                        // the Dig rectangles as world x/z corners, those under the building first (the hatch's well is last)
+                        (System.Collections.Generic.List<Vector2[]> Quads, int Covered) Cut(Transform3D t)
+                        {
+                            var quads = new System.Collections.Generic.List<Vector2[]>(); int covered = 0;
+                            foreach (var (x0, z0, x1, z1) in genRes.Dig)
+                            {
+                                if ((x0, z0, x1, z1) != genRes.HatchWell) covered++;
+                                var c = new Vector2[4]; int i = 0;
+                                foreach (var (x, z) in new[] { (x0, z0), (x1, z0), (x1, z1), (x0, z1) }) { var q = t * new Vector3(x, 0f, z); c[i++] = new Vector2(q.X, q.Z); }
+                                quads.Add(c);
+                            }
+                            return (quads, covered);
+                        }
+                        var (q1, c1) = Cut(at);
+                        int dug = res.Terr.AddBasementCut(1, q1, c1);
+                        Log.Print($"[terrain-basement] cut at {site} yaw {tyaw} (corners within {best:0.00} m): {q1.Count} quad(s), {dug} triangle(s) dug -- {res.Terr.CutReport}");
+                        var tb2 = System.Environment.GetEnvironmentVariable("UG_TERRAINBASEMENT2")?.Split(',');
+                        if (tb2 is { Length: 3 })
+                        {
+                            float G(int i) => float.Parse(tb2[i], nf, ic);
+                            var at2 = at * new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(G(2))), new Vector3(G(0), 0f, G(1)));
+                            var (q2, c2) = Cut(at2);
+                            int dug2 = res.Terr.AddBasementCut(2, q2, c2);
+                            Log.Print($"[terrain-basement] second cut at {at2.Origin}: {dug2} triangle(s) dug -- {res.Terr.CutReport}");
+                        }
+                        var tc = System.Environment.GetEnvironmentVariable("UG_TERRAINCAM")?.Split(',');
+                        if (tc is { Length: 6 })
+                        {
+                            float F(int i) => float.Parse(tc[i], nf, ic);
+                            cam.GlobalPosition = at * new Vector3(F(0), F(1), F(2));
+                            cam.LookAt(at * new Vector3(F(3), F(4), F(5)), Vector3.Up);
+                        }
+                    }
                 }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
                 // UG_EDITLIGHTS=off flips every room's light switch off after the building is up, so a capture can show the

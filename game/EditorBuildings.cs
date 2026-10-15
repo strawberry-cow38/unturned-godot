@@ -2080,15 +2080,9 @@ namespace UnturnedGodot
             // A ground plane you can pick against, on the world layer, because GroundAt raycasts layer 0 and
             // with the map hidden there would otherwise be nothing under the cursor at all.
             var body = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0 };
-            body.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            // WorldBoundaryShape3D's plane is in the BODY's space, so parenting it under the offset stage puts
-            // the pick plane at the stage height and not at world y=0.
-            // Big enough that its edge is off-screen at working distances -- otherwise the map, 2 km below,
-            // shows past the rim and the "blank stage" has scenery in it.
-            var floor = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(900f, 900f) } };
-            floor.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.28f, 0.26f), Roughness = 1f };
-            body.AddChild(floor);
+            _stageGround = body;
             _stage.AddChild(body);
+            SetStageHoles(System.Array.Empty<Rect2>());
 
             // Lattice lines at the same 3m pitch walls snap to, so the snapping is something you can SEE
             // rather than something you infer from where the wall lands.
@@ -2109,6 +2103,62 @@ namespace UnturnedGodot
             };
             _stage.AddChild(grid);
             PositionGrid();   // the stage can be built while a storey is already selected
+        }
+
+        StaticBody3D _stageGround;
+        System.Collections.Generic.IReadOnlyList<Rect2> _stageHoles = System.Array.Empty<Rect2>();
+        const float StageHalf = 450f;
+
+        /// <summary>The stage's ground: a plane you can pick against, on the world layer, because GroundAt raycasts layer 0 and
+        /// with the map hidden there would otherwise be nothing under the cursor at all -- open over `holes` (stage-local plan
+        /// rectangles): a generated building's basement and its hatch's well, which the ground hid from a camera and closed
+        /// to a player (BuildingGenResult.Dig). With none, the one plane it always was.
+        /// Big enough that its edge is off-screen at working distances -- otherwise the map, 2 km below, shows past the rim
+        /// and the "blank stage" has scenery in it.</summary>
+        public void SetStageHoles(System.Collections.Generic.IReadOnlyList<Rect2> holes)
+        {
+            _stageHoles = holes;
+            if (_stageGround == null) return;
+            foreach (var c in _stageGround.GetChildren()) { _stageGround.RemoveChild(c); c.QueueFree(); }
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.28f, 0.26f), Roughness = 1f };
+            if (holes.Count == 0)
+            {
+                // WorldBoundaryShape3D's plane is in the BODY's space, so parenting it under the offset stage puts the pick
+                // plane at the stage height and not at world y=0
+                _stageGround.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+                _stageGround.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(2 * StageHalf, 2 * StageHalf) }, MaterialOverride = mat });
+                return;
+            }
+            // the plane cut along every hole's edges into rectangles, those under no hole kept: each a quad to see and a
+            // slab to stand on (a boundary plane has no holes)
+            var xs = new System.Collections.Generic.SortedSet<float> { -StageHalf, StageHalf };
+            var zs = new System.Collections.Generic.SortedSet<float> { -StageHalf, StageHalf };
+            foreach (var h in holes) { xs.Add(h.Position.X); xs.Add(h.End.X); zs.Add(h.Position.Y); zs.Add(h.End.Y); }
+            var xl = new List<float>(xs); var zl = new List<float>(zs);
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Triangles);
+            const float Deep = 1f;
+            for (int i = 0; i + 1 < xl.Count; i++)
+                for (int j = 0; j + 1 < zl.Count; j++)
+                {
+                    float x0 = xl[i], x1 = xl[i + 1], z0 = zl[j], z1 = zl[j + 1];
+                    var mid = new Vector2((x0 + x1) * 0.5f, (z0 + z1) * 0.5f);
+                    bool open = false;
+                    foreach (var h in holes) if (h.HasPoint(mid)) { open = true; break; }
+                    if (open || x1 - x0 < 1e-4f || z1 - z0 < 1e-4f) continue;
+                    foreach (var (x, z) in new[] { (x0, z0), (x1, z0), (x1, z1), (x0, z0), (x1, z1), (x0, z1) })
+                    {
+                        st.SetNormal(Vector3.Up);
+                        st.AddVertex(new Vector3(x, 0f, z));
+                    }
+                    _stageGround.AddChild(new CollisionShape3D
+                    {
+                        Shape = new BoxShape3D { Size = new Vector3(x1 - x0, Deep, z1 - z0) },
+                        Position = new Vector3(mid.X, -Deep * 0.5f, mid.Y),
+                    });
+                }
+            mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+            _stageGround.AddChild(new MeshInstance3D { Mesh = st.Commit(), MaterialOverride = mat });
         }
 
         // ---- persistence -------------------------------------------------------------------------------
@@ -2928,10 +2978,16 @@ namespace UnturnedGodot
             _stairRamps.Clear();
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
 
+            // (a back face of its own where the plan gives one: a basement's outside walls, concrete inside)
             foreach (var pl in res.Walls)
                 SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
                           pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.TexelBack >= 0 ? mat : -1, pl.TexelBack);
+            // the stage's ground opened over a basement and its hatch's well, so they can be seen and walked down to
+            var holesBefore = _stageHoles;
+            var holes = new List<Rect2>();
+            foreach (var (x0, z0, x1, z1) in res.Dig) holes.Add(new Rect2(at.X - StageOrigin.X + x0, at.Z - StageOrigin.Z + z0, x1 - x0, z1 - z0));
+            SetStageHoles(holes);
             foreach (var s in res.Stairs)
             {
                 var o = at + new Vector3(s.X, s.Y, s.Z);
@@ -2939,8 +2995,10 @@ namespace UnturnedGodot
                 // covers the landing too), so they only want their ramps
                 float rise = s.Rise > 0f ? s.Rise : StoreyHeight;
                 int steps = WallOpenings.StairSteps(rise);
+                // (a basement hatch's flight is concrete: the palette's concrete texel)
+                int treads = s.Concrete && BuildingGen.FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Concrete : -1;
                 foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
-                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs);
+                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f, treads);
                 FitStairsToStructure(o, s.Yaw, s.Run, s.Width, rise, cutFloor: rise >= StoreyHeight - 0.01f);
             }
             var solved = SolveCorners();
@@ -2980,6 +3038,7 @@ namespace UnturnedGodot
                 foreach (var r in rampsMade) if (IsInstanceValid(r)) r.QueueFree();
                 _stairRamps.Clear();
                 RestoreAll(before);
+                SetStageHoles(holesBefore);
                 foreach (var r in rampsBefore) if (IsInstanceValid(r)) { AddChild(r); _stairRamps.Add(r); }
                 DesignatedKind = kindBefore;
                 Designations.Clear(); Designations.AddRange(roomsBefore);
@@ -3007,6 +3066,7 @@ namespace UnturnedGodot
             Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
                      + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "
                      + $"{res.Stairs.Count} flight(s), {res.Furniture.Count} pieces of furniture, {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}{(res.Business != UnturnedSim.Business.None ? $" ({res.Business})" : "")}"
+                     + (res.HasBasement ? $", a {EditorBuildingsPanel.BasementWords(res)}" : "")
                      + (res.Notes.Count > 0 ? " -- " + string.Join("; ", res.Notes) : ""));
             return res;
         }
