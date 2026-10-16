@@ -198,6 +198,7 @@ fn present(
                 },
                 RenderTarget::Image(image.clone().into()),
                 Tonemapping::None,
+                bevy::core_pipeline::tonemapping::DebandDither::Disabled,
                 Msaa::Off,
                 projection.clone(),
                 RenderLayers::layer(OUTLINE_LAYER),

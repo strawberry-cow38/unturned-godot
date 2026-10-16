@@ -720,6 +720,10 @@ fn collect_focus(
             json!({"netId":id}),
             container,
         );
+        // ObjectDoor/StoreShelf focus: the whole prop (body + swinging leaf), white.
+        if let Some(prop) = registry.parents.get(&source) {
+            focus.outline_net_id(id, *prop, Color::WHITE);
+        }
         return;
     }
     let point = camera.translation + *camera.forward() * distance;
@@ -747,6 +751,10 @@ fn collect_focus(
             json!({"netId":seat.net_id}),
             false,
         );
+        // PropSeat.SetLookFocused: the seat's prop, white.
+        if let Some(prop) = registry.parents.get(&source) {
+            focus.outline_net_id(seat.net_id, *prop, Color::WHITE);
+        }
     }
 }
 
