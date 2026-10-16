@@ -15,6 +15,7 @@ pub struct Options {
     pub player_name: String,
     pub network_ready: bool,
     pub vehicle: Option<String>,
+    pub hitch: Option<String>,
     pub demo_furniture: bool,
     pub play: bool,
     pub headless: bool,
@@ -42,6 +43,7 @@ impl Default for Options {
             player_name: std::env::var("UG_USERNAME").unwrap_or_else(|_| "Survivor".into()),
             network_ready: false,
             vehicle: None,
+            hitch: None,
             demo_furniture: false,
             play: false,
             headless: false,
@@ -80,6 +82,9 @@ impl Options {
                 "--play" | "--peiplay" => options.play = true,
                 "--headless" => options.headless = true,
                 "--demo-furniture" => options.demo_furniture = true,
+                "--hitch" => {
+                    options.hitch = Some(inline.unwrap_or("trailer").to_ascii_lowercase())
+                }
                 "--stay" => options.exit_after_capture = false,
                 "--map" => options.map = value()?,
                 "--seed" => options.seed = value()?.parse()?,
@@ -184,6 +189,14 @@ impl Options {
                 );
             }
         }
+        if let Some(trailer) = &options.hitch {
+            let tows = options.vehicle.as_deref().and_then(crate::vehicle::data::named)
+                .is_some_and(|d| d.spec.fifth_wheel != [0.; 3]);
+            let towed = crate::vehicle::data::named(trailer).is_some_and(|d| d.spec.kingpin != [0.; 3]);
+            if !tows || !towed {
+                bail!("--hitch[=TRAILER] needs --vehicle with a hitch and a trailer key (e.g. --vehicle semi --hitch)");
+            }
+        }
         Ok(options)
     }
 }
@@ -219,6 +232,7 @@ Usage: bevy/run.sh [options]\n\
   --island DIR             Reopen that map without regenerating authored files\n\
   --island-name NAME --island-tiles 3x3  Finite generation settings\n\
   --vehicle jeep          Spawn an original vehicle beside the player for testing\n\
+  --hitch[=trailer]        With --vehicle: park that trailer, kingpin under the hitch\n\
   --demo-furniture        Original fallback bed at source map anchor (diagnostic)\n\
   --headless --ticks 250   Exercise the core bridge without a renderer\n\
   --shot PATH              Capture the rendered window and exit\n\
@@ -270,6 +284,16 @@ mod tests {
             Some(50)
         );
         assert!(Options::parse(["--fixed-fps=0".into()]).is_err());
+    }
+    #[test]
+    fn hitch_harness_requires_a_fifth_wheel_vehicle() {
+        let options = Options::parse(["--vehicle=semi".into(), "--hitch".into()]).unwrap();
+        assert_eq!(options.hitch.as_deref(), Some("trailer"));
+        let car = Options::parse(["--vehicle=jeep".into(), "--hitch=Dinky_Trailer".into()]).unwrap();
+        assert_eq!(car.hitch.as_deref(), Some("dinky_trailer"));
+        assert!(Options::parse(["--hitch".into()]).is_err());
+        assert!(Options::parse(["--vehicle=huey".into(), "--hitch".into()]).is_err());
+        assert!(Options::parse(["--vehicle=semi".into(), "--hitch=jeep".into()]).is_err());
     }
     #[test]
     fn paths_with_spaces_and_both_option_forms_are_preserved() {

@@ -108,3 +108,79 @@ is established by the recorded transforms and physics assertions rather than
 similar silhouettes. This is a scripted production-controller fixture, not a
 full-game OS-input journey. Full-game hitch/drive/exit input and rigid cargo are
 separate remaining work.
+
+## Full-game rocking: anti-roll extension parity
+
+The handoff's open issue was an actual full-game W-drive of the hitched pair
+that oscillated near its start, while CPU witnesses drove. Its own OS captures
+showed the cause before anyone drove. After the accepted hitch, the unattended
+pair vibrated sideways at about ±2 m/s with only about 0.1 m of displacement
+and 6–7° of roll. Every CPU witness had the same signature: one side's wheels
+bottomed at suspension length 0 while the other side hung, alternating. The
+witnesses' >3 m distance assertion never caught it.
+
+`unattended_coupled_rig_settles_level_like_each_body_alone` isolates it on flat
+ground. The semi alone and the trailer alone settle, but the coupled pair rocked
+to 24° roll at 3.6 m/s. Disabling the bar (`UG_ANTIROLL=0`) or softening it
+(`UG_ANTIROLLK=0.2`) made it stable, which located the cause in the bar's input.
+The port read compression (`suspension_length / rest`). Source `WheelExtension`
+casts its own bit0 ray from `w.GlobalPosition`, and Godot moves a
+`VehicleWheel3D` node to hard point + direction × suspension length every step.
+`tools/wheel_extension_reference.py` verifies this on the real Godot
+4.6.2/Jolt binary. Its fixture `data/wheel-extension-reference.json` has three
+cases and twelve wheels. Grounded wheels read 0 at any compression, a wheel
+hanging over a floor 0.3 m lower reads gap/rest = 0.738, and one over a floor
+0.8 m lower (none in reach) reads 1. The source bar is therefore a lift-off
+restoring couple, not a compression spring. The Rust oracle test replays every
+wheel under a non-identity body pose.
+
+The native bar now uses that reading: a ray from the wheel node along body down
+for radius + rest + travel, against source bit0 (`player::world_solid`: world
+solids but not bit6 props; a vehicle only through an un-ghosted fallback
+chassis), excluding the body itself.
+
+The gate is a `dynamics::Park` latch matching every source `_parked` site.
+Spawn sets it, and so does Uncouple's `trailer.Park()`. Drive/DriveHeli/
+DrivePlane (a driver or NPC at the controls), CoupleTo's trailer `Wake()`,
+OnVehicleContact's ram `Wake()` (an active contact with another vehicle body)
+and NetEndHold (the host resuming a body after a remote driver's hold) clear it.
+A driver's exit does not park: source NetTests asserts `!Parked` after exit, so
+a car abandoned while moving keeps its bar until it settles. Source sleep (an
+unattended, untowed hull put to sleep once still) is approximated by
+instantaneous velocity thresholds in place of the source's low-passed averages.
+
+Known engine differences:
+- Godot's grounded wheel node sits about 0.04 m closer to the ground than the
+  radius. Its node uses a slightly longer suspension length than its own latest
+  ray (0.1777 against 0.1378 in the level oracle), a property of Godot's
+  suspension integration rather than the formula. Rapier's equilibrium has no
+  such deadband, so the native bar can respond to a few centimetres of rebound
+  that Godot ignores.
+- The port's contact flag is one controller step older than Godot's.
+- A ray starting inside a solid reads 0 natively; Godot skips that shape.
+
+Evidence:
+- The oracle test and the parked-rig test both fail under a surgical revert to
+  the compression reading (0.711 vs 0, and 24° roll). The latch test fails
+  under the old "an undriven car is parked" gate.
+- Main-schedule witness distances, before → after: PostUpdate fixture 13.1 →
+  22.0 m, fixed schedule 11.9 → 23.7 m, CCD 9.2 → 21.6 m, live entered pose with
+  glazing 9.5 → 19.7 m, and actual owner input/publish/tick 8.5 → 15.7 m. The
+  PEI road+props witness went 13.2 → 9.0 m from a different settled start pose,
+  still accelerating through 4.2 m/s.
+- The full native suite passes on the final code (759, 49 GPU-only ignored),
+  including 161 vehicle/CLI tests. The managed suite (251) passes.
+
+Full-game journey (actual OS input via xdotool on Xvfb/lavapipe, `--play
+--fixed-fps 20`): `--vehicle semi --hitch` with `UG_VEHICLE_AT=-601.5,-200,0`
+stages the original Main `--hitch` pose on the PEI road. Coupling stays the
+player's accepted F hitch. The journey was console teleport → aim → "[F]
+connect trailer" → hitched ("[F] disconnect trailer") → "[F] Enter Semi Truck"
+→ hold W → exit while moving. The opened final-code captures are
+`bevy/artifacts/bevy-coupling-antiroll-*.png` with JSON sidecars. While parked
+and coupled, both bodies stay under about 0.2 m/s at about 0° roll. Driving
+accelerates the pair down the road with the trailer tracking. Exiting at
+3.6 m/s leaves the coupled pair coasting level (2.4 then 0.7 m/s). An earlier
+run of the same journey reached 6.5 m/s over about 35 m. Rigid cargo and
+remote/MP towing journeys remain separate work; the latter is planned with the
+hybrid dedicated host (ledger row 16).

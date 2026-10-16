@@ -12,7 +12,7 @@ pub mod origin;
 mod procedural;
 mod procedural_roads;
 pub mod rain;
-mod roads;
+pub(crate) mod roads;
 mod surface_tags;
 mod terrain;
 mod tunnels;

@@ -1295,6 +1295,14 @@ fn publish_body(
     }
 }
 
+#[cfg(test)]
+pub(crate) fn test_ready_publisher(app: &mut App) {
+    app.insert_resource(Session { initialized: true, ..default() })
+        .init_resource::<PlayerInput>()
+        .add_systems(FixedUpdate, publish_body.after(PhysicsSet::Writeback)
+            .after(crate::vehicle::VehiclePublish));
+}
+
 pub(crate) fn sync_seated_body(
     mut commands: Commands,
     occupancy: Option<Res<crate::vehicle::Occupancy>>,
@@ -1688,6 +1696,23 @@ pub(crate) fn world_or_prop(
     let ghost = groups.memberships.bits() & crate::vehicle::coupling::GHOST_TRAILER.bits() != 0;
     let source_prop = groups.memberships.bits() & crate::world::buildings::SOURCE_PROP.bits() != 0;
     !vehicle || fallback || ghost || source_prop
+}
+/// Shared source bit0 (SolidBit) predicate for GROUP1|GROUP4 queries: world
+/// solids but not bit6 authored props; a vehicle only through a fallback
+/// chassis that is not tow-ghosted (HitMesh/SetTowGhost move it off bit0).
+pub(crate) fn world_solid(
+    _: Entity,
+    collider: &bevy_rapier3d::rapier::geometry::Collider,
+) -> bool {
+    let groups = collider.collision_groups();
+    let memberships = groups.memberships.bits();
+    if memberships & Group::GROUP_4.bits() != 0 {
+        let fallback = groups.filter.bits() & (Group::GROUP_2 | Group::GROUP_4).bits()
+            == (Group::GROUP_2 | Group::GROUP_4).bits();
+        fallback && memberships & crate::vehicle::coupling::GHOST_TRAILER.bits() == 0
+    } else {
+        memberships & crate::world::buildings::SOURCE_PROP.bits() == 0
+    }
 }
 fn throw_clearance(
     context: &RapierContext,

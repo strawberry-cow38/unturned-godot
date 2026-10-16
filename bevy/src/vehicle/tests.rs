@@ -57,6 +57,7 @@ pub(crate) fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
                 engine: audio::Engine::new(0., true),
                 swamp: water::Swamp::new(s),
                 wreck: default(),
+                park: default(),
             },
             Transform::from_translation(at),
             RigidBody::Dynamic,

@@ -370,3 +370,5 @@ fn real_async_decomposer_consumes_the_post_partition_source_before_cache_fallbac
         "post-partition source reaches the completed hull; original cached body remains near x0"
     );
 }
+
+mod main_schedule;

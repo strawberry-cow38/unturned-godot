@@ -24,7 +24,14 @@ poses through `worldVehicleState`; the local driver uses the existing
 - Mass, centre of mass, load-scaled suspension, actual driven axles, source gear
   construction, torque/RPM/shift/clutch curves, reverse-pedal braking, steering
   fade/stability limit, rear handbrake and tracked differential steering.
-  The anti-roll bar applies a pure torque even with one wheel airborne.
+  The anti-roll bar applies a pure torque even with one wheel airborne. Its
+  reading is the source `WheelExtension`: a bit0 ray from the wheel node, which
+  Godot keeps at the suspended centre. A grounded wheel therefore reads 0, and
+  only a lifted wheel's air gap drives the bar. A `Park` latch mirrors source
+  `_parked`: set at spawn and on uncouple, cleared by a driver or NPC, coupling,
+  a vehicle ram or the end of a remote driver's hold. A driver's exit does not
+  park. The bar also skips exploded and settled hulls; see
+  `VEHICLE_COUPLING_NATIVE.md`.
 - Original voxel buoyancy, mass-scaled water damping, steady hull heave/roll
   damping and boat propulsion/rudder. The flat native sea matches current source:
   `WaveField.Flat = true` forces both the visual field and physical height to zero.

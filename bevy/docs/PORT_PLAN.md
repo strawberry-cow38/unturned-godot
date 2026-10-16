@@ -113,3 +113,44 @@ have source camera focus, basic health/fuel information and accepted hold-F
 pickup, including an actual PEI main-game visual/input journey. Remaining
 utility readouts, configuration, specialized bodies and placement tools are
 tracked separately in [DEPLOYABLES_PORT.md](DEPLOYABLES_PORT.md).
+
+## Parity gap ledger (2026-10-15 audit)
+
+The source was audited against native consumers. All 86 CommandIds, every
+EventId and every snapshot field were traced through `BridgeHost` actions and
+`ClientEvents`. Rows leave this table only when the native implementation, the
+authority path, tests with negative controls and opened captures all land.
+Owner "agent" means an isolated worktree branch merged by the integrator.
+
+| # | Feature (source) | Gap | Size | Impact | Owner / status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | No held ghost/snapping/LMB place; cmd 7 test-only | L | high | queued (coordinate with power agent on `deployables.rs`) |
+| 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | `ordinary()` excludes storage/fixture/fluid/turbine bodies | M | high | power agent: powered fixtures; rest queued with 1 |
+| 3 | Player structures (`BuildTool`, `StructureManager`) | Absent; source is local-only, no command/save | XL | high | needs authority design |
+| 4 | Survival HUD status icons (`HUD.cs`) | Bleeding/broken/starved/dehydrated/deadzone/temperature rows | S | high | agent C (in progress) |
+| 5 | Temperature (`PlayerTemperatureSim`, `ThermalField`) | Band never computed/streamed (`TempBand`) | M | med | agent C (in progress) |
+| 6 | Deadzones (`DeadzoneOverlay`, `GeigerCounter`) | Volumes exist, no overlay/Geiger | S | med | agent C (in progress) |
+| 7 | Save lifecycle (`WorldSaveDriver`) | Manual save/load only; no autosave, entry load or quit save | S | high | agent C (in progress) |
+| 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | agent C (in progress) |
+| 9 | Vehicle hand tools: paint, carjack, spare tire, pump, pour (cmds 29/50/55/56) | Not sent; `paintRgb` not rendered | M | med | queued |
+| 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | queued |
+| 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | queued |
+| 12 | Binoculars, umbrella, fishing | Absent | S-M | low | queued |
+| 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | queued |
+| 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | queued |
+| 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data | L | high (MP) | queued |
+| 16 | Hybrid dedicated server and moderation | No headless bridge host on 47872; live Godot server is protocol 61 | L | high (MP) | queued |
+| 17 | Infinite/finite world MP | Origin protocol, island descriptor negotiation | L | med | queued |
+| 18 | Menus/settings/bug report/launcher | Difficulty/config/island list/arena; limited settings; launcher still Godot | L | med | queued |
+| 19 | Generated buildings | Preview stage; furniture data only (`61272db6`) | L | med | queued |
+| 20 | World devices (elevator, car lift, crane, train, SAM, flares, magnet, vending, notes, traffic lights, AI drivers) | None native | L | low | queued |
+| 21 | Fluid networks / item pipes (cmds 64-66) | Not sent; pipe events not bridged | L | low-med | check with power agent |
+| 22 | Map and NPC editor | Absent | XL | low for play | last |
+| — | Nearby AREA operations and selected-item Salvage | Drag/split/equip/drop/Empty/magazine/Salvage | M | high | agent A (in progress) |
+| — | Remaining power utilities | Specialized endpoints, fuel/ramp, consumer lights/audio, readouts | L | med | agent B (in progress) |
+| — | Fifth-wheel towing | Full-game rocking fixed; remote/MP towing journey, rigid cargo | M | med | integrator |
+| — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | queued |
+
+N/A: the zombie attack loop/death loot and NPC map placements/quest persistence
+are absent from the source itself. FreezeMode, TargetDummy, DamageNumbers,
+DiscordPresence and the `--*test` harness flags are development aids.

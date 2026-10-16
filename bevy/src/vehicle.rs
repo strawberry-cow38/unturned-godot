@@ -108,6 +108,7 @@ pub struct VehicleBody {
     engine: audio::Engine,
     swamp: water::Swamp,
     wreck: damage::Wreck,
+    park: dynamics::Park,
 }
 impl VehicleBody {
     pub(crate) fn coupled_trailer(&self) -> u32 { self.coupling.trailer }
@@ -367,11 +368,38 @@ fn register_spawns(
     }
     if !vehicles.registered.contains(&usize::MAX) {
         if let Some(d) = options.0.vehicle.as_deref().and_then(data::named) {
-            let yaw = world.spawn_yaw;
-            let rear =
+            // UG_VEHICLE_AT="x,z[,yaw]" stages the harness at a chosen spot (e.g.
+            // a flat road for a rig journey); move the player there separately.
+            // It applies only with --vehicle; a malformed value is ignored whole.
+            let staged: Option<Vec<f32>> = std::env::var("UG_VEHICLE_AT").ok().and_then(|v| {
+                let parsed: Result<Vec<f32>, _> = v.split(',').map(|n| n.trim().parse()).collect();
+                match parsed {
+                    Ok(v) if (2..=3).contains(&v.len()) => Some(v),
+                    _ => {
+                        warn!("UG_VEHICLE_AT={v} ignored: expected x,z[,yaw]");
+                        None
+                    }
+                }
+            });
+            let yaw = staged
+                .as_ref()
+                .and_then(|v| v.get(2))
+                .map_or(world.spawn_yaw, |d| d.to_radians());
+            let mut rear =
                 (d.spec.box_center[2] + d.spec.box_size[2] * 0.5).max(d.spec.tail_rotor_hub[2]);
+            // A staged --hitch rig must clear the player with the whole trailer.
+            if let Some(t) = options.0.hitch.as_deref().and_then(data::named) {
+                rear = rear.max(
+                    d.spec.fifth_wheel[2] - t.spec.kingpin[2]
+                        + t.spec.box_center[2]
+                        + t.spec.box_size[2] * 0.5,
+                );
+            }
             let mut at =
                 world.spawn + Quat::from_rotation_y(yaw) * Vec3::NEG_Z * (rear + 6.).max(6.);
+            if let Some(v) = &staged {
+                at = Vec3::new(v[0], at.y, v[1]);
+            }
             at.y = geometry.terrain_height(at.x, at.z).unwrap_or(world.spawn.y)
                 + if d.spec.heli || d.spec.plane {
                     d.spec.ground_clearance() + 0.05
@@ -385,6 +413,21 @@ fn register_spawns(
                 yaw.to_degrees(),
                 0,
             ));
+            // Main --hitch backs a trailer under the cab. Coupling itself stays
+            // the player's accepted on-foot hitch; this only stages the pose.
+            if let Some(t) = options.0.hitch.as_deref().and_then(data::named) {
+                let rotation = Quat::from_rotation_y(yaw);
+                // Main --hitch: trailer.GlobalPosition += FifthWheelWorld - KingpinWorld.
+                let pin = at + rotation
+                    * (Vec3::from_array(d.spec.fifth_wheel) - Vec3::from_array(t.spec.kingpin));
+                requests.push(registration(
+                    t,
+                    format!("{}:vehicle:harness:{}", config.map_name, t.key),
+                    pin,
+                    yaw.to_degrees(),
+                    0,
+                ));
+            }
             indices.push(usize::MAX);
         }
     }
@@ -604,6 +647,7 @@ fn sync_vehicles(
                     engine: audio::Engine::new(ignition_length, row.flags & 1 != 0),
                     swamp: water::Swamp::new(spec),
                     wreck: default(),
+                    park: default(),
                 },
                 pose,
                 remote::Puppet::default(),
@@ -918,6 +962,8 @@ fn step_bodies(
     let context = context.single().ok();
     // An unattended coupled rig is one residency unit. Freezing only the cab
     // would leave its unsupported trailer falling outside streamed collision.
+    // OnVehicleContact wakes any non-husk vehicle another vehicle touches.
+    let vehicles: HashSet<Entity> = query.iter().map(|(e, ..)| e).collect();
     let outside_region: HashSet<u32> = query.iter().filter_map(|(_,body,pose,_,_,_,_,_,_,_)| {
         geometry.as_ref().is_some_and(|g| g.loaded_radius > 0.
             && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius).then_some(body.net_id)
@@ -938,6 +984,7 @@ fn step_bodies(
         if network.as_ref().is_some_and(|n| {
             !coupling::state::simulates(&n.0, &body)
         }) {
+            body.park.hold();
             remote::advance_aircraft_presentation(&mut body, 0.02);
             *rigid_body = RigidBody::KinematicPositionBased;
             *force = default();
@@ -998,6 +1045,51 @@ fn step_bodies(
                 &mut wheels,
                 body.drivetrain.surface_grip,
             );
+            // Source StepAntiRoll skips _exploded, _parked and sleeping hulls.
+            let driven = body.driver_player_id != 0
+                || pilots.as_ref().is_some_and(|p| p.managed(body.net_id));
+            let rammed = body.park.parked
+                && context.as_ref().is_some_and(|context| {
+                    context.contact_pairs_with(entity).any(|pair| {
+                        let other = if pair.collider1() == Some(entity) {
+                            pair.collider2()
+                        } else {
+                            pair.collider1()
+                        };
+                        pair.has_any_active_contact()
+                            && other
+                                .and_then(|c| {
+                                    context.colliders.collider_parent(context.rigidbody_set, c)
+                                })
+                                .is_some_and(|o| o != entity && vehicles.contains(&o))
+                    })
+                });
+            let cab = body.coupling.cab;
+            body.park.update(driven, cab, rammed);
+            let asleep = dynamics::settled(!driven, cab != 0, &velocity);
+            if body.flags & 32 == 0
+                && !body.park.parked
+                && !asleep
+                && let Some(context) = context.as_ref()
+            {
+                let filter = QueryFilter::default()
+                    .exclude_sensors()
+                    .exclude_rigid_body(entity)
+                    .groups(CollisionGroups::new(Group::ALL, Group::GROUP_1 | Group::GROUP_4))
+                    .predicate(&crate::player::world_solid);
+                let down = pose.rotation * Vec3::NEG_Y;
+                force.torque += dynamics::anti_roll(spec, &wheels, pose, |wheel| {
+                    dynamics::wheel_extension(
+                        wheel,
+                        |from, reach| {
+                            context
+                                .cast_ray(from, down, reach, true, filter)
+                                .map(|(_, distance)| distance)
+                        },
+                        pose,
+                    )
+                });
+            }
             // Vehicle._Process applies an all-wheel parking brake while unattended.
             // Driver Space only brakes the rear axle and cannot stand in for this.
             if body.driver_player_id == 0 && body.coupling.cab == 0 && body.flags & 32 == 0 {

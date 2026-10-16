@@ -4,6 +4,121 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use std::f32::consts::{PI, TAU};
 
+/// Source `Vehicle._parked`. Spawn and Uncouple's `trailer.Park()` set it; a
+/// driver or NPC at the controls (Drive/DriveHeli/DrivePlane), CoupleTo's
+/// trailer `Wake()`, OnVehicleContact's ram `Wake()` and NetEndHold (a remote
+/// driver's hold ending) clear it. A driver's exit does NOT park the car.
+#[derive(Clone, Copy, Debug)]
+pub struct Park {
+    pub parked: bool,
+    cab: u32,
+    held: bool,
+}
+impl Default for Park {
+    fn default() -> Self {
+        Self { parked: true, cab: 0, held: false }
+    }
+}
+impl Park {
+    /// A remote owner's hold: the host does not simulate this body.
+    pub fn hold(&mut self) {
+        self.held = true;
+    }
+    pub fn update(&mut self, driven: bool, cab: u32, rammed: bool) {
+        if self.cab != 0 && cab == 0 {
+            self.parked = true;
+        }
+        if driven || cab != 0 || rammed || std::mem::take(&mut self.held) {
+            self.parked = false;
+        }
+        self.cab = cab;
+    }
+}
+
+/// Source settle: an unattended, untowed hull that is no longer moving is put
+/// to sleep, and a sleeping body has no roll to resist. Instantaneous
+/// velocities stand in for the source's low-passed `_velAvg`/`_angAvg`.
+pub fn settled(unattended: bool, towed: bool, velocity: &Velocity) -> bool {
+    unattended
+        && !towed
+        && velocity.linear.length_squared() < 1.
+        && velocity.angular.length_squared() < 0.03
+}
+
+static ANTI_ROLL: std::sync::LazyLock<Option<f32>> = std::sync::LazyLock::new(|| {
+    (std::env::var("UG_ANTIROLL").as_deref() != Ok("0")).then(|| {
+        std::env::var("UG_ANTIROLLK")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|n| *n >= 0.)
+            .unwrap_or(0.55)
+    })
+});
+
+/// Original StepAntiRoll: per axle (left wheel, first right partner within
+/// 0.35 m of z), a PURE couple about body Z, even with one wheel airborne.
+/// Applying two individually contact-gated forces launches the inside corner.
+/// `extension` is the source WheelExtension reading for a wheel.
+pub(super) fn anti_roll(
+    spec: &VehicleSpec,
+    wheels: &RayCastVehicleController,
+    pose: &Transform,
+    extension: impl Fn(&VehicleWheel) -> f32,
+) -> Vec3 {
+    // Like the source's static fields, UG_ANTIROLL/UG_ANTIROLLK are read once.
+    let Some(rate) = *ANTI_ROLL else {
+        return Vec3::ZERO;
+    };
+    if spec.heli || spec.plane {
+        return Vec3::ZERO;
+    }
+    let mut torque = Vec3::ZERO;
+    for left in &wheels.wheels {
+        if left.chassis_connection_point.x >= 0. {
+            continue;
+        }
+        if let Some(right) = wheels.wheels.iter().find(|right| {
+            right.chassis_connection_point.x > 0.
+                && (right.chassis_connection_point.z - left.chassis_connection_point.z).abs()
+                    <= 0.35
+        }) {
+            if !left.state.is_in_contact && !right.state.is_in_contact {
+                continue;
+            }
+            let force = (extension(left) - extension(right)) * rate * spec.mass() * 9.8 * 0.5;
+            torque += pose.rotation
+                * Vec3::Z
+                * (force
+                    * (right.chassis_connection_point.x - left.chassis_connection_point.x).abs());
+        }
+    }
+    torque
+}
+
+/// Source WheelExtension casts its own bit0 ray from `w.GlobalPosition`, and
+/// Godot moves a VehicleWheel3D node to its suspended centre every step
+/// (hard point + direction x suspension length, verified on Godot 4.6.2/Jolt).
+/// Every grounded wheel therefore reads 0; only a lifted wheel's air gap over
+/// its rest length drives the bar, and no ground within reach reads 1.
+/// `ground` is the distance along the body's down axis to source bit0, if any.
+pub(super) fn wheel_extension(
+    wheel: &VehicleWheel,
+    ground: impl FnOnce(Vec3, f32) -> Option<f32>,
+    pose: &Transform,
+) -> f32 {
+    let rest = wheel.suspension_rest_length.max(0.01);
+    let center = pose.transform_point(
+        wheel.chassis_connection_point + wheel.direction * wheel.state.suspension_length,
+    );
+    match ground(
+        center,
+        wheel.radius + rest + wheel.tuning.max_suspension_travel,
+    ) {
+        Some(distance) => ((distance - wheel.radius) / rest).clamp(0., 1.),
+        None => 1.,
+    }
+}
+
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Controls {
     pub throttle: f32,
@@ -256,45 +371,6 @@ impl Drivetrain {
         let h = Vec3::new(velocity.linear.x, 0., velocity.linear.z);
         let hs = h.length();
         let mut result = ExternalForce::default();
-        // Original anti-roll bar is a PURE couple, even with one wheel airborne.
-        // Applying two individually contact-gated forces launches the inside corner.
-        if !spec.heli && !spec.plane && std::env::var("UG_ANTIROLL").as_deref() != Ok("0") {
-            let rate = std::env::var("UG_ANTIROLLK")
-                .ok()
-                .and_then(|s| s.parse::<f32>().ok())
-                .filter(|n| *n >= 0.)
-                .unwrap_or(0.55);
-            for left in &wheels.wheels {
-                if left.chassis_connection_point.x >= 0. {
-                    continue;
-                }
-                if let Some(right) = wheels.wheels.iter().find(|right| {
-                    right.chassis_connection_point.x > 0.
-                        && (right.chassis_connection_point.z - left.chassis_connection_point.z)
-                            .abs()
-                            <= 0.35
-                }) {
-                    if !left.state.is_in_contact && !right.state.is_in_contact {
-                        continue;
-                    }
-                    let extension = |w: &VehicleWheel| {
-                        if w.state.is_in_contact {
-                            (w.state.suspension_length / w.suspension_rest_length.max(0.01))
-                                .clamp(0., 1.)
-                        } else {
-                            1.
-                        }
-                    };
-                    let force =
-                        (extension(left) - extension(right)) * rate * spec.mass() * 9.8 * 0.5;
-                    result.torque += pose.rotation
-                        * Vec3::Z
-                        * (force
-                            * (right.chassis_connection_point.x - left.chassis_connection_point.x)
-                                .abs());
-                }
-            }
-        }
         if hs > 0.15 && self.drag > 0. {
             result.force -= h / hs
                 * (self.drag * (1. + 0.37 * (self.surface_roll - 1.)) * hs * hs
@@ -470,3 +546,6 @@ impl Buoyancy {
         (result, true)
     }
 }
+
+#[cfg(test)]
+mod anti_roll_tests;
