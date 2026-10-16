@@ -24,7 +24,7 @@ namespace UnturnedGodot
     /// and the series says how many frames late the counters run (this project renders on its own thread, so a value read in
     /// _Process belongs to a frame already drawn). Every later read waits past that lag and takes two consecutive frames.
     ///
-    /// Pictures land beside the --shot path as cull_&lt;stop&gt;_&lt;config&gt;.png; the --shot path itself gets stop (a)'s.</summary>
+    /// Pictures land beside the --shot path as cull_&lt;stop&gt;_&lt;config&gt;.png; the --shot path itself gets the first stop's.</summary>
     public partial class CullProbe : Node
     {
         /// <summary>A culling feature the probe can switch off and back on: On() must restore exactly what Off() took away.</summary>
@@ -41,6 +41,7 @@ namespace UnturnedGodot
         TownRoadGrid _town;
         TownRoadGrid.TownBuilding _b;
         string _dir, _shot;
+        bool _shotSaved;
         IEnumerator<int> _script;
         int _wait, _frames;
         readonly List<(string Tag, Vector3 Eye, Vector3 Look)> _stops = new();
@@ -522,10 +523,11 @@ namespace UnturnedGodot
                 foreach (var e in Settle($"{tag} again")) yield return e;
                 Log.Print($"[cullprobe] {tag} all again: {_last}");
                 Save($"cull_{tag}_again");
-                if (tag == "a_street" && !string.IsNullOrEmpty(_shot))
+                if (!_shotSaved && !string.IsNullOrEmpty(_shot))
                 {
-                    var img = GetViewport().GetTexture()?.GetImage();
-                    img?.SavePng(_shot);
+                    // the --shot path gets the first stop's frame (a missing file is how tools/shot.py reads a failed run)
+                    GetViewport().GetTexture()?.GetImage()?.SavePng(_shot);
+                    _shotSaved = true;
                 }
                 // (a threshold stop is only about the basement gate: the frame with it, and without it)
                 bool threshold = tag.StartsWith("t_");
