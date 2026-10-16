@@ -193,8 +193,9 @@ public sealed class NearbyInventoryTests
         for(int n=0;n<bytes.Length;n++){Assert.That(NearbyOperationCommand.TryRead(Reader(bytes[..n]),out got),Is.False);
             Assert.That(got,Is.EqualTo(default(NearbyOperationCommand)));}
         var bad=c;bad.Amount=0;Assert.That(bad.IsValid,Is.False,"split always names a positive amount");
-        bad=c;bad.Operation=NearbyOperation.Place;Assert.That(bad.IsValid,Is.False,"place moves the whole row, never a count");
-        bad.Amount=0;Assert.That(bad.IsValid,Is.True);
+        bad=c;bad.Operation=NearbyOperation.Reserved;Assert.That(bad.IsValid,Is.False,"a whole ground drag is not an operation");
+        bad.Amount=0;Assert.That(bad.IsValid,Is.False,"in any shape");
+        Assert.That(NearbyOperationCommand.TryRead(Reader(Bytes(bad.Write)),out got),Is.False);
         bad=c;bad.Page=PlayerInventory.AREA;Assert.That(bad.IsValid,Is.False,"never a ground destination");
         bad=c;bad.Page=PlayerInventory.STORAGE;Assert.That(bad.IsValid,Is.False,"owned scope cannot name a container page");
         bad.CrateId=7;Assert.That(bad.IsValid,Is.True);bad.Page=2;Assert.That(bad.IsValid,Is.False,"container scope cannot name an owned page");
@@ -227,30 +228,33 @@ public sealed class NearbyInventoryTests
         finally{a.NearbyChanged-=Saw;}
     }
     [Test]
-    public void PlaceUsesTheDraggedCellRotationAndHolsterRuleAndNeverSwapsWithTheGround()
+    public void WholeGroundDragIsRefusedLikeTryDragAndNeverReachesTheLedger()
     {
+        // Source TryDrag refuses AREA endpoints: a whole drag off the ground
+        // snaps home. Wire value 0 stays reserved and fails the parse.
         var (h,a,bag,eye)=Owner(48311);
         var rifle=new Item(TransactionalFixtures.RifleId,1,61){gunAmmo=9,gunSightId=22};
         var world=h.Server.WorldItems.ServerSpawn(new NetId(900),rifle,eye,0);
-        bag.items[PlayerInventory.BACKPACK].resize(4,4);bag.items[PlayerInventory.BACKPACK].addItem(0,0,0,new Item(TransactionalFixtures.ScrapId));
-        Open(h,a,1,eye);
-        Assert.That(Send(h,a,Op(a,2,eye,NearbyOperation.Place,page:PlayerInventory.BACKPACK,x:0,y:0,rot:1)),Is.EqualTo(NearbyResult.NoRoom),
-            "an occupied cell is refused; a ground row has nowhere to take a swapped occupant");
-        Assert.That(Send(h,a,Op(a,3,eye,NearbyOperation.Place,page:1)),Is.EqualTo(NearbyResult.NoRoom),
-            "primary-only rifle cannot be holstered in SECONDARY");
-        Assert.That(h.Server.WorldItems.TryGet(world.NetIdValue,out _),Is.True);
-        var place=Op(a,4,eye,NearbyOperation.Place,page:PlayerInventory.BACKPACK,x:2,y:0,rot:1);
-        Assert.That(Send(h,a,place),Is.EqualTo(NearbyResult.Transferred));
-        var jar=bag.items[PlayerInventory.BACKPACK].items.Single(j=>j.item.id==TransactionalFixtures.RifleId);
-        Assert.That((jar.x,jar.y,jar.rot),Is.EqualTo(((byte)2,(byte)0,(byte)1)),"rotated 4x2 occupies 2x4 at the dragged cell");
-        foreach(var f in typeof(Item).GetFields())Assert.That(f.GetValue(jar.item),Is.EqualTo(f.GetValue(rifle)),f.Name);
-        Assert.That(h.Server.WorldItems.TryGet(world.NetIdValue,out _),Is.False);
-        Assert.That(a.Nearby.Rows,Is.Empty);
-        a.SendNearbyOperation(place);h.Step(12);
-        Assert.That(bag.getItemCount(TransactionalFixtures.RifleId),Is.EqualTo(1),"exact replay resends, never re-applies");
-        h.Server.WorldItems.ServerSpawn(new NetId(901),new Item(TransactionalFixtures.RifleId),eye,0);Open(h,a,5,eye);
-        Assert.That(Send(h,a,Op(a,6,eye,NearbyOperation.Place,page:0,x:3,y:2,rot:3)),Is.EqualTo(NearbyResult.Transferred));
-        Assert.That(bag.items[0].items.Select(j=>(j.x,j.y,j.rot)),Is.EqualTo(new[]{((byte)0,(byte)0,(byte)0)}),"hand slot is its one cell at rot 0");
+        var rounds=new Item(TransactionalFixtures.Round556Id,20);h.Server.WorldItems.ServerSpawn(new NetId(901),rounds,eye,0);
+        bag.items[PlayerInventory.BACKPACK].resize(4,4);Open(h,a,1,eye);
+        int Row(ushort id)=>a.Nearby.Rows.ToList().FindIndex(r=>r.Jar.item.id==id);
+        uint revision=a.Nearby.Revision;
+        var whole=Op(a,2,eye,NearbyOperation.Reserved,row:Row(rifle.id),page:PlayerInventory.BACKPACK,x:2,y:0,rot:1);
+        Assert.That(whole.IsValid,Is.False);Assert.That(a.SendNearbyOperation(whole),Is.False,"the client never sends a whole drag");
+        var replies=new List<NearbyInventoryEvent>();a.NearbyChanged+=replies.Add;
+        Assert.That(a.SendCommandRaw(ReplicationIds.CommandNearbyOperation,whole.Write),Is.True,"a modified client");
+        h.Step(12);a.NearbyChanged-=replies.Add;
+        Assert.That(replies,Is.Empty,"refused at parse: no reply and no repaint");
+        Assert.That(a.Nearby.Revision,Is.EqualTo(revision));
+        Assert.That(h.Server.WorldItems.TryGet(world.NetIdValue,out var still),Is.True);Assert.That(still.ServerItem,Is.SameAs(rifle));
+        Assert.That((rifle.amount,rifle.gunAmmo,rounds.amount),Is.EqualTo(((ushort)1,9,(ushort)20)));
+        Assert.That(bag.items.Take(PlayerInventory.OWNPAGES).Sum(p=>p.items.Count),Is.Zero,"nothing landed in the owner's bag");
+        Assert.That(Send(h,a,Op(a,2,eye,NearbyOperation.Split,row:Row(rounds.id),page:PlayerInventory.BACKPACK,amount:20)),
+            Is.EqualTo(NearbyResult.Denied),"the refused ID was never recorded, and the whole stack as a split is still a whole drag");
+        Assert.That(rounds.amount,Is.EqualTo(20));
+        Assert.That(Send(h,a,Op(a,3,eye,NearbyOperation.Split,row:Row(rounds.id),page:PlayerInventory.BACKPACK,amount:5)),
+            Is.EqualTo(NearbyResult.Transferred));
+        Assert.That((rounds.amount,bag.getItemCount(TransactionalFixtures.Round556Id)),Is.EqualTo(((ushort)15,5)));
     }
     [Test]
     public void SplitTakesOnlyTheNamedCountFromContributorsInSourceOrderAndMergesAtTheCell()
@@ -424,7 +428,7 @@ public sealed class NearbyInventoryTests
         Assert.That(facts[4].Result,Is.EqualTo(MagazineTransferResult.Dead));Assert.That(first.amount+second.amount,Is.EqualTo(3));
     }
     [Test]
-    public void GroundPlaceAndSplitKeepTryDragMergeHolsterAndMagazineRules()
+    public void GroundSplitKeepsTryDragMergeHolsterAndMagazineRules()
     {
         var (h,a,bag,eye)=Owner(48319);
         var rounds=new Item(TransactionalFixtures.Round556Id,25);h.Server.WorldItems.ServerSpawn(new NetId(900),rounds,eye,0);
@@ -438,9 +442,9 @@ public sealed class NearbyInventoryTests
         Assert.That(Send(h,a,Op(a,3,eye,NearbyOperation.Split,row:Row(mag.id),page:2,x:1,amount:1)),Is.EqualTo(NearbyResult.NoRoom),
             "a magazine's amount is rounds: never merged onto another magazine");
         Assert.That((empty.amount,empty.magLoadedRound,mag.amount),Is.EqualTo(((ushort)0,(string)null,(ushort)4)));
-        Assert.That(Send(h,a,Op(a,4,eye,NearbyOperation.Place,row:Row(rounds.id),page:2,x:0)),Is.EqualTo(NearbyResult.Transferred));
-        Assert.That((stack.amount,rounds.amount),Is.EqualTo(((ushort)30,(ushort)15)),"TryDrag merge: the remainder stays at the origin");
-        Assert.That(Send(h,a,Op(a,5,eye,NearbyOperation.Place,row:Row(rounds.id),page:2,x:0)),Is.EqualTo(NearbyResult.NoRoom),
+        Assert.That(Send(h,a,Op(a,4,eye,NearbyOperation.Split,row:Row(rounds.id),page:2,x:0,amount:12)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That((stack.amount,rounds.amount),Is.EqualTo(((ushort)30,(ushort)15)),"merge up to the stack size: the remainder stays on the ground");
+        Assert.That(Send(h,a,Op(a,5,eye,NearbyOperation.Split,row:Row(rounds.id),page:2,x:0,amount:1)),Is.EqualTo(NearbyResult.NoRoom),
             "a full stack would be a swap");
     }
     [Test]

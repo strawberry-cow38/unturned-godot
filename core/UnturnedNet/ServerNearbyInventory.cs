@@ -221,14 +221,14 @@ namespace UnturnedGodot.Net
             if (grid == null) return NearbyResult.Denied;
             var source = row.Jar.item; int before = source.amount, taken;
             var probe = new ItemJar(source);
-            if (command.Operation == NearbyOperation.Split && command.Amount >= before) return NearbyResult.Denied;   // the whole stack is a move
-            // PlayerInventory.TryDrag's cross-page rules for both gestures: the
-            // holster rule, then hand slots at their single cell with rot 0.
+            if (command.Amount >= before) return NearbyResult.Denied;   // the whole stack is a drag, which TryDrag refuses from AREA
+            // PlayerInventory.TryDrag's cross-page rules: the holster rule, then
+            // hand slots at their single cell with rot 0.
             // (OnSplitItem lacks the holster check; a ground split keeps it.)
             bool slot = command.Page < PlayerInventory.SLOTS;
             byte x = slot ? (byte)0 : command.ToX, y = slot ? (byte)0 : command.ToY, rot = slot ? (byte)0 : command.ToRot;
             if (source.GetAsset()?.slot.CanOccupyPage(command.Page) != true) return NearbyResult.NoRoom;
-            int wanted = command.Operation == NearbyOperation.Place ? before : command.Amount;
+            int wanted = command.Amount;
             byte at = grid.getIndex(x, y);
             if (at != byte.MaxValue)
             {

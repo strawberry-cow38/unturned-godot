@@ -277,26 +277,48 @@ fn sent(out: commands::Dispatch) -> Vec<(String, serde_json::Value)> {
         .collect()
 }
 #[test]
-fn ground_rows_route_only_place_split_and_empty_through_command87() {
+fn ground_rows_route_only_split_and_empty_through_command87() {
     let area = Cell::at(AREA, 0, 0);
     let own = Cell::at(2, 3, 1);
     let (view, pages) = ground_view(0);
-    let moved = sent(commands::dispatch(
-        Intent::Move {
+    let split = sent(commands::dispatch(
+        Intent::Split {
             from: area,
+            amount: 4,
             to: own,
             rotation: 3,
         },
         &view,
         &pages,
     ));
-    assert_eq!(moved.len(), 1);
-    assert_eq!(moved[0].0, "nearbyOperation");
+    assert_eq!(split.len(), 1);
+    assert_eq!(split[0].0, "nearbyOperation");
     assert_eq!(
-        moved[0].1,
-        json!({"operation":"Place","scanId":3,"revision":9,"worldId":41,"token":77,"x":0,"y":0,
-            "amount":0,"crateId":0,"page":2,"toX":3,"toY":1,"toRot":3})
+        split[0].1,
+        json!({"operation":"Split","scanId":3,"revision":9,"worldId":41,"token":77,"x":0,"y":0,
+            "amount":4,"crateId":0,"page":2,"toX":3,"toY":1,"toRot":3})
     );
+    // Source TryDrag refuses AREA endpoints: a whole drag, rotated or not,
+    // into an owned or the open viewed grid is no operation at all.
+    let (open_view, open_pages) = ground_view(60);
+    for (to, (view, pages)) in [
+        (own, (&view, &pages)),
+        (Cell::at(STORAGE, 1, 2), (&open_view, &open_pages)),
+    ] {
+        for rotation in [0, 3] {
+            let whole = Intent::Move {
+                from: area,
+                to,
+                rotation,
+            };
+            assert!(
+                commands::dispatch(whole.clone(), view, pages)
+                    .commands
+                    .is_empty(),
+                "{whole:?}"
+            );
+        }
+    }
     let split = sent(commands::dispatch(
         Intent::Split {
             from: area,
@@ -308,7 +330,6 @@ fn ground_rows_route_only_place_split_and_empty_through_command87() {
         &pages,
     ));
     assert!(split.is_empty(), "a container cell needs the accepted open crate");
-    let (open_view, open_pages) = ground_view(60);
     let split = sent(commands::dispatch(
         Intent::Split {
             from: area,
@@ -413,7 +434,7 @@ fn cell_item(app: &App, page: u8, x: u8, y: u8) -> Option<InventoryItem> {
         .cloned()
 }
 #[test]
-fn ground_rmb_carry_and_rotated_drag_wait_for_command87_acceptance() {
+fn ground_rmb_carry_waits_for_command87_and_rotated_whole_drag_snaps_home() {
     let (host, mut app, window) = setup();
     let round = owned_round(&app);
     spawn_ground(
@@ -484,9 +505,11 @@ fn ground_rmb_carry_and_rotated_drag_wait_for_command87_acceptance() {
     assert_eq!(split[0]["token"], row.address.token);
     assert_eq!(cell_item(&app, 2, 0, 1).map(|i| (i.id, i.amount)), Some((round, 1)));
     assert_eq!(ground_amount(&app, row.address.world_id), Some(total - 1));
-    // Whole-row drag of the ground magazine with source R rotation.
+    // Source TryDrag refuses AREA endpoints: a whole drag of the ground
+    // magazine, rotated with R, snaps home and sends nothing.
     let row = nearby_id(&app, 6);
     let total = ground_amount(&app, row.address.world_id).unwrap();
+    let pages = app.world().resource::<Menu>().pages.clone();
     let p = at(row.address.cell());
     pointer(
         &mut app,
@@ -512,30 +535,34 @@ fn ground_rmb_carry_and_rotated_drag_wait_for_command87_acceptance() {
         Some((MouseButton::Left, ButtonState::Released)),
     );
     step(&mut app, 0.11);
-    assert!(cell_item(&app, 2, 4, 0).is_none(), "no optimistic placement");
-    let placed = deliver(&host, &mut app);
-    assert_eq!(placed.len(), 1);
-    assert_eq!(placed[0]["operation"], "Place");
-    assert_eq!(
-        (&placed[0]["page"], &placed[0]["toX"], &placed[0]["toY"], &placed[0]["toRot"]),
-        (&json!(2), &json!(4), &json!(0), &json!(1))
-    );
-    let landed = cell_item(&app, 2, 4, 0).expect("accepted rotated cell");
-    assert_eq!((landed.id, landed.rot, landed.amount), (6, 1, total));
+    {
+        let menu = app.world().resource::<Menu>();
+        assert!(menu.gesture.carry.is_none(), "the carry ended at home");
+        assert_eq!(menu.notice, "Take this item into your inventory first.");
+    }
+    let whole = deliver(&host, &mut app);
+    assert!(whole.is_empty(), "{whole:?}");
     let menu = app.world().resource::<Menu>();
+    assert_eq!(menu.pages, pages, "owned and viewed pages unchanged");
+    assert_eq!(ground_amount(&app, row.address.world_id), Some(total));
     assert_eq!(
-        menu.view
-            .items
-            .iter()
-            .filter(|r| r.address.page == AREA)
-            .map(|r| r.address.id)
-            .collect::<Vec<_>>(),
-        [round],
-        "only the remaining rounds stay on the ground"
+        nearby_id(&app, 6).address.cell(),
+        row.address.cell(),
+        "the row stays at its cell"
     );
-    assert!(menu.notice.is_empty(), "{}", menu.notice);
+    let mut ground = menu
+        .view
+        .items
+        .iter()
+        .filter(|r| r.address.page == AREA)
+        .map(|r| r.address.id)
+        .collect::<Vec<_>>();
+    ground.sort();
+    let mut expected = vec![round, 6];
+    expected.sort();
+    assert_eq!(ground, expected, "both ground rows remain");
     assert!(
-        !app.world().resource::<GameSnapshot>().0["worldItems"]
+        app.world().resource::<GameSnapshot>().0["worldItems"]
             .as_array()
             .unwrap()
             .iter()

@@ -93,7 +93,7 @@ Final broad results are recorded in PROGRESS.md.
 ## Remaining external-page work
 
 Nearby now has its own owner-only full-item projection (protocol 76) and the
-ground Place/Split/Empty and magazine operations (protocol 77); see
+ground Split/Empty and magazine operations (protocol 77); see
 NEARBY_PORT.md. A ground magazine job can take its rounds from, or put them into,
 the viewed container scopes described here.
 

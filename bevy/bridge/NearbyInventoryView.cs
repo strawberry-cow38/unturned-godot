@@ -87,8 +87,10 @@ public sealed partial class BridgeHost
             Eye=kind==NearbyAction.Close?default:Vec(args,"eye") };
         return new {queued=_client.SendNearbyInventory(command)};
     }
-    /// <summary>Command 87 shares this monotonic request counter with 86, as
-    /// the host shares its replay ledger; nothing here edits the projection.</summary>
+    /// <summary>Command 87 (Split or EmptyFuel; a whole ground drag is not an
+    /// operation and is never queued) shares this monotonic request counter
+    /// with 86, as the host shares its replay ledger; nothing here edits the
+    /// projection.</summary>
     object RequestNearbyOperation(JsonElement args)
     {
         if(!Enum.TryParse<NearbyOperation>(Text(args,"operation",""),true,out var kind)||!args.TryGetProperty("eye",out _))return new{queued=false};

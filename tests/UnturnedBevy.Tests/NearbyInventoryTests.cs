@@ -142,27 +142,29 @@ public sealed class NearbyInventoryTests
     JsonElement PeerPage(byte page)=>State(_peer).GetProperty("inventory").GetProperty("pages").EnumerateArray()
         .Single(p=>p.GetProperty("index").GetByte()==page).GetProperty("items").Clone();
     [Test]
-    public void ActualUdpPlaceUsesReceivedIdentityDraggedCellAndRotationWithoutLocalMutation()
+    public void ActualUdpWholeGroundDragIsNeverQueuedAndLeavesGroundAndBagUnchanged()
     {
+        // Source TryDrag refuses AREA endpoints, so a whole drag off the ground
+        // snaps home: no operation name or reserved wire value carries it.
         var magazine=new Item(6,17,58){magLoadedRound="5.56x45mm NATO"};var e=Spawn(magazine);Open();var a=Address();
-        var bag=Server.Transactions.InventoryForTest(Client.PlayerId);var pocket=bag.items[2];
-        Assert.That((pocket.width,pocket.height),Is.EqualTo(((byte)5,(byte)3)));
-        pocket.addItem(0,0,0,new Item(13));Pump();a=Address();
-        Assert.That(Operate(Operation(a,2,"Place",page:2,toX:0,toY:0,toRot:1)),Is.EqualTo(NearbyResult.NoRoom),"occupied cell never swaps with ground");
-        var place=Operation(Address(),3,"Place",page:2,toX:4,toY:0,toRot:1);
-        Assert.That(Action(_peer,"nearbyOperation",place).GetProperty("queued").GetBoolean(),Is.True);
-        Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out _),Is.True,"queued intent is not a pickup");
-        Assert.That(PeerPage(2).GetArrayLength(),Is.EqualTo(1),"the dashboard still shows only accepted owner cells");
-        Pump();Assert.That(Client.Nearby.Result,Is.EqualTo(NearbyResult.Transferred));
-        var jar=pocket.getItem(4,0);Assert.That((jar.x,jar.y,jar.rot),Is.EqualTo(((byte)4,(byte)0,(byte)1)));
-        foreach(var field in typeof(Item).GetFields())Assert.That(field.GetValue(jar.item),Is.EqualTo(field.GetValue(magazine)),field.Name);
-        Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out _),Is.False);
-        var drawn=PeerPage(2).EnumerateArray().Single(i=>i.GetProperty("id").GetUInt16()==6);
-        Assert.That((drawn.GetProperty("x").GetByte(),drawn.GetProperty("y").GetByte(),drawn.GetProperty("rot").GetByte()),
-            Is.EqualTo(((byte)4,(byte)0,(byte)1)),"native pages receive the accepted rotated cell");
-        Assert.That(PeerPage(PlayerInventory.AREA).GetArrayLength(),Is.Zero);
-        Action(_peer,"nearbyOperation",place);Pump();
-        Assert.That(bag.items.SelectMany(p=>p.items).Count(j=>j.item.id==6),Is.EqualTo(1),"exact replay cannot duplicate");
+        var bag=Server.Transactions.InventoryForTest(Client.PlayerId);
+        int owned=bag.items.Take(PlayerInventory.OWNPAGES).Sum(p=>p.items.Count);uint revision=Client.Nearby.Revision;
+        var replies=new List<NearbyInventoryEvent>();Client.NearbyChanged+=replies.Add;
+        try
+        {
+            foreach(var name in new[]{"Place","Move","Reserved","0"})
+                Assert.That(Action(_peer,"nearbyOperation",Operation(a,2,name,page:2,toX:4,toY:0,toRot:1))
+                    .GetProperty("queued").GetBoolean(),Is.False,name);
+            Pump();
+        }
+        finally{Client.NearbyChanged-=replies.Add;}
+        Assert.That(replies,Is.Empty,"nothing was sent, so nothing was answered");
+        Assert.That(Client.Nearby.Revision,Is.EqualTo(revision));
+        Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out var still),Is.True);Assert.That(still.ServerItem,Is.SameAs(magazine));
+        Assert.That((magazine.amount,magazine.magLoadedRound),Is.EqualTo(((ushort)17,"5.56x45mm NATO")));
+        Assert.That(bag.items.Take(PlayerInventory.OWNPAGES).Sum(p=>p.items.Count),Is.EqualTo(owned),"nothing landed in the bag");
+        Assert.That(PeerPage(2).GetArrayLength(),Is.Zero);
+        Assert.That(PeerPage(PlayerInventory.AREA).GetArrayLength(),Is.EqualTo(1),"the ground row is still received");
     }
     [Test]
     public void ActualUdpSplitOfGroundMoneyLandsInNamedOwnedAndViewedCellsConservingValue()

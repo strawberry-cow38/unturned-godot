@@ -1,6 +1,6 @@
 //! Production dashboard driving commands 87/88 over actual UDP: a ground split
-//! strip drag, a rotated whole-row drag, context Empty and a timed ground
-//! Unload. Pointer/key edges are scripted into the production ordered-input
+//! strip drag, a rotated whole-row drag that snaps home as source TryDrag
+//! refuses AREA, context Empty and a timed ground Unload. Pointer/key edges are scripted into the production ordered-input
 //! controller, not an OS mouse.
 use super::*;
 #[derive(Resource)]
@@ -20,8 +20,8 @@ const STAGES: usize = 9;
 /// Loose 5.56 FMJ, the source round for the Military Magazine and Drum.
 const ROUND: u16 = 5004;
 #[test]
-#[ignore = "requires Vulkan/display; actual UDP Nearby split, rotated place and Empty"]
-fn gpu_nearby_split_rotated_place_and_empty() {
+#[ignore = "requires Vulkan/display; actual UDP Nearby split, refused whole drag and Empty"]
+fn gpu_nearby_split_refused_drag_and_empty() {
     let prefix =
         std::env::var("UG_INVENTORY_SHOT").unwrap_or_else(|_| "/tmp/bevy-nearby-ops".into());
     let config = WorldConfig::default();
@@ -161,12 +161,15 @@ fn gpu_nearby_split_rotated_place_and_empty() {
     assert_eq!(ground_amount(2, ROUND), Some(json!(35)));
     assert!(facts[2]["own"].as_array().unwrap().iter().any(|r| r["id"] == ROUND && r["amount"] == 5));
     assert_eq!(facts[3]["carry"], json!({"id":6,"rotation":1}));
-    assert_eq!(ground_amount(4, 6), None);
-    assert!(facts[4]["own"].as_array().unwrap().iter().any(|r| r["id"] == 6 && r["amount"] == 23 && r["rot"] == 1));
+    assert_eq!(facts[4]["carry"], Value::Null, "the whole drag snapped home");
+    assert_eq!(facts[4]["notice"], "Take this item into your inventory first.");
+    assert_eq!(ground_amount(4, 6), Some(json!(23)));
+    assert_eq!(facts[4]["own"], facts[2]["own"], "owned pages unchanged");
+    assert_eq!(facts[4]["sent"], facts[2]["sent"], "the whole drag sent nothing");
     assert_eq!(facts[5]["actions"], json!(["Empty", "Take", "Close"]));
     assert_eq!(facts[5]["fuel"], json!(12000.0));
     assert_eq!(facts[6]["fuel"], json!(0.0));
-    assert_eq!(facts[6]["worldRemaining"], 3, "Empty never takes the can");
+    assert_eq!(facts[6]["worldRemaining"], 4, "Empty never takes the can");
     assert_eq!(facts[7]["actions"], json!(["Take", "Unload", "Close"]));
     let drum = ground_amount(8, 17).unwrap().as_u64().unwrap();
     let loose = facts[8]["own"]
@@ -185,7 +188,7 @@ fn gpu_nearby_split_rotated_place_and_empty() {
         .filter(|s| s["name"] == "nearbyOperation")
         .map(|s| s["args"]["operation"].clone())
         .collect::<Vec<_>>();
-    assert_eq!(operations, [json!("Split"), json!("Place"), json!("EmptyFuel")]);
+    assert_eq!(operations, [json!("Split"), json!("EmptyFuel")]);
     let unloads = journey
         .iter()
         .filter(|s| s["name"] == "nearbyMagazineTransfer")
@@ -321,7 +324,7 @@ fn record(world: &mut World) {
             let over = cell_point(world, 2, 4, 0, 18.);
             hover(world, over);
         }
-        // 4: release; the accepted rotated cell arrives from the host.
+        // 4: release; TryDrag refuses AREA, so the row snaps home unsent.
         (4, 10) => {
             let over = cell_point(world, 2, 4, 0, 18.);
             pointer(world, over, MouseButton::Left, ButtonState::Released);

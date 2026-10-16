@@ -199,11 +199,8 @@ pub(super) fn dispatch(intent: Intent, view: &api::View, pages: &[InventoryPage]
                 view,
                 matches!(intent, Intent::TakeToOwn(_)) || !open_storage(pages),
             ),
-            // A ground drag is a pickup to the released cell; a split carry is
-            // source DoSplitTo. Neither edits AREA or the target before acceptance.
-            Intent::Move { to, rotation, .. } => {
-                nearby_operation(row, view, pages, "Place", Some((to, rotation)), 0)
-            }
+            // A split carry is source DoSplitTo and edits nothing before
+            // acceptance. A whole drag is no intent: TryDrag refuses AREA.
             Intent::Split {
                 amount,
                 to,

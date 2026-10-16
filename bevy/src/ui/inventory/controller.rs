@@ -102,9 +102,9 @@ impl Menu {
         ui: &mut UiState,
         intents: &mut MessageWriter<UiIntent>,
     ) {
-        // Ground rows accept Take/Store, a drag to a cell, a split carry and a
-        // source round-onto-magazine load. Equipment, wear and drop stay
-        // explicit refusals; a load onto a ground magazine is resolved below.
+        // Ground rows accept Take/Store, a split carry and a source
+        // round-onto-magazine load, resolved below with the whole-drag refusal.
+        // Equipment, wear and drop stay explicit refusals.
         let ground = commands::nearby_source(&intent).is_some();
         if (commands::nearby_destination(&intent) && !matches!(intent, Intent::LoadOrMove { .. }))
             || (ground
@@ -154,8 +154,9 @@ impl Menu {
                                         "Take the magazine into your inventory first.".into();
                                 }
                             }
-                        } else if to.page == AREA {
-                            // PlayerInventory.TryDrag refuses AREA endpoints.
+                        } else if to.page == AREA || from.page == AREA {
+                            // PlayerInventory.TryDrag refuses AREA endpoints: a
+                            // whole ground drag snaps home and sends nothing.
                             self.notice = "Take this item into your inventory first.".into();
                         } else {
                             self.dispatch(

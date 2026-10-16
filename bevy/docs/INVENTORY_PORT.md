@@ -186,7 +186,7 @@ identity, current access, shared replay and all-viewer refresh are covered in
 INVENTORY_VIEWED_PORT.md. Commands 79/81 remain owned-only and unchanged.
 
 Nearby has the original camera/range/LOS scan, 6×6 packing and owner-only
-full-Item projection (protocol 76), plus accepted ground Place/Split/Empty and
+full-Item projection (protocol 76), plus accepted ground Split/Empty and
 timed ground magazine jobs (protocol 77); NEARBY_PORT.md lists each gesture
 against the reference. Ground equipment, wear and drop stay refused as in the
 source. Salvage is offered on owned pages only, exactly as the source's

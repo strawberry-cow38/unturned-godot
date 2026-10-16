@@ -41,10 +41,13 @@ namespace UnturnedGodot.Net
         }
     }
 
-    public enum NearbyOperation : byte { Place, Split, EmptyFuel }
+    /// <summary>Wire value 0 is reserved and refused at parse: a whole drag of
+    /// a ground row is not an operation, because PlayerInventory.TryDrag
+    /// refuses AREA endpoints and the item snaps home.</summary>
+    public enum NearbyOperation : byte { Reserved, Split, EmptyFuel }
     /// <summary>Protocol 77 command 87: one exact accepted Nearby row, addressed
-    /// exactly like Transfer, placed whole at a named cell, split N to a named
-    /// cell (source DoSplitTo/OnSplitItem), or emptied (EmptyFuelSelected).
+    /// exactly like Transfer, split N to a named cell (source
+    /// DoSplitTo/OnSplitItem) or emptied (EmptyFuelSelected).
     /// CrateId zero names an owned page; nonzero only the currently viewed one.</summary>
     public struct NearbyOperationCommand
     {
@@ -54,11 +57,11 @@ namespace UnturnedGodot.Net
         public ushort Amount;
         public NearbyOperation Operation;
         public Vector3 Eye;
-        public bool IsValid => RequestId != 0 && Operation <= NearbyOperation.EmptyFuel && MountedWire.Finite(Eye)
+        public bool IsValid => RequestId != 0 && (Operation is NearbyOperation.Split or NearbyOperation.EmptyFuel) && MountedWire.Finite(Eye)
             && ScanId != 0 && Revision != 0 && WorldId != 0 && Token != 0 && X < NearbyPacking.Side && Y < NearbyPacking.Side
             && (Operation == NearbyOperation.EmptyFuel
                 ? Amount == 0 && CrateId == 0 && Page == 0 && ToX == 0 && ToY == 0 && ToRot == 0
-                : ToRot < 4 && (Operation == NearbyOperation.Split) == (Amount != 0)
+                : ToRot < 4 && Amount != 0
                     && (CrateId == 0 ? Page < PlayerInventory.OWNPAGES : PlayerInventory.IsContainerView(Page)));
         public void Write(NetPakWriter w)
         {
