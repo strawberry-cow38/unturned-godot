@@ -152,7 +152,14 @@ namespace UnturnedGodot
             Walk(_retailNode, n => { if (n is MeshInstance3D mi && mi.Mesh != null) { var w = mi.GlobalTransform * mi.GetAabb(); ab = first ? w : ab.Merge(w); first = false; } });
             var space = _retailNode.GetWorld3D().DirectSpaceState;
             const uint mask = (1u << 0) | (1u << 6);
-            Godot.Collections.Dictionary Ray(Vector3 a, Vector3 b) => space.IntersectRay(PhysicsRayQueryParameters3D.Create(a, b, mask));
+            // (back faces too: a retail building is a shell drawn double-sided, so from inside a room its walls can face away)
+            Godot.Collections.Dictionary Ray(Vector3 a, Vector3 b)
+            {
+                var q = PhysicsRayQueryParameters3D.Create(a, b, mask);
+                q.HitBackFaces = true;
+                return space.IntersectRay(q);
+            }
+            int floors = 0, roofed = 0, clear = 0;
             float best = 0f; Vector3 bestAt = Vector3.Zero; float bestYaw = 0f;
             float baseY = _retailNode.GlobalPosition.Y;
             for (float x = ab.Position.X + 1f; x < ab.End.X - 1f; x += 1f)
@@ -162,8 +169,10 @@ namespace UnturnedGodot
                     if (floor.Count == 0) continue;
                     float fy = ((Vector3)floor["position"]).Y;
                     if (fy < baseY + 0.3f) continue;                                          // the ground outside, not a floor
+                    floors++;
                     var ceil = Ray(new Vector3(x, fy + 1.0f, z), new Vector3(x, fy + 4.5f, z));
                     if (ceil.Count == 0) continue;                                            // open sky: not inside
+                    roofed++;
                     var eye = new Vector3(x, fy + 1.6f, z);
                     float minFree = float.MaxValue, maxFree = 0f, maxYaw = 0f;
                     for (int k = 0; k < 8; k++)
@@ -171,14 +180,17 @@ namespace UnturnedGodot
                         float yaw = k * 45f;
                         var dir = new Vector3(-Mathf.Sin(Mathf.DegToRad(yaw)), 0f, -Mathf.Cos(Mathf.DegToRad(yaw)));   // the player's -Z at that yaw
                         var h = Ray(eye, eye + dir * 12f);
-                        float d = h.Count > 0 ? ((Vector3)h["position"]).DistanceTo(eye) : 12f;
+                        if (h.Count == 0) continue;                                           // out a door or a window: not a view of the room
+                        float d = ((Vector3)h["position"]).DistanceTo(eye);
                         minFree = Mathf.Min(minFree, d);
                         if (d > maxFree) { maxFree = d; maxYaw = yaw; }
                     }
-                    if (minFree < 0.6f || maxFree >= 12f) continue;                           // in a wall, or looking out a door
+                    if (minFree < 0.6f || maxFree < 2.5f) continue;                           // in a wall, or a cupboard of a space
+                    clear++;
                     if (maxFree > best) { best = maxFree; bestAt = new Vector3(x, fy + 0.05f, z); bestYaw = maxYaw; }
                 }
             _retailAt = bestAt; _retailYaw = bestYaw;
+            Log.Print($"[playat] retail spot search over {ab.Size.X:0} x {ab.Size.Z:0} m: {floors} over a floor, {roofed} under a ceiling, {clear} clear");
             Log.Print(bestAt == Vector3.Zero ? "[playat] no spot inside the retail building"
                       : $"[playat] retail spot ({bestAt.X:0.0}, {bestAt.Y:0.0}, {bestAt.Z:0.0}) looking {best:0.0} m at yaw {bestYaw:0}");
         }
@@ -265,7 +277,7 @@ namespace UnturnedGodot
                 foreach (var f in Furniture(b))
                     Walk(f, n =>
                     {
-                        if (n is not MeshInstance3D mi || mi.Mesh == null) return;
+                        if (n is not MeshInstance3D mi || mi.Mesh == null || !mi.IsVisibleInTree()) return;   // (not a hidden outline or light cone)
                         var w = mi.GlobalTransform * mi.GetAabb();
                         if (w.Size.Y > 0.1f && w.Position.Y < floorY + 1.8f && w.End.Y > floorY + 0.1f) boxes.Add(w);   // standing in the way: not a rug, not a lamp
                     });
