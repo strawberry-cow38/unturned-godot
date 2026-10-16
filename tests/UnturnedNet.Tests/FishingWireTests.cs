@@ -4,7 +4,7 @@ using SDG.NetPak;
 using UnityEngine;
 using UnturnedGodot.Net;
 namespace UnturnedNet.Tests;
-/// <summary>v80 fishing wire: the cast (bobber position + gauge strength), the line input and the caster-only
+/// <summary>v81 fishing wire: the cast (bobber position + gauge strength), the line input and the caster-only
 /// state event round-trip, refuse truncation and out-of-range kinds/states, and the version bump keeps a v79
 /// peer (which would drop 103/104/78) out.</summary>
 [TestFixture]
@@ -38,6 +38,6 @@ public sealed class FishingWireTests
 
         Assert.That((ReplicationIds.CommandFishingCast, ReplicationIds.CommandFishingInput, ReplicationIds.EventFishingState),
             Is.EqualTo(((byte)103, (byte)104, (byte)78)));
-        Assert.That(NetProtocol.Version, Is.GreaterThanOrEqualTo(80));
+        Assert.That(NetProtocol.Version, Is.GreaterThanOrEqualTo(81));
     }
 }

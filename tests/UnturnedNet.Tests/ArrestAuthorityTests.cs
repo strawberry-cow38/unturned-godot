@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NUnit.Framework;
 using SDG.Unturned;
 using UnturnedGodot.Net;
@@ -79,5 +80,48 @@ public sealed class ArrestAuthorityTests
         _victim.SendStruggle(1); _h.Step(4);
         Assert.That(Arrested, Is.False, "the 64th alternating lean breaks a cable tie");
         Assert.That(_v.Gesture, Is.Zero);
+    }
+
+    void Cuff()
+    {
+        _h.Grant(_captor.PlayerId, new Item(ArrestDef.Handcuffs));
+        _c.HeldId = ArrestDef.Handcuffs; _v.Gesture = (byte)EPlayerGesture.SURRENDER_START;
+        Arrest(); Assert.That(Arrested, Is.True);
+    }
+
+    /// <summary>Review: the hands-bound rule on the authority. A modded cuffed client's swing, and its select of
+    /// anything but empty hands (command 71), are refused; the same swing lands once the cuffs are off.</summary>
+    [Test]
+    public void ACuffedPlayerCannotSwingOrTakeAnythingIntoTheHandOverTheWire()
+    {
+        _h.PumpCombatState = true;
+        var selected = new List<ushort>();
+        _h.Server.SelectHeldRequested = (owner, cmd) => selected.Add(cmd.Address.Id);
+        long Swing() { long before = _h.Server.Combat.Diag.MeleeAccepted; _victim.SendMelee(false, 0f); _h.Step(30); return _h.Server.Combat.Diag.MeleeAccepted - before; }
+        Cuff();
+        Assert.That(Swing(), Is.EqualTo(0L), "a cuffed swing is refused");
+        _victim.SendSelectHeld(2, 0, 0, 13, 99); _h.Step(6);
+        Assert.That(selected, Is.Empty, "a cuffed select is refused");
+        _victim.SendSelectHeld(2, 0, 0, 0, 0); _h.Step(6);
+        Assert.That(selected, Is.EqualTo(new ushort[] { 0 }), "empty hands stay allowed");
+        _h.Server.Transactions.ReleaseArrest(_victim.PlayerId);
+        Assert.That(Swing(), Is.EqualTo(1L), "free again: the same swing lands");
+    }
+
+    /// <summary>Review: neither death nor leaving keeps the cuffs, so a respawn is free and a recycled id inherits
+    /// nothing.</summary>
+    [Test]
+    public void DeathAndDisconnectReleaseTheCuffs()
+    {
+        Cuff();
+        _h.Server.Combat.DamagePlayerExternal(_victim.PlayerId, 9999f);
+        _h.Step(6);
+        Assert.That(_v.Alive, Is.False);
+        Assert.That((Arrested, _h.Server.Transactions.IsArrested(_victim.PlayerId), _v.Gesture), Is.EqualTo((false, false, (byte)0)), "death releases");
+        _v.Alive = true;
+        Cuff();
+        _victim.Disconnect();
+        _h.StepUntil(() => !_h.Server.Transactions.IsArrested(_victim.PlayerId), 400);
+        Assert.That(_h.Server.Transactions.IsArrested(_victim.PlayerId), Is.False, "leaving releases");
     }
 }

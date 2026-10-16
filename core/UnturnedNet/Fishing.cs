@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace UnturnedGodot.Net
 {
-    /// <summary>v80 (fishing): the server-side catch the source never had. PlayerController ran the whole
+    /// <summary>v81 (fishing): the server-side catch the source never had. PlayerController ran the whole
     /// UseableFisher loop (FishingSim) locally and GrantFish added the fish to its own copy of the bag, which the
     /// next owner-inventory echo overwrote, while the XP was overwritten by the per-tick skills adoption. As retail's
     /// UseableFisher does, the authority now owns the bite timer, the catch window, the catch-challenge minigame and

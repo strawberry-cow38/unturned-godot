@@ -223,6 +223,7 @@ namespace UnturnedGodot.Net
             };
             // A disconnecting player must not leave their rate limit behind for whoever inherits the id.
             Session.PeerDisconnected += (p, _) => Transactions.ChatLimiter.Forget(p.PlayerId);
+            Session.PeerDisconnected += (p, _) => Transactions.ReleaseArrest(p.PlayerId);   // a recycled id must not inherit the cuffs
 
             ForageHost = new ServerForage(Resources);
             Transactions.Forage = ForageHost;   // OnForageResource validates through it; see ServerTransactions.Forage
@@ -390,6 +391,9 @@ namespace UnturnedGodot.Net
             // longer sends them) -- mirrors MoveInput staying registered for demo walkers/loopback.
             PlayerHost.CombatDispatch = (sender, ev, tick) =>
             {
+                // Bevy port review: CUFFED HANDS ARE NOT FREE HANDS, on the authority. The source only gated the
+                // cuffed client's own equip, so a modded client could still shoot, swing or throw at its captor.
+                if (ev.Kind != CombatEventKind.Reload && Transactions.IsArrested(sender)) return;
                 switch (ev.Kind)
                 {
                     case CombatEventKind.Fire:    Combat.OnFire(sender, ev.Fire, tick); break;
@@ -425,7 +429,7 @@ namespace UnturnedGodot.Net
             // DEATH DROPS EVERYTHING (strawberry 2026-09-02). The one death path in ServerCombat had never
             // touched the inventory, so a corpse kept its bag and stood back up with it. Wired in core so
             // every host (dedicated, loopback SP, the L0 harness) gets it -- there is no game-side death.
-            Combat.PlayerDied = (victim, tick) => Transactions.DropInventoryOnDeath(victim);
+            Combat.PlayerDied = (victim, tick) => { Transactions.ReleaseArrest(victim); Transactions.DropInventoryOnDeath(victim); };
             Combat.DeathResolved = (victim, killer, weapon) =>
             {
                 if (!AnnounceDeaths) return;

@@ -28,6 +28,14 @@ const DEEP: &dyn Fn(Vec3) -> bool = &|_| true;
 const SHALLOW: &dyn Fn(Vec3) -> bool = &|_| false;
 
 #[test]
+fn only_terrain_at_least_four_metres_under_the_sea_is_fishable() {
+    assert!(fishable(None, 0.), "no terrain sampled there: trust the plane");
+    assert!(fishable(Some(-4.), 0.) && fishable(Some(-30.), 25.6 - 30.));
+    assert!(!fishable(Some(-3.9), 0.), "too shallow");
+    assert!(!fishable(Some(2.), 0.), "land above the sea");
+}
+
+#[test]
 fn the_gauge_is_the_source_tock_and_slows_with_fishing_skill() {
     // m = 1 - |sin(((t + P/2) % P) / P * pi)|, squared: full at t = P/2, empty at t = 0 and P.
     assert!((gauge(50, 0) - 1.).abs() < 1e-6);
@@ -94,6 +102,10 @@ fn the_server_line_drives_the_bobber_and_every_press_and_release_on_it_is_sent()
     assert_eq!(f.bobber_height(0.), -0.5);
     assert_eq!(f.step(frame(false, true, rod(), DEEP)), vec![Send::Input(1)]);
     assert_eq!(f.step(frame(true, false, rod(), DEEP)), vec![Send::Input(0)]);
+    // A quick tap in the window: the press opens the challenge on the server and the release,
+    // sent before the client hears of it, lets the cursor fall.
+    f.phase = Phase::Line { bite: Some(1.5) };
+    assert_eq!(f.step(frame(true, true, rod(), DEEP)), vec![Send::Input(0), Send::Input(1)]);
     f.adopt(IDLE);
     assert!(!f.bobber_visible(), "caught or reeled in: the bobber and line go");
     // ClearFisher: putting the rod away with a line out reels it in on the server.
@@ -196,6 +208,31 @@ fn a_native_cast_lands_a_line_on_the_server_and_only_the_server_grants_a_fish() 
     request(rig.app.world().resource::<CoreBridge>(), "action", json!({"name":"holdItem","args":{"page":cell.0,"x":cell.1,"y":cell.2}}));
     rig.tick(10);
     rig.step(1);
+    // First over a sandbank: the bobber splashes onto the sea plane above land and no cast is sent.
+    let mut land = crate::world::WorldGeometry::default();
+    land.terrain.push(crate::world::TerrainPatch {
+        origin: Vec2::new(-500., -500.),
+        cells: 1,
+        spacing: 1000.,
+        heights: vec![2.; 4],
+        layers: vec![],
+        normals: vec![],
+        holes: vec![],
+        splat: None,
+    });
+    rig.app.insert_resource(land);
+    rig.mouse(ButtonState::Pressed);
+    rig.step(25);
+    rig.mouse(ButtonState::Released);
+    for _ in 0..200 {
+        if rig.phase() == Phase::Idle {
+            break;
+        }
+        rig.step(1);
+    }
+    assert_eq!(rig.phase(), Phase::Idle, "over land: dropped");
+    assert!(rig.app.world().resource::<Fishing>().sent.is_empty(), "and nothing sent");
+    rig.app.world_mut().remove_resource::<crate::world::WorldGeometry>();
     rig.mouse(ButtonState::Pressed);
     rig.step(25);
     rig.mouse(ButtonState::Released);

@@ -7,7 +7,7 @@ using SDG.Unturned;
 using UnturnedBevy;
 using UnturnedGodot.Net;
 namespace UnturnedBevyTests;
-/// <summary>The v80 server-side fishing catch over actual UDP: a joined peer casts, the listen host's
+/// <summary>The v81 server-side fishing catch over actual UDP: a joined peer casts, the listen host's
 /// FishingServices owns the bite timer, the catch window, the challenge and the reward, and the peer learns
 /// its line's state from Event78 and sees the fish arrive in its replicated bag.</summary>
 [TestFixture, NonParallelizable]
@@ -107,6 +107,53 @@ public sealed class FishingTests
         Assert.That(Fish,Does.Contain(landed.Caught),"a fish from the PEI table");
         Assert.That(FishInBag,Is.EqualTo(1),"granted into the authoritative bag and replicated");
         Assert.That(Experience,Is.EqualTo(xp+3),"Rod_Fishing Reward_Experience 3 on the server's skills");
+    }
+
+    /// <summary>BobberOverFishableWater reads the terrain: land rising above the sea, and water shallower than
+    /// MinFishDepth, refuse a bobber on the sea plane; deep water accepts it.</summary>
+    [Test]
+    public void OnlyTerrainAtLeastFourMetresUnderTheSeaIsFishable()
+    {
+        var geometry = Field<WorldGeometry>(_host, "_geometry");
+        float[] Flat(float h) => Enumerable.Repeat(h, 4).ToArray();
+        geometry.AddHeightfield(10, -5, 1, 10, Flat(2f));     // a sandbank 2 m above the sea
+        geometry.AddHeightfield(-20, -5, 1, 10, Flat(-2f));   // 2 m of water
+        geometry.AddHeightfield(-5, 10, 1, 10, Flat(-6f));    // 6 m of water
+        geometry.Build();
+        Action(_peer,"console",new{text="teleport 0 1 0"});Pump(40);
+        HoldRod();
+        Cast(15,0,0);
+        Assert.That(Services.LineCount,Is.Zero,"over land: the bobber lies on the sea plane but the terrain is above it");
+        Cast(-15,0,0);
+        Assert.That(Services.LineCount,Is.Zero,"2 m deep is too shallow");
+        Cast(0,0,15);
+        Assert.That(Services.LineCount,Is.EqualTo(1),"6 m deep");
+    }
+
+    /// <summary>The hand is the client's MoveInput: a rod claimed in it but absent from the bag casts nothing.</summary>
+    [Test]
+    public void ARodInTheHandButNotInTheBagIsRefused()
+    {
+        Action(_peer,"console",new{text="teleport 0 1 0"});Pump(40);
+        for(int n=0;n<20;n++){Call(_peer,"simulate",new{input=new{heldItemId=(int)Rod}});Pump(1);}
+        var server=Field<NetWorldServer>(_host,"_server");
+        Assert.That(server.CombatState.TryGet(PeerId,out var me)&&me.HeldId==Rod,Is.True,"the forged hand replicated");
+        Cast(5,0,-5);
+        Assert.That(_seen.Last().State,Is.EqualTo(FishingStateEvent.Idle));
+        Assert.That(Services.LineCount,Is.Zero);
+    }
+
+    /// <summary>The listen host's own owner client receives its Event78 like any caster.</summary>
+    [Test]
+    public void TheHostsOwnCastIsAnsweredOnItsOwnClient()
+    {
+        Action(_host,"console",new{text="give 503"});Pump();
+        var c=Cell(_host,Rod);Action(_host,"holdItem",new{page=c.Page,x=c.X,y=c.Y});Pump(20);
+        var at=State(_host).GetProperty("player").GetProperty("position").EnumerateArray().Select(v=>v.GetSingle()).ToArray();
+        Action(_host,"fishingCast",new{bobber=new[]{at[0]+5,0f,at[2]-5},strength=.5f});Pump(10);
+        var states=State(_host).GetProperty("events").EnumerateArray().Where(e=>e.GetProperty("kind").GetString()=="fishingState")
+            .Select(e=>e.GetProperty("data").GetProperty("state").GetByte()).ToArray();
+        Assert.That(states,Is.EqualTo(new[]{FishingStateEvent.Line}));
     }
 
     [Test]

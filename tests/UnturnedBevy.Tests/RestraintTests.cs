@@ -77,6 +77,28 @@ public sealed class RestraintTests
         Assert.That(Gesture(_peer),Is.EqualTo(Arrest));
     }
 
+    /// <summary>The captor's hand is its own MoveInput: a joined client that reports handcuffs it does not own
+    /// cuffs nobody, and a key it does not own frees nobody.</summary>
+    [Test]
+    public void AForgedHandOverTheWireCuffsAndFreesNobody()
+    {
+        ushort host=State(_host).GetProperty("playerId").GetUInt16();
+        Action(_host,"requestGesture",new{gesture=Surrender});Pump();
+        Assert.That(Gesture(_host),Is.EqualTo(Surrender));
+        Action(_peer,"console",new{text="teleport 1 0 1"});Pump(30);
+        for(int n=0;n<20;n++){Call(_peer,"simulate",new{input=new{heldItemId=(int)ArrestDef.Handcuffs}});Pump(1);}
+        var server=(NetWorldServer)typeof(BridgeHost).GetField("_server",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(_host)!;
+        Assert.That(server.CombatState.TryGet(PeerId,out var me)&&me.HeldId==ArrestDef.Handcuffs,Is.True,"the forged hand replicated");
+        Action(_peer,"arrestPlayer",new{targetPlayerId=host});Pump(20);
+        Assert.That(Gesture(_host),Is.EqualTo(Surrender),"no cuffs in the peer's bag: refused");
+        Give(_peer,ArrestDef.Handcuffs);Hold(_peer,ArrestDef.Handcuffs);
+        Action(_peer,"arrestPlayer",new{targetPlayerId=host});Pump(20);
+        Assert.That(Gesture(_host),Is.EqualTo(Arrest),"control: owned cuffs work");
+        for(int n=0;n<20;n++){Call(_peer,"simulate",new{input=new{heldItemId=(int)ArrestDef.HandcuffsKey}});Pump(1);}
+        Action(_peer,"unlockArrest",new{targetPlayerId=host});Pump(20);
+        Assert.That(Gesture(_host),Is.EqualTo(Arrest),"a forged key frees nobody");
+    }
+
     [Test]
     public void AKeyFreesAndReturnsTheCuffsAndAHundredTwentyEightAlternatingLeansBreakThem()
     {

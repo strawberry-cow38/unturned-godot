@@ -461,7 +461,10 @@ public sealed partial class BridgeHost : IDisposable
             input.TryGetProperty("stance", out _) ? wanted == EPlayerStance.SPRINT ? EPlayerStance.STAND : wanted : null,
             Float(input, "capsuleHeight", PlayerMovementDef.HeightForStance(_movement.Stance)), _ => Bool(input, "headroom", true), Bool(input, "equipmentAllowsSprint", true));
         _movement.SpeedMultiplier = PlayerMovementSim.SpeedMultiplierForHeld(_held);
-        _movement.GravityMultiplier = Float(input, "gravityMultiplier", 1);
+        // The held umbrella's Gravity (0.25) or 1: a finite fraction. Float already refuses NaN/infinity.
+        float gravity = Float(input, "gravityMultiplier", 1);
+        if (gravity < 0f || gravity > 1f) throw new ArgumentException("gravityMultiplier must be within 0..1");
+        _movement.GravityMultiplier = gravity;
         if (input.TryGetProperty("velocity", out _)) _movement.Velocity = WorldToLocal(Vec(input, "velocity"), _yaw);
         _velocity = LocalToWorld(_movement.Step(new(Float(input, "moveX"), Float(input, "moveY")), Bool(input, "jump"), _grounded, (float)SimClock.FixedDelta), _yaw);
         return new { velocity = Array(_velocity), height = PlayerMovementDef.HeightForStance(_movement.Stance), eyeHeight = PlayerMovementDef.EyeHeightForStance(_movement.Stance), stance = _movement.Stance.ToString().ToLowerInvariant(), jumpLocked = _movement.JumpLocked };

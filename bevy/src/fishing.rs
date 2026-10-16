@@ -3,7 +3,7 @@
 //! EmptyHands viewmodel. The casting client keeps what the source shows: the 50 Hz strength gauge
 //! (no HUD in the source), the red bobber's flight, the fishable-water test, the bob on the swell,
 //! the tug in the catch window and the line from the rod tip. The authority owns the line itself
-//! (v80, `bridge/FishingServices.cs`): the bobber's landing is sent as command 103, every LMB press
+//! (v81, `bridge/FishingServices.cs`): the bobber's landing is sent as command 103, every LMB press
 //! and release on a line as command 104, and Event78 says where the server's line is and which fish
 //! it landed. The fish arrives through the replicated bag; nothing is granted locally.
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     settings::{GameAction, Settings},
     ui::{UiModel, UiState, input_order::FrameInput},
     use_items::Cell,
-    world::WorldState,
+    world::{WorldGeometry, WorldState},
 };
 use bevy::{
     asset::RenderAssetUsages,
@@ -22,7 +22,6 @@ use bevy::{
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowEvent},
 };
-use bevy_rapier3d::prelude::*;
 use serde_json::{Value, json};
 
 /// FishingSim's catch window: it opens WARNING_DURATION after the bite and stays CATCH_WINDOW.
@@ -163,7 +162,9 @@ impl Fishing {
                     let speed = 12. + (26. - 12.) * self.strength;
                     self.phase = Phase::Flying { velocity: forward * speed + Vec3::Y * 3. };
                 }
-                Phase::Challenge => out.push(Send::Input(1)),
+                // Every release on a line goes up; the server ignores one that does not apply (a quick tap
+                // inside the catch window is a press that opens the challenge and a release that lets go).
+                Phase::Cast | Phase::Line { .. } | Phase::Challenge => out.push(Send::Input(1)),
                 _ => {}
             }
         }
@@ -215,6 +216,13 @@ impl Fishing {
     }
 }
 
+/// BobberOverFishableWater: the terrain under the surface point at least MIN_FISH_DEPTH below
+/// the sea (`SampleHeight <= SeaLevelY - MinFishDepth`); no terrain there trusts the plane.
+/// Only the terrain counts, as in the source: a pier or a hull over deep water does not.
+pub(crate) fn fishable(terrain: Option<f32>, sea: f32) -> bool {
+    terrain.is_none_or(|floor| floor <= sea - MIN_FISH_DEPTH)
+}
+
 #[derive(Component)]
 pub(crate) struct Bobber;
 #[derive(Component)]
@@ -247,7 +255,7 @@ fn input(
     windows: Query<(Entity, &Window, &CursorOptions), With<PrimaryWindow>>,
     camera: Query<&GlobalTransform, With<PlayerCamera>>,
     world: Option<Res<WorldState>>,
-    context: ReadRapierContext,
+    geometry: Option<Res<WorldGeometry>>,
     mut core_events: MessageReader<CoreEvent>,
     (epoch, bridge, time): (Res<WorldSessionEpoch>, Option<Res<CoreBridge>>, Res<Time>),
     mut fishing: ResMut<Fishing>,
@@ -294,17 +302,8 @@ fn input(
     }
     let paused = ui.as_ref().is_some_and(|u| crate::player::simulation_paused(u));
     let eye = camera.single().map_or((Vec3::ZERO, Vec3::NEG_Z), |c| (c.translation(), *c.forward()));
-    let physics = context.single().ok();
-    // BobberOverFishableWater: the floor at least MIN_FISH_DEPTH under the surface (no world
-    // collision here trusts the plane, as the source does without a terrain).
     let fishable = |surface: Vec3| {
-        physics.as_ref().is_none_or(|c| {
-            let filter = QueryFilter::default()
-                .exclude_sensors()
-                .groups(CollisionGroups::new(Group::ALL, Group::GROUP_1))
-                .predicate(&crate::player::world_solid);
-            c.cast_ray(surface, Vec3::NEG_Y, MIN_FISH_DEPTH, true, filter).is_none()
-        })
+        fishable(geometry.as_ref().and_then(|g| g.terrain_height(surface.x, surface.z)), surface.y)
     };
     let skill = snapshot.0["skills"]["groups"][2][4]["level"].as_u64().unwrap_or(0) as u8;
     let sends = fishing.step(Frame {

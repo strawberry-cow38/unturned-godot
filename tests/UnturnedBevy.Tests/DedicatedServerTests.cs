@@ -496,7 +496,7 @@ public sealed class DedicatedServerTests
         check.Bind(new IPEndPoint(IPAddress.Any, _port));
     }
 
-    /// <summary>The v80 fishing handlers are host world services installed by StartSession, so the headless
+    /// <summary>The v81 fishing handlers are host world services installed by StartSession, so the headless
     /// host answers a joined client's cast with Event78 exactly as a listen host does.</summary>
     [Test]
     public void ARemoteCastOnTheDedicatedHostIsAnsweredWithItsLineState()

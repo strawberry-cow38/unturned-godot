@@ -24,7 +24,7 @@ use bevy::{
     image::ImageSampler,
     light::NotShadowCaster,
     pbr::{ExtendedMaterial, MaterialExtension},
-    render::render_resource::{AsBindGroup, TextureFormat},
+    render::render_resource::{AsBindGroup, Extent3d, TextureFormat},
     shader::ShaderRef,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
@@ -185,9 +185,9 @@ fn input(
     let captured = windows
         .single()
         .is_ok_and(|(w, c)| w.focused && !c.visible && c.grab_mode != CursorGrabMode::None);
-    let free = captured && !ui.captures_input() && occupancy.seat.is_none();
-    let want = free && settings.pressed(GameAction::Aim, &keys, &mouse);
-    let cycle = free && settings.just_pressed(GameAction::Fire, &keys, &mouse);
+    let (raise, step) = gates(captured && !ui.captures_input(), occupancy.seat.map(|s| s.driver));
+    let want = raise && settings.pressed(GameAction::Aim, &keys, &mouse);
+    let cycle = step && settings.just_pressed(GameAction::Fire, &keys, &mouse);
     if binoculars.step(held, want, cycle) && config.content_root.join(SELECTOR_SOUND).is_file() {
         // PlaySelectorSwitchSound: the firemode click, a detent between zoom stops.
         commands.spawn((
@@ -195,6 +195,17 @@ fn input(
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(settings.master_volume)),
         ));
     }
+}
+
+/// (may raise, may step the zoom). UpdateOptic refuses only `_driving` (the driver): a passenger can
+/// raise them. The LMB dispatch reaches CycleOpticZoom only on foot (driving honks, riding does nothing).
+pub(crate) fn gates(free: bool, seat_driver: Option<bool>) -> (bool, bool) {
+    (free && seat_driver != Some(true), free && seat_driver.is_none())
+}
+/// BinocularsView.Resize: height = clamp(ScopeSize * 2, 540, max(540, window height)), the window's aspect.
+pub(crate) fn target_size(scope: u32, window: Vec2) -> UVec2 {
+    let height = (scope * 2).clamp(540, (window.y as u32).max(540));
+    UVec2::new(((height as f32 * window.x / window.y).round() as u32).max(16), height)
 }
 
 /// `_viewmodel.SetShown(!want)`: raised, the pair is at the eyes and the arms are gone.
@@ -273,13 +284,21 @@ fn pose(
     }
     // The single magnified render the discs cut into (BinocularsView._world).
     let window = windows.single().map_or(Vec2::new(1280., 720.), |w| w.size().max(Vec2::ONE));
-    if pip.image.is_none() {
-        let scope = settings.as_ref().map_or(720, |s| s.graphics.scope_quality.scope_size());
-        let height = (scope * 2).clamp(540, (window.y as u32).max(540));
-        let width = ((height as f32 * window.x / window.y).round() as u32).max(16);
-        let mut target = Image::new_target_texture(width, height, TextureFormat::Rgba16Float, None);
-        target.sampler = ImageSampler::linear();
-        pip.image = Some(images.add(target));
+    let scope = settings.as_ref().map_or(720, |s| s.graphics.scope_quality.scope_size());
+    let size = target_size(scope, window);
+    match &pip.image {
+        // The window was resized: resize the one target (its handle is shared by the discs and the camera).
+        Some(image) if images.get(image).is_some_and(|i| i.size() != size) => {
+            if let Some(mut target) = images.get_mut(image) {
+                target.resize(Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 });
+            }
+        }
+        Some(_) => {}
+        None => {
+            let mut target = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba16Float, None);
+            target.sampler = ImageSampler::linear();
+            pip.image = Some(images.add(target));
+        }
     }
     let image = pip.image.clone().unwrap();
     let over = viewport.as_ref().map_or(Vec2::ONE, |v| v.target.as_vec2() / v.screen.as_vec2());
@@ -329,6 +348,7 @@ fn pose(
                 cam.is_active = active;
                 if let Projection::Perspective(p) = &mut *projection {
                     p.fov = fov;
+                    p.aspect_ratio = size.x as f32 / size.y as f32;
                     p.near = main_projection.near;
                     p.far = main_projection.far;
                 }
@@ -339,7 +359,6 @@ fn pose(
             };
         }
         None => {
-            let size = images.get(&image).map_or(UVec2::new(16, 9), |i| i.size());
             pip.camera = Some(
                 commands
                     .spawn((

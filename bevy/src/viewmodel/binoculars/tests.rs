@@ -35,6 +35,23 @@ fn a_fresh_pair_starts_lowered_at_4x_and_lmb_cycles_4_8_12_raised_or_not() {
 }
 
 #[test]
+fn a_passenger_may_raise_but_only_the_driver_is_refused_and_lmb_steps_only_on_foot() {
+    assert_eq!(gates(true, None), (true, true), "on foot");
+    assert_eq!(gates(true, Some(false)), (true, false), "a passenger raises; riding LMB does nothing");
+    assert_eq!(gates(true, Some(true)), (false, false), "the driver (`_driving`)");
+    assert_eq!(gates(false, None), (false, false), "UI or a free cursor");
+}
+
+#[test]
+fn the_pip_target_follows_the_window_like_binocularsview_resize() {
+    assert_eq!(target_size(720, Vec2::new(1280., 720.)), UVec2::new(1280, 720));
+    assert_eq!(target_size(720, Vec2::new(2560., 1440.)), UVec2::new(2560, 1440));
+    assert_eq!(target_size(360, Vec2::new(1920., 1080.)), UVec2::new(1280, 720));
+    assert_eq!(target_size(720, Vec2::new(800., 400.)), UVec2::new(1080, 540), "at least 540 tall");
+    assert_eq!(target_size(1080, Vec2::new(1000., 1000.)), UVec2::new(1000, 1000), "never taller than the window");
+}
+
+#[test]
 fn only_an_optic_hand_tool_in_a_living_hand_is_held() {
     let mut catalog = ItemCatalog::default();
     for (id, kind) in [(333, "optic"), (1195, "restraint")] {

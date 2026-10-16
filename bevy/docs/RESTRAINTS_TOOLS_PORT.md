@@ -66,12 +66,18 @@ joined clients alike.
 
 ### Deviations
 
-- **Bound hands are a client gate,** as in the source: what is already in the hand stays,
-  and the server does not refuse a cuffed player's `HeldItemId`.
+- **Bound hands are also enforced by the server** (review fix; the source only gated the cuffed
+  client's own equip): core drops a cuffed sender's fire, melee and throw (`CombatDispatch`; reload
+  is harmless and kept) and any command-71 select other than empty hands. The bridge keeps the
+  source's client message. Surrender needs empty hands, so a prisoner holds nothing to begin with.
 - **No local "Nobody to use that on.":** that alert is the source's direct-SP branch with no
   `NetAimedPlayer`; the port is always a client of a server, like `MpLoopback`.
-- **Death and disconnect keep the cuffs,** as in the source (`ArrestSim.Forget` is never
-  called, and death does not clear the gesture).
+- **Death and disconnect release the cuffs** (review fix): `ServerTransactions.ReleaseArrest` runs in
+  the death path and on disconnect, clearing the record and `ARREST_START`. In the source nothing
+  called `ArrestSim.Forget`, so a respawned prisoner was stuck in a gesture no struggle could break
+  and a recycled player id inherited the record. The spent restraint is not returned. A restart
+  releases everyone, as in the source: `WorldSave` persists neither gestures nor `ArrestSim`.
+  The key also refuses a dead target.
 - **No clatter:** `ArrestBroke` (retail's Metal_1 effect) has no listener in the source.
 
 ### Verification
@@ -132,7 +138,8 @@ ordinary `holdItem`.
   target; a disc sunk 3 cm into each eyepiece samples it at its own screen position (corrected
   for the oversized arms target), with the 0.30 vignette. No inverse ACES is needed: the scene is
   untonemapped and the viewmodel pass tonemaps once, as the scope glass does.
-- **Raised** (RMB held, captured mouse, no UI, alive, not in a vehicle): the arms camera is off,
+- **Raised** (RMB held, captured mouse, no UI, alive, not the driver; a passenger may raise them,
+  as `UpdateOptic` refuses only `_driving`): the arms camera is off,
   the tank optics' periscope overlay (the same `ui/binoculars_overlay.png` cover-fit) is shown, the
   main FOV is divided by the zoom once per frame, and look sensitivity is divided by it.
 - **LMB** on foot steps 4x → 8x → 12x → 4x and plays `sounds/firemode.wav`; a fresh equip starts
@@ -207,12 +214,15 @@ owner-inventory echo drops the fish, and the per-tick skills adoption drops the 
 possible at all in the Bevy port (the native client has no inventory to mutate), so the catch is made
 server-authoritative, as retail's UseableFisher is.
 
-### Authority (protocol v80)
+### Authority (protocol v81)
 
 - **Command 103 `FishingCast`** (bobber position, gauge strength as a byte): the bridge
   `FishingServices` (host, like the v79 fuel handlers) checks a living, on-foot caster with a FISHER
   in the replicated hand and in the bag, a landing within 64 m horizontally and at most 2 m above the
-  caster, on the sea plane (±1 m) with at least 4 m of water under it (a world ray). It then builds a
+  caster, on the sea plane (±1 m), with the TERRAIN under it at least 4 m below the sea, as
+  `BobberOverFishableWater` samples it (`WorldGeometry.TryGroundHeight`; no terrain there trusts the
+  plane; a pier does not count). The first version cast a ray from the sea plane down, which found
+  nothing under land and passed it as water. It then builds a
   `FishingSim` exactly as `ConfigureForPei` does (with the caster's server-side FISHING level) and
   `BeginLine`s it. A refusal answers `Idle`.
 - **Command 104 `FishingInput`** (press, release, stop): press is `FishingSim.Press` with retail's
@@ -233,7 +243,8 @@ server-authoritative, as retail's UseableFisher is.
 `bevy/src/fishing.rs`: LMB on a held rod starts the gauge (the source's 50 Hz tock, period
 100 + 20 × FISHING level, no HUD in the source); release flings the bobber from 0.6 m along the aim
 at Lerp(12, 26, strength) plus 3 m/s up under 20 m/s² gravity; a splash into water with 4 m of depth
-under it (a Rapier ray against world solids; no physics world trusts the plane) sends 103, otherwise
+under it (the native `WorldGeometry::terrain_height`, the source's `SampleHeight`; none there trusts
+the plane) sends 103, otherwise
 the cast is dropped, as is one that falls 60 m. While the server's line is out, every press and release
 is sent as 104; the bobber floats on the sea with a 0.06 m bob, is tugged 0.35 m under in the catch
 window (1.0-2.4 s after the bite event) and held 0.5 m under during the challenge. The line runs from
@@ -242,7 +253,7 @@ the rod away, dying or getting into a vehicle with a line out sends stop.
 
 ### Deviations
 
-- **Server-side catch** (above): new wire ids 103/104/78 and protocol 80; the integrator renumbers at merge.
+- **Server-side catch** (above): new wire ids 103/104/78 and protocol 81; the integrator renumbers at merge.
 - **No catch-challenge UI,** as in the source: the fish is played blind with LMB held/released.
 - **Event timing:** the catch window opens when the bite event arrives, so the client's tug lags the
   server's window by the link delay; the server's 1 s leniency covers the press's return trip.
@@ -282,3 +293,24 @@ the rod away, dying or getting into a vehicle with a line out sends stop.
 - The local presentation stays out of the headless app: `RestraintsPlugin` and `FishingPlugin` are added
   only with a window (next to the graphics/bug-reporter/outline plugins), and the binocular systems inside
   `ViewmodelPlugin` run only with a local player (`dedicated::has_local_player`).
+
+## Review fixes (independent review of the three commits)
+
+- **Umbrella:** the host's `GravityOf` now also needs the umbrella in the authoritative bag (the hand is
+  the client's MoveInput) and reads the hand as of the landing tick, and pruned entries leave with the
+  player. Core matches the source cap: below 0.99 `PlayerMovement.cs:1280` caps the descent at
+  2 × 9.81 × the multiplier (4.9 m/s at 0.25), so a landing faster than that (+1.5 m/s slack) was not
+  under the umbrella and takes the ordinary curve on the peak speed. `simulate` refuses a
+  `gravityMultiplier` outside 0..1.
+- **Restraints:** server-side bound hands, release on death/disconnect, and the key's living-target check
+  (above).
+- **Fishing:** the terrain water test (above); every press and release on a line is sent, so a quick tap in
+  the catch window keeps its release; the server ignores one that does not apply.
+- **Binoculars:** a passenger may raise them; the eyepiece target is resized with the window.
+- **Protocol:** v81 (v80 is taken by a parallel MP-wire branch); ids 103/104/78 unchanged.
+- **Tests added:** core cuffed swing/select refused over the wire and released after; death and
+  disconnect release; the glide-cap cases (0.25 glide/fast, 0.67, 0.68). Managed: a forged hand over the
+  wire cuffs and frees nobody; umbrella not in the bag, too-fast landing and `gravityMultiplier` range;
+  terrain land/shallow/deep; a rod held but not in the bag; the host's own cast gets Event 78. Native: the
+  tap's release, the terrain fishable rule and an integrated cast over a sandbank, the passenger/driver
+  gates and the target size.

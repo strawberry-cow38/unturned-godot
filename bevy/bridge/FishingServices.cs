@@ -4,7 +4,7 @@ using UnturnedGodot;
 using UnturnedGodot.Net;
 namespace UnturnedBevy;
 
-/// <summary>Host choke point for v80 commands 103/104: the server-side UseableFisher the source never had.
+/// <summary>Host choke point for v81 commands 103/104: the server-side UseableFisher the source never had.
 /// PlayerController ran FishingSim on the client and GrantFish added to its own copy of the bag; here the
 /// authority owns the bite timer, the catch window (with retail's SERVER_LENIENCY_WINDOW), the catch-challenge
 /// minigame and the reward, configured exactly as FishingContent.ConfigureForPei configures the source's sim
@@ -50,12 +50,13 @@ public sealed class FishingServices
         return Assets.find(rod) is { type: EItemType.FISHER }
             && _server.Inventories.TryGet(sender, out var bag) && bag.Inventory.getItemCount(rod) > 0;
     }
-    /// <summary>BobberOverFishableWater: on the sea plane, with at least MinFishDepth of water below.</summary>
+    /// <summary>BobberOverFishableWater: on the sea plane, and the terrain under it at least MinFishDepth below
+    /// the sea (`SampleHeight <= SeaLevelY - MinFishDepth`). As in the source only the terrain counts (a pier or a
+    /// boat over the water does not), and a point with no registered terrain trusts the plane.</summary>
     public bool Fishable(Vector3 bobber)
     {
         if (!_server.HasWater || Mathf.Abs(bobber.y - _server.SeaLevelY) > 1f) return false;
-        var surface = new Vector3(bobber.x, _server.SeaLevelY, bobber.z);
-        return !_geometry.Ray(surface, surface - new Vector3(0, MinFishDepth, 0), out _, out _);
+        return !_geometry.TryGroundHeight(bobber.x, bobber.z, out float floor) || floor <= _server.SeaLevelY - MinFishDepth;
     }
     void OnCast(ushort sender, FishingCastCommand cmd)
     {

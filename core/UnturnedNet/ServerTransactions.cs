@@ -660,7 +660,7 @@ namespace UnturnedGodot.Net
                 (sender, cmd) =>
                 {
                     if (!_combat.TryGet(sender, out var freer) || !_combat.TryGet(cmd.TargetPlayerId, out var victim)) return;
-                    if (!freer.Alive) return;                                         // Bevy port review, as for 52
+                    if (!freer.Alive || !victim.Alive) return;                        // Bevy port review, as for 52
                     if (!SDG.Unturned.ArrestDef.IsKey(freer.HeldId)) return;
                     if (!OwnsItem(sender, freer.HeldId)) return;                      // the key must really be in the bag
                     if (!InArrestReach(sender, cmd.TargetPlayerId)) return;
@@ -2560,6 +2560,21 @@ namespace UnturnedGodot.Net
 
         /// <summary>Who is cuffed, for the game layer (a cuffed player cannot equip) and for tests.</summary>
         public bool IsArrested(ushort playerId) => _arrest.IsArrested(playerId);
+
+        /// <summary>Bevy port review: the cuffs come off a player who dies (and so respawns) or leaves. Neither the
+        /// source's death path nor its save keeps them (WorldSave does not persist gestures or ArrestSim), so without
+        /// this a respawned prisoner stood in ARREST_START that no struggle could break, and a recycled player id
+        /// inherited the record. The restraint is not returned: it was spent when the cuffs went on.</summary>
+        public void ReleaseArrest(ushort playerId)
+        {
+            _arrest.Forget(playerId);
+            _lastStruggle.Remove(playerId);
+            if (_combat.TryGet(playerId, out var me) && me.Gesture == (byte)SDG.Unturned.EPlayerGesture.ARREST_START)
+            {
+                me.Gesture = (byte)SDG.Unturned.EPlayerGesture.NONE;
+                _combat.MarkDirty(me, _tick());
+            }
+        }
 
         /// <summary>The sender's authoritative bag holds at least one of <paramref name="itemId"/>.</summary>
         bool OwnsItem(ushort sender, ushort itemId) => itemId != 0 && SenderInventory(sender) is { } inv && inv.getItemCount(itemId) > 0;

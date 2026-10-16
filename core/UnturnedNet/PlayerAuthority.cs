@@ -230,6 +230,8 @@ namespace UnturnedGodot.Net
         /// it was opened after the peak speed was reached. Set by the host (core has no item catalogue); null = 1.</summary>
         public Func<ushort, float> FallGravityMultiplier;
         public const float FallDamageGravityFloor = 0.67f;
+        /// <summary>Quantization and frame-timing headroom on the glide cap (4.9 m/s at 0.25).</summary>
+        public const float GlideLandingSlack = 1.5f;
 
         /// <summary>The world floor for the client-auth walker: an adopted authoritative Y below this is
         /// out-of-bounds -> lethal (else an owner who clips through the floor falls forever, review finding 1).
@@ -272,6 +274,7 @@ namespace UnturnedGodot.Net
             // airborne interval; on the airborne->grounded edge, FallMath the peak into DamageOwner. HP stays
             // fully server-authored -- only the envelope-validated Vel+Grounded feed it, never a wire damage number.
             public float PeakFallSpeed;   // max(-LinVel.y) while the adopted claim is airborne (m/s down)
+            public float LastFallSpeed;   // the latest airborne claim's descent (m/s down): the landing speed
             public bool WasAirborne;      // the previous adopted claim's !Grounded -- detects the landing edge
         }
         readonly Dictionary<ushort, DrivenState> _driven = new Dictionary<ushort, DrivenState>();
@@ -380,7 +383,7 @@ namespace UnturnedGodot.Net
                 // Deliberately ignore every claimed motion field, including a
                 // hostile teleport, fall velocity or stale recovery echo. Clear
                 // walking-only vitals/fall history while retaining combat ACKs.
-                st.PeakFallSpeed = 0; st.WasAirborne = false;
+                st.PeakFallSpeed = 0; st.LastFallSpeed = 0; st.WasAirborne = false;
                 if (st.HasAdopted) st.Adopted = new DrivenPlayerState {
                     Pos = e.Pos, YawDegrees = e.YawDegrees, Vel = Vector3.zero,
                     Grounded = true, TempBand = cmd.TempBand,
@@ -470,6 +473,7 @@ namespace UnturnedGodot.Net
                     float posDown = claimDt > 0f ? System.Math.Min(-dy / claimDt, DownRate) : 0f;
                     float down = System.Math.Max(-cmd.LinVel.y, posDown);   // m/s down
                     if (down > st.PeakFallSpeed) st.PeakFallSpeed = down;
+                    st.LastFallSpeed = down;
                 }
                 else if (st.WasAirborne)
                 {
@@ -485,9 +489,15 @@ namespace UnturnedGodot.Net
                     // -100 -> 100). Safe direction (never over-punishes); the OOB net below catches true void
                     // plunges. Full-range parity needs a wider LinVel encoding (wire-format change) or deriving the
                     // fall speed from the unclamped-within-±256 position stream -- both deferred to review.
-                    int dmg = (FallGravityMultiplier?.Invoke(sender) ?? 1f) <= FallDamageGravityFloor ? 0 : FallMath.Damage(-st.PeakFallSpeed);
+                    // PlayerLife:2399 skips the landing at <= 0.67; and below 0.99 PlayerMovement.cs:1280 caps the descent
+                    // at 2 x 9.81 x the multiplier, so a glider always lands at that speed or less. A landing faster than
+                    // the cap was not under an open umbrella, whatever the hand claims, and takes the ordinary curve.
+                    float gravity = FallGravityMultiplier?.Invoke(sender) ?? 1f;
+                    bool gliding = gravity <= FallDamageGravityFloor
+                        && st.LastFallSpeed <= 2f * PlayerMovementDef.GRAVITY_BASE * gravity + GlideLandingSlack;
+                    int dmg = gliding ? 0 : FallMath.Damage(-st.PeakFallSpeed);
                     if (dmg > 0) DamageOwner(sender, dmg);
-                    st.PeakFallSpeed = 0f;
+                    st.PeakFallSpeed = 0f; st.LastFallSpeed = 0f;
                 }
                 st.WasAirborne = !cmd.Grounded;
 
@@ -518,7 +528,7 @@ namespace UnturnedGodot.Net
             // the last-good the recov teleports the shell to must be the ENTITY's quantized pos, so the resume
             // claim (shell now sitting there, re-quantized) lands a ~zero delta and adopts clean
             Vector3 landed = _players.TryGetByOwner(playerId, out var e) ? e.Pos : pos;
-            st.PeakFallSpeed = 0f; st.WasAirborne = false;   // P3b: a respawn wipes any in-flight fall so the resume claim can't inherit a phantom landing
+            st.PeakFallSpeed = 0f; st.LastFallSpeed = 0f; st.WasAirborne = false;   // P3b: a respawn wipes any in-flight fall so the resume claim can't inherit a phantom landing
             st.StationarySeatId = 0; // a later accepted re-entry starts a fresh furniture window
             st.RecovCounter++;
             st.Recovering = true;
