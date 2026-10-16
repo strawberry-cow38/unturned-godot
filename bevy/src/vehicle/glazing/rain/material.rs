@@ -9,7 +9,7 @@ use bevy::{
 };
 
 #[derive(Clone, Debug, Reflect, ShaderType)]
-pub(super) struct GlassUniform {
+pub(crate) struct GlassUniform {
     pub world_from_local: Mat4,
     pub local_from_world: Mat4,
     pub tint: Vec4,
@@ -44,7 +44,7 @@ impl GlassUniform {
     }
 }
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
-pub(super) struct GlassMaterial {
+pub(crate) struct GlassMaterial {
     #[uniform(100)]
     pub uniform: GlassUniform,
 }

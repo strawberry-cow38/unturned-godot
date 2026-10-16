@@ -11,7 +11,7 @@ use std::path::Path;
 
 pub(super) mod collision;
 mod effects;
-mod rain;
+pub(crate) mod rain;
 mod upload;
 
 /// Canonical wire bits. Missing files do not renumber the remaining panes.

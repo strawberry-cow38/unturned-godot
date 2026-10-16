@@ -59,8 +59,14 @@ public sealed partial class BuildingSurface
 public readonly record struct BuildingTransform(Basis Basis, Vector3 Position)
 {
     public static Vector3 operator *(BuildingTransform t, Vector3 v) => t.Basis * v + t.Position;
+    public static BuildingTransform operator *(BuildingTransform a, BuildingTransform b) => new(a.Basis * b.Basis, a * b.Position);
 }
 public readonly record struct BuildingAabb(Vector3 Position, Vector3 Size)
 {
     public Vector3 End => Position + Size;
+    public Vector3 GetCenter() => Position + Size * 0.5f;
+    public Vector3 GetEndpoint(int index) => new(
+        Position.X + ((index & 4) != 0 ? Size.X : 0),
+        Position.Y + ((index & 2) != 0 ? Size.Y : 0),
+        Position.Z + ((index & 1) != 0 ? Size.Z : 0));
 }

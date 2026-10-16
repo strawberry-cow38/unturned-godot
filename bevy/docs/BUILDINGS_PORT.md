@@ -3,7 +3,8 @@
 The finite island's existing prefab towns and `BuildingGen` are separate source
 paths. This work preserves that distinction. No generated wall replaces a town
 prefab. A read-only native stage consumer now materializes the original wall
-surfaces and ramps; normal generator/editor entry and manipulation remain pending.
+surfaces, fitted doors, panes and ramps; normal generator/editor entry and
+manipulation remain pending.
 
 ## Source data boundary
 
@@ -119,11 +120,71 @@ Verification on `.local/building-view-tests-final` and
 - Normal generator/editor and map placement entry, authority geometry export,
   save/session/origin lifecycle for an installed building. The validated stage
   consumer is currently exercised by its actual bridge/render fixtures.
-- Original opening placement: measured door leaf offsets and action modes,
-  glass (including original raw opening dimensions), shards and barricades.
+- Installed opening authority, endpoint occupancy retry, sound, damage, shards,
+  static broken-glass remnants and barricades. The fitted stage preview below
+  is separate from those runtime services.
 - Original generated furniture and runtime decoration, room services, stairs
   and source metadata bindings; no client-side shared state or invented damage.
 - Reachable generator/editor integration, authored files, source bake, editor
   manipulation/history and finite-map menu/remote content handoff.
 
 These remain active work, not completion claims for the building generator.
+
+## Fitted opening preview
+
+`BuildingOpenings` extracts the original `DoorDeploy.SpawnProp`, wooden-door
+catalog fallback and `WallSurface.PlaceDoor` into values. It keeps each opening
+index, original mesh, fitted mesh scale and pivot, 270-degree stand-up, full wall
+basis, measured horizontal/foot alignment, signed angle, duration, easing curves,
+sound and collider bounds. Scale is baked into mesh vertices and inverse-scaled
+normals; no ancestor above the hinge receives nonuniform scale. Pocket leaves
+slide by their fitted width toward the pivot, using the original smoothstep and
+minimum collider thickness. Double-acting leaves preserve the reverse direction.
+
+Original source limitations are retained: the unsplit wooden double-door mesh is
+refused; `WallSurface.RebuildDoors` never applies the saved `DoorOpen` token.
+Newly built leaves therefore start closed. Container leaves use their original
+catalog pivots rather than the wooden path's center rebasing.
+
+Glass uses raw opening dimensions, not trim-clear dimensions, with the source
+0.04m thickness, default hue/alpha, HP clamp, indestructible flag and interior-wall
+coverage convention. Broken or unglazed openings create no intact pane. The
+largest-face rain axis includes original `Mesh.GetFaces` coordinate snapping:
+0.03999m and 0.04m widths tie after the engine's 0.0001 snap. Native windows and
+vehicle glass share the same shader/material registration and transmission copy;
+vehicle shelter polling and wreck behavior remain in the vehicle plugin.
+
+The native stage preloads all door meshes before retiring its old root, then
+creates fitted leaves and panes under the source wall/opening hierarchy. Both use
+the original bit6 marker, distinct from wall bit0. The explicit preview clock
+reuses the shared ObjectDoor hinge transform and disables leaf collision while
+moving. It creates no gameplay IDs, commands, sounds, damage or shared-state
+mutation. Installed authority, occupied-volume endpoint retry, break effects,
+static broken-glass remnants and barricade fills are still pending. The stage
+clock is not presented as a complete interactive ObjectDoor implementation.
+
+Source evidence: `building_openings_reference.py` executes original DoorDeploy,
+ObjectDoor geometry/ApplySwing and WallSurface.PlaceDoor on actual Godot nodes.
+Its 19 cases include swing/double/pocket, all hinge/front combinations, tilted
+walls at stage altitude, raised openings and one-/two-leaf container props. Eleven
+actual Godot BoxMesh/GlassPane cases guard dimensions, tint, HP, snapped
+largest-face ties and the source zero-axis fallback for a tiny positive pane.
+Eleven managed building tests pass on the private immutable
+`.local/building-openings-final-v2` candidate. Six native building tests pass on
+`.local/native-building-openings-final`, including actual Rapier leaf transforms,
+endpoint/mid-swing collision, glass query masks, saved broken-pane retirement,
+and accepting only the exact source zero axis or a unit rain axis. The existing
+vehicle RainGlass group (four tests) and ObjectDoor group (nine tests) also pass
+after extracting their shared material and pivot helpers.
+
+The paired original Godot and native Vulkan opening rigs both exit 0. All eight
+`artifacts/{godot,bevy}-building-openings-{closed,half,open,wet}.png` images were
+opened: the two swinging leaves and pocket leaf retain matching positions and
+orientations, and the checkerboard-backed pane receives the original rain shader.
+The native fixture requires a dry-to-wet pixel change, catching a missing material
+pipeline without pixel goldens. Original renderer output preserves all 19 door
+and 11 pane numerical oracle rows exactly. Native JSON records actual leaf poses,
+moving-collider disable flags and `authorityInstalled:false`. As in the surface
+fixture, native isolated shadowed faces/ground have darker ambient fill; these
+images verify opening geometry/motion and the shader path, not full lighting
+parity or installed gameplay interaction.

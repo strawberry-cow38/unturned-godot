@@ -158,20 +158,35 @@ fn leaf_pose(def: &LeafDefinition, swing: f32, opening: bool, reverse: bool) -> 
         def.close_curve.as_deref()
     };
     let fraction = easing(swing, opening, curve);
-    let axis = Vec3::from_array(def.axis)
-        .try_normalize()
-        .unwrap_or(Vec3::Z);
+    pivot_pose(
+        def.pivot.into(),
+        def.axis.into(),
+        def.angle_degrees,
+        fraction,
+        reverse,
+    )
+}
+/// ObjectDoor.ApplySwing's rigid rotation around its authored hinge. Fitted
+/// building leaves reuse this after baking scale into the mesh and pivot.
+pub(crate) fn pivot_pose(
+    pivot: Vec3,
+    axis: Vec3,
+    angle_degrees: f32,
+    fraction: f32,
+    reverse: bool,
+) -> Transform {
+    let axis = axis.try_normalize().unwrap_or(Vec3::Z);
     let rotation = Quat::from_axis_angle(
         axis,
-        def.angle_degrees.to_radians() * fraction * if reverse { -1. } else { 1. },
+        angle_degrees.to_radians() * fraction * if reverse { -1. } else { 1. },
     );
-    let pivot = Vec3::from_array(def.pivot);
     Transform {
         translation: pivot - rotation * pivot,
         rotation,
         ..default()
     }
 }
+
 fn seat_pose(seat: &SeatDefinition) -> OccupiedPropSeat {
     let anchor = Vec3::from_array(seat.position);
     let forward = Vec3::new(seat.face[0], 0., seat.face[2])

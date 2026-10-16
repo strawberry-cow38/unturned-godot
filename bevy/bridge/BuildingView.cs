@@ -12,7 +12,9 @@ public sealed partial class BridgeHost
     // must separately own placement and authority when it becomes reachable.
     object ReadBuildingView(JsonElement request)
     {
-        var scene = new BuildingScene(Path.GetFullPath(Text(request, "contentRoot", "game/content")));
+        string contentRoot = Path.GetFullPath(Text(request, "contentRoot", "game/content"));
+        var scene = new BuildingScene(contentRoot);
+        var openings = new BuildingOpenings(contentRoot);
         string palette = null;
         if (request.TryGetProperty("text", out var text))
         {
@@ -30,6 +32,7 @@ public sealed partial class BridgeHost
         }
         static float[] V(Vector3 v) => [v.X, v.Y, v.Z];
         static float[][] B(Basis b) => [V(b.X), V(b.Y), V(b.Z)];
+        static object T(BuildingTransform t) => new { position = V(t.Position), basis = B(t.Basis) };
         static float[] C(Color c) => [c.R, c.G, c.B, c.A];
         static object Shape(BuildingCollision c) => new {
             position = V(c.Position),
@@ -37,7 +40,7 @@ public sealed partial class BridgeHost
             hull = c.Shape is BuildingHull hull ? hull.Points.Select(V).ToArray() : null,
         };
         return new {
-            version = 1, readOnly = true, palette, stageOrigin = V(BuildingScene.StageOrigin),
+            version = 1, readOnly = true, contentRoot, palette, stageOrigin = V(BuildingScene.StageOrigin),
             text = scene.SaveText(),
             walls = scene.Walls.Select((wall, index) => {
                 var geometry = wall.Build();
@@ -50,6 +53,26 @@ public sealed partial class BridgeHost
                     solids = new { layer = 1u, shapes = geometry.Solids.Select(Shape).ToArray() },
                     trimSolids = new { layer = 64u, shapes = geometry.TrimSolids.Select(Shape).ToArray() },
                     openings = wall.Openings,
+                    doorModels = wall.Openings.Select((o, openingIndex) => {
+                        var door = openings.Door(wall,o);
+                        return door == null ? null : new {
+                            openingIndex, name=door.Name, pose=T(door.Transform),
+                            leaves=door.Leaves.Select(leaf => new {
+                                mesh=leaf.MeshFile, scale=V(leaf.Scale), pivot=V(leaf.Pivot), axis=V(leaf.Axis),
+                                angleDegrees=leaf.Angle,durationSeconds=leaf.Duration,sound=leaf.Sound,
+                                openCurve=leaf.OpenCurve?.Select(p=>new[]{p.X,p.Y}).ToArray(),
+                                closeCurve=leaf.CloseCurve?.Select(p=>new[]{p.X,p.Y}).ToArray(),
+                                body=T(leaf.Body),slide=V(leaf.Slide),action=leaf.Action.ToString(),
+                                colliderCenter=V(leaf.ColliderCenter),colliderSize=V(leaf.ColliderSize),
+                            }).ToArray(),
+                        };
+                    }).Where(d=>d!=null).ToArray(),
+                    glassModels = wall.Openings.Select((o, openingIndex) => {
+                        var pane=BuildingOpenings.Pane(wall,o);
+                        return pane==null?null:new {openingIndex,position=V(pane.Position),size=V(pane.Size),
+                            axis=V(pane.Axis),color=C(pane.Color),health=pane.Health,indestructible=pane.Indestructible,
+                            covered=pane.Covered,layer=64u,mask=0u};
+                    }).Where(p=>p!=null).ToArray(),
                 };
             }).ToArray(),
             ramps = scene.Ramps.Select(r => new { position = V(r.Position), basis = B(r.Basis), size = V(r.Size) }).ToArray(),

@@ -28,6 +28,8 @@ public sealed class BuildingViewTests
         Assert.That(result.GetProperty("walls").GetArrayLength(), Is.EqualTo(74));
         Assert.That(result.GetProperty("ramps").GetArrayLength(), Is.EqualTo(2));
         Assert.That(result.GetProperty("furniture").GetArrayLength(), Is.GreaterThan(0));
+        Assert.That(result.GetProperty("walls").EnumerateArray().Sum(w=>w.GetProperty("doorModels").GetArrayLength()),Is.GreaterThan(0));
+        Assert.That(result.GetProperty("walls").EnumerateArray().Sum(w=>w.GetProperty("glassModels").GetArrayLength()),Is.GreaterThan(0));
         foreach (var wall in result.GetProperty("walls").EnumerateArray())
         {
             Assert.That(wall.GetProperty("solids").GetProperty("layer").GetUInt32(), Is.EqualTo(1));

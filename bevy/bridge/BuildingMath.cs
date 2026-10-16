@@ -22,6 +22,7 @@ public partial struct Vector3
 
 public partial struct Basis
 {
+    public static Basis Identity => new(Vector3.Right, Vector3.Up, Vector3.Back);
     // Godot's default YXZ order, in radians. This is not EditorObjects.FromEuler,
     // which converts retail PEI angles and includes a 180-degree heading change.
     public static Basis FromEuler(Vector3 euler)

@@ -3,6 +3,8 @@ use crate::bridge::CoreBridge;
 use bevy::ecs::system::SystemState;
 use serde_json::json;
 
+mod opening_visual;
+mod openings;
 mod visual;
 
 fn source(request: serde_json::Value) -> View {

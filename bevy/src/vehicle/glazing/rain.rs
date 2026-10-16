@@ -8,7 +8,7 @@ use crate::{
 use bevy::{asset::embedded_asset, pbr::ScreenSpaceTransmission, prelude::*};
 
 mod material;
-use material::{GlassMaterial, GlassUniform};
+pub(crate) use material::{GlassMaterial, GlassUniform};
 
 #[derive(Component)]
 pub(super) struct RainPane {
@@ -24,16 +24,25 @@ pub(super) struct Cover {
 pub(super) struct RainGlassPlugin;
 impl Plugin for RainGlassPlugin {
     fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<GlassMaterialPlugin>() {
+            app.add_plugins(GlassMaterialPlugin);
+        }
+        app.add_systems(
+            Update,
+            poll.after(RainUpdate).after(crate::vehicle::VehicleUpdate),
+        )
+        .add_systems(PostUpdate, materials.after(TransformSystems::Propagate));
+    }
+}
+/// Shared original GlassPane shader and one pre-transparent scene copy. Vehicle
+/// shelter polling remains in RainGlassPlugin; authored windows need neither a
+/// VehicleBody nor a second copy of the shader.
+pub(crate) struct GlassMaterialPlugin;
+impl Plugin for GlassMaterialPlugin {
+    fn build(&self, app: &mut App) {
         embedded_asset!(app, "rain/glass.wesl");
         app.add_plugins(MaterialPlugin::<GlassMaterial>::default())
-            .add_systems(
-                Update,
-                (
-                    cameras,
-                    poll.after(RainUpdate).after(crate::vehicle::VehicleUpdate),
-                ),
-            )
-            .add_systems(PostUpdate, materials.after(TransformSystems::Propagate));
+            .add_systems(Update, cameras);
     }
 }
 fn cameras(

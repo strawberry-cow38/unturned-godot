@@ -15,7 +15,7 @@ mod effects;
 mod exit;
 mod flight;
 mod geometry;
-mod glazing;
+pub(crate) mod glazing;
 mod hearing;
 pub(crate) mod lighting;
 mod npc;

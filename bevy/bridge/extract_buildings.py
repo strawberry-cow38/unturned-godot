@@ -132,3 +132,66 @@ def extract(read, out, match, method):
         '// Original EditorBuildings scene assembly; engine nodes/UI/undo replaced by values.\n'
         'using Godot; using UnturnedSim; namespace UnturnedBevy {\n'
         'public sealed partial class BuildingScene {\n' + output + '\n}}\n')
+
+    # The fitted door path reuses original DoorDeploy catalog/wooden fallback,
+    # fitting and WallSurface alignment. Node/material allocation becomes values;
+    # the standalone ground lift is overwritten by PlaceDoor and is not retained.
+    door = read('game/DoorDeploy.cs')
+    wooden = method(door, 'static List<WorldBuilder.DoorCatalogEntry> WoodenLeaves(string prop, string dir)')
+    wooden = wooden.replace('static List<', 'List<', 1).replace('ObjMesh.Load(', 'Mesh(')
+    spawn = method(door, 'public static Node3D SpawnProp(string prop, Node parent, Vector3 pos, float yawDeg, Vector2? fit = null, bool reverse = false)')
+    catalog = spawn[spawn.index('            string dir ='):spawn.index('            var host =')]
+    catalog = catalog.replace('ProjectSettings.GlobalizePath("res://content/objects/")',
+                              'System.IO.Path.Combine(contentRoot, "objects") + System.IO.Path.DirectorySeparatorChar')
+    catalog = catalog.replace('def.DoorProp', 'prop')
+    leaves = spawn[spawn.index('            var xform ='):spawn.index('            if (made.Count == 0)')]
+    leaves = once(leaves, '            var mat = MatFor(def.DoorProp, dir);\n')
+    leaves = leaves.replace('Transform3D', 'BuildingTransform').replace('new List<ObjectDoor>()', 'new List<BuildingDoorLeaf>()')
+    leaves = leaves.replace('ObjMesh.Load(', 'Mesh(').replace('def.DoorProp', 'prop')
+    leaves = leaves.replace('pivotL *= sc;', 'pivotL = new Vector3(pivotL.X * sc.X, pivotL.Y * sc.Y, pivotL.Z * sc.Z);')
+    a = leaves.index('                made.Add(ObjectDoor.Spawn(')
+    b = leaves.index('                    soundName: e.Sound));', a) + len('                    soundName: e.Sound));')
+    leaves = leaves[:a] + '''                made.Add(BuildingDoorLeaf.Create(e.MeshFile, leaf, pivotL, e.Axis,
+                    reverse ? -e.AngleDeg : e.AngleDeg, e.DurationSec, xform,
+                    WorldBuilder.LoadDoorCurve(dir, curveBase, "open"),
+                    WorldBuilder.LoadDoorCurve(dir, curveBase, "close"), e.Sound));''' + leaves[b:]
+    spawn = ('BuildingDoorHost SpawnProp(string prop, Vector2? fit, bool reverse) {\n'
+             + 'if(string.IsNullOrEmpty(prop)) return null;\n' + catalog + leaves
+             + '\n return made.Count == 0 ? null : new BuildingDoorHost(prop, made.ToArray());\n}')
+    place = method(source, 'void PlaceDoor(Node3D host, WallOpening o)')
+    place = place.replace('void PlaceDoor(Node3D host, WallOpening o)',
+                          'static void PlaceDoor(BuildingSurface wall, BuildingDoorHost host, WallOpening o)')
+    place = place.replace('host == null || !IsInstanceValid(host)', 'host == null').replace('Transform3D', 'BuildingTransform')
+    a = place.index('            foreach (var d in host.GetChildren())')
+    b = place.index('            // Land it on the TRIM', a)
+    measured = '''            foreach(var leaf in host.Leaves) {
+                var ab = leaf.Mesh.GetAabb();
+                var meshWorld = leaf.ClosedMesh(wall.GlobalTransform * host.Transform);
+                for(int i=0;i<8;i++) {
+                    var q = wall.ToLocal(meshWorld * ab.GetEndpoint(i));
+                    lo.X = Mathf.Min(lo.X,q.X);hi.X = Mathf.Max(hi.X,q.X);
+                    lo.Y = Mathf.Min(lo.Y,q.Y);hi.Y = Mathf.Max(hi.Y,q.Y);
+                }
+            }
+'''
+    place = place[:a] + measured + place[b:]
+    place = place.replace('TrimProfile', 'BuildingSurface.TrimProfile')
+    output = '\n'.join([wooden, spawn, place]).replace('Log.Err(', 'UnturnedGodot.Log.Err(')
+    (out / 'BuildingOpenings.g.cs').write_text(
+        '// Original DoorDeploy/WallSurface fitted leaf construction, values only.\n'
+        'using Godot;using UnturnedGodot;using UnturnedSim;namespace UnturnedBevy {\n'
+        'public sealed partial class BuildingOpenings {\n' + output + '\n}}\n')
+
+    # Preserve source face indexing/fan order; discard only unused attributes.
+    mesh = method(read('game/ObjMesh.cs'), 'public static ArrayMesh Load(string globalPath)')
+    mesh = mesh[mesh.index('            var pos ='):mesh.index('            var arr =')]
+    mesh = re.sub(r'^\s*var (?:col|nrm|uv|outC|outN|outU) =[^\n]+\n', '\n', mesh, flags=re.M)
+    mesh = re.sub(r'^\s*(?:col|outC|outN|outU)\.Add\([^\n]+\n', '\n', mesh, flags=re.M)
+    a = mesh.index("                else if (raw[0] == 'v' && raw[1] == 'n')")
+    b = mesh.index("                else if (raw[0] == 'f' && raw[1] == ' ')",a)
+    mesh = mesh[:a] + mesh[b:]
+    (out / 'BuildingDoorMesh.g.cs').write_text(
+        '// Original ObjMesh referenced-vertex parser; no mesh/resource storage.\n'
+        'using Godot;namespace UnturnedBevy {public sealed partial class BuildingDoorMesh {\n'
+        'public static BuildingDoorMesh Load(string globalPath) {\n' + mesh
+        + '\n return new BuildingDoorMesh(outV.ToArray(),new Vector3(1,1,1));\n}}}\n')

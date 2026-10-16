@@ -11,6 +11,8 @@
     <ProjectReference Include="../../core/UnturnedNet/UnturnedNet.csproj" />
     <ProjectReference Include="../../core/BugReportCore/BugReportCore.csproj" />
     <Compile Include="$(IntermediateOutputPath)Data/BuildingSurface.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/BuildingOpenings.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/BuildingDoorMesh.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/BuildingPalettes.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/BuildingScene.g.cs" />
     <Compile Include="../../game/ToolDef.cs" Link="Source/ToolDef.cs" />

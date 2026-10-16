@@ -18,7 +18,14 @@ struct Capture {
 #[test]
 #[ignore = "requires Vulkan/display; UG_BUILDING_SHOT=output-prefix"]
 fn render_original_generated_surfaces_and_cutaway() {
-    let view = source(json!({"spec":{"kind":"Residential","seed":17,"minFloors":2,"maxFloors":2}}));
+    let mut view =
+        source(json!({"spec":{"kind":"Residential","seed":17,"minFloors":2,"maxFloors":2}}));
+    // Retain this original surfaces-only comparison; opening materials and
+    // motion have their own paired source fixture.
+    for wall in &mut view.walls {
+        wall.door_models.clear();
+        wall.glass_models.clear();
+    }
     let prefix = std::env::var_os("UG_BUILDING_SHOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "/tmp/bevy-building".into());

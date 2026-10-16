@@ -1,8 +1,10 @@
 //! Original EditorBuildings stage values. Retail finite prefab towns never use
-//! this path. Opening entities/furniture and gameplay registration follow the
-//! same wall indices in later consumers; this module owns surfaces and ramps.
+//! this path. Doors/glass use original opening identities in this preview. Furniture and
+//! gameplay registration follow in separate consumers.
 mod data;
+mod openings;
 mod surface;
+pub(crate) use openings::BuildingOpeningPlugin;
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
@@ -37,6 +39,11 @@ pub(crate) fn replace(world: &mut World, view: &View) -> anyhow::Result<Entity> 
             ))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let opening_art = view
+        .walls
+        .iter()
+        .map(|w| openings::prepare(w, &view.content_root))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let roots: Vec<_> = world
         .query_filtered::<Entity, With<Stage>>()
         .iter(world)
@@ -52,7 +59,7 @@ pub(crate) fn replace(world: &mut World, view: &View) -> anyhow::Result<Entity> 
             Visibility::Inherited,
         ))
         .id();
-    for (wall, (solids, trim)) in view.walls.iter().zip(collision) {
+    for ((wall, (solids, trim)), art) in view.walls.iter().zip(collision).zip(opening_art) {
         let entity = world
             .spawn((
                 Wall(wall.index),
@@ -96,6 +103,7 @@ pub(crate) fn replace(world: &mut World, view: &View) -> anyhow::Result<Entity> 
                 CollisionGroups::new(Group::GROUP_1, Group::ALL),
             ));
         }
+        openings::spawn(world, entity, wall, art);
         if let Some(collider) = trim {
             world.spawn((
                 Trim,

@@ -8,6 +8,7 @@ pub(crate) struct View {
     pub read_only: bool,
     pub stage_origin: [f32; 3],
     pub text: String,
+    pub content_root: std::path::PathBuf,
     pub walls: Vec<Wall>,
     pub ramps: Vec<Ramp>,
 }
@@ -23,6 +24,10 @@ pub(super) struct Wall {
     pub trim: Part,
     pub solids: Collision,
     pub trim_solids: Collision,
+    #[serde(default)]
+    pub door_models: Vec<super::openings::Door>,
+    #[serde(default)]
+    pub glass_models: Vec<super::openings::Pane>,
 }
 #[derive(Clone, Deserialize)]
 pub(super) struct Part {
@@ -61,17 +66,8 @@ impl View {
             self.stage_origin.iter().all(|f| f.is_finite()),
             "invalid building stage"
         );
-        let valid_pose = |p: [f32; 3], b: [[f32; 3]; 3]| {
-            let m = Mat3::from_cols_array_2d(&b);
-            p.iter().all(|v| v.is_finite())
-                && m.is_finite()
-                && (m.determinant() - 1.).abs() < 1e-4
-                && (m.transpose() * m - Mat3::IDENTITY)
-                    .to_cols_array()
-                    .iter()
-                    .all(|v| v.abs() < 1e-4)
-        };
         for (index, w) in self.walls.iter().enumerate() {
+            super::openings::validate(w)?;
             anyhow::ensure!(
                 w.index == index && valid_pose(w.position, w.basis),
                 "invalid wall identity/pose"
@@ -115,4 +111,15 @@ impl View {
         }
         Ok(())
     }
+}
+
+pub(super) fn valid_pose(p: [f32; 3], b: [[f32; 3]; 3]) -> bool {
+    let m = Mat3::from_cols_array_2d(&b);
+    p.iter().all(|v| v.is_finite())
+        && m.is_finite()
+        && (m.determinant() - 1.).abs() < 1e-4
+        && (m.transpose() * m - Mat3::IDENTITY)
+            .to_cols_array()
+            .iter()
+            .all(|v| v.abs() < 1e-4)
 }
