@@ -45,6 +45,9 @@ fn setup() -> (CoreBridge, App, Entity) {
         .init_resource::<GameSnapshot>()
         .init_resource::<WorldSessionEpoch>()
         .init_resource::<FrameInput>()
+        .init_resource::<bevy::text::FontCx>()
+        .init_resource::<bevy::text::LayoutCx>()
+        .init_resource::<bevy::clipboard::Clipboard>()
         .init_resource::<crate::ui::crafting::Menu>()
         .init_resource::<paperdoll::Portrait>()
         .init_resource::<paperdoll::stage::Surface>()
@@ -249,13 +252,20 @@ fn production_dashboard_uses_frost_and_preserves_split_editor_through_accepted_r
         ui::{backdrop::Backdrop, swoop::Swoop},
     };
     use bevy::text::EditableText;
-    let (_host, mut app, _) = setup();
+    let (_host, mut app, window) = setup();
+    app.add_plugins((
+        bevy::input_focus::InputFocusPlugin,
+        bevy::input_focus::pointer_focus::PointerFocusPlugin,
+    ));
+    app.add_observer(context::number_key);
     app.init_resource::<Assets<Image>>()
         .init_resource::<Assets<feedback::WheelMaterial>>()
         .init_resource::<render::Art>()
         .init_resource::<badge::Badge>()
         .insert_resource(WorldConfig::default())
-        .insert_resource(OriginalFont(default()));
+        .init_resource::<Assets<Font>>()
+        .init_resource::<bevy::text::RemSize>()
+        .init_resource::<OriginalFont>();
     let cell = app
         .world()
         .resource::<Menu>()
@@ -293,7 +303,7 @@ fn production_dashboard_uses_frost_and_preserves_split_editor_through_accepted_r
         .get_mut::<EditableText>(editor)
         .unwrap()
         .editor
-        .set_text("7");
+        .set_text("pow(2;3)-1");
     world.resource_mut::<Menu>().dirty();
     app.world_mut().run_system_once(render::build).unwrap();
     let world = app.world_mut();
@@ -310,7 +320,7 @@ fn production_dashboard_uses_frost_and_preserves_split_editor_through_accepted_r
             .unwrap()
             .value()
             .to_string(),
-        "7"
+        "pow(2;3)-1"
     );
     assert!(
         world.get::<ChildOf>(editor).is_some(),
@@ -328,8 +338,26 @@ fn production_dashboard_uses_frost_and_preserves_split_editor_through_accepted_r
     );
     app.init_resource::<bevy::input_focus::InputFocus>();
     app.world_mut()
-        .resource_mut::<bevy::input_focus::InputFocus>()
-        .set(editor, bevy::input_focus::FocusCause::Pressed);
+        .entity_mut(editor)
+        .insert(bevy::ui::ComputedUiRenderTargetInfo::default());
+    app.world_mut()
+        .run_system_once(bevy::text::load_font_assets_into_font_collection)
+        .unwrap();
+    app.world_mut()
+        .run_system_once(bevy::ui::widget::update_editable_text_styles)
+        .unwrap();
+    app.world_mut().trigger(bevy::input_focus::AcquireFocus {
+        focused_entity: editor,
+        window,
+    });
+    app.world_mut().flush();
+    assert_eq!(
+        app.world()
+            .resource::<bevy::input_focus::InputFocus>()
+            .get(),
+        Some(editor),
+        "production number accepts pointer focus; typing must not bind Inventory hotkeys"
+    );
     app.world_mut()
         .run_system_once(context::synchronize)
         .unwrap();
@@ -349,9 +377,16 @@ fn production_dashboard_uses_frost_and_preserves_split_editor_through_accepted_r
             .unwrap()
             .value()
             .to_string(),
-        "7",
+        "pow(2;3)-1",
         "accepted refresh must retain draft text and focus"
     );
+    // A text edit can still be queued when a same-frame outside click blurs
+    // the field. The source commits those edits, not last frame's draft.
+    {
+        let mut text = app.world_mut().get_mut::<EditableText>(editor).unwrap();
+        text.queue_edit(bevy::text::TextEdit::SelectAll);
+        text.queue_edit(bevy::text::TextEdit::Insert("4+3".into()));
+    }
     app.world_mut()
         .resource_mut::<bevy::input_focus::InputFocus>()
         .clear();
@@ -596,5 +631,90 @@ fn accepted_currency_table_matches_all_source_wallets_and_live_preview_rebuilds_
     assert!(
         flush(&mut app).is_empty(),
         "changing preview art emits no gameplay action"
+    );
+}
+
+#[test]
+fn actual_owner_controller_scales_captured_mouse_motion_once_without_mutating_magazine() {
+    use bevy::input::mouse::MouseMotion;
+    let (_host, mut app, window) = setup();
+    app.init_resource::<spin::capture::Lease>();
+    app.world_mut()
+        .get_mut::<Window>(window)
+        .unwrap()
+        .resolution
+        .set_scale_factor_override(Some(2.));
+    let cell = app
+        .world()
+        .resource::<Menu>()
+        .view
+        .items
+        .iter()
+        .find(|row| row.magazine)
+        .unwrap()
+        .address
+        .cell();
+    let before = app
+        .world()
+        .resource::<Menu>()
+        .view
+        .tile(cell)
+        .unwrap()
+        .amount;
+    let field = Rect::new(100., 200., 200., 231.);
+    let anchor = spin::arrows(field)[0].center();
+    {
+        let mut menu = app.world_mut().resource_mut::<Menu>();
+        menu.gesture.selected = Some(cell);
+        menu.gesture.split_amount = 15;
+        menu.hits.number = Some(field);
+    }
+    pointer(
+        &mut app,
+        window,
+        anchor,
+        Some((MouseButton::Left, ButtonState::Pressed)),
+    );
+    pointer(&mut app, window, anchor + Vec2::new(0., -3.), None);
+    step(&mut app, 0.02);
+    app.world_mut()
+        .run_system_once(spin::capture::apply)
+        .unwrap();
+    assert!(app.world().resource::<Menu>().spin.captured());
+    assert_eq!(app.world().resource::<Menu>().gesture.split_amount, 16);
+    app.world_mut()
+        .resource_mut::<FrameInput>()
+        .push(WindowEvent::MouseMotion(MouseMotion {
+            delta: Vec2::new(0., -40.),
+        }));
+    step(&mut app, 0.02);
+    assert_eq!(
+        app.world().resource::<Menu>().gesture.split_amount,
+        18,
+        "40 physical pixels are20 logical pixels at2x"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<Menu>()
+            .view
+            .tile(cell)
+            .unwrap()
+            .amount,
+        before
+    );
+    assert!(flush(&mut app).is_empty());
+    pointer(
+        &mut app,
+        window,
+        anchor,
+        Some((MouseButton::Left, ButtonState::Released)),
+    );
+    step(&mut app, 0.02);
+    app.world_mut()
+        .run_system_once(spin::capture::apply)
+        .unwrap();
+    assert_eq!(
+        app.world().get::<Window>(window).unwrap().cursor_position(),
+        Some(anchor)
     );
 }

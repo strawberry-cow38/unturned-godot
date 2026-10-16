@@ -14,7 +14,7 @@ use bevy::{
     input_focus::FocusedInput,
     picking::Pickable,
     prelude::*,
-    text::EditableText,
+    text::{EditableText, FontCx, LayoutCx},
     ui_widgets::{
         Slider, SliderRange, SliderStep, SliderThumb, SliderValue, TextInput, TrackClick,
         ValueChange,
@@ -26,6 +26,12 @@ pub(super) struct Number {
     pub maximum: u16,
     pub requested: u16,
     pub editing: bool,
+}
+/// The source SpinBox embeds LineEdit, never a multiline text editor.
+pub(super) fn number_text(value: u16) -> EditableText {
+    let mut text = EditableText::new(value.to_string());
+    text.allow_newlines = false;
+    text
 }
 #[derive(Component)]
 pub(super) struct SplitSlider;
@@ -93,7 +99,8 @@ pub(super) fn prepare(
                     editing: false,
                 },
                 TextInput,
-                EditableText::new(menu.gesture.split_amount.to_string()),
+                bevy::input_focus::tab_navigation::TabIndex(0),
+                number_text(menu.gesture.split_amount),
                 tiles::at(0., 0., 84., 31.),
                 TextFont {
                     font: font.clone().into(),
@@ -122,6 +129,9 @@ pub(super) fn number_key(
     mut fields: Query<(&mut Number, &mut EditableText)>,
     mut menu: ResMut<Menu>,
     ui: Res<UiState>,
+    mut fonts: ResMut<FontCx>,
+    mut layouts: ResMut<LayoutCx>,
+    mut clipboard: ResMut<bevy::clipboard::Clipboard>,
 ) {
     if ui.screen != Screen::Inventory
         || event.event_target() != event.original_event_target()
@@ -141,6 +151,9 @@ pub(super) fn number_key(
         return;
     }
     if event.input.key_code != KeyCode::Escape {
+        // TextInput queues earlier keys/paste until PostUpdate. Enter belongs
+        // to this event, so apply only edits already queued before evaluating.
+        text.apply_pending_edits(&mut fonts, &mut layouts.0, &mut clipboard, |_| true);
         menu.gesture.split_amount = super::spin::committed(
             &text.value().to_string(),
             menu.gesture.split_amount,
@@ -160,6 +173,9 @@ pub(super) fn synchronize(
     mut fills: Query<&mut Node, (With<SplitFill>, Without<SplitThumb>)>,
     sliders: Query<Entity, With<SplitSlider>>,
     mut focus: ResMut<bevy::input_focus::InputFocus>,
+    mut fonts: ResMut<FontCx>,
+    mut layouts: ResMut<LayoutCx>,
+    mut clipboard: ResMut<bevy::clipboard::Clipboard>,
 ) {
     let Some(cell) = menu.gesture.selected else {
         return;
@@ -177,6 +193,7 @@ pub(super) fn synchronize(
         let focused = focus.get() == Some(entity);
         let committed = field.editing && !focused;
         if committed {
+            text.apply_pending_edits(&mut fonts, &mut layouts.0, &mut clipboard, |_| true);
             amount = super::spin::committed(&text.value().to_string(), amount, total - 1);
             menu.gesture.split_amount = amount;
         }

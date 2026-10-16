@@ -1,0 +1,1207 @@
+[
+  {
+    "shown": "3",
+    "text": "7/2",
+    "value": 3
+  },
+  {
+    "shown": "4",
+    "text": "7.0/2",
+    "value": 4
+  },
+  {
+    "shown": "64",
+    "text": "2**3**2",
+    "value": 64
+  },
+  {
+    "shown": "6",
+    "text": "10-2**2",
+    "value": 6
+  },
+  {
+    "shown": "6",
+    "text": "10+-2**2",
+    "value": 6
+  },
+  {
+    "shown": "17",
+    "text": "+5",
+    "value": 17
+  },
+  {
+    "shown": "7",
+    "text": "min(7;8)",
+    "value": 7
+  },
+  {
+    "shown": "7",
+    "text": "min(7,8)",
+    "value": 7
+  },
+  {
+    "shown": "12",
+    "text": "clamp(17;2;12)",
+    "value": 12
+  },
+  {
+    "shown": "3",
+    "text": "round(2.5)",
+    "value": 3
+  },
+  {
+    "shown": "7",
+    "text": "round(-2.5)+10",
+    "value": 7
+  },
+  {
+    "shown": "12",
+    "text": "int(12.9)",
+    "value": 12
+  },
+  {
+    "shown": "13",
+    "text": "float(\"12\")+1",
+    "value": 13
+  },
+  {
+    "shown": "33",
+    "text": "1e2/3",
+    "value": 33
+  },
+  {
+    "shown": "19",
+    "text": "0x10+0b11",
+    "value": 19
+  },
+  {
+    "shown": "31",
+    "text": "PI*10",
+    "value": 31
+  },
+  {
+    "shown": "1",
+    "text": "NAN",
+    "value": 1
+  },
+  {
+    "shown": "499",
+    "text": "INF",
+    "value": 499
+  },
+  {
+    "shown": "1",
+    "text": "1/0",
+    "value": 1
+  },
+  {
+    "shown": "499",
+    "text": "1.0/0.0",
+    "value": 499
+  },
+  {
+    "shown": "1",
+    "text": "sqrt(-1)",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "2+",
+    "value": 17
+  },
+  {
+    "shown": "2",
+    "text": "2abc",
+    "value": 2
+  },
+  {
+    "shown": "1",
+    "text": "not false",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "true",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "false",
+    "value": 1
+  },
+  {
+    "shown": "4",
+    "text": "[3,4][1]",
+    "value": 4
+  },
+  {
+    "shown": "17",
+    "text": "len([1,2,3])",
+    "value": 17
+  },
+  {
+    "shown": "7",
+    "text": "abs(-7)",
+    "value": 7
+  },
+  {
+    "shown": "8",
+    "text": "snapped(9,4)",
+    "value": 8
+  },
+  {
+    "shown": "",
+    "text": "",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "  ",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "17",
+    "value": 17
+  },
+  {
+    "shown": "2",
+    "text": "1.5",
+    "value": 2
+  },
+  {
+    "shown": "3",
+    "text": "2.5",
+    "value": 3
+  },
+  {
+    "shown": "499",
+    "text": "499.9",
+    "value": 499
+  },
+  {
+    "shown": "1",
+    "text": "-5",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "1e",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "1e+",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "1e-2",
+    "value": 1
+  },
+  {
+    "shown": "3",
+    "text": ".5+2",
+    "value": 3
+  },
+  {
+    "shown": "1",
+    "text": "0x",
+    "value": 1
+  },
+  {
+    "shown": "255",
+    "text": "0Xff",
+    "value": 255
+  },
+  {
+    "shown": "2",
+    "text": "0b102",
+    "value": 2
+  },
+  {
+    "shown": "1",
+    "text": "1_000",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "2@x",
+    "value": 17
+  },
+  {
+    "shown": "2",
+    "text": "2 3",
+    "value": 2
+  },
+  {
+    "shown": "2",
+    "text": "2)junk",
+    "value": 2
+  },
+  {
+    "shown": "2",
+    "text": "(2)junk",
+    "value": 2
+  },
+  {
+    "shown": "17",
+    "text": "3.5%2",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "7%3",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "7%0",
+    "value": 1
+  },
+  {
+    "shown": "9",
+    "text": "-7%3+10",
+    "value": 9
+  },
+  {
+    "shown": "2",
+    "text": "2**3/3",
+    "value": 2
+  },
+  {
+    "shown": "17",
+    "text": "2**-2",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "2**(-2)",
+    "value": 1
+  },
+  {
+    "shown": "6",
+    "text": "-2**2+10",
+    "value": 6
+  },
+  {
+    "shown": "4",
+    "text": "(-2)**2",
+    "value": 4
+  },
+  {
+    "shown": "2",
+    "text": "--2",
+    "value": 2
+  },
+  {
+    "shown": "17",
+    "text": "~-2+10",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "-~2+10",
+    "value": 17
+  },
+  {
+    "shown": "9",
+    "text": "2+-3+10",
+    "value": 9
+  },
+  {
+    "shown": "4",
+    "text": "2*-3+10",
+    "value": 4
+  },
+  {
+    "shown": "32",
+    "text": "2<<3+1",
+    "value": 32
+  },
+  {
+    "shown": "32",
+    "text": "128>>2",
+    "value": 32
+  },
+  {
+    "shown": "6",
+    "text": "5^3",
+    "value": 6
+  },
+  {
+    "shown": "7",
+    "text": "5|2&3",
+    "value": 7
+  },
+  {
+    "shown": "1",
+    "text": "not 2>1",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "!(2>1)",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "3>2+10",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "2==2",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "false+1",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "true*4",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "null",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "false and unknown",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "true or unknown",
+    "value": 17
+  },
+  {
+    "shown": "12",
+    "text": "\"12\"",
+    "value": 12
+  },
+  {
+    "shown": "12",
+    "text": "\"12x\"",
+    "value": 12
+  },
+  {
+    "shown": "13",
+    "text": "\"  12.5 \"",
+    "value": 13
+  },
+  {
+    "shown": "23",
+    "text": "\"2\"+\"3\"",
+    "value": 23
+  },
+  {
+    "shown": "8",
+    "text": "int(\"-12x\")+20",
+    "value": 8
+  },
+  {
+    "shown": "1",
+    "text": "bool(0)",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "bool(\"0\")",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "int()",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "float()",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "bool()",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "int(null)",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "float(true)",
+    "value": 1
+  },
+  {
+    "shown": "2",
+    "text": "typeof(2)",
+    "value": 2
+  },
+  {
+    "shown": "28",
+    "text": "typeof([1])",
+    "value": 28
+  },
+  {
+    "shown": "4",
+    "text": "[3,4][-1]",
+    "value": 4
+  },
+  {
+    "shown": "17",
+    "text": "[3,4][9]",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "[1,2,]",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "[1,2]+[3]",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "2 in [1,2,3]",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "\"a\" in \"abc\"",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "min(1)",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "max()",
+    "value": 17
+  },
+  {
+    "shown": "3",
+    "text": "min(3,8,5)",
+    "value": 3
+  },
+  {
+    "shown": "8",
+    "text": "max(3,8,5)",
+    "value": 8
+  },
+  {
+    "shown": "1",
+    "text": "min(2.5,3)/2",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "max(2,3)/2",
+    "value": 1
+  },
+  {
+    "shown": "3",
+    "text": "clamp(9,10,3)",
+    "value": 3
+  },
+  {
+    "shown": "3",
+    "text": "clamp(7,3,9)/2",
+    "value": 3
+  },
+  {
+    "shown": "4",
+    "text": "clamp(7.0,3,9)/2",
+    "value": 4
+  },
+  {
+    "shown": "4",
+    "text": "floor(7.8)/2",
+    "value": 4
+  },
+  {
+    "shown": "3",
+    "text": "floor(7)/2",
+    "value": 3
+  },
+  {
+    "shown": "3",
+    "text": "floori(7.8)/2",
+    "value": 3
+  },
+  {
+    "shown": "4",
+    "text": "floorf(7.8)/2",
+    "value": 4
+  },
+  {
+    "shown": "4",
+    "text": "ceil(6.1)/2",
+    "value": 4
+  },
+  {
+    "shown": "3",
+    "text": "ceili(6.1)/2",
+    "value": 3
+  },
+  {
+    "shown": "4",
+    "text": "round(7.1)/2",
+    "value": 4
+  },
+  {
+    "shown": "3",
+    "text": "roundi(7.1)/2",
+    "value": 3
+  },
+  {
+    "shown": "3",
+    "text": "abs(-7)/2",
+    "value": 3
+  },
+  {
+    "shown": "4",
+    "text": "absf(-7)/2",
+    "value": 4
+  },
+  {
+    "shown": "3",
+    "text": "absi(-7.8)/2",
+    "value": 3
+  },
+  {
+    "shown": "9",
+    "text": "sign(-1)+10",
+    "value": 9
+  },
+  {
+    "shown": "10",
+    "text": "signf(0)+10",
+    "value": 10
+  },
+  {
+    "shown": "10",
+    "text": "signi(0.5)+10",
+    "value": 10
+  },
+  {
+    "shown": "4",
+    "text": "snapped(7.9,3)/2",
+    "value": 4
+  },
+  {
+    "shown": "3",
+    "text": "snapped(7,3.0)/2",
+    "value": 3
+  },
+  {
+    "shown": "3",
+    "text": "snappedf(7,3)/2",
+    "value": 3
+  },
+  {
+    "shown": "4",
+    "text": "snappedi(7.9,3)/2",
+    "value": 4
+  },
+  {
+    "shown": "14",
+    "text": "snapped(-7,3)+20",
+    "value": 14
+  },
+  {
+    "shown": "9",
+    "text": "sqrt(81)",
+    "value": 9
+  },
+  {
+    "shown": "81",
+    "text": "pow(3,4)",
+    "value": 81
+  },
+  {
+    "shown": "5",
+    "text": "log(exp(5))",
+    "value": 5
+  },
+  {
+    "shown": "100",
+    "text": "sin(PI/2)*100",
+    "value": 100
+  },
+  {
+    "shown": "99",
+    "text": "cos(PI)+100",
+    "value": 99
+  },
+  {
+    "shown": "100",
+    "text": "tan(0)+100",
+    "value": 100
+  },
+  {
+    "shown": "12",
+    "text": "sinh(1)*10",
+    "value": 12
+  },
+  {
+    "shown": "15",
+    "text": "cosh(1)*10",
+    "value": 15
+  },
+  {
+    "shown": "8",
+    "text": "tanh(1)*10",
+    "value": 8
+  },
+  {
+    "shown": "52",
+    "text": "asin(0.5)*100",
+    "value": 52
+  },
+  {
+    "shown": "105",
+    "text": "acos(0.5)*100",
+    "value": 105
+  },
+  {
+    "shown": "79",
+    "text": "atan(1)*100",
+    "value": 79
+  },
+  {
+    "shown": "79",
+    "text": "atan2(1,1)*100",
+    "value": 79
+  },
+  {
+    "shown": "88",
+    "text": "asinh(1)*100",
+    "value": 88
+  },
+  {
+    "shown": "132",
+    "text": "acosh(2)*100",
+    "value": 132
+  },
+  {
+    "shown": "55",
+    "text": "atanh(0.5)*100",
+    "value": 55
+  },
+  {
+    "shown": "9",
+    "text": "fmod(-7,3)+10",
+    "value": 9
+  },
+  {
+    "shown": "12",
+    "text": "fposmod(-7,3)+10",
+    "value": 12
+  },
+  {
+    "shown": "12",
+    "text": "posmod(-7,3)+10",
+    "value": 12
+  },
+  {
+    "shown": "1",
+    "text": "is_nan(NAN)",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "is_inf(INF)",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "is_finite(12)",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "is_equal_approx(2,2.000001)",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "is_zero_approx(0.000001)",
+    "value": 1
+  },
+  {
+    "shown": "7",
+    "text": "lerp(3,10,0.5)",
+    "value": 7
+  },
+  {
+    "shown": "7",
+    "text": "lerpf(3,10,0.5)",
+    "value": 7
+  },
+  {
+    "shown": "50",
+    "text": "inverse_lerp(3,10,6.5)*100",
+    "value": 50
+  },
+  {
+    "shown": "14",
+    "text": "remap(7,5,10,10,20)",
+    "value": 14
+  },
+  {
+    "shown": "16",
+    "text": "smoothstep(0,1,.25)*100",
+    "value": 16
+  },
+  {
+    "shown": "5",
+    "text": "move_toward(3,10,2)",
+    "value": 5
+  },
+  {
+    "shown": "4",
+    "text": "wrap(13,1,10)",
+    "value": 4
+  },
+  {
+    "shown": "5",
+    "text": "wrapf(13.5,1,10)",
+    "value": 5
+  },
+  {
+    "shown": "4",
+    "text": "wrapi(13.5,1,10)",
+    "value": 4
+  },
+  {
+    "shown": "6",
+    "text": "wrap(-3,1,10)",
+    "value": 6
+  },
+  {
+    "shown": "32",
+    "text": "nearest_po2(17)",
+    "value": 32
+  },
+  {
+    "shown": "7",
+    "text": "pingpong(13,10)",
+    "value": 7
+  },
+  {
+    "shown": "38",
+    "text": "angle_difference(6,0.1)*100",
+    "value": 38
+  },
+  {
+    "shown": "62",
+    "text": "lerp_angle(6,.1,.5)*10",
+    "value": 62
+  },
+  {
+    "shown": "31",
+    "text": "deg_to_rad(180)*10",
+    "value": 31
+  },
+  {
+    "shown": "180",
+    "text": "rad_to_deg(PI)",
+    "value": 180
+  },
+  {
+    "shown": "94",
+    "text": "linear_to_db(.5)+100",
+    "value": 94
+  },
+  {
+    "shown": "10",
+    "text": "db_to_linear(20)",
+    "value": 10
+  },
+  {
+    "shown": "25",
+    "text": "ease(.5,2)*100",
+    "value": 25
+  },
+  {
+    "shown": "50",
+    "text": "ease(.5,-2)*100",
+    "value": 50
+  },
+  {
+    "shown": "3",
+    "text": "cubic_interpolate(1,5,0,6,.5)",
+    "value": 3
+  },
+  {
+    "shown": "3",
+    "text": "bezier_interpolate(1,2,3,4,.5)",
+    "value": 3
+  },
+  {
+    "shown": "3",
+    "text": "bezier_derivative(1,2,3,4,.5)",
+    "value": 3
+  },
+  {
+    "shown": "9",
+    "text": "7+2",
+    "value": 9
+  },
+  {
+    "shown": "9",
+    "text": "7+2.0",
+    "value": 9
+  },
+  {
+    "shown": "5",
+    "text": "7-2",
+    "value": 5
+  },
+  {
+    "shown": "5",
+    "text": "7-2.0",
+    "value": 5
+  },
+  {
+    "shown": "14",
+    "text": "7*2",
+    "value": 14
+  },
+  {
+    "shown": "14",
+    "text": "7*2.0",
+    "value": 14
+  },
+  {
+    "shown": "3",
+    "text": "7/2",
+    "value": 3
+  },
+  {
+    "shown": "4",
+    "text": "7/2.0",
+    "value": 4
+  },
+  {
+    "shown": "1",
+    "text": "7%2",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "7%2.0",
+    "value": 17
+  },
+  {
+    "shown": "49",
+    "text": "7**2",
+    "value": 49
+  },
+  {
+    "shown": "49",
+    "text": "7**2.0",
+    "value": 49
+  },
+  {
+    "shown": "9",
+    "text": "7.0+2",
+    "value": 9
+  },
+  {
+    "shown": "9",
+    "text": "7.0+2.0",
+    "value": 9
+  },
+  {
+    "shown": "5",
+    "text": "7.0-2",
+    "value": 5
+  },
+  {
+    "shown": "5",
+    "text": "7.0-2.0",
+    "value": 5
+  },
+  {
+    "shown": "14",
+    "text": "7.0*2",
+    "value": 14
+  },
+  {
+    "shown": "14",
+    "text": "7.0*2.0",
+    "value": 14
+  },
+  {
+    "shown": "4",
+    "text": "7.0/2",
+    "value": 4
+  },
+  {
+    "shown": "4",
+    "text": "7.0/2.0",
+    "value": 4
+  },
+  {
+    "shown": "17",
+    "text": "7.0%2",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "7.0%2.0",
+    "value": 17
+  },
+  {
+    "shown": "49",
+    "text": "7.0**2",
+    "value": 49
+  },
+  {
+    "shown": "49",
+    "text": "7.0**2.0",
+    "value": 49
+  },
+  {
+    "shown": "17",
+    "text": "1/0+10",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "10+(1/0)",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "min(1/0,3)",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "round(1/0)",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "[1/0][0]",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "1%0+10",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "abs(\"x\")",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "snapped(\"x\",3)",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "min(\"x\",2)",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "pow(\"x\",3)",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "clamp(\"x\",1,4)",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "[1,2,3]",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "[1,2][9]",
+    "value": 17
+  },
+  {
+    "shown": "2",
+    "text": "float(\"2a\")",
+    "value": 2
+  },
+  {
+    "shown": "12",
+    "text": "int(\"abc12\")",
+    "value": 12
+  },
+  {
+    "shown": "1",
+    "text": "float(\"abc12\")",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "0<<-1",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "wrapi(9223372036854775807,-9223372036854775808,9223372036854775807)",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "pow(\"x\",3)+20",
+    "value": 17
+  },
+  {
+    "shown": "3",
+    "text": "sqrt(\"9\")",
+    "value": 3
+  },
+  {
+    "shown": "21",
+    "text": "sin(true)+20",
+    "value": 21
+  },
+  {
+    "shown": "17",
+    "text": "abs(\"x\")+20",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "snapped(\"x\",3)+20",
+    "value": 17
+  },
+  {
+    "shown": "8",
+    "text": "int(\"a-12x\")+20",
+    "value": 8
+  },
+  {
+    "shown": "12",
+    "text": "int(\"12.9\")",
+    "value": 12
+  },
+  {
+    "shown": "12",
+    "text": "int(\"1e2\")",
+    "value": 12
+  },
+  {
+    "shown": "12",
+    "text": "float(\"12x\")",
+    "value": 12
+  },
+  {
+    "shown": "1",
+    "text": "(1/0)",
+    "value": 1
+  },
+  {
+    "shown": "17",
+    "text": "1/0==0",
+    "value": 17
+  },
+  {
+    "shown": "1",
+    "text": "clamp(NAN,1,9)",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "min(NAN,3)",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "max(NAN,3)",
+    "value": 1
+  },
+  {
+    "shown": "2",
+    "text": "step_decimals(0.01)",
+    "value": 2
+  },
+  {
+    "shown": "6",
+    "text": "step_decimals(0.000001)",
+    "value": 6
+  },
+  {
+    "shown": "1",
+    "text": "step_decimals(1)",
+    "value": 1
+  },
+  {
+    "shown": "1",
+    "text": "step_decimals(-.25)",
+    "value": 1
+  },
+  {
+    "shown": "30",
+    "text": "rotate_toward(0,1,.3)*100",
+    "value": 30
+  },
+  {
+    "shown": "10",
+    "text": "rotate_toward(0,1,-.3)+10",
+    "value": 10
+  },
+  {
+    "shown": "64",
+    "text": "rotate_toward(6,.1,1)*10",
+    "value": 64
+  },
+  {
+    "shown": "62",
+    "text": "cubic_interpolate_angle(6,.1,5,1,.5)*10",
+    "value": 62
+  },
+  {
+    "shown": "30",
+    "text": "cubic_interpolate_in_time(1,5,0,6,.5,1,-1,2)*10",
+    "value": 30
+  },
+  {
+    "shown": "30",
+    "text": "cubic_interpolate_in_time(1,5,0,6,.5,0,0,0)*10",
+    "value": 30
+  },
+  {
+    "shown": "62",
+    "text": "cubic_interpolate_angle_in_time(6,.1,5,1,.5,1,-1,2)*10",
+    "value": 62
+  },
+  {
+    "shown": "61",
+    "text": "cubic_interpolate_angle_in_time(6,.1,5,1,.5,0,0,0)*10",
+    "value": 61
+  },
+  {
+    "shown": "17",
+    "text": "lerp(1,3.0,.5)",
+    "value": 17
+  },
+  {
+    "shown": "17",
+    "text": "lerp(1.0,3,.5)",
+    "value": 17
+  }
+]

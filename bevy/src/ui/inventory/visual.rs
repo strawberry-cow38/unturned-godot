@@ -1,5 +1,6 @@
 //! Production dashboard widgets driven by an actual integrated owner session.
 //! Scripted pointer edges exercise the same controller as the OS input batch.
+mod spin_os;
 use super::{controller::Menu, model::*, *};
 use crate::{
     bridge::CoreBridge,
@@ -30,6 +31,7 @@ struct Capture {
     facts: Vec<Value>,
     magazine: Cell,
     money: bool,
+    spin_os: bool,
     sent: Vec<Value>,
 }
 fn action(bridge: &CoreBridge, name: &str, args: Value) {
@@ -52,14 +54,19 @@ fn view(bridge: &CoreBridge) -> api::View {
 #[test]
 #[ignore = "requires Vulkan/display; UG_INVENTORY_SHOT sets output prefix"]
 fn gpu_original_dashboard_context_accepted_split_and_magazine_wheel() {
-    run(false);
+    run(false, false);
 }
 #[test]
 #[ignore = "requires Vulkan/display; UG_INVENTORY_SHOT sets output prefix"]
 fn gpu_original_currency_preview_and_accepted_exact_split() {
-    run(true);
+    run(true, false);
 }
-fn run(money: bool) {
+#[test]
+#[ignore = "requires X11/Vulkan/xdotool; UG_INVENTORY_SHOT sets output prefix"]
+fn os_spinbox_expression_capture_restore_and_accepted_split() {
+    run(true, true);
+}
+fn run(money: bool, spin_os: bool) {
     let prefix =
         std::env::var("UG_INVENTORY_SHOT").unwrap_or_else(|_| "/tmp/bevy-inventory".into());
     let config = WorldConfig::default();
@@ -175,15 +182,34 @@ fn run(money: bool) {
         facts: vec![],
         magazine,
         money,
+        spin_os,
         sent: vec![],
     })
     .add_systems(Startup, scene)
     .add_systems(Update, accepted.before(controller::update))
     .add_systems(Last, capture);
+    if spin_os {
+        app.init_resource::<spin_os::Steps>()
+            .add_plugins(crate::ui::input_order::InputOrderPlugin);
+    }
     app.run();
     let facts: Vec<Value> =
         serde_json::from_slice(&std::fs::read(format!("{prefix}.json")).unwrap()).unwrap();
     assert_eq!(facts.len(), 4);
+    if spin_os {
+        assert_eq!(facts[1]["previewAmount"], 51);
+        assert_eq!(facts[2]["previewAmount"], 54);
+        assert_eq!(facts[3]["wallets"], json!([96, 54]));
+        for stage in 0..4 {
+            assert!(
+                std::fs::metadata(format!("{prefix}-{stage}.png"))
+                    .unwrap()
+                    .len()
+                    > 20_000
+            );
+        }
+        return;
+    }
     assert!(facts[0]["portrait"].as_bool().unwrap());
     assert_eq!(facts[1]["selected"], true);
     let sent = facts[3]["sent"].as_array().unwrap();
@@ -353,6 +379,10 @@ fn split(world: &mut World, cell: Cell, amount: u16) {
 }
 
 fn capture(world: &mut World) {
+    if world.resource::<Capture>().spin_os {
+        spin_os::capture(world);
+        return;
+    }
     world.resource_mut::<FrameInput>().begin();
     let mut c = world.remove_resource::<Capture>().unwrap();
     if c.pending {

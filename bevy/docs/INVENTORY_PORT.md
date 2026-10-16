@@ -39,7 +39,8 @@ wheel, right-click min/max and the original slider geometry are implemented.
 Unlike the original automatic Refresh suppression while carrying or selecting,
 the adapter adopts accepted changes while retaining the live editor and gesture
 identity. Swoop progress survives those rebuilds; retiring roots have no live
-buttons. Full SpinBox expressions and captured vertical drag remain a follow-up.
+buttons. Scalar expression entry and captured vertical drag are described in
+[INVENTORY_NUMBER_PORT.md](INVENTORY_NUMBER_PORT.md).
 
 ## Accepted presentation
 
@@ -193,8 +194,17 @@ Original InventoryUI can address viewed pages; those operations need a separate
 validated view/ground identity seam before native UI can enable them safely.
 This limitation does not broaden legacy39 or claim the complete dashboard done.
 
-General SpinBox expressions and captured, accelerated vertical dragging are not
-yet implemented.
+The bounded scalar SpinBox evaluator and accelerated capture have source
+oracles, native controller tests and an actual OS expression/capture/split
+journey. See INVENTORY_NUMBER_PORT.md for its verification boundary.
+Arbitrary engine object methods/vector/locale expression behavior remains outside
+the scalar adapter.
 Rejected legacy hold-transfer requests remain reserved until H is released,
 rather than inventing a completion or local inventory change. These are explicit
 follow-ups after this reviewed dashboard checkpoint.
+
+At 720p, the original LayoutDash minimum character-panel height of 600 pixels
+overrides HUD.ContentBottom. The original layer-12 vitals therefore overlap the
+layer-11 Inventory's lower portrait/PRIMARY area. The full-game pickup capture
+`bevy-pickup-final-inventory.png` reproduces that source limitation; this parity
+checkpoint does not introduce an adaptive-layout redesign.

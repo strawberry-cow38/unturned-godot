@@ -55,6 +55,10 @@ impl FrameInput {
     pub fn push(&mut self, event: WindowEvent) {
         let window = match &event {
             WindowEvent::CursorMoved(e) => Some(e.window),
+            // Captured mouse deltas have no window/absolute cursor coordinate.
+            // Only an active capture owner may consume them; ordinary widgets
+            // retain their independent window-specific CursorMoved stream.
+            WindowEvent::MouseMotion(_) => None,
             WindowEvent::MouseButtonInput(e) => Some(e.window),
             WindowEvent::MouseWheel(e) => Some(e.window),
             WindowEvent::KeyboardInput(e) => Some(e.window),
@@ -71,7 +75,10 @@ impl FrameInput {
             }
             _ => return,
         };
-        let mut delta = Vec2::ZERO;
+        let mut delta = match &event {
+            WindowEvent::MouseMotion(e) => e.delta,
+            _ => Vec2::ZERO,
+        };
         let (pointer, buttons) = if let Some(window) = window {
             let state = self.windows.entry(window).or_default();
             match &event {

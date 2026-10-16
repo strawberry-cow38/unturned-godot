@@ -1,20 +1,15 @@
 //! Map the shared ordered OS batch to InventoryUI's original gesture branches.
 use super::super::input_order::OrderedEvent;
 use super::gesture::Edge;
-use crate::settings::{Binding, GameAction, Settings, mouse_number};
+use crate::settings::{GameAction, Settings};
 use bevy::{input::ButtonState, prelude::*, window::WindowEvent};
 
 #[derive(Debug)]
 pub(super) enum Input {
     Gesture(Edge, Vec2),
     Wheel(Vec2, f32),
+    RelativeMotion(Vec2),
     Cancel,
-}
-fn key_is(settings: &Settings, action: GameAction, key: KeyCode) -> bool {
-    matches!(settings.bindings.get(&action),Some(Binding::Key(name)) if *name==format!("{key:?}"))
-}
-fn button_is(settings: &Settings, action: GameAction, button: MouseButton) -> bool {
-    matches!(settings.bindings.get(&action),Some(Binding::Mouse(number)) if *number==mouse_number(button))
 }
 fn hotbar(matches: impl Fn(GameAction) -> bool) -> Option<u8> {
     use GameAction::*;
@@ -36,11 +31,18 @@ pub(super) fn map(
     if input.window.is_some_and(|w| w != window) {
         return None;
     }
+    let matches = |action| {
+        settings
+            .bindings
+            .get(&action)
+            .is_some_and(|binding| binding.matches_window_event(&input.event))
+    };
     let control = input.buttons.physical.pressed(KeyCode::ControlLeft)
         || input.buttons.physical.pressed(KeyCode::ControlRight);
     let edge = match &input.event {
         WindowEvent::KeyboardFocusLost(_) => return Some(Input::Cancel),
         WindowEvent::WindowFocused(e) if !e.focused => return Some(Input::Cancel),
+        WindowEvent::MouseMotion(e) => return Some(Input::RelativeMotion(e.delta)),
         WindowEvent::CursorMoved(_) => Some(Edge::Motion { delta: input.delta }),
         WindowEvent::MouseWheel(e) => {
             let notches = match e.unit {
@@ -54,31 +56,25 @@ pub(super) fn map(
             match e.button {
                 MouseButton::Left => Some(Edge::Left { down, control }),
                 MouseButton::Right => Some(Edge::Right { down, control }),
-                _ if down && !carrying && button_is(settings, GameAction::ItemUses, e.button) => {
+                _ if down && !carrying && matches(GameAction::ItemUses) => {
                     Some(Edge::Lookup { uses: true })
                 }
-                _ if down
-                    && !carrying
-                    && button_is(settings, GameAction::ItemRecipes, e.button) =>
-                {
+                _ if down && !carrying && matches(GameAction::ItemRecipes) => {
                     Some(Edge::Lookup { uses: false })
                 }
-                _ if down => hotbar(|a| button_is(settings, a, e.button)).map(Edge::Bind),
+                _ if down => hotbar(matches).map(Edge::Bind),
                 _ => None,
             }
         }
         WindowEvent::KeyboardInput(e) if e.state == ButtonState::Pressed => {
             if carrying && matches!(e.key_code, KeyCode::KeyR | KeyCode::Space) {
                 Some(Edge::Rotate)
-            } else if !carrying && !e.repeat && key_is(settings, GameAction::ItemUses, e.key_code) {
+            } else if !carrying && !e.repeat && matches(GameAction::ItemUses) {
                 Some(Edge::Lookup { uses: true })
-            } else if !carrying
-                && !e.repeat
-                && key_is(settings, GameAction::ItemRecipes, e.key_code)
-            {
+            } else if !carrying && !e.repeat && matches(GameAction::ItemRecipes) {
                 Some(Edge::Lookup { uses: false })
             } else {
-                hotbar(|a| key_is(settings, a, e.key_code)).map(Edge::Bind)
+                hotbar(matches).map(Edge::Bind)
             }
         }
         _ => None,

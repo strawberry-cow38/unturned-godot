@@ -393,6 +393,12 @@ pub(super) fn update(
         ) else {
             continue;
         };
+        let input = match input {
+            input::Input::RelativeMotion(delta) => {
+                input::Input::RelativeMotion(delta / window.scale_factor())
+            }
+            other => other,
+        };
         if let Some(field) = menu.hits.number {
             let maximum = menu
                 .gesture
@@ -413,6 +419,7 @@ pub(super) fn update(
             continue;
         }
         match input {
+            input::Input::RelativeMotion(_) => {}
             input::Input::Cancel => {
                 menu.gesture.close();
                 menu.dirty();

@@ -6,6 +6,7 @@ mod badge;
 mod commands;
 mod context;
 mod controller;
+mod expression;
 mod feedback;
 mod gesture;
 mod hotbar;
@@ -31,6 +32,8 @@ impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<controller::Menu>()
             .init_resource::<Typing>()
+            .init_resource::<spin::capture::Lease>()
+            .add_systems(PostUpdate, spin::capture::apply)
             .init_resource::<render::Art>()
             .init_resource::<badge::Badge>()
             .init_resource::<symbols::Symbols>()

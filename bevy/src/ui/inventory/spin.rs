@@ -2,6 +2,7 @@
 //! selection state; only dragging its preview emits a SplitItem command.
 use super::{gesture::Edge, input::Input};
 use bevy::prelude::*;
+pub(super) mod capture;
 
 #[derive(Default, Debug)]
 pub(super) struct State {
@@ -10,6 +11,11 @@ pub(super) struct State {
     pointer: Vec2,
     pub focus_requested: bool,
     first_repeat: bool,
+    dragging: bool,
+    raw_mode: bool,
+    anchor: Vec2,
+    base: u16,
+    relative_y: f64,
 }
 pub(super) fn arrows(field: Rect) -> [Rect; 2] {
     // Actual Godot theme enforces height31, with integer heights15 and16.
@@ -23,9 +29,15 @@ fn increment(value: &mut u16, maximum: u16, change: i32) {
     *value = (i32::from(*value) + change).clamp(1, i32::from(maximum.max(1))) as u16;
 }
 impl State {
+    #[cfg(test)]
+    pub fn captured(&self) -> bool {
+        self.dragging && self.raw_mode
+    }
     pub fn cancel(&mut self) {
         self.held = false;
         self.focus_requested = false;
+        self.dragging = false;
+        self.raw_mode = false;
     }
     pub fn input(
         &mut self,
@@ -39,6 +51,13 @@ impl State {
         let (edge, p) = match event {
             Input::Cancel => {
                 self.cancel();
+                return false;
+            }
+            Input::RelativeMotion(delta) => {
+                if self.dragging && self.raw_mode {
+                    self.drag(delta.y, value, maximum);
+                    return true;
+                }
                 return false;
             }
             Input::Wheel(p, notches) if editing && field.contains(*p - offset) => {
@@ -57,6 +76,9 @@ impl State {
                 self.remaining = 0.6;
                 self.first_repeat = true;
                 self.focus_requested = true;
+                self.anchor = p + offset;
+                self.dragging = false;
+                self.raw_mode = false;
                 true
             }
             Edge::Right { down: true, .. } if arrow.is_some() => {
@@ -65,15 +87,37 @@ impl State {
                 true
             }
             Edge::Left { down: false, .. } if self.held => {
-                self.held = false;
+                self.cancel();
                 true
             }
-            Edge::Motion { .. } if self.held => true,
+            Edge::Motion { delta } if self.held => {
+                if self.dragging {
+                    // Before Winit applies capture, replay logical cursor edges.
+                    // Once locked, only raw motion drives the original relative
+                    // motion formula; warp-generated CursorMoved is ignored.
+                    if !self.raw_mode {
+                        self.drag(delta.y, value, maximum);
+                    }
+                } else if (p + offset).distance(self.anchor) > 2. {
+                    self.dragging = true;
+                    self.base = *value;
+                    self.relative_y = 0.;
+                }
+                true
+            }
             _ => false,
         }
     }
+    fn drag(&mut self, dy: f32, value: &mut u16, maximum: u16) {
+        if !dy.is_finite() {
+            return;
+        }
+        self.relative_y += f64::from(dy);
+        let diff = -0.01 * self.relative_y.abs().powf(1.8) * self.relative_y.signum();
+        *value = super::expression::clamp(f64::from(self.base) + diff, maximum);
+    }
     pub fn step(&mut self, dt: f32, field: Rect, value: &mut u16, maximum: u16) {
-        if !self.held {
+        if !self.held || self.dragging {
             return;
         }
         self.remaining -= dt.max(0.);
@@ -99,13 +143,7 @@ impl State {
     }
 }
 pub(super) fn committed(text: &str, old: u16, maximum: u16) -> u16 {
-    text.trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|v| v.is_finite())
-        .map_or(old, |v| {
-            v.round().clamp(1., f64::from(maximum.max(1))) as u16
-        })
+    super::expression::committed(text, old, maximum)
 }
 
 #[derive(Component)]
@@ -297,3 +335,9 @@ mod tests {
         assert_eq!(committed("2.5", 7, 20), 3);
     }
 }
+
+#[cfg(test)]
+mod capture_tests;
+
+#[cfg(test)]
+mod number_tests;
