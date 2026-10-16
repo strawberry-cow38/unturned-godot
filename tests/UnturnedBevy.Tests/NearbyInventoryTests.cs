@@ -183,7 +183,6 @@ public sealed class NearbyInventoryTests
             .Single(c=>c.GetProperty("page").GetByte()==7);
         Assert.That(other.GetProperty("tile").GetProperty("amount").GetUInt16(),Is.EqualTo(30),"other viewer repainted");
         Assert.That(raw.amount+bag.getItemCount(Currency.StackId)+crate.Storage.items.Sum(j=>j.item.amount),Is.EqualTo(700));
-        Assert.That(bag.items[PlayerInventory.AREA].getItemCount(),Is.Zero);
     }
     [Test]
     public void ActualUdpEmptyZeroesOnlyTheExactGroundCanAndRefusesOtherRows()

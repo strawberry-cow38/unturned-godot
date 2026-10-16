@@ -97,7 +97,9 @@ namespace UnturnedGodot.Net
     /// <summary>Protocol 77 command 88: one original MagRules round in which the
     /// magazine, the loose-round stack, or both are exact received Nearby rows
     /// (source UnloadSelected/TryStartLoad over the ground page). Unload has no
-    /// round scope, only the expected loose-round ID; the result is Event60.</summary>
+    /// round scope, only the expected loose-round ID; the result is Event60.
+    /// A ground part is admitted by scan plus first-contributor identity; the
+    /// revision and root are informational (concurrent jobs repaint).</summary>
     public struct NearbyMagazineTransferCommand
     {
         public uint RequestId, ScanId, Revision;

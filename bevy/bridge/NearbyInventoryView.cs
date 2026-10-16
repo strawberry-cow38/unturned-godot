@@ -104,7 +104,9 @@ public sealed partial class BridgeHost
         return new{queued=_client.SendNearbyOperation(command),requestId=request};
     }
     /// <summary>Command 88. Its request ID belongs to the magazine job's 81/85
-    /// sequence (one host ledger), never to the Nearby counter above. A part
+    /// sequence (one host ledger), never to the Nearby counter above. The host
+    /// admits a ground part by its world identity in the current scan; the
+    /// revision is informational. A part
     /// with a nonzero world ID is a received ground row; otherwise it is the
     /// exact scoped owned/container address the magazine routes already use.</summary>
     object RequestNearbyMagazineTransfer(JsonElement args)

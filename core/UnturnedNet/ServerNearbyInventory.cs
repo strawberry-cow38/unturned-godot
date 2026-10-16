@@ -211,6 +211,8 @@ namespace UnturnedGodot.Net
                 // which for a ground row is the live world item itself.
                 if (row.Sources.Length != 1 || !WorldItems.TryGet(row.Sources[0].WorldId, out var can)
                     || can.ServerItem.GetAsset()?.IsFuelContainer != true) return NearbyResult.Denied;
+                // Fuel is not a public world-item field (nor saved with it), so
+                // no ServerItemChanged; RefreshNearby repaints every Nearby viewer.
                 can.ServerItem.fuelLevel = 0;
                 return NearbyResult.Transferred;
             }
@@ -219,43 +221,35 @@ namespace UnturnedGodot.Net
             if (grid == null) return NearbyResult.Denied;
             var source = row.Jar.item; int before = source.amount, taken;
             var probe = new ItemJar(source);
-            if (command.Operation == NearbyOperation.Place)
+            if (command.Operation == NearbyOperation.Split && command.Amount >= before) return NearbyResult.Denied;   // the whole stack is a move
+            // PlayerInventory.TryDrag's cross-page rules for both gestures: the
+            // holster rule, then hand slots at their single cell with rot 0.
+            // (OnSplitItem lacks the holster check; a ground split keeps it.)
+            bool slot = command.Page < PlayerInventory.SLOTS;
+            byte x = slot ? (byte)0 : command.ToX, y = slot ? (byte)0 : command.ToY, rot = slot ? (byte)0 : command.ToRot;
+            if (source.GetAsset()?.slot.CanOccupyPage(command.Page) != true) return NearbyResult.NoRoom;
+            int wanted = command.Operation == NearbyOperation.Place ? before : command.Amount;
+            byte at = grid.getIndex(x, y);
+            if (at != byte.MaxValue)
             {
-                // PlayerInventory.TryDrag's move-onto-empty rule for a different
-                // page: holster rule, rotation-aware empty footprint, hand slots at
-                // their single cell with rot 0. A ground row has nowhere to receive
-                // a swapped occupant, so an occupied target is refused.
-                bool slot = command.Page < PlayerInventory.SLOTS;
-                byte x = slot ? (byte)0 : command.ToX, y = slot ? (byte)0 : command.ToY, rot = slot ? (byte)0 : command.ToRot;
-                if (source.GetAsset()?.slot.CanOccupyPage(command.Page) != true
-                    || !grid.checkSpaceEmpty(x, y, probe.size_x, probe.size_y, rot)) return NearbyResult.NoRoom;
-                grid.addItem(x, y, rot, source.Clone());
-                taken = before;
+                // TryDrag/OnSplitItem merge onto the same ID at that cell up to its
+                // stack size; a magazine's amount is rounds, never merged. Any other
+                // occupant would be a swap, and a ground row cannot receive one.
+                var into = grid.getItem(at);
+                var asset = into?.item == null ? null : Assets.find(into.item.id);
+                int room = into?.item == null || into.item.id != source.id || asset?.IsMagazine == true ? 0
+                    : Math.Max(1, asset?.stackSize ?? 1) - into.item.amount;
+                if (room <= 0 || wanted == 0) return NearbyResult.NoRoom;
+                taken = Math.Min(wanted, room);
+                into.item.amount = (ushort)(into.item.amount + taken);
+                grid.raiseStateUpdated();
             }
             else
             {
-                // ServerTransactions.OnSplitItem's named-cell branch against the
-                // projected row: never the whole stack; merge onto the same ID at
-                // that cell up to its stack size, otherwise an empty footprint.
-                if (command.Amount >= before) return NearbyResult.Denied;
-                byte at = grid.getIndex(command.ToX, command.ToY);
-                if (at != byte.MaxValue)
-                {
-                    var into = grid.getItem(at);
-                    if (into?.item == null || into.item.id != source.id) return NearbyResult.NoRoom;
-                    int room = Math.Max(1, Assets.find(into.item.id)?.stackSize ?? 1) - into.item.amount;
-                    if (room <= 0) return NearbyResult.NoRoom;
-                    taken = Math.Min(command.Amount, room);
-                    into.item.amount = (ushort)(into.item.amount + taken);
-                    grid.raiseStateUpdated();
-                }
-                else
-                {
-                    if (!grid.checkSpaceEmpty(command.ToX, command.ToY, probe.size_x, probe.size_y, command.ToRot)) return NearbyResult.NoRoom;
-                    var made = source.Clone(); made.amount = command.Amount;
-                    grid.addItem(command.ToX, command.ToY, command.ToRot, made);
-                    taken = command.Amount;
-                }
+                if (!grid.checkSpaceEmpty(x, y, probe.size_x, probe.size_y, rot)) return NearbyResult.NoRoom;
+                var made = source.Clone(); made.amount = (ushort)wanted;
+                grid.addItem(x, y, rot, made);
+                taken = wanted;
             }
             DebitNearby(session, row, before, taken);
             Inventories.ServerMarkDirty(owner);
@@ -275,9 +269,20 @@ namespace UnturnedGodot.Net
         {
             if (!Players.TryGetByOwner(owner, out var player) || !Inventories.TryGet(owner, out var entry)) return (MagazineTransferResult.MissingInventory, 0);
             if (!CombatState.IsAlive(owner)) return (MagazineTransferResult.Dead, 0);
-            bool usable = NearbyVisible != null && Inventories.ItemIdentityProvider != null && NearbyEye(owner, command.Eye);
-            NearbyPacking.Row Ground(NearbyRowRef r) => usable && AdmitNearbyRow(session, command.ScanId, command.Revision, r.X, r.Y,
-                r.WorldId, r.Token, command.Eye, out var row) == NearbyResult.Ready ? row : null;
+            bool usable = NearbyVisible != null && Inventories.ItemIdentityProvider != null && NearbyEye(owner, command.Eye)
+                && session.Current.ScanId != 0 && command.ScanId == session.Current.ScanId;
+            // Source _magOps run concurrently and every accepted round repaints
+            // the picture, so an exact revision would let one job (or anyone's
+            // nearby pickup) cancel another mid-batch. A ground part is admitted
+            // by its exact first-contributor identity in the current scan,
+            // wherever the repaint put it; the full Take recheck (every live
+            // token and full bytes, range, LOS) still runs on the newest picture.
+            NearbyPacking.Row Ground(NearbyRowRef r)
+            {
+                var found = usable ? session.Current.Rows.FirstOrDefault(x => x.Sources[0].WorldId == r.WorldId && x.Sources[0].Token == r.Token) : null;
+                return found != null && AdmitNearbyRow(session, session.Current.ScanId, session.Current.Revision, found.Jar.x, found.Jar.y,
+                    r.WorldId, r.Token, command.Eye, out var row) == NearbyResult.Ready ? row : null;
+            }
             var inv = entry.Inventory;
             Item magazine; uint magazineWorld = 0;
             if (command.MagazineGround)

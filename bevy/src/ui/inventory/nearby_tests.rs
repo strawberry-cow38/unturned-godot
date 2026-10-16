@@ -415,9 +415,15 @@ fn cell_item(app: &App, page: u8, x: u8, y: u8) -> Option<InventoryItem> {
 #[test]
 fn ground_rmb_carry_and_rotated_drag_wait_for_command87_acceptance() {
     let (host, mut app, window) = setup();
-    drop_host(&host, &mut app, 6);
+    let round = owned_round(&app);
+    spawn_ground(
+        &host,
+        &mut app,
+        json!([{"itemId":round,"amount":12,"position":[0,1.75,-1]},
+            {"itemId":6,"amount":17,"position":[0.4,1.75,-1]}]),
+    );
     open(&host, &mut app);
-    let row = nearby(&app);
+    let row = nearby_id(&app, round);
     let total = app
         .world()
         .resource::<Menu>()
@@ -425,7 +431,7 @@ fn ground_rmb_carry_and_rotated_drag_wait_for_command87_acceptance() {
         .tile(row.address.cell())
         .unwrap()
         .amount;
-    assert!(total > 1, "source magazine stack");
+    assert_eq!(total, 12, "loose round stack");
     assert!(cell_item(&app, 2, 0, 1).is_none() && cell_item(&app, 2, 4, 0).is_none());
     let (area, pocket) = ground_grids(&mut app);
     let at = |cell: Cell| area.min + Vec2::new(cell.x as f32, cell.y as f32) * CELL + Vec2::splat(20.);
@@ -476,18 +482,11 @@ fn ground_rmb_carry_and_rotated_drag_wait_for_command87_acceptance() {
     );
     assert_eq!(split[0]["worldId"], row.address.world_id);
     assert_eq!(split[0]["token"], row.address.token);
-    assert_eq!(cell_item(&app, 2, 0, 1).map(|i| (i.id, i.amount)), Some((6, 1)));
-    let row = nearby(&app);
-    assert_eq!(
-        app.world()
-            .resource::<Menu>()
-            .view
-            .tile(row.address.cell())
-            .unwrap()
-            .amount,
-        total - 1
-    );
-    // Whole-row drag with source R rotation to the released cell.
+    assert_eq!(cell_item(&app, 2, 0, 1).map(|i| (i.id, i.amount)), Some((round, 1)));
+    assert_eq!(ground_amount(&app, row.address.world_id), Some(total - 1));
+    // Whole-row drag of the ground magazine with source R rotation.
+    let row = nearby_id(&app, 6);
+    let total = ground_amount(&app, row.address.world_id).unwrap();
     let p = at(row.address.cell());
     pointer(
         &mut app,
@@ -522,9 +521,18 @@ fn ground_rmb_carry_and_rotated_drag_wait_for_command87_acceptance() {
         (&json!(2), &json!(4), &json!(0), &json!(1))
     );
     let landed = cell_item(&app, 2, 4, 0).expect("accepted rotated cell");
-    assert_eq!((landed.id, landed.rot, landed.amount), (6, 1, total - 1));
+    assert_eq!((landed.id, landed.rot, landed.amount), (6, 1, total));
     let menu = app.world().resource::<Menu>();
-    assert!(menu.view.items.iter().all(|r| r.address.page != AREA));
+    assert_eq!(
+        menu.view
+            .items
+            .iter()
+            .filter(|r| r.address.page == AREA)
+            .map(|r| r.address.id)
+            .collect::<Vec<_>>(),
+        [round],
+        "only the remaining rounds stay on the ground"
+    );
     assert!(menu.notice.is_empty(), "{}", menu.notice);
     assert!(
         !app.world().resource::<GameSnapshot>().0["worldItems"]
@@ -537,8 +545,13 @@ fn ground_rmb_carry_and_rotated_drag_wait_for_command87_acceptance() {
 #[test]
 fn ground_split_strip_and_context_empty_send_exact_operations_only() {
     let (host, mut app, window) = setup();
+    let round = owned_round(&app);
     drop_host(&host, &mut app, 28);
-    drop_host(&host, &mut app, 6);
+    spawn_ground(
+        &host,
+        &mut app,
+        json!([{"itemId":round,"amount":20,"position":[0.4,1.75,-1]}]),
+    );
     open(&host, &mut app);
     let rows = app
         .world()
@@ -550,7 +563,7 @@ fn ground_split_strip_and_context_empty_send_exact_operations_only() {
         .cloned()
         .collect::<Vec<_>>();
     let can = rows.iter().find(|r| r.address.id == 28).unwrap().clone();
-    let magazine = rows.iter().find(|r| r.address.id == 6).unwrap().clone();
+    assert!(rows.iter().any(|r| r.address.id == round));
     assert_eq!(
         can.actions
             .iter()
@@ -575,11 +588,11 @@ fn ground_split_strip_and_context_empty_send_exact_operations_only() {
     );
     // Split strip: the preview slot is dragged out with the edited count.
     let (_, pocket) = ground_grids(&mut app);
-    let magazine = nearby_id(&app, magazine.address.id);
+    let rounds = nearby_id(&app, round);
     let preview = Rect::from_corners(Vec2::new(700., 600.), Vec2::new(780., 680.));
     {
         let mut menu = app.world_mut().resource_mut::<Menu>();
-        menu.gesture.selected = Some(magazine.address.cell());
+        menu.gesture.selected = Some(rounds.address.cell());
         menu.gesture.split_amount = 5;
         menu.hits.split_preview = Some(preview);
     }
@@ -603,7 +616,8 @@ fn ground_split_strip_and_context_empty_send_exact_operations_only() {
         (&split[0]["operation"], &split[0]["amount"], &split[0]["toX"], &split[0]["toY"]),
         (&json!("Split"), &json!(5), &json!(1), &json!(1))
     );
-    assert_eq!(cell_item(&app, 2, 1, 1).map(|i| (i.id, i.amount)), Some((6, 5)));
+    assert_eq!(cell_item(&app, 2, 1, 1).map(|i| (i.id, i.amount)), Some((round, 5)));
+    assert_eq!(ground_amount(&app, rounds.address.world_id), Some(15));
 }
 fn nearby_id(app: &App, id: u16) -> api::Item {
     app.world()
@@ -671,6 +685,17 @@ fn ground_refusals_keep_source_snap_home_and_send_nothing() {
     pump(&host, &mut app, 8);
     step(&mut app, 0.11);
     assert_eq!(nearby(&app).address.world_id, row.address.world_id);
+}
+/// The loose round matching the setup magazine, from the accepted view.
+fn owned_round(app: &App) -> u16 {
+    app.world()
+        .resource::<Menu>()
+        .view
+        .items
+        .iter()
+        .find(|r| r.address.page < OWN_PAGES && r.address.id == 6)
+        .unwrap()
+        .round_id
 }
 fn spawn_ground(host: &CoreBridge, app: &mut App, items: serde_json::Value) {
     host.request("worldSpawn", json!({ "items": items })).unwrap();

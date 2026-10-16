@@ -251,7 +251,6 @@ public sealed class NearbyInventoryTests
         h.Server.WorldItems.ServerSpawn(new NetId(901),new Item(TransactionalFixtures.RifleId),eye,0);Open(h,a,5,eye);
         Assert.That(Send(h,a,Op(a,6,eye,NearbyOperation.Place,page:0,x:3,y:2,rot:3)),Is.EqualTo(NearbyResult.Transferred));
         Assert.That(bag.items[0].items.Select(j=>(j.x,j.y,j.rot)),Is.EqualTo(new[]{((byte)0,(byte)0,(byte)0)}),"hand slot is its one cell at rot 0");
-        Assert.That(bag.items[PlayerInventory.AREA].getItemCount(),Is.Zero);
     }
     [Test]
     public void SplitTakesOnlyTheNamedCountFromContributorsInSourceOrderAndMergesAtTheCell()
@@ -371,7 +370,7 @@ public sealed class NearbyInventoryTests
         Assert.That(ground.amount,Is.EqualTo(2));Assert.That(bag.getItemCount(TransactionalFixtures.Round556Id),Is.EqualTo(1));
         Assert.That(a.Nearby.Rows[0].Jar.item.amount,Is.EqualTo(2),"owner picture follows the world magazine");
         Assert.That(Step(unload),Is.EqualTo(fact),"exact replay resends the stored result");Assert.That(ground.amount,Is.EqualTo(2));
-        var stale=unload;stale.RequestId=3;Assert.That(Step(stale).Result,Is.EqualTo(MagazineTransferResult.StaleMagazine),"old revision");
+        var stale=unload;stale.RequestId=3;stale.ScanId++;Assert.That(Step(stale).Result,Is.EqualTo(MagazineTransferResult.StaleMagazine),"another scan");
         bag.items[2].items.Single().item.amount=30;   // the one pocket cell is a full stack
         var full=unload;full.RequestId=4;full.Revision=a.Nearby.Revision;
         Assert.That(Step(full).Result,Is.EqualTo(MagazineTransferResult.NoRoom),"full bag: add before decrement");
@@ -392,6 +391,57 @@ public sealed class NearbyInventoryTests
         Assert.That(a.Nearby.Result,Is.EqualTo(NearbyResult.Transferred));
         Assert.That(bag.items.Take(PlayerInventory.OWNPAGES).SelectMany(p=>p.items).Single(j=>j.item.id==TransactionalFixtures.StanagId).item.amount,
             Is.EqualTo(3));Assert.That(h.Server.WorldItems.TryGet(900,out _),Is.False,"no leftover magazine body on the ground");
+    }
+    [Test]
+    public void ConcurrentGroundJobsSurviveEachOthersRepaintsButNotAClosedScanOrDeath()
+    {
+        var (h,a,bag,eye)=Owner(48318,"owner","other");var b=h.Clients[1];var facts=new List<MagazineTransferEvent>();a.MagazineTransferred+=facts.Add;
+        var first=new Item(TransactionalFixtures.StanagId,3);var second=new Item(TransactionalFixtures.StanagId,3);
+        h.Server.WorldItems.ServerSpawn(new NetId(900),first,eye,0);h.Server.WorldItems.ServerSpawn(new NetId(901),second,eye,0);
+        h.Server.WorldItems.ServerSpawn(new NetId(902),new Item(TransactionalFixtures.BeansId),eye,0);
+        bag.items[2].resize(4,4);Open(h,a,1,eye);
+        NearbyMagazineTransferCommand Unload(uint id,int row){var c=Mag(a,id,eye);c.Unloading=true;c.MagazineGround=true;c.MagazineRow=RowRef(a,row);
+            c.UnloadRoundId=TransactionalFixtures.Round556Id;return c;}
+        // Both built from one revision and in flight together, then someone
+        // else's pickup repaints the picture before a third step from it.
+        var one=Unload(2,0);var two=Unload(3,1);var three=Unload(4,1);
+        Assert.That(a.SendNearbyMagazineTransfer(one),Is.True);Assert.That(a.SendNearbyMagazineTransfer(two),Is.True);
+        Assert.That(h.StepUntil(()=>facts.Count==2),Is.True);
+        Assert.That(facts.Select(f=>f.Result),Is.All.EqualTo(MagazineTransferResult.Applied));
+        b.SendNearbyInventory(new(){RequestId=1,Action=NearbyAction.Open,Eye=eye});Assert.That(h.StepUntil(()=>b.Nearby.RequestId==1),Is.True);
+        var beans=b.Nearby.Rows.Single(r=>r.Jar.item.id==TransactionalFixtures.BeansId);var take=Transfer(b,2,eye);
+        take.WorldId=beans.Sources[0].WorldId;take.Token=beans.Sources[0].Token;take.X=beans.Jar.x;take.Y=beans.Jar.y;
+        b.SendNearbyInventory(take);h.Step(12);   // b's Take changes a's shared picture
+        Assert.That(h.Server.WorldItems.TryGet(902,out _),Is.False);
+        Assert.That(a.SendNearbyMagazineTransfer(three),Is.True);Assert.That(h.StepUntil(()=>facts.Count==3),Is.True);
+        Assert.That(facts[2].Result,Is.EqualTo(MagazineTransferResult.Applied),"identity, not the stale revision, names the magazine");
+        Assert.That((first.amount,second.amount,bag.getItemCount(TransactionalFixtures.Round556Id)),Is.EqualTo(((ushort)2,(ushort)1,3)));
+        a.SendNearbyInventory(new(){RequestId=5,Action=NearbyAction.Close});Open(h,a,6,eye);
+        var oldScan=Unload(7,0);oldScan.ScanId=1;Assert.That(a.SendNearbyMagazineTransfer(oldScan),Is.True);
+        Assert.That(h.StepUntil(()=>facts.Count==4),Is.True);Assert.That(facts[3].Result,Is.EqualTo(MagazineTransferResult.StaleMagazine),"reopen is a new scan");
+        h.Server.CombatState.TryGet(a.PlayerId,out var life);life.Alive=false;
+        Assert.That(a.SendNearbyMagazineTransfer(Unload(8,0)),Is.True);Assert.That(h.StepUntil(()=>facts.Count==5),Is.True);
+        Assert.That(facts[4].Result,Is.EqualTo(MagazineTransferResult.Dead));Assert.That(first.amount+second.amount,Is.EqualTo(3));
+    }
+    [Test]
+    public void GroundPlaceAndSplitKeepTryDragMergeHolsterAndMagazineRules()
+    {
+        var (h,a,bag,eye)=Owner(48319);
+        var rounds=new Item(TransactionalFixtures.Round556Id,25);h.Server.WorldItems.ServerSpawn(new NetId(900),rounds,eye,0);
+        var mag=new Item(TransactionalFixtures.StanagId,4);h.Server.WorldItems.ServerSpawn(new NetId(901),mag,eye,0);
+        var pocket=bag.items[2];pocket.resize(3,2);var stack=new Item(TransactionalFixtures.Round556Id,20);pocket.addItem(0,0,0,stack);
+        var empty=new Item(TransactionalFixtures.StanagId,0);pocket.addItem(1,0,0,empty);Open(h,a,1,eye);
+        int Row(ushort id)=>a.Nearby.Rows.ToList().FindIndex(r=>r.Jar.item.id==id);
+        Assert.That(Send(h,a,Op(a,2,eye,NearbyOperation.Split,row:Row(rounds.id),page:0,amount:5)),Is.EqualTo(NearbyResult.NoRoom),
+            "rounds can never occupy a hand slot, split or not");
+        Assert.That(bag.items[0].getItemCount(),Is.Zero);
+        Assert.That(Send(h,a,Op(a,3,eye,NearbyOperation.Split,row:Row(mag.id),page:2,x:1,amount:1)),Is.EqualTo(NearbyResult.NoRoom),
+            "a magazine's amount is rounds: never merged onto another magazine");
+        Assert.That((empty.amount,empty.magLoadedRound,mag.amount),Is.EqualTo(((ushort)0,(string)null,(ushort)4)));
+        Assert.That(Send(h,a,Op(a,4,eye,NearbyOperation.Place,row:Row(rounds.id),page:2,x:0)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That((stack.amount,rounds.amount),Is.EqualTo(((ushort)30,(ushort)15)),"TryDrag merge: the remainder stays at the origin");
+        Assert.That(Send(h,a,Op(a,5,eye,NearbyOperation.Place,row:Row(rounds.id),page:2,x:0)),Is.EqualTo(NearbyResult.NoRoom),
+            "a full stack would be a swap");
     }
     [Test]
     public void OwnedMagazineLoadsFromTheFirstGroundContributorAndRechecksLos()

@@ -7,6 +7,11 @@ use serde::Deserialize;
 use serde_json::json;
 
 pub(super) const INTERVAL: f32 = 0.5;
+/// Adapter bound, not a source timer: a request the bridge never queued (for
+/// example, no completed camera for a ground step) gets no reply, and a later
+/// retry would be a stale ID on the shared ledger. The job retires instead of
+/// spinning its wheel forever; a late reply then matches no job.
+pub(super) const REPLY_TIMEOUT: f32 = 10.0;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +40,8 @@ pub(super) struct Operation {
     pub elapsed: f32,
     capacity: i32,
     pending: Option<Pending>,
+    /// Seconds an unanswered request has waited; see REPLY_TIMEOUT.
+    waiting: f32,
 }
 impl Operation {
     pub fn progress(&self) -> f32 {
@@ -66,8 +73,15 @@ impl Magazines {
         {
             return false;
         }
-        self.operations
-            .retain(|op| op.magazine.cell() != row.address.cell());
+        // Source keys a replacement on the magazine. A ground row can be
+        // repacked to another cell, so it is matched by its world identity.
+        self.operations.retain(|op| {
+            if op.magazine.ground() || row.address.ground() {
+                !op.magazine.same_instance(row.address)
+            } else {
+                op.magazine.cell() != row.address.cell()
+            }
+        });
         self.operations.push(Operation {
             magazine: row.address,
             unloading,
@@ -77,6 +91,7 @@ impl Magazines {
             elapsed: 0.,
             capacity: row.magazine_capacity,
             pending: None,
+            waiting: 0.,
         });
         true
     }
@@ -142,7 +157,13 @@ impl Magazines {
             };
             op.elapsed += delta.max(0.);
             match op.pending {
-                Some(Pending::Reply(..)) => continue,
+                Some(Pending::Reply(..)) => {
+                    op.waiting += delta.max(0.);
+                    if op.waiting > REPLY_TIMEOUT {
+                        self.operations.remove(index);
+                    }
+                    continue;
+                }
                 Some(Pending::Echo(tick, ground))
                     if (view.accepted_tick.wrapping_sub(tick) as i32) < 0
                         || (ground && (view.nearby_tick.wrapping_sub(tick) as i32) < 0) =>
@@ -184,6 +205,7 @@ impl Magazines {
             self.next_request = self.next_request.wrapping_add(1).max(1);
             let ground = op.magazine.ground() || round.ground();
             op.pending = Some(Pending::Reply(self.next_request, ground));
+            op.waiting = 0.;
             op.elapsed -= INTERVAL;
             let scoped = op.magazine.crate_id != 0 || round.crate_id != 0;
             let mut args = json!({

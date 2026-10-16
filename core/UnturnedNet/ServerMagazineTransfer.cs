@@ -47,7 +47,7 @@ namespace UnturnedGodot.Net
             });
 
         /// <summary>The shared owner-only completion: one monotonic replay ledger
-        /// per connection across81/85/88; exact replay resends the stored result.</summary>
+        /// per connection across commands 81, 85 and 88; exact replay resends the stored result.</summary>
         internal void ProcessMagazineRequest(ushort sender, uint requestId, ulong magazineToken, object command,
             System.Func<(MagazineTransferResult Result, ushort Amount)> apply)
         {

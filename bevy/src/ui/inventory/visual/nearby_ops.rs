@@ -1,6 +1,7 @@
-//! Production dashboard driving command 87 over actual UDP: a ground split
-//! strip drag, a rotated whole-row drag and context Empty. Pointer/key edges
-//! are scripted into the production ordered-input controller, not an OS mouse.
+//! Production dashboard driving commands 87/88 over actual UDP: a ground split
+//! strip drag, a rotated whole-row drag, context Empty and a timed ground
+//! Unload. Pointer/key edges are scripted into the production ordered-input
+//! controller, not an OS mouse.
 use super::*;
 #[derive(Resource)]
 struct Host(CoreBridge);
@@ -16,6 +17,8 @@ struct Journey {
     ground: Vec<u64>,
 }
 const STAGES: usize = 9;
+/// Loose 5.56 FMJ, the source round for the Military Magazine and Drum.
+const ROUND: u16 = 5004;
 #[test]
 #[ignore = "requires Vulkan/display; actual UDP Nearby split, rotated place and Empty"]
 fn gpu_nearby_split_rotated_place_and_empty() {
@@ -50,7 +53,8 @@ fn gpu_nearby_split_rotated_place_and_empty() {
             json!({"items":[
                 {"itemId":6,"amount":23,"quality":67,"position":[0,1.75,-1]},
                 {"itemId":28,"quality":81,"fuelLevel":12000.0,"position":[0.6,1.75,-1]},
-                {"itemId":17,"amount":12,"quality":64,"position":[-0.6,1.75,-1]}]}),
+                {"itemId":17,"amount":12,"quality":64,"position":[-0.6,1.75,-1]},
+                {"itemId":ROUND,"amount":40,"position":[0.3,1.75,-0.8]}]}),
         )
         .unwrap();
     let ground = spawned["result"]["entities"]
@@ -150,28 +154,30 @@ fn gpu_nearby_split_rotated_place_and_empty() {
             .map(|r| r["amount"].clone())
     };
     assert_eq!(ground_amount(0, 6), Some(json!(23)));
-    assert!(!facts[0]["own"].as_array().unwrap().iter().any(|r| r["id"] == 6));
+    assert_eq!(ground_amount(0, ROUND), Some(json!(40)));
+    assert!(!facts[0]["own"].as_array().unwrap().iter().any(|r| r["id"] == 6 || r["id"] == ROUND));
     assert_eq!(facts[1]["split"], json!(5), "source strip on a ground stack");
-    assert_eq!(ground_amount(2, 6), Some(json!(18)));
-    assert!(facts[2]["own"].as_array().unwrap().iter().any(|r| r["id"] == 6 && r["amount"] == 5 && r["rot"] == 0));
+    assert_eq!(facts[1]["actions"], json!(["Take", "Close"]));
+    assert_eq!(ground_amount(2, ROUND), Some(json!(35)));
+    assert!(facts[2]["own"].as_array().unwrap().iter().any(|r| r["id"] == ROUND && r["amount"] == 5));
     assert_eq!(facts[3]["carry"], json!({"id":6,"rotation":1}));
     assert_eq!(ground_amount(4, 6), None);
-    assert!(facts[4]["own"].as_array().unwrap().iter().any(|r| r["id"] == 6 && r["amount"] == 18 && r["rot"] == 1));
+    assert!(facts[4]["own"].as_array().unwrap().iter().any(|r| r["id"] == 6 && r["amount"] == 23 && r["rot"] == 1));
     assert_eq!(facts[5]["actions"], json!(["Empty", "Take", "Close"]));
     assert_eq!(facts[5]["fuel"], json!(12000.0));
     assert_eq!(facts[6]["fuel"], json!(0.0));
-    assert_eq!(facts[6]["worldRemaining"], 2, "Empty never takes the can");
+    assert_eq!(facts[6]["worldRemaining"], 3, "Empty never takes the can");
     assert_eq!(facts[7]["actions"], json!(["Take", "Unload", "Close"]));
     let drum = ground_amount(8, 17).unwrap().as_u64().unwrap();
     let loose = facts[8]["own"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|r| r["id"] != 6)
+        .filter(|r| r["id"] == ROUND)
         .map(|r| r["amount"].as_u64().unwrap())
         .sum::<u64>();
     assert!((1..12).contains(&drum), "accepted ground unload in progress: {drum}");
-    assert_eq!(drum + loose, 12, "every round is either in the drum or the bag");
+    assert_eq!(drum + loose, 12 + 5, "every round is in the drum or the bag (5 were split earlier)");
     assert_eq!(facts[8]["wheel"], json!(true), "source wheel on the ground drum");
     let journey: Vec<Value> = facts[8]["sent"].as_array().unwrap().clone();
     let operations = journey
@@ -293,9 +299,9 @@ fn record(world: &mut World) {
     }
     c.frame += 1;
     match (c.stage, c.frame) {
-        // 1: source RMB click on the ground stack opens its context strip.
+        // 1: source RMB click on the ground round stack opens its context strip.
         (1, 10) => {
-            let p = point(world, ground(world, 6));
+            let p = point(world, ground(world, ROUND));
             pointer(world, p, MouseButton::Right, ButtonState::Pressed);
             pointer(world, p, MouseButton::Right, ButtonState::Released);
         }
