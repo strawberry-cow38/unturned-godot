@@ -327,3 +327,8 @@ shared world clock, as in the source.
     platform sits in the same place under the frame. Godot also draws the power
     port cube, which the port does not.
   - Renders: `bevy/artifacts/{godot,bevy}-{traffic-green-red,carlift}.png`.
+- **Full-game PEI (`--play`, fixed `UG_INF_CAM`, frame 400, real
+  DevicePlugin):** the traffic mast at placement 1982 shows both heads lit;
+  Vendor_0 at placement 608 shows the red no-funds rim and the
+  "Insufficient funds -- $1 cola" billboard. No panics in the run log.
+  Captures (local, gitignored): `bevy/artifacts/bevy-game-{traffic,vending}.png`.
