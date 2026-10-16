@@ -333,6 +333,17 @@ public sealed class DedicatedServerTests
     }
 
     [Test]
+    public void HostDoorProbesForRemoteRidersAreAcceptedWithoutALocalPlayer()
+    {
+        // The native host re-probes every remote rider's door (vehicle/remote_exits.rs);
+        // refusing the op on a dedicated host left every joined rider stuck in a seat.
+        Boot();
+        var e = Assert.Throws<ArgumentException>(() => Call("worldVehicleExit", new { netId = 999999, seat = 0, clear = true, position = new[] { 0f, 0f, 0f } }));
+        Assert.That(e.Message, Does.Contain("Unknown vehicle seat"));
+        Assert.Throws<InvalidOperationException>(() => Call("action", new { name = "exitVehicle", args = new { } }), "local-player operations stay refused");
+    }
+
+    [Test]
     public void OversizedMaxPlayersIsClampedToTheSessionCap()
     {
         Environment.SetEnvironmentVariable("UG_MAXPLAYERS", "64");

@@ -268,7 +268,7 @@ public sealed partial class BridgeHost
     static readonly string[] DedicatedOperations = [
         "init", "shutdown", "tick", "snapshot", "catalog", "diagnostics", "npcCatalog", "profileRules",
         "terrain", "worldGeometry", "worldDynamicGeometry", "worldRay", "worldSpawns", "worldSpawn", "worldServices",
-        "mapServices", "worldLoot", "worldVehicles", "worldVehicleState", "worldVehicleDamage", "worldVehicleLighting",
+        "mapServices", "worldLoot", "worldVehicles", "worldVehicleState", "worldVehicleExit", "worldVehicleDamage", "worldVehicleLighting",
         "worldVehicleGlazing", "worldNpcHelis", "worldMountedInput", "worldWildlife", "worldZombies", "worldZombieState",
         "worldZombieNoise", "worldCosmeticGeometry", "save", "load", "dedicatedServe", "dedicatedStop",
     ];
