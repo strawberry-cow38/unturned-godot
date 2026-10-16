@@ -3,6 +3,7 @@ use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
 pub(crate) mod beds;
 pub(crate) mod buildings;
 mod demo_door;
+pub(crate) mod devices;
 pub(crate) mod finite;
 mod foliage;
 mod holiday;
@@ -113,6 +114,7 @@ impl Plugin for WorldPlugin {
             foliage::ResourcePresentationPlugin,
             terrain::TerrainPlugin,
             interactables::InteractablePlugin,
+            devices::DevicePlugin,
             origin::OriginPlugin,
             water::WaterPlugin,
             underwater::UnderwaterPlugin,
@@ -224,6 +226,8 @@ pub struct Placement {
     pub name: String,
     pub material: String,
     pub transform: Transform,
+    /// The retail row's authored Euler degrees (None on finite maps).
+    pub euler: Option<Vec3>,
 }
 
 /// Retail placement conversion shared by objects and resources. See WorldBuilder.cs:970.
@@ -283,6 +287,7 @@ pub fn parse_placements(
                 Vec3::new(n[3], n[4], n[5]),
                 Vec3::new(n[6], n[7], n[8]),
             ),
+            euler: Some(Vec3::new(n[3], n[4], n[5])),
         });
     }
     Ok(result)
@@ -1063,6 +1068,9 @@ fn build_world(
                 source_index: p.source_index,
             },
         ));
+        if let Some(euler) = p.euler {
+            entity.insert(devices::PlacementEuler(euler));
+        }
         if p.material.starts_with("Hedge_") && texture.is_some() {
             entity.insert(foliage::FoliageSurface::canopy());
         }

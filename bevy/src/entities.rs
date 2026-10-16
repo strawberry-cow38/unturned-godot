@@ -195,6 +195,13 @@ impl InteractionFocus {
             candidate.action == action && candidate.args["netId"].as_u64() == Some(u64::from(id))
         })
     }
+    /// Whether the winner is exactly (action, args): local targets that are
+    /// not keyed by a replicated NetId (world devices by placement index).
+    pub(crate) fn selected_args(&self, action: &str, args: &Value) -> bool {
+        self.candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.action == action && candidate.args == *args)
+    }
     /// A dispatched candidate with no prompt (the source shows none for it).
     pub fn offer_hidden(&mut self, distance: f32, action: &str, args: Value, open_storage: bool) {
         self.offer(distance, "", action, args.clone(), open_storage);

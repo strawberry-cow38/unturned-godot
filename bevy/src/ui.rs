@@ -285,6 +285,8 @@ pub enum Screen {
     Quests,
     Attachments,
     Lightbar,
+    /// NoteReader: a readable note's paper panel (world::devices::notes).
+    Note,
     Mechanics,
     Settings,
     Console,
@@ -1067,6 +1069,7 @@ fn rebuild_overlay(
         Screen::Playing
             | Screen::Attachments
             | Screen::Lightbar
+            | Screen::Note
             | Screen::Mechanics
             | Screen::Dialogue
             | Screen::Trade
@@ -1173,6 +1176,7 @@ fn rebuild_overlay(
                 Screen::Playing
                 | Screen::Attachments
                 | Screen::Lightbar
+                | Screen::Note
                 | Screen::Mechanics
                 | Screen::Dialogue
                 | Screen::Trade

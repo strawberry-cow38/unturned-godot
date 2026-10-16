@@ -118,8 +118,7 @@ fn collect(
     // Deployable.SetLookFocused: the neutral vehicle tint (no per-deployable rarity).
     focus.outline_net_id(body.net_id, owner, OUTLINE_COLOR);
 }
-/// Deployable.OutlineColor.
-const OUTLINE_COLOR: Color = Color::srgb(0.82, 0.83, 0.90);
+use super::OUTLINE_COLOR;
 
 fn apply(
     hovered: Res<Hovered>,
@@ -327,7 +326,7 @@ fn apply(
 }
 
 /// InfoBillboard.HealthColor / FuelColor / LoadColor (Palette R, Y, electric cyan).
-const HEALTH: Color = Color::srgb(191. / 255., 31. / 255., 31. / 255.);
+pub(super) const HEALTH: Color = Color::srgb(191. / 255., 31. / 255., 31. / 255.);
 const FUEL: Color = Color::srgb(220. / 255., 180. / 255., 19. / 255.);
 const LOAD: Color = Color::srgb(0x35 as f32 / 255., 0xc0 as f32 / 255., 0xe0 as f32 / 255.);
 

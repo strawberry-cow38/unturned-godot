@@ -119,6 +119,61 @@ impl Definition {
     }
 }
 
+/// `PowerNet.MainsLive` on the replicated path (`DayNightCycle.MainsLive`):
+/// believe the breakers when the world has any GridSource fixture, and fall
+/// back to the default-on global flag only when it has none.
+pub(crate) fn mains_live(snapshot: &Value, catalog: &ItemCatalog) -> bool {
+    let mut saw = false;
+    for row in snapshot["deployables"].as_array().into_iter().flatten() {
+        let grid = row["defId"].as_u64().is_some_and(|d| {
+            catalog
+                .deployables
+                .iter()
+                .any(|def| u64::from(def.id) == d && def.fixture == "GridSource")
+        });
+        if grid {
+            saw = true;
+            if row["toggledOn"] == true {
+                return true;
+            }
+        }
+    }
+    !saw
+}
+/// `Deployable.OutlineColor`.
+pub(crate) const OUTLINE_COLOR: Color = Color::srgb(0.82, 0.83, 0.90);
+/// `DeployableDef.PropFixture`'s name and health for a world-scenery body, when
+/// the catalogue's def `id` carries that prop model.
+pub(crate) fn fixture_name_health(catalog: &ItemCatalog, id: u16, model: &str) -> Option<(String, f32)> {
+    catalog
+        .deployables
+        .iter()
+        .find(|d| d.id == id && d.model.as_deref() == Some(model))
+        .map(|d| (d.name.clone(), d.health))
+}
+/// The world-scenery `Deployable` billboard: name, full HP, no prompt.
+pub(crate) fn scenery_billboard(name: &str, health: f32, origin: Vec3) -> crate::info_billboard::View {
+    crate::info_billboard::View {
+        position: origin + Vec3::Y * 0.5,
+        content: crate::info_billboard::Content {
+            name: name.into(),
+            name_color: OUTLINE_COLOR,
+            prompt: String::new(),
+            prompt_color: OUTLINE_COLOR,
+            bars: [
+                Some(crate::info_billboard::Bar {
+                    value: if health > 0. { 1. } else { 0. },
+                    color: interaction::HEALTH,
+                }),
+                None,
+                None,
+                None,
+                None,
+            ],
+        },
+    }
+}
+
 #[derive(Component)]
 pub(crate) struct Deployed {
     pub(crate) net_id: u32,
