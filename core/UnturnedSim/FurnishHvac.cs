@@ -81,7 +81,7 @@ namespace UnturnedSim
                     foreach (float u in us)
                     {
                         float x = w.X + dx * u + nx * t, z = w.Z + dz * u + nz * t, yaw = YawFacing(nx, nz);
-                        if (RegisterFits(name, x, z, yaw)) return Fixture(name, x, z, yaw);
+                        if (RegisterFits(name, x, z, yaw)) return OnFloor(Fixture(name, x, z, yaw));
                     }
                 }
                 // along an outside wall: every 0.25 m of the faces with no room behind them, ranked on the room's own draws
@@ -94,8 +94,20 @@ namespace UnturnedSim
                         cands.Add(f.Nx != 0 ? (f.At + f.Nx * off, t, YawFacing(f.Nx, 0)) : (t, f.At + f.Nz * off, YawFacing(0, f.Nz)));
                     }
                 foreach (var (x, z, yaw) in Rank(cands, null, rng))
-                    if (RegisterFits(name, x, z, yaw)) return Fixture(name, x, z, yaw);
+                    if (RegisterFits(name, x, z, yaw)) return OnFloor(Fixture(name, x, z, yaw));
                 return null;
+            }
+
+            /// <summary>A floor register stands ON the floor -- in a tiled or a concrete room, the room's cover 2 cm over the slab
+            /// (BuildWalls), not the slab: at the slab's top its 3.5 cm grille stood 2 cm deep in the cover, the floor running
+            /// through it (strawberry: "some floor vents are clipped with the floor"). So its base at the top of the highest floor
+            /// surface under its middle that lies on its storey's slab (within 0.1 m over the slab's top: a cover, not a landing).</summary>
+            FurniturePlan OnFloor(FurniturePlan m)
+            {
+                float slab = m.Y;
+                foreach (var w in _res.Walls)
+                    if (w.Kind == SurfaceKind.Floor && SurfaceTopAt(w, m.X, m.Z) is var t && t > m.Y && t < slab + 0.1f) m.Y = t;
+                return m;
             }
 
             /// <summary>Is the floor clear for a register: all of it this room's floor, no wall, stair or piece on it (the grid,

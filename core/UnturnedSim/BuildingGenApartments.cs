@@ -589,6 +589,7 @@ namespace UnturnedSim
                 int at = res.Notes.FindLastIndex(n => n.StartsWith("fitted the"));
                 if (at >= 0) res.Notes[at] += $", but short of {string.Join(", ", miss.Select(x => x.What).Distinct())}";
             }
+            SettleShared(res);   // (which of two surfaces sharing a plane is drawn there, as BuildingGen's: see there)
             if (turn) TurnHalf(res);
             return res;
         }

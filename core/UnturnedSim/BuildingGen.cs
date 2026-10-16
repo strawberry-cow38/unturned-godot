@@ -1470,6 +1470,8 @@ namespace UnturnedSim
             // last: a parapet on each flat roof as built, after everything that reads the walls -- joined where it meets a
             // taller part, as the editor's corner pass would join it
             SolveCorners(res.Walls, RoofShapes.AddParapets(res.Walls).Contains);
+            // and then which of two surfaces sharing a plane is drawn there (SettleShared), on the plan as built
+            SettleShared(res);
             if (turn) TurnHalf(res);
             return res;
 
@@ -3523,10 +3525,14 @@ namespace UnturnedSim
                 // (each side from the house wall's centreline, inside its footing, so the corner solve finds them already met)
                 if (!in0) footings.Add(o.AlongX ? (a0 + tf * 0.5f, face - e * he, a0 + tf * 0.5f, face + e * depth) : (face - e * he, a0 + tf * 0.5f, face + e * depth, a0 + tf * 0.5f));
                 if (!in1) footings.Add(o.AlongX ? (a1 - tf * 0.5f, face - e * he, a1 - tf * 0.5f, face + e * depth) : (face - e * he, a1 - tf * 0.5f, face + e * depth, a1 - tf * 0.5f));
+                // (their tops the deck's underside: the deck is the porch's floor, and owns its top and its edges. Run up to the
+                // deck's top, a footing shared that top across its width and its outer face was the deck's edge, the foundation's
+                // colour and the floor's fighting all along the porch -- strawberry: "crazy z fighting between floor textures and
+                // foundation walls")
                 foreach (var (x0, z0, x1, z1) in footings)
                 {
                     var f = Wall(x0, z0, x1, z1, -WallOpenings.FoundationDepth, tf);
-                    f.Height = WallOpenings.FoundationDepth; f.Kind = SurfaceKind.Foundation;
+                    f.Height = WallOpenings.FoundationDepth - Slab; f.Kind = SurfaceKind.Foundation;
                     res.Walls.Add(f);
                 }
             }
@@ -3653,6 +3659,212 @@ namespace UnturnedSim
                 grew++;
             }
             return grew;
+        }
+
+        /// <summary>⭐ WHO OWNS A SHARED PLANE (strawberry: "crazy z fighting between floor textures and foundation walls, 1st floor
+        /// wall tops clip and z fight the floor of the 2nd floor"). Two faces in one plane, facing the same way and painted
+        /// differently, are a coin toss per pixel for the depth test -- which face wins changes with the camera -- and the plan
+        /// laid every floor with its top in the plane of the walls under it: a storey's walls run up to its head, and the floor
+        /// over them has its top there too. Settled here, on the finished plan, by giving each shared plane to ONE surface:
+        ///   - A FLOOR OWNS ITS TOP. A wall under a floor or a ceiling stops at that slab's underside, Storey - Slab -- the
+        ///     OpeningTop every opening already stops at -- so none of it is in the plane of the floor over it: a partition, a
+        ///     basement's wall under the ground floor's rooms, a chimney's breast. A partition only partly under them (a
+        ///     business's, running on under a lower flat roof, which sits ON it; one under a stair hole) is split where they
+        ///     stop, each stretch under them stopping short, the pieces joined as the corner solve joins any wall. Not the
+        ///     outline's walls: the slab stops SlabInset short of their outer faces, so none is wholly under it, and their tops
+        ///     carry the wall (or the roof) above. (A porch's footings stop under its deck where they are laid: AddPorches.)
+        ///   - A WALL OWNS ITS FACE. Where a stair hole's edge is the face of a wall standing up through the slab (an outside
+        ///     wall), the hole runs on through that wall to the slab's edge: the strip of slab left inside the wall showed its
+        ///     edge in the plane of the face, the floor's colour fighting the wall's up the stairwell. Every full-storey flight's
+        ///     hole is cut here as the editor's FitStairsToStructure cuts it (which still cuts its own, a part of this one) --
+        ///     clipped to each slab, so one over the join of an L's two slabs is cut in both rather than in neither.
+        ///   - A WALL OWNS THE SILL IT STANDS ON. In a doorway through a wall standing on another (an outside door: on the
+        ///     footing, or on the basement's wall), the threshold is that other wall's top -- the slab reached to 5 cm short of
+        ///     the outer face and shared it. The floor, and a room's cover over it, stop at the wall's face across the doorway.
+        /// Run LAST (after the furnisher, the corner solve and the parapets; before the half turn): everything that reads the
+        /// walls while the building is made -- the furnisher's floor plan, the corner solve, the chimney, the doodads -- knows
+        /// a storey's own walls by their full Storey height and a full flight's hole by its flight, so they all read the plan
+        /// they always did, and only what is drawn changes. Returns the walls stopped short (pieces), the floors cut at a sill
+        /// and the holes run on through a wall.</summary>
+        static (int Walls, int Sills, int Holes) SettleShared(BuildingGenResult res)
+        {
+            const float E = 1e-3f;
+            bool Flat(WallPlan w) => MathF.Abs(w.Pitch + 90f) < 0.01f && MathF.Abs(w.Yaw) < 0.01f;
+            bool Upright(WallPlan w) => (w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation) && MathF.Abs(w.Pitch) < 0.01f
+                                        && w.InsetL0 + w.InsetL1 + w.InsetR0 + w.InsetR1 < 0.02f && w.GableRise < E;
+            float Top(WallPlan s) => s.Y + s.Thickness * 0.5f;
+            // a storey's floors and ceilings (not a room's cover, a landing, the hatch's lid or a roof, which sits ON its walls)
+            var slabs = res.Walls.Where(w => w.Kind == SurfaceKind.Floor && Flat(w) && MathF.Abs(w.Thickness - Slab) < E).ToList();
+
+            // every full-storey flight's hole, in each slab it arrives at: its footprint StairHoleMargin all round
+            foreach (var st in res.Stairs)
+            {
+                float rise = st.Rise > 0f ? st.Rise : Storey;
+                if (rise < Storey - 0.01f) continue;
+                var (bx, bz) = st.Back; var (rx, rz) = st.Right;
+                float ex = st.X + bx * st.Run + rx * st.Width, ez = st.Z + bz * st.Run + rz * st.Width, m = WallOpenings.StairHoleMargin;
+                var hole = (MathF.Min(st.X, ex) - m, MathF.Min(st.Z, ez) - m, MathF.Max(st.X, ex) + m, MathF.Max(st.Z, ez) + m);
+                foreach (var s in slabs.Where(s => MathF.Abs(Top(s) - (st.Y + rise)) <= rise * 0.5f)) Cut(s, hole);
+            }
+
+            // a floor owns its top: each stretch of a wall under the solid of the slabs whose top is its own stops at their underside
+            int walls = 0;
+            var pieces = new List<WallPlan>();
+            foreach (var w in res.Walls.Where(Upright).ToList())
+            {
+                float head = w.Y + w.Height;
+                var over = slabs.Where(s => MathF.Abs(Top(s) - head) < E).SelectMany(Solid).ToList();
+                if (over.Count == 0 || w.Height <= Slab + E) continue;
+                var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                float dx = c, dz = -sn, h = w.Thickness * 0.5f, x0 = w.X, z0 = w.Z;
+                bool alongX = MathF.Abs(dz) < 0.5f;
+                (float X0, float Z0, float X1, float Z1) Across(float u0, float u1)
+                {
+                    float xa = x0 + dx * u0, xb = x0 + dx * u1, za = z0 + dz * u0, zb = z0 + dz * u1;
+                    return alongX ? (MathF.Min(xa, xb), z0 - h, MathF.Max(xa, xb), z0 + h) : (x0 - h, MathF.Min(za, zb), x0 + h, MathF.Max(za, zb));
+                }
+                // the run cut wherever a slab's edge crosses it, each stretch under the slabs across the wall's whole thickness or not
+                var us = new SortedSet<float> { 0f, w.Length };
+                foreach (var q in over)
+                    foreach (float a in alongX ? new[] { q.X0, q.X1 } : new[] { q.Z0, q.Z1 })
+                    {
+                        float u = (a - (alongX ? x0 : z0)) * (alongX ? dx : dz);
+                        if (u > E && u < w.Length - E) us.Add(u);
+                    }
+                var cuts = us.ToList();
+                var under = new bool[cuts.Count - 1];
+                for (int i = 0; i + 1 < cuts.Count; i++) under[i] = Covers(over, Across(cuts[i], cuts[i + 1]));
+                if (!under.Any(b => b)) continue;
+                // never a seam inside an opening: one with both kinds of stretch over it keeps the wall's height over all of it
+                foreach (var o in w.Openings)
+                {
+                    var inside = Enumerable.Range(0, under.Length).Where(i => cuts[i + 1] > o.U + E && cuts[i] < o.U + o.Width - E).ToList();
+                    if (inside.Any(i => under[i]) && inside.Any(i => !under[i])) foreach (int i in inside) under[i] = false;
+                }
+                var runs = new List<(float U0, float U1, bool Under)>();
+                for (int i = 0; i < under.Length; i++)
+                    if (runs.Count > 0 && runs[^1].Under == under[i]) runs[^1] = (runs[^1].U0, cuts[i + 1], under[i]);
+                    else runs.Add((cuts[i], cuts[i + 1], under[i]));
+                if (!runs.Any(r => r.Under)) continue;
+                // (split, a partition only: an outside wall partly under a slab is an L's inside corner, where the main block's floor
+                // runs on over the end of the wing's wall -- a corner square the main block's own wall shares and shows nowhere in
+                // the audit -- and a split turns every tee into it into a corner the editor's corner pass would grow)
+                if (runs.Count > 1 && w.Thickness > Inner + E) continue;
+                var ops = w.Openings.ToList();
+                float h0 = w.Height;
+                int at = res.Walls.IndexOf(w);
+                for (int k = 0; k < runs.Count; k++)
+                {
+                    var (u0, u1, low) = runs[k];
+                    var p = k == 0 ? w : new WallPlan
+                    {
+                        Y = w.Y, Yaw = w.Yaw, Pitch = w.Pitch, Kind = w.Kind, Height = h0, Thickness = w.Thickness, Material = w.Material,
+                        Texel = w.Texel, MaterialBack = w.MaterialBack, TexelBack = w.TexelBack,
+                    };
+                    if (runs.Count > 1)
+                    {
+                        p.X = x0 + dx * u0; p.Z = z0 + dz * u0; p.Length = u1 - u0;
+                        p.Openings.Clear();
+                        foreach (var o in ops)
+                            if (o.U >= u0 - E && o.U + o.Width <= u1 + E) { var q = o; q.U -= u0; p.Openings.Add(q); }
+                        pieces.Add(p);
+                        if (k > 0) res.Walls.Insert(++at, p);
+                    }
+                    if (!low) continue;
+                    p.Height -= Slab;
+                    for (int i = 0; i < p.Openings.Count; i++)
+                    {
+                        var o = p.Openings[i];
+                        if (o.V + o.Height > p.Height) { o.Height = MathF.Max(0f, p.Height - o.V); p.Openings[i] = o; }
+                    }
+                    walls++;
+                }
+            }
+            // (a piece's new end joined to whatever it meets there, as every wall's is -- openings kept in place)
+            if (pieces.Count > 0) SolveCorners(res.Walls, pieces.Contains);
+
+            // a wall owns its face: a hole's edge on a wall standing up through the slab runs on through that wall
+            var uprights = res.Walls.Where(Upright).ToList();
+            int holes = 0;
+            foreach (var s in slabs)
+            {
+                float top = Top(s);
+                var through = uprights.Where(w => w.Y <= top - Slab + E && w.Y + w.Height >= top - E).Select(PlanRect).ToList();
+                foreach (var o in s.Openings.ToList())
+                {
+                    float hx0 = s.X + o.U, hx1 = hx0 + o.Width, hz1 = s.Z - o.V, hz0 = hz1 - o.Height;
+                    foreach (var (px0, pz0, px1, pz1) in through)
+                    {
+                        float ax0 = MathF.Max(hx0, px0), ax1 = MathF.Min(hx1, px1), az0 = MathF.Max(hz0, pz0), az1 = MathF.Min(hz1, pz1);
+                        if (ax1 - ax0 > E && (MathF.Abs(hz0 - pz1) < E || MathF.Abs(hz1 - pz0) < E)) holes += Cut(s, (ax0, pz0, ax1, pz1)) ? 1 : 0;
+                        else if (az1 - az0 > E && (MathF.Abs(hx0 - px1) < E || MathF.Abs(hx1 - px0) < E)) holes += Cut(s, (px0, az0, px1, az1)) ? 1 : 0;
+                    }
+                }
+            }
+
+            // a wall owns the sill it stands on: across a doorway in a wall standing on another, no floor over that other's top
+            var floors = res.Walls.Where(w => w.Kind == SurfaceKind.Floor && Flat(w)).ToList();
+            int sills = 0;
+            foreach (var w in uprights)
+            {
+                if (w.Kind != SurfaceKind.Wall) continue;
+                var below = uprights.Where(b => b != w && MathF.Abs(b.Y + b.Height - w.Y) < E).Select(PlanRect).ToList();
+                if (below.Count == 0) continue;
+                var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                float dx = c, dz = -sn, h = w.Thickness * 0.5f;
+                foreach (var o in w.Openings.Where(o => o.V < WallOpenings.Eps))
+                {
+                    float u0 = MathF.Max(0f, o.U), u1 = MathF.Min(w.Length, o.U + o.Width);
+                    if (u1 - u0 < E) continue;
+                    float xa = w.X + dx * u0, xb = w.X + dx * u1, za = w.Z + dz * u0, zb = w.Z + dz * u1;
+                    var (dx0, dz0, dx1, dz1) = MathF.Abs(dz) < 0.5f ? (MathF.Min(xa, xb), w.Z - h, MathF.Max(xa, xb), w.Z + h)
+                                                                     : (w.X - h, MathF.Min(za, zb), w.X + h, MathF.Max(za, zb));
+                    foreach (var (bx0, bz0, bx1, bz1) in below)
+                    {
+                        var sill = (MathF.Max(dx0, bx0), MathF.Max(dz0, bz0), MathF.Min(dx1, bx1), MathF.Min(dz1, bz1));
+                        if (sill.Item3 - sill.Item1 < E || sill.Item4 - sill.Item2 < E) continue;
+                        foreach (var f in floors.Where(f => Top(f) > w.Y - E && Top(f) < w.Y + 0.05f)) sills += Cut(f, sill) ? 1 : 0;
+                    }
+                }
+            }
+            return (walls, sills, holes);
+        }
+
+        /// <summary>An upright wall's plan rectangle: its run along its yaw (a multiple of 90), its thickness centred on it.</summary>
+        static (float X0, float Z0, float X1, float Z1) PlanRect(WallPlan w)
+        {
+            var (c, s) = PlanTrig.CosSin(w.Yaw);
+            float ex = w.X + c * w.Length, ez = w.Z - s * w.Length, h = w.Thickness * 0.5f;
+            return MathF.Abs(s) < 0.5f ? (MathF.Min(w.X, ex), w.Z - h, MathF.Max(w.X, ex), w.Z + h) : (w.X - h, MathF.Min(w.Z, ez), w.X + h, MathF.Max(w.Z, ez));
+        }
+
+        /// <summary>A flat slab's solid in plan: its rectangle less its holes, as WallOpenings.Solids partitions it to draw it.</summary>
+        static IEnumerable<(float X0, float Z0, float X1, float Z1)> Solid(WallPlan s)
+            => WallOpenings.Solids(s.Length, s.Height, s.Openings).Select(q => (s.X + q.U0, s.Z - q.V1, s.X + q.U1, s.Z - q.V0));
+
+        /// <summary>Is the plan rectangle r wholly inside the union of `by`? Exact: every cell of the grid their edges cut r into.</summary>
+        static bool Covers(List<(float X0, float Z0, float X1, float Z1)> by, (float X0, float Z0, float X1, float Z1) r)
+        {
+            var xs = by.SelectMany(q => new[] { q.X0, q.X1 }).Where(x => x > r.X0 && x < r.X1).Append(r.X0).Append(r.X1).Distinct().OrderBy(x => x).ToList();
+            var zs = by.SelectMany(q => new[] { q.Z0, q.Z1 }).Where(z => z > r.Z0 && z < r.Z1).Append(r.Z0).Append(r.Z1).Distinct().OrderBy(z => z).ToList();
+            for (int i = 0; i + 1 < xs.Count; i++)
+                for (int j = 0; j + 1 < zs.Count; j++)
+                {
+                    if (xs[i + 1] - xs[i] < 1e-4f || zs[j + 1] - zs[j] < 1e-4f) continue;
+                    float cx = (xs[i] + xs[i + 1]) * 0.5f, cz = (zs[j] + zs[j + 1]) * 0.5f;
+                    if (!by.Any(q => q.X0 <= cx && cx <= q.X1 && q.Z0 <= cz && cz <= q.Z1)) return false;
+                }
+            return true;
+        }
+
+        /// <summary>Cut the plan rectangle r, clipped to it, out of a flat slab: a hole in the slab's own frame (from its min X along
+        /// +X, from its max Z along -Z). Whether there was anything to cut.</summary>
+        static bool Cut(WallPlan s, (float X0, float Z0, float X1, float Z1) r)
+        {
+            float x0 = MathF.Max(r.X0, s.X), x1 = MathF.Min(r.X1, s.X + s.Length), z0 = MathF.Max(r.Z0, s.Z - s.Height), z1 = MathF.Min(r.Z1, s.Z);
+            if (x1 - x0 < 1e-3f || z1 - z0 < 1e-3f) return false;
+            s.Openings.Add(new WallOpening(x0 - s.X, s.Z - z1, x1 - x0, z1 - z0));
+            return true;
         }
 
         /// <summary>The hole a switchback in `bay` needs in each floor it climbs to, in plan metres: over its two flights and
