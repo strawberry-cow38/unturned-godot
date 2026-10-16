@@ -344,6 +344,94 @@ public sealed class DedicatedServerTests
     }
 
     [Test]
+    public void ThrowingServiceIsLoggedAndTheServerKeepsServing()
+    {
+        // Godot logged a frame's exception and kept running; a deterministic throw
+        // must not reply ok:false every tick and crash-loop the server.
+        Boot();
+        var peer = Peer("player");
+        Pump();
+        _host.DedicatedTickFault = () => throw new InvalidOperationException("deterministic service fault");
+        Assert.DoesNotThrow(() => Pump(60));
+        Assert.That(Network().GetProperty("tickFaults").GetInt32(), Is.GreaterThanOrEqualTo(60));
+        Assert.That(Network().GetProperty("serving").GetBoolean(), Is.True);
+        Assert.That(peer.State, Is.EqualTo(NetSessionState.Connected), "replication still runs after the faulting step");
+        Assert.That(Run(peer, "save"), Is.EqualTo("saved to " + SavePath), "commands are still dispatched");
+    }
+
+    [Test]
+    public void StopAfterAnUnrecoveredFailureKeepsTheLastGoodSave()
+    {
+        Boot();
+        var peer = Peer("player");
+        Pump();
+        Assert.That(Run(peer, "save"), Is.EqualTo("saved to " + SavePath));
+        string good = File.ReadAllText(SavePath);
+        Call("worldSpawn", new { items = new[] { new { itemId = 13, amount = 1, position = new[] { 2f, 1f, 2f } } } });
+        Pump(2);
+        var stopped = JsonSerializer.SerializeToElement(Call("dedicatedStop", new { save = false }));
+        Assert.That(stopped.GetProperty("saved").GetBoolean(), Is.False);
+        Assert.That(File.ReadAllText(SavePath), Is.EqualTo(good), "the post-failure world is never written");
+        _host.EndOfInput();
+        Assert.That(File.ReadAllText(SavePath), Is.EqualTo(good), "nor by the closing pipe afterwards");
+    }
+
+    [Test]
+    public void SaveFromAnotherOriginIsRefusedWithoutBeingMoved()
+    {
+        Boot();
+        Call("save", new { path = SavePath });
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(SavePath))!;
+        json["BevyBridge"]!["OriginX"] = 4096;
+        File.WriteAllText(SavePath, json.ToJsonString());
+        string written = File.ReadAllText(SavePath);
+        Call("dedicatedStop", new { save = false });
+        _host.Dispose();
+        _host = new BridgeHost();
+        Boot(serve: false);
+        Assert.Throws<InvalidOperationException>(() => Call("dedicatedServe"));
+        Assert.That(File.ReadAllText(SavePath), Is.EqualTo(written), "a configuration refusal leaves the file in place");
+        Assert.That(Directory.GetFiles(_dir, "PEI.json.refused-*"), Is.Empty);
+    }
+
+    [Test]
+    public void RefusedSaveThatCannotBeMovedAsideIsNeverServedOver()
+    {
+        File.WriteAllText(SavePath, "{ not a save");
+        Boot(serve: false);
+        var mode = File.GetUnixFileMode(_dir);
+        File.SetUnixFileMode(_dir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => Call("dedicatedServe"));
+            Assert.That(Network().GetProperty("serving").GetBoolean(), Is.False, "the autosave would overwrite it");
+        }
+        finally { File.SetUnixFileMode(_dir, mode); }
+        Assert.That(File.ReadAllText(SavePath), Is.EqualTo("{ not a save"));
+    }
+
+    [Test]
+    public void DeployScriptRefusesToFastForwardAnyOtherBranch()
+    {
+        // The claw checkout is shared: merging origin/port/bevy into main would move main.
+        string repo = Path.Combine(_dir, "repo");
+        Directory.CreateDirectory(Path.Combine(repo, "tools"));
+        string script = Path.Combine(TestContext.CurrentContext.TestDirectory, "../../../../../tools/deploy-bevy-server.sh");
+        File.Copy(Path.GetFullPath(script), Path.Combine(repo, "tools/deploy-bevy-server.sh"));
+        void Git(string args) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", args)
+            { WorkingDirectory = repo, RedirectStandardOutput = true, RedirectStandardError = true })!.WaitForExit();
+        Git("init -q -b main");
+        Git("-c user.email=t@t -c user.name=t commit -q --allow-empty -m init");
+        var run = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("bash", "tools/deploy-bevy-server.sh")
+            { WorkingDirectory = repo, RedirectStandardOutput = true, RedirectStandardError = true })!;
+        string output = run.StandardOutput.ReadToEnd() + run.StandardError.ReadToEnd();
+        run.WaitForExit();
+        Assert.That(run.ExitCode, Is.EqualTo(1));
+        Assert.That(output, Does.Contain("refusing: this checkout is on 'main', not 'port/bevy'"));
+        Assert.That(output, Does.Not.Contain("fetching"), "nothing is fetched or merged");
+    }
+
+    [Test]
     public void OversizedMaxPlayersIsClampedToTheSessionCap()
     {
         Environment.SetEnvironmentVariable("UG_MAXPLAYERS", "64");

@@ -10,6 +10,15 @@ cd "$(dirname "$0")/.."
 branch="${UG_DEPLOY_BRANCH:-port/bevy}"
 export PATH="$HOME/.dotnet:$HOME/.cargo/bin:$PATH"
 
+# Only ever fast-forward the branch being deployed: the claw checkout is shared,
+# and merging origin/port/bevy into whatever is checked out (main) would move it.
+current="$(git symbolic-ref --quiet --short HEAD || true)"
+if [ "$current" != "$branch" ]; then
+  echo "[deploy] refusing: this checkout is on '${current:-detached HEAD}', not '$branch'." >&2
+  echo "[deploy] deploy from a dedicated worktree: git worktree add ../unturned-bevy-server $branch" >&2
+  exit 1
+fi
+
 echo "[deploy] fetching origin/$branch..."
 git fetch --quiet origin "$branch"
 git merge --ff-only "origin/$branch"   # a dirty/diverged tree fails loudly instead of guessing

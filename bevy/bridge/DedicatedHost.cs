@@ -158,6 +158,25 @@ public sealed partial class BridgeHost
         _lastHeartbeatTick = _server.Session.CurrentTick;
     }
 
+    /// <summary>Test seam: runs inside the guarded tick (a deliberately throwing service).</summary>
+    public Action DedicatedTickFault;
+    int _tickFaults;
+    readonly Dictionary<string, long> _faultLoggedAt = new();
+
+    void Guarded(string step, Action action)
+    {
+        try { action(); }
+        catch (Exception e)
+        {
+            _tickFaults++;
+            long tick = _server.Session.CurrentTick;
+            // One line per step per heartbeat window: a throw every tick must not flood the journal.
+            if (_faultLoggedAt.TryGetValue(step, out long last) && tick - last < DedicatedHeartbeatTicks) return;
+            _faultLoggedAt[step] = tick;
+            Log.Err($"[DEDICATED] {step} threw at tick {tick}; still serving ({_tickFaults} faults so far): {e}");
+        }
+    }
+
     void DedicatedConnectionDropped(ITransportConnection connection, string reason, bool isError)
         => Log.Print($"[DEDICATED] connection dropped ({connection.GetAddressString(true)}): {reason}");
 
@@ -166,16 +185,22 @@ public sealed partial class BridgeHost
         // Nothing simulates or accepts before the save is restored (source: the
         // server is constructed after the world build, then loads, then ticks).
         if (!_serving || _stopped) return;
-        _server.TickSimulation(); _weapons.Step(); _npcHelis.Step(); _mounted.Step(); _cosmetic.Step();
-        _warheads.Prune();
+        // Each step is guarded on its own: Godot logged a frame's exception and kept
+        // running, and one deterministic throw must not crash-loop the server (or
+        // skip the replication of every other system's tick).
+        Guarded("simulation", _server.TickSimulation);
+        Guarded("test fault", () => DedicatedTickFault?.Invoke());
+        Guarded("weapons", _weapons.Step); Guarded("npc helis", _npcHelis.Step);
+        Guarded("mounted", _mounted.Step); Guarded("cosmetic", _cosmetic.Step);
+        Guarded("warheads", _warheads.Prune);
         // A listen host's own client consumes these per-shot presentation facts
         // from PlayerFired/PlayerMeleed; with no client they would only grow.
-        _weapons.DiscardPresentationFacts();
-        StepWorldServices();
-        _appearance.Tick();
-        if (_worldChanged) PublishFullSnapshot();
-        TickAutosave();   // source order: net.save.autosave, then net.server.replicate LAST
-        _server.TickReplication();
+        Guarded("presentation facts", _weapons.DiscardPresentationFacts);
+        Guarded("world services", StepWorldServices);
+        Guarded("appearance", _appearance.Tick);
+        if (_worldChanged) Guarded("full snapshot", PublishFullSnapshot);
+        Guarded("autosave", TickAutosave);   // source order: net.save.autosave, then net.server.replicate LAST
+        Guarded("replication", _server.TickReplication);
         if (_udpTransport != null) _udpTransport.StatusPlayerCount = _server.Session.Peers.Count;
         if (_server.Session.CurrentTick - _lastHeartbeatTick >= DedicatedHeartbeatTicks)
         {
@@ -187,7 +212,7 @@ public sealed partial class BridgeHost
     object DedicatedOperation(string op, JsonElement request)
     {
         if (!_dedicated || _server == null) throw new InvalidOperationException($"{op} requires an initialized dedicated server");
-        if (op is "dedicatedStop" or "disconnect") return DedicatedStop();
+        if (op is "dedicatedStop" or "disconnect") return DedicatedStop(!request.TryGetProperty("save", out var save) || save.GetBoolean());
         if (_stopped) throw new InvalidOperationException("The dedicated server has stopped");
         if (_serving) return new { serving = true, port = (int)_listenPort, save = (string)null };
         string line = LoadDedicatedSave();
@@ -206,12 +231,25 @@ public sealed partial class BridgeHost
     string LoadDedicatedSave()
     {
         if (!_restorePending) return "no save at " + _savePath + " -- fresh world";
-        string error;
+        string error, json = null;
         try
         {
-            if (WorldSave.TryParse(File.ReadAllText(_savePath), _map, out _, out error)) error = null;
+            json = File.ReadAllText(_savePath);
+            if (WorldSave.TryParse(json, _map, out _, out error)) error = null;
         }
         catch (Exception e) { error = e.Message; }
+        if (error == null)
+        {
+            // Checked before anything moves: an origin this server cannot serve is
+            // a configuration problem, not a bad file, so the save stays where it is.
+            var extra = System.Text.Json.Nodes.JsonNode.Parse(json)?["BevyBridge"]?.Deserialize<BridgeSave>();
+            try { CheckNetworkOrigin(extra?.OriginX ?? 0, extra?.OriginZ ?? 0); }
+            catch (Exception e)
+            {
+                Log.Err($"[save] {_savePath} cannot be served here: {e.Message}. The file is left untouched.");
+                throw new InvalidOperationException($"save {_savePath} cannot be served: {e.Message}", e);
+            }
+        }
         if (error != null)
         {
             string aside = MoveRefusedSave();
@@ -232,16 +270,22 @@ public sealed partial class BridgeHost
         }
     }
 
+    /// <summary>Moves an unusable save out of the autosave's way. If it cannot be
+    /// moved the server refuses to serve: the autosave would overwrite it.</summary>
     string MoveRefusedSave()
     {
         string aside = $"{_savePath}.refused-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         try { File.Move(_savePath, aside); return aside; }
-        catch (Exception) { return _savePath; }
+        catch (Exception e)
+        {
+            Log.Err($"[save] cannot move {_savePath} aside ({e.Message}); refusing to serve over it.");
+            throw new InvalidOperationException($"cannot move the refused save {_savePath} aside: {e.Message}", e);
+        }
     }
 
     /// <summary>Graceful stop (SIGTERM through the native parent, or the
     /// parent's pipe closing): write the world, then release the socket.</summary>
-    object DedicatedStop()
+    object DedicatedStop(bool save = true)
     {
         if (_stopped) return new { saved = false, stopped = true, path = _savePath };
         // Beyond the source (Godot was SIGKILLed after ignoring SIGTERM): the stop
@@ -249,9 +293,10 @@ public sealed partial class BridgeHost
         // ...and never over a wipe the admin was told needs a restart (an autosave
         // after the wipe recreates the file, which the source would also keep).
         bool wiped = _wipedSinceBoot && !File.Exists(_savePath);
-        bool saved = _serving && !_restorePending && !wiped && SaveNow();
+        bool saved = save && _serving && !_restorePending && !wiped && SaveNow();
         _stopped = true;
         if (_serving) Log.Print(saved ? $"[SAVE] shutdown save written to {_savePath}"
+            : !save ? $"[SAVE] no shutdown save after a failure; the last good save stays"
             : wiped ? $"[SAVE] wiped -- no shutdown save; the next boot is a fresh world"
             : $"[SAVE] shutdown save FAILED -- {_savePath}");
         Log.Print("[DEDICATED] shutting down");
@@ -287,7 +332,7 @@ public sealed partial class BridgeHost
         contentHash = NetContent.Hash.ToString("X16"), peers = _server?.Session.Peers.Count,
         protocol = NetProtocol.Version, awaitingSpawn = false, wireGaps = System.Array.Empty<string>(),
         serving = _serving, savePath = _savePath, allowCheats = _allowCheats,
-        bans = _server?.Transactions.Moderation.Count ?? 0,
+        bans = _server?.Transactions.Moderation.Count ?? 0, tickFaults = _tickFaults,
         autosaveInSeconds = Math.Max(0, AutosaveSeconds - _sinceSave),
     };
 

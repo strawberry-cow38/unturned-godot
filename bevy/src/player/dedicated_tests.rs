@@ -52,7 +52,7 @@ fn state(app: &App) -> &Value {
 fn dedicated_host_has_no_body_opens_after_services_admits_a_client_and_saves_on_exit() {
     let port = free_port();
     let map = format!("DedicatedNative{}", std::process::id());
-    let save = persistence::save_path(&map);
+    let save = persistence::dedicated_save_path(&map);
     let _ = std::fs::remove_file(&save);
     let mut host = dedicated_app(port, &map);
     host.update();
@@ -127,6 +127,10 @@ fn dedicated_host_has_no_body_opens_after_services_admits_a_client_and_saves_on_
     host.update();
     assert!(save.is_file(), "AppExit writes the final save");
     assert!(
+        !persistence::save_path(&map).exists(),
+        "the dedicated world never lands in the single-player save"
+    );
+    assert!(
         std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok(),
         "the stopped host released UDP {port}"
     );
@@ -147,5 +151,33 @@ fn dedicated_host_that_cannot_bind_exits_with_an_error_instead_of_idling() {
         host.should_exit().is_some_and(|exit| exit.is_error()),
         "systemd must see a failed start"
     );
-    assert!(!persistence::save_path(&map).exists(), "nothing was served, nothing saved");
+    assert!(!persistence::dedicated_save_path(&map).exists(), "nothing was served, nothing saved");
+}
+
+/// After an unrecovered authority failure the exit must not write the
+/// post-failure world over the last good save (it would crash-loop into it).
+#[test]
+fn failed_dedicated_host_exits_without_saving() {
+    let port = free_port();
+    let map = format!("DedicatedFailed{}", std::process::id());
+    let save = persistence::dedicated_save_path(&map);
+    let _ = std::fs::remove_file(&save);
+    let mut host = dedicated_app(port, &map);
+    host.update();
+    host.world_mut().resource_mut::<ServiceManifest>().map = map.clone();
+    for _ in 0..60 {
+        host.update();
+        if state(&host)["network"]["state"] == json!("Serving") {
+            break;
+        }
+    }
+    assert_eq!(state(&host)["network"]["state"], json!("Serving"));
+    crate::dedicated::mark_failed(host.world_mut());
+    host.world_mut().write_message(AppExit::error());
+    host.update();
+    assert!(!save.exists(), "no save after an unrecovered failure");
+    assert!(
+        std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok(),
+        "the failed host still released UDP {port}"
+    );
 }

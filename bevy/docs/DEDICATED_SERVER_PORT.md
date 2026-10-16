@@ -52,15 +52,20 @@ restore, then serve.
    `WorldSaveDriver.LoadIntoWorld` semantics through the existing `load` path:
    missing save → fresh world; unreadable/refused save → logged, moved aside to
    `<save>.refused-UNIX` (the source left it in place for the next autosave to
-   overwrite) and a fresh world; a restore that fails part-way moves the file aside
-   the same way and fails the boot rather than serve a half-restored world;
-   otherwise the season start and loot seed are restored first. Then the
+   overwrite) and a fresh world, and if the file cannot be moved the server
+   refuses to serve rather than autosave over it; a save from another world
+   origin (`CheckNetworkOrigin`) is a configuration refusal that fails the boot and
+   leaves the file untouched; a restore that fails part-way moves the file aside
+   and fails the boot rather than serve a half-restored world; otherwise the
+   season start and loot seed are restored first. Then the
    session starts ticking and the source lines are printed
    (`[SAVE] ...`, `[DEDICATED] world up ...; listening on udp P`).
 
 Persistence is the shared host lifecycle (`bevy/bridge/WorldPersistence.cs`,
 `player::persistence`), not a second copy: the source `WorldSaveDriver.PathFor`
-file (`UG_BEVY_SAVES`/`UG_SAVE_DIR`, default `<settings dir>/saves/<map>.json`),
+file (`UG_BEVY_SAVES`/`UG_SAVE_DIR` as given, else its own
+`<settings dir>/saves/dedicated/<map>.json`, so a local `--dedicated` run never
+touches the single-player world of the same map and adopts no legacy name),
 the 60 s autosave on the simulation clock, the `save`/`wipe` verbs, the loot seed
 established on first save and the season/seed restore on load. The dedicated host
 only changes *when* the restore happens (at admission, `dedicatedServe`, instead
@@ -77,7 +82,9 @@ SIGINT cannot block it). The `Last`-schedule stop writes the final save, release
 the socket and ends the bridge. The bridge ignores those signals while it hosts
 (the native parent owns the stop), and if the parent's pipe closes without a stop
 it still writes the save once. A failed start (occupied port, lost session, map
-services not registered within 15 minutes) exits non-zero so systemd restarts it;
+services not registered within 15 minutes) exits non-zero so systemd restarts it,
+and an exit after such an unrecovered failure never saves (the last good save
+stays);
 a signal stop exits 0.
 
 ## Moderation and operator surface
@@ -103,20 +110,52 @@ caps (8 half-open, 8 per source IP) are the core defaults. `EnableSyncCheck` is 
 World items stream on the source 128 m interest ring. `UG_MAXPLAYERS` above 32 is
 clamped with a warning (the source session cap).
 Logs: the source `[DEDICATED]` join/leave/drop lines and 10 s heartbeat from the
-bridge, plus a native heartbeat with the achieved authority rate
+bridge, plus a native heartbeat with the achieved authority rate, the live entity
+and sound counts and refused ticks
 (`[DEDICATED] native: N authority ticks/s (target 50) ...`).
+
+## Faults
+
+Like Godot, which logged a frame's exception and kept running, every step of
+`TickDedicated` (simulation, weapons, NPC helicopters, mounted guns, cosmetics,
+world services, appearance, autosave, replication) is guarded on its own: a
+throw is logged once per step per 10 s with a running count (`tickFaults` in the
+network state) and the server keeps serving. A tick the bridge still refuses is
+logged by the native host and is not fatal either; only a broken pipe to the
+bridge ends the process.
+
+## Headless presentation
+
+The graphics, bug-reporter (microphone) and focus-outline plugins are added only
+to a windowed app. The audio plugin stays (its asset types are shared), but a
+headless host has no output, so Bevy never retires a one-shot sound: the
+dedicated host ends every despawn/remove one-shot the frame it starts (remote
+gunfire, footsteps, impacts), and the heartbeat reports the entity count. Its
+log filter drops bevy_render's one-time `ClearColor` extraction error (no render
+world exists).
 
 ## Deploy
 
-Versioned only; nothing is installed. `deploy/systemd/unturned-bevy-server.service`
-runs `bevy/target/debug/unturned-bevy --dedicated` with the Release bridge
-(`UG_BRIDGE_DLL`), `UG_SAVE_DIR`, `TimeoutStopSec=30` for the final save and
-`Conflicts=unturned-server.service` (same port). `tools/deploy-bevy-server.sh`
-fast-forwards (`UG_DEPLOY_BRANCH`, default `port/bevy`), builds the native host and
-the Release bridge, then writes `bevy/.local/dedicated-server.stamp`, which
-`unturned-bevy-server-reload.path` watches, so a half-finished build never
-restarts the server. Cut-over on claw is a manual decision: disable the Godot
-units, install these, enable `unturned-bevy-server.service` and the `.path`.
+Versioned only; nothing is installed. The server runs from its own worktree,
+never the shared Godot checkout:
+`git -C ~/projects/unturned-godot worktree add ~/projects/unturned-bevy-server port/bevy`.
+`deploy/systemd/unturned-bevy-server.service` runs
+`bevy/target/debug/unturned-bevy --dedicated` there with the Release bridge
+(`UG_BRIDGE_DLL`), `UG_SAVE_DIR` and `TimeoutStopSec=30` for the final save.
+`tools/deploy-bevy-server.sh` refuses to run unless that checkout is on the
+deployed branch (`UG_DEPLOY_BRANCH`, default `port/bevy`); a shared checkout on
+`main` would otherwise be fast-forwarded to `port/bevy`. It then fast-forwards,
+builds the native host and the Release bridge, and writes
+`bevy/.local/dedicated-server.stamp`, which `unturned-bevy-server-reload.path`
+watches, so a half-finished build never restarts the server.
+
+Both servers use UDP 47872, so the unit declares
+`Conflicts=unturned-server.service unturned-server-reload.path`. The Godot rebuild
+watcher must go too: left running, a Godot rebuild restarts `unturned-server`,
+which stops this unit, and the two fight over the port. Cut-over on claw is a
+manual decision: `systemctl --user disable --now unturned-server.service
+unturned-server-reload.path` (or `mask` them), install these units, then enable
+`unturned-bevy-server.service` and `unturned-bevy-server-reload.path`.
 
 ## Performance
 
@@ -179,9 +218,13 @@ bodies not adopting the restored pose (the car woke at its spawn point).
   the frame-sampled replica velocity would read as crashes there.
 - Headless frames are slow (per-frame JSON snapshot, hull re-uploads); the
   authority rate holds, the frame rate does not.
-- Headless still opens audio (ALSA noise in the log) and logs one
-  `ClearColor` extract error at boot.
-- The native dedicated tests use the default save directory.
+- Headless still opens the audio device (ALSA noise in the log); no sound is
+  ever output or kept.
+- A `wipe` followed by an autosave (60 s) before the restart writes the world
+  again, as in the source (`WorldSaveDriver`); only the shutdown save is
+  suppressed.
+- `BanStore.Save` rewrites the TSV in place (inherited verbatim from the source),
+  so a crash mid-write can truncate the ban list.
 - Source parity gaps kept on purpose: no admin tier, no stdin console,
   moderation behind `AllowCheats`, no auth/encryption (MP_PLAN §7).
 - Cutting claw over is a manual operator step; the units and

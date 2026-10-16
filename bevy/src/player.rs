@@ -384,8 +384,13 @@ fn initialize_session(
     // WorldSaveDriver owns one file per map on the host; a remote client has none,
     // and neither does the native vehicle render harness (source harness entries
     // never attach the MpLoopback that owns the save).
-    let restore = (options.0.network.owns_world() && options.0.vehicle.is_none())
-        .then(|| persistence::adopt_legacy_save(&options.0.map));
+    let restore = (options.0.network.owns_world() && options.0.vehicle.is_none()).then(|| {
+        if options.0.network.dedicated() {
+            persistence::dedicated_save_path(&options.0.map)
+        } else {
+            persistence::adopt_legacy_save(&options.0.map)
+        }
+    });
     if let Some(path) = &restore {
         request["savePath"] = json!(path);
         request["restorePending"] = json!(path.is_file());

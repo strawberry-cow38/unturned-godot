@@ -245,7 +245,7 @@ impl Plugin for DedicatedPlugin {
                     fixed_loop_finished.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
                 ),
             )
-            .add_systems(Last, (heartbeat, stop));
+            .add_systems(Last, (reap_one_shot_audio, heartbeat, stop).chain());
     }
 }
 
@@ -280,6 +280,9 @@ struct Host {
     serving: bool,
     stopped: bool,
     failed: bool,
+    /// Refused ticks this heartbeat window (the bridge guards each service, so
+    /// these are rare); logged once per window, never fatal on their own.
+    tick_errors: u32,
     /// Heartbeat window: authority ticks, time spent in them, frames.
     ticks: u32,
     tick_time: Duration,
@@ -302,7 +305,12 @@ fn fixed_loop_finished(mut host: ResMut<Host>) {
 
 /// Native counterpart of the bridge's 10 s `[DEDICATED] tick` heartbeat: the
 /// achieved authority rate exposes a host that cannot keep its 50 Hz.
-fn heartbeat(time: Res<Time<Real>>, mut host: ResMut<Host>) {
+fn heartbeat(
+    time: Res<Time<Real>>,
+    mut host: ResMut<Host>,
+    entities: Query<()>,
+    sounds: Query<(), With<AudioPlayer>>,
+) {
     if !host.serving || host.stopped {
         return;
     }
@@ -313,13 +321,17 @@ fn heartbeat(time: Res<Time<Real>>, mut host: ResMut<Host>) {
     }
     let seconds = host.window.as_secs_f64();
     info!(
-        "[DEDICATED] native: {:.1} authority ticks/s (target 50), {:.2} ms per bridge tick, {:.2} ms per fixed step, {:.1} frames/s, {:.0} ms per frame outside the fixed loop",
+        "[DEDICATED] native: {:.1} authority ticks/s (target 50), {:.2} ms per bridge tick, {:.2} ms per fixed step, {:.1} frames/s, {:.0} ms per frame outside the fixed loop, {} entities ({} sounds), {} refused ticks",
         host.ticks as f64 / seconds,
         host.tick_time.as_secs_f64() * 1000. / host.ticks.max(1) as f64,
         host.fixed_time.as_secs_f64() * 1000. / host.ticks.max(1) as f64,
         host.frames as f64 / seconds,
-        (host.window - host.fixed_time.min(host.window)).as_secs_f64() * 1000. / host.frames.max(1) as f64
+        (host.window - host.fixed_time.min(host.window)).as_secs_f64() * 1000. / host.frames.max(1) as f64,
+        entities.iter().count(),
+        sounds.iter().count(),
+        host.tick_errors,
     );
+    host.tick_errors = 0;
     host.fixed_time = Duration::ZERO;
     host.ticks = 0;
     host.tick_time = Duration::ZERO;
@@ -420,7 +432,16 @@ fn tick(
             residency.adopt(&reply["state"]);
             snapshot.0 = reply["state"].take();
         }
-        Err(error) => fail(&mut host, &mut exit, error),
+        // A broken pipe ends the server; a refused tick does not (Godot logged a
+        // frame's exception and kept running), or one deterministic throw would
+        // crash-loop it into systemd's start limit.
+        Err(error) if bridge.transport_failed() => fail(&mut host, &mut exit, error),
+        Err(error) => {
+            if host.tick_errors == 0 {
+                warn!("Dedicated authority tick refused (still serving): {error}");
+            }
+            host.tick_errors += 1;
+        }
     }
 }
 
@@ -430,6 +451,33 @@ fn fail(host: &mut Host, exit: &mut MessageWriter<AppExit>, error: anyhow::Error
     exit.write(AppExit::error());
 }
 
+/// Test hook: the state `fail()` leaves (an unrecovered authority failure).
+#[cfg(test)]
+pub(crate) fn mark_failed(world: &mut World) {
+    world.resource_mut::<Host>().failed = true;
+}
+
+/// A headless host has no audio output, so a one-shot sound never finishes
+/// and Bevy never retires it. Presentation systems still spawn them for remote
+/// gunfire, footsteps and impacts; over a long uptime they would pile up.
+/// Here a one-shot ends the frame it starts. Loops stay with their owners.
+fn reap_one_shot_audio(
+    mut commands: Commands,
+    sounds: Query<(Entity, &PlaybackSettings), With<AudioPlayer>>,
+) {
+    for (entity, settings) in &sounds {
+        match settings.mode {
+            bevy::audio::PlaybackMode::Despawn => commands.entity(entity).try_despawn(),
+            bevy::audio::PlaybackMode::Remove => {
+                commands
+                    .entity(entity)
+                    .try_remove::<(AudioPlayer, PlaybackSettings)>();
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Graceful shutdown: write the final save, release the socket, then end
 /// the bridge child before this process drops (and kills) it.
 fn stop(mut exits: MessageReader<AppExit>, bridge: Res<CoreBridge>, mut host: ResMut<Host>) {
@@ -437,7 +485,7 @@ fn stop(mut exits: MessageReader<AppExit>, bridge: Res<CoreBridge>, mut host: Re
         return;
     }
     host.stopped = true;
-    match bridge.request("dedicatedStop", json!({})) {
+    match bridge.request("dedicatedStop", json!({"save": !host.failed})) {
         Ok(reply) => info!("Dedicated server stopped: {}", reply["result"]),
         Err(error) => error!("Dedicated server stop failed: {error}"),
     }
@@ -446,3 +494,5 @@ fn stop(mut exits: MessageReader<AppExit>, bridge: Res<CoreBridge>, mut host: Re
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod signal_tests;

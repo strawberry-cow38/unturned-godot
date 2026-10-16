@@ -66,7 +66,7 @@ fn dedicated_init_carries_the_hybrid_save_bans_and_map_root() {
     let bans = std::path::PathBuf::from(request["bansPath"].as_str().unwrap());
     assert!(bans.ends_with("bans.tsv"));
     assert!(
-        bans.starts_with(std::env::temp_dir()) && crate::player::persistence::save_path("PEI").starts_with(std::env::temp_dir()),
+        bans.starts_with(std::env::temp_dir()) && crate::player::persistence::dedicated_save_path("PEI").starts_with(std::env::temp_dir()),
         "tests never touch the real ban list or saves: {bans:?}"
     );
     assert_eq!(request["mapRoot"], json!("/srv/Unturned/Maps/PEI"));
@@ -123,4 +123,38 @@ fn shipped_pei_placements_and_spawns_fit_the_dedicated_region() {
     for (spawn, _) in spawns {
         assert!(spawn.xz().distance(center.xz()) + EXTENT_MARGIN <= radius + 0.01);
     }
+}
+
+/// A headless host has no audio output, so Bevy never retires a one-shot
+/// sound; remote gunfire, footsteps and impacts would pile up over the uptime.
+#[test]
+fn one_shot_sounds_end_on_a_headless_host_and_loops_stay() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<AudioSource>()
+        .add_systems(Last, reap_one_shot_audio);
+    let looping = app
+        .world_mut()
+        .spawn((AudioPlayer::new(Handle::default()), PlaybackSettings::LOOP))
+        .id();
+    for _ in 0..200 {
+        // A frame of remote gunfire and footsteps.
+        for _ in 0..10 {
+            app.world_mut()
+                .spawn((AudioPlayer::new(Handle::default()), PlaybackSettings::DESPAWN));
+        }
+        let voice = app
+            .world_mut()
+            .spawn((AudioPlayer::new(Handle::default()), PlaybackSettings::REMOVE))
+            .id();
+        app.update();
+        assert!(app.world().get::<AudioPlayer>(voice).is_none());
+    }
+    let sounds = app
+        .world_mut()
+        .query::<&AudioPlayer>()
+        .iter(app.world())
+        .count();
+    assert_eq!(sounds, 1, "2,000 one-shots ended; the loop is kept");
+    assert!(app.world().get::<AudioPlayer>(looping).is_some());
 }

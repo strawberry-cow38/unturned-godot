@@ -102,6 +102,12 @@ impl CoreBridge {
         Ok(Self(Mutex::new(process)))
     }
 
+    /// The pipe to the core broke (or a reply never came): every later request
+    /// fails. A refused operation (`ok:false`) leaves the transport healthy.
+    pub fn transport_failed(&self) -> bool {
+        self.0.lock().map_or(true, |process| process.failed)
+    }
+
     pub fn request(&self, operation: &str, fields: Value) -> Result<Value> {
         self.0
             .lock()
