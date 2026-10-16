@@ -20,6 +20,7 @@ fn row(page: u8, id: u16, token: u64) -> api::Item {
             y: 1,
             id,
             token,
+            ..Default::default()
         },
         hand_action: "Equip".into(),
         ..Default::default()
@@ -37,6 +38,7 @@ fn container_paperdoll_weapon_moves_displaced_slot_then_waits_for_owner_token_be
             y: 0,
             id: 6,
             token: 111,
+            ..Default::default()
         }),
         displaced_to: Some(api::Destination {
             page: 2,
@@ -74,6 +76,7 @@ fn container_paperdoll_weapon_moves_displaced_slot_then_waits_for_owner_token_be
         y: 0,
         id: 4,
         token: 222,
+        ..Default::default()
     };
     let next = api::View {
         items: vec![accepted],
@@ -152,7 +155,7 @@ fn source_context_salvage_and_empty_use_exact_tokens_and_do_not_claim_authority(
     }
 }
 #[test]
-fn own_to_container_uses_source_compartment_plan_and_nearby_always_takes_to_owner() {
+fn own_store_keeps_compartment_plan_and_nearby_uses_exact_take_or_store_scope() {
     let mut selected = row(2, 44, 31);
     selected.store_page = 12;
     let view = api::View {
@@ -171,12 +174,39 @@ fn own_to_container_uses_source_compartment_plan_and_nearby_always_takes_to_owne
         &pages,
     ));
     assert_eq!(result[0].1["toPage"], 12);
-    let result = commands(dispatch(
-        Intent::TakeToOwn(Cell::at(8, 0, 0)),
-        &view,
-        &pages,
-    ));
-    assert_eq!(result[0].1["toPage"], 255);
+    let mut ground = row(8, 44, 999);
+    ground.address.world_id = 700;
+    ground.address.scan_id = 4;
+    ground.address.revision = 6;
+    ground.store_page = 12;
+    let ground_view = api::View {
+        items: vec![ground.clone()],
+        open_crate_id: 500,
+        ..Default::default()
+    };
+    for (intent, crate_id, destination) in [
+        (Intent::TakeToOwn(ground.address.cell()), 0, 255),
+        (Intent::QuickTransfer(ground.address.cell()), 500, 12),
+    ] {
+        let result = commands(dispatch(intent, &ground_view, &pages));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "nearbyInventory");
+        assert_eq!(
+            result[0].1,
+            json!({"action":"Transfer", "scanId":4, "revision":6,
+            "worldId":700, "token":999, "x":2, "y":1, "crateId":crate_id, "destination":destination})
+        );
+    }
+    ground.address.token = 0;
+    let invalid = api::View {
+        items: vec![ground.clone()],
+        ..Default::default()
+    };
+    assert!(
+        dispatch(Intent::TakeToOwn(ground.address.cell()), &invalid, &pages)
+            .commands
+            .is_empty()
+    );
 }
 
 #[test]

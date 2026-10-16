@@ -1348,7 +1348,7 @@ namespace UnturnedGodot.Net
             ReplicaUpdated?.Invoke(owner);
         }
 
-        static void WriteJar(NetPakWriter w, ItemJar j)
+        internal static void WriteJar(NetPakWriter w, ItemJar j)
         {
             w.WriteUInt8(j.x); w.WriteUInt8(j.y); w.WriteUInt8(j.rot);
             w.WriteUInt16(j.item?.id ?? 0);
@@ -1424,7 +1424,7 @@ namespace UnturnedGodot.Net
             if (froz) w.WriteUInt8(j.item.frozen);
         }
 
-        static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
+        internal static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
         {
             item = null;
             x = y = rot = 0;

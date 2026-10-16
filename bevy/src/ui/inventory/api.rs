@@ -7,6 +7,7 @@ use serde::Deserialize;
 #[serde(default, rename_all = "camelCase")]
 pub(super) struct View {
     pub accepted_tick: u32,
+    pub open_crate_id: u32,
     pub items: Vec<Item>,
     pub quick_crafts: Vec<QuickCraft>,
     pub cooker: Option<Cooker>,
@@ -78,6 +79,9 @@ pub(super) struct Denomination {
 #[serde(default, rename_all = "camelCase")]
 pub(super) struct Address {
     pub crate_id: u32,
+    pub world_id: u32,
+    pub scan_id: u32,
+    pub revision: u32,
     pub page: u8,
     pub x: u8,
     pub y: u8,
@@ -87,7 +91,8 @@ pub(super) struct Address {
 impl Address {
     /// Shape accepted by the scoped wire; authority still rechecks live access.
     pub fn addressable(self) -> bool {
-        self.token != 0
+        self.world_id == 0
+            && self.token != 0
             && self.id != 0
             && if self.crate_id == 0 {
                 self.page < OWN_PAGES

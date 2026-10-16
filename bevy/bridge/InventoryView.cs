@@ -9,7 +9,7 @@ namespace UnturnedBevy;
 /// class does not seed, move, split, consume or otherwise edit a replicated Item.</summary>
 public static class InventoryView
 {
-    public sealed record Address(byte Page, byte X, byte Y, ushort Id, ulong Token, uint CrateId = 0);
+    public sealed record Address(byte Page, byte X, byte Y, ushort Id, ulong Token, uint CrateId = 0, uint WorldId = 0, uint ScanId = 0, uint Revision = 0);
     public sealed record Button(string Action, string Label, string Tooltip = "", int Recipe = -1);
     public sealed record Fluid(byte Type, byte Quality, float Amount, float Capacity, bool AutoDrink,
         string Contents, float[] Color);
@@ -22,7 +22,7 @@ public static class InventoryView
         byte StorePage, Destination PaperdollTake, EquipPlan Equip);
     public sealed record QuickCraft(int Index, string Name, ushort ItemId, string Icon);
     public sealed record Load(bool Consumed, bool Allowed, string Message, int Batch, ushort RoundId);
-    public sealed record View(ItemView[] Items, QuickCraft[] QuickCrafts, object Cooker, Load Load, InventoryTiles.View Tiles, uint AcceptedTick);
+    public sealed record View(ItemView[] Items, QuickCraft[] QuickCrafts, object Cooker, Load Load, InventoryTiles.View Tiles, uint AcceptedTick, uint OpenCrateId);
 
     static ushort RoundId(string round) => string.IsNullOrEmpty(round) ? (ushort)0
         : Assets.all().FirstOrDefault(a => a.isAmmo && a.magRound == round)?.id ?? 0;
@@ -59,14 +59,20 @@ public static class InventoryView
     public static View Read(Catalog catalog, InventoryReplication replicas, ushort owner,
         OwnerEquipmentState held, PlayerSkills skills, ICollection<string> known, object cooker = null,
         (int Page, int X, int Y)? loadFrom = null, (int Page, int X, int Y)? loadTo = null, uint acceptedTick = 0,
-        ICollection<string> stations = null, uint openCrateId = 0)
+        ICollection<string> stations = null, uint openCrateId = 0, PlayerInventory presented = null, NearbyInventoryEvent nearby = default)
     {
-        replicas.TryGet(owner, out var entry); var inventory = entry?.Inventory;
+        replicas.TryGet(owner, out var entry); var inventory = presented ?? entry?.Inventory;
         var result = new List<ItemView>();
         var source = new SourceInventoryUI(inventory);
         float[] Color(Godot.Color c) => [c.R, c.G, c.B, c.A];
         Address ItemAddress(byte page, ItemJar jar)
         {
+            if (page == PlayerInventory.AREA)
+            {
+                var row = nearby.Rows?.FirstOrDefault(r => r.Jar.x == jar.x && r.Jar.y == jar.y);
+                if (row != null) { var part = row.Sources[0];
+                    return new(page, jar.x, jar.y, part.ItemId, part.Token, 0, part.WorldId, nearby.ScanId, nearby.Revision); }
+            }
             replicas.TryGetItemToken(owner, page, jar.x, jar.y, out ulong token);
             return new(page, jar.x, jar.y, jar.item.id, token, PlayerInventory.IsContainerView(page) ? openCrateId : 0);
         }
@@ -86,7 +92,7 @@ public static class InventoryView
         {
             var item = jar.item; var a = item?.GetAsset(); if (a == null) continue;
             replicas.TryGetItemToken(owner, page.page, jar.x, jar.y, out ulong token);
-            var address = new Address(page.page, jar.x, jar.y, item.id, token, PlayerInventory.IsContainerView(page.page) ? openCrateId : 0);
+            var address = ItemAddress(page.page, jar);
             string hand = "";
             if (HandRules.CanEquipItemAsset(a)) hand = held?.Token == token && token != 0 ? "Dequip"
                 : a.IsFluidContainer || a.IsConsumable || a.IsFuelContainer ? "Hold" : "Equip";
@@ -102,6 +108,12 @@ public static class InventoryView
             var salvage = page.page < PlayerInventory.OWNPAGES ? BlueprintRegistry.SalvageFor(item.id) : null;
             if (salvage != null) actions.Add(new("salvage", "Salvage", SourceInventoryUI.SalvageTip(salvage), catalog.Recipes.IndexOf(salvage)));
             actions.Add(new("drop", "Drop")); actions.Add(new("close", "Close"));
+            if (page.page == PlayerInventory.AREA)
+            {
+                hand = ""; actions.Clear();
+                actions.Add(new("transfer", inventory.items[PlayerInventory.STORAGE].width > 0 ? "Store" : "Take"));
+                actions.Add(new("close", "Close"));
+            }
             var color = ItemTool.RarityColorUI(a.rarity);
             // Source FluidItem.Read lazily initializes fresh items. Seed a clone
             // here: merely opening a remote context menu must not edit its bag.
@@ -123,7 +135,7 @@ public static class InventoryView
                 Color(SourceInventoryUI.Lerp(item.quality == 0 && a.type != EItemType.FOOD ? new(.85f,.2f,.18f)
                     : SourceInventoryUI.QualityColor(item.quality / 100f), new(1,1,1), .3f)),
                 source.StoreTarget(jar), source.FirstFreeOwnCell(a, out var takePage, out var takeX, out var takeY)
-                    ? new(takePage, takeX, takeY, 0) : null, Equip(jar)));
+                    ? new(takePage, takeX, takeY, 0) : null, page.page == PlayerInventory.AREA ? null : Equip(jar)));
         }
         // Source BuildQuickCraftSection preserves registry order, stops at18,
         // excludes salvage/recolour and only displays known, ready recipes.
@@ -143,7 +155,7 @@ public static class InventoryView
             load = new(consumed, allowed, consumed ? MagRules.Message(check) : "",
                 allowed ? Math.Min(bullet.item.amount, MagRules.Capacity(m) - magazine.item.amount) : 0, b?.id ?? 0);
         }
-        return new(result.ToArray(), quick, cooker, load, InventoryTiles.Read(inventory), acceptedTick);
+        return new(result.ToArray(), quick, cooker, load, InventoryTiles.Read(inventory), acceptedTick, openCrateId);
     }
 }
 
@@ -176,6 +188,7 @@ public sealed partial class BridgeHost
             needsFuel = Cooking.NeedsFuel((ECookerKind)kind) } : null;
         return InventoryView.Read(_catalog, _client.Inventories, _client.PlayerId, held, skills?.Skills,
             _client.KnownBlueprints, cooker, Address("loadFrom"), Address("loadTo"), unchecked((uint)_client.Applier.LastAppliedServerTick),
-            AcceptedCraftingStations, _storageView.Current.NetId);
+            AcceptedCraftingStations, _storageView.Current.NetId,
+            NearbyInventory(_client.Inventories.TryGet(_client.PlayerId, out var entry) ? entry.Inventory : null), _client.Nearby);
     }
 }

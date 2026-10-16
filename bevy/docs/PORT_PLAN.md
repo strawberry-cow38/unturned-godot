@@ -36,9 +36,9 @@ replacement has evidence of parity.
 Measured source: 187 engine-independent C# files / 60,586 lines, 342 gameplay
 files / 146,706 lines, 319 in-engine test files / 62,166 lines, and 194 core test
 files / 45,176 lines. Historical repository summaries are stale. The current
-source protocol is version61; the port is now version75 for accepted equipment,
+source protocol is version61; the port is now version76 for accepted equipment,
 resource contacts, mounted weapons, occupant rise, remote mounted flight
-effects, NPC crew, vehicle electrical/lamp state, glazing/maintenance, full fleet fuel/health ranges, original skill nodes, bus doors, exact owned/viewed inventory and magazine actions, source crafting-station context, accepted respawn facing and fifth-wheel pairing. Inventory has22 pages including vehicle compartments.
+effects, NPC crew, vehicle electrical/lamp state, glazing/maintenance, full fleet fuel/health ranges, original skill nodes, bus doors, exact owned/viewed inventory and magazine actions, source crafting-station context, accepted respawn facing, fifth-wheel pairing and owner-only Nearby full-item projection with Take/Store. Inventory has22 pages including vehicle compartments; other AREA actions remain pending.
 
 ## Milestones
 

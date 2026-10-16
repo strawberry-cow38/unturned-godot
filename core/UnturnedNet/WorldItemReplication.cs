@@ -108,6 +108,8 @@ namespace UnturnedGodot.Net
 
             /// <summary>Server-only: the real dropped Item (never on the wire; null on replicas).</summary>
             public Item ServerItem;
+            /// <summary>Host scene insertion order; independent of restored/reused wire IDs.</summary>
+            public ulong SpawnOrder;
 
             /// <summary>Server-only: the velocity the item was thrown with, kept so the server can hand it to a
             /// real physics node. It was already computed and BROADCAST in WorldItemSpawnedEvent.Vel and then
@@ -135,6 +137,7 @@ namespace UnturnedGodot.Net
         /// tracker (not dirty ticks) is what makes walk-into-range appearance work.</summary>
         public InterestPolicy Interest;
 
+        ulong _spawnOrder;
         readonly NetEntityRegistry<WorldItemEntity> _items = new NetEntityRegistry<WorldItemEntity>();
         readonly Dictionary<uint, long> _removedAtTick = new Dictionary<uint, long>();
         readonly RelevancyTracker _relevancy = new RelevancyTracker();
@@ -174,6 +177,7 @@ namespace UnturnedGodot.Net
                 Pos = StorePosition(pos),
                 LastChangedTick = Stamp(tick),
                 ServerItem = item,
+                SpawnOrder = ++_spawnOrder,
             };
             _items.Add(id, e);
             _removedAtTick.Remove(id.Value);
@@ -204,6 +208,13 @@ namespace UnturnedGodot.Net
             if (!TryGet(netId, out var e) || e.Settled) return;
             e.Pos = StorePosition(pos);
             e.Settled = true;
+            e.LastChangedTick = Stamp(tick);
+        }
+
+        public void ServerItemChanged(uint netId, long tick)
+        {
+            if (!TryGet(netId, out var e) || e.ServerItem == null) return;
+            e.ItemId = e.ServerItem.id; e.Amount = e.ServerItem.amount; e.Quality = e.ServerItem.quality;
             e.LastChangedTick = Stamp(tick);
         }
 

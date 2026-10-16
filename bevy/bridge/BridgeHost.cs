@@ -390,6 +390,7 @@ public sealed partial class BridgeHost : IDisposable
         }
         _server.Transactions.Blueprints = _catalog.Recipes;
         ConfigureInventoryTransactions();
+        ConfigureNearby();
         _server.PendingSave = save;
         save?.ApplyWorld(_server, 0);
         _vehicles.RestoreFuel(save);
@@ -465,6 +466,7 @@ public sealed partial class BridgeHost : IDisposable
 
     object Action(string name, JsonElement args)
     {
+        if (name == "nearbyInventory") return RequestNearby(args);
         if (name == "craftingContext") return RequestCraftingContext(args);
         if (name == "craft" && args.TryGetProperty("eye",out _)) return RequestCraftingContext(args,craft:true);
         if (name == "vehicleHitch") return new { queued = _client.SendVehicleHitch(VehicleHitchServices.ReadCommand(args)) };
@@ -556,12 +558,12 @@ public sealed partial class BridgeHost : IDisposable
         _client.Inventories.TryGet(_client.PlayerId, out var entry);
         _client.Skills.TryGet(_client.PlayerId, out var skills);
         _client.Profiles.TryGet(_client.PlayerId, out var profile);
-        var inv = entry?.Inventory;
+        var inv = NearbyInventory(entry?.Inventory);
         var events = _events.ToArray();
         var occupied = _client.Vehicles.All.FirstOrDefault(v => v.DriverPlayerId == _client.PlayerId || (v.Passengers?.Contains(_client.PlayerId) ?? false));
         int seat = occupied == null ? -1 : occupied.DriverPlayerId == _client.PlayerId ? 0 : System.Array.IndexOf(occupied.Passengers, _client.PlayerId) + 1;
         return new { tick = _network.CurrentTick, origin = Origin, connected = _client.State == NetSessionState.Connected && (!IsRemote || _remoteSpawnAdopted), playerId = _client.PlayerId,
-            network = NetworkState(), players = PlayerReplicas(), npc = _npcView.Snapshot(), storage = _storageView.Current,
+            network = NetworkState(), players = PlayerReplicas(), npc = _npcView.Snapshot(), storage = _storageView.Current, nearby = NearbyState(),
             worldClock = ClockSnapshot(),
             finiteVehicles = _finiteVehicles,
             weather = _environment?.State(),

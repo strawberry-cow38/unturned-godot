@@ -348,6 +348,7 @@ namespace UnturnedGodot.Net
             RegisterVehicleDoorCommands();
             RegisterVehicleHitchCommands();
             RegisterCraftingContextCommands();
+            RegisterNearbyCommands();
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
             // the content table. One hook rather than each growing a copy of the other's half.
@@ -662,6 +663,7 @@ namespace UnturnedGodot.Net
                 CraftQueue.Forget(peer.PlayerId);
                 Transactions.ForgetMagazineTransfers(peer.PlayerId);
                 ForgetCraftingContext(peer.PlayerId);
+                ForgetNearby(peer.PlayerId);
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
                 _pendingRecoveryFulls.Remove(peer.PlayerId);   // a reused playerId must not inherit a stale hold
@@ -877,6 +879,7 @@ namespace UnturnedGodot.Net
         /// ack -- the join path is reliable BY CONSTRUCTION, not by racing the unreliable stream.</summary>
         public void TickReplication()
         {
+            RefreshNearby();
             // this tick's joiners get their reliable FULL snapshot first -- composed here, after ALL of the
             // tick's mutation, so acking its tick really does mean "I have everything through that tick"
             if (_pendingJoinSnapshots.Count > 0)
@@ -1066,6 +1069,7 @@ namespace UnturnedGodot.Net
             RegisterVehicleDoorEvents();
             RegisterMagazineTransferEvents();
             RegisterCraftingContextEvents();
+            RegisterNearbyEvents();
             RegisterMountedFlightEvents();
             RegisterResourceContactEvents();
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
@@ -1214,7 +1218,7 @@ namespace UnturnedGodot.Net
 
         public void Connect()
         {
-            if (State == NetSessionState.Disconnected) ResetRespawnPose();
+            if (State == NetSessionState.Disconnected) { ResetRespawnPose(); ResetNearby(); }
             Session.Connect();
         }
 
@@ -1738,6 +1742,6 @@ namespace UnturnedGodot.Net
 
         ushort _playerStateSeq;
 
-        public void Disconnect() { ResetRespawnPose(); Session.Disconnect(); }
+        public void Disconnect() { ResetRespawnPose(); ResetNearby(); Session.Disconnect(); }
     }
 }

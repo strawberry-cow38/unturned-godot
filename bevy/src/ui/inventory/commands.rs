@@ -115,7 +115,61 @@ fn equip(from: Cell, row: &api::Item) -> Dispatch {
     }
     out
 }
+pub(super) fn nearby_source(intent: &Intent) -> Option<Cell> {
+    let cell = match intent {
+        Intent::Move { from, .. }
+        | Intent::Split { from, .. }
+        | Intent::Wear { from, .. }
+        | Intent::LoadOrMove { from, .. }
+        | Intent::Bind { from, .. } => *from,
+        Intent::Drop(from)
+        | Intent::Equip(from)
+        | Intent::QuickTransfer(from)
+        | Intent::TakeToOwn(from)
+        | Intent::TakeToPaperdoll(from) => *from,
+        _ => return None,
+    };
+    (cell.page == AREA).then_some(cell)
+}
+pub(super) fn nearby_destination(intent: &Intent) -> bool {
+    matches!(intent, Intent::Move { to, .. } | Intent::Split { to, .. }
+        | Intent::Unwear { to, .. } | Intent::LoadOrMove { to, .. } if to.page == AREA)
+}
+pub(super) fn nearby_transfer(row: &api::Item, view: &api::View, take: bool) -> Dispatch {
+    let a = row.address;
+    if a.world_id == 0 || a.token == 0 || a.scan_id == 0 || a.revision == 0 {
+        return Dispatch::default();
+    }
+    let crate_id = if take { 0 } else { view.open_crate_id };
+    Dispatch {
+        commands: vec![action(
+            "nearbyInventory",
+            json!({"action":"Transfer", "scanId":a.scan_id,
+        "revision":a.revision,"worldId":a.world_id,"token":a.token,"x":a.x,"y":a.y,
+        "crateId":crate_id,"destination":if crate_id == 0 { ANY_PAGE } else { row.store_page }}),
+        )],
+        ..Default::default()
+    }
+}
 pub(super) fn dispatch(intent: Intent, view: &api::View, pages: &[InventoryPage]) -> Dispatch {
+    if nearby_destination(&intent) {
+        return Dispatch::default();
+    }
+    if let Some(from) = nearby_source(&intent) {
+        return match intent {
+            Intent::QuickTransfer(_) | Intent::TakeToOwn(_) => view
+                .at(from)
+                .map(|row| {
+                    nearby_transfer(
+                        row,
+                        view,
+                        matches!(intent, Intent::TakeToOwn(_)) || !open_storage(pages),
+                    )
+                })
+                .unwrap_or_default(),
+            _ => Dispatch::default(),
+        };
+    }
     let mut out = Dispatch::default();
     match intent {
         Intent::Move{from,to,rotation} => out.commands.push(move_item(from,to,rotation)),
@@ -141,7 +195,8 @@ pub(super) fn dispatch(intent: Intent, view: &api::View, pages: &[InventoryPage]
     out
 }
 pub(super) fn context_refusal(name: &str, row: &api::Item) -> Option<&'static str> {
-    if (name == "emptyFuel" && !row.address.addressable())
+    if (row.address.page == AREA && !matches!(name, "transfer" | "close"))
+        || (name == "emptyFuel" && !row.address.addressable())
         || (name == "salvage" && (row.address.page >= OWN_PAGES || row.address.token == 0))
     {
         Some("Take this item into your inventory first.")

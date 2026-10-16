@@ -31,6 +31,7 @@ pub(super) struct Menu {
     pub transfers: transfer::Transfers,
     pub viewport: Vec2,
     pub open: bool,
+    nearby_started: bool,
     pub revision: u64,
     pub epoch: u64,
     pub pending_equip: Option<commands::PendingEquip>,
@@ -101,6 +102,14 @@ impl Menu {
         ui: &mut UiState,
         intents: &mut MessageWriter<UiIntent>,
     ) {
+        if commands::nearby_destination(&intent)
+            || (commands::nearby_source(&intent).is_some()
+                && !matches!(intent, Intent::QuickTransfer(_) | Intent::TakeToOwn(_)))
+        {
+            self.notice = "Take this item into your inventory first.".into();
+            self.dirty();
+            return;
+        }
         match intent {
             Intent::Lookup { id, uses } => {
                 craft.lookup(uses, id);
@@ -239,6 +248,13 @@ pub(super) fn update(
         menu.poll = 0.;
         menu.dirty();
         if !open {
+            if menu.nearby_started {
+                intents.write(commands::action(
+                    "nearbyInventory",
+                    json!({"action":"Close"}),
+                ));
+            }
+            menu.nearby_started = false;
             menu.gesture.close();
             menu.transfers.clear();
             menu.pending_actions.clear();
@@ -303,6 +319,16 @@ pub(super) fn update(
             .and_then(|(eye, origin)| eye.request(origin, &epoch))
         {
             request["eye"] = json!(position);
+            if !menu.nearby_started {
+                menu.nearby_started = bridge
+                    .request(
+                        "action",
+                        json!({"name":"nearbyInventory",
+                    "args":{"action":"Open","eye":position}}),
+                    )
+                    .ok()
+                    .is_some_and(|reply| reply["result"]["queued"].as_bool() == Some(true));
+            }
         }
         match bridge.request("inventoryView", request) {
             Ok(reply) => {

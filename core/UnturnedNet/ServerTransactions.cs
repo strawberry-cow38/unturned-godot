@@ -493,11 +493,13 @@ namespace UnturnedGodot.Net
             commands.Register<QuickTransferCommand>(ReplicationIds.CommandQuickTransfer, QuickTransferCommand.TryRead,
                 OnQuickTransfer,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES
+                                           && cmd.Page != PlayerInventory.AREA && cmd.ToPage != PlayerInventory.AREA
                                            && (cmd.ToPage == 255 || cmd.ToPage < PlayerInventory.PAGES));
 
             commands.Register<SplitItemCommand>(ReplicationIds.CommandSplitItem, SplitItemCommand.TryRead,
                 OnSplitItem,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES
+                                           && cmd.Page != PlayerInventory.AREA && cmd.ToPage != PlayerInventory.AREA
                                            && cmd.Amount > 0);
 
             commands.Register<PickupItemCommand>(ReplicationIds.CommandPickupItem, PickupItemCommand.TryRead,
@@ -696,7 +698,7 @@ namespace UnturnedGodot.Net
 
             commands.Register<UnwearClothingCommand>(ReplicationIds.CommandUnwearClothing, UnwearClothingCommand.TryRead,
                 OnUnwearClothing,
-                validate: (sender, cmd) => _inventories.TryGet(sender, out _));
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page != PlayerInventory.AREA);
 
             commands.Register<OpenStorageCommand>(ReplicationIds.CommandOpenStorage, OpenStorageCommand.TryRead,
                 (sender, cmd) =>

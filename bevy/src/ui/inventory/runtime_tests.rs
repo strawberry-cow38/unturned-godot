@@ -817,3 +817,6 @@ fn actual_udp_viewed_magazine_timer_updates_trunk_and_retires_after_close() {
         "a retired view cannot send another magazine request"
     );
 }
+
+#[path = "nearby_tests.rs"]
+mod nearby;

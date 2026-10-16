@@ -77,6 +77,7 @@ mod tests {
                 y: 1,
                 id: 4,
                 token: 9,
+                ..default()
             },
             hand_action: "Equip".into(),
             equip_slot: 0,

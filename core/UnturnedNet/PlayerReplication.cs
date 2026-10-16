@@ -249,6 +249,7 @@ namespace UnturnedGodot.Net
         public const byte CommandVehicleDoor = 78; // v70: source bus driver/focused toggle intent.
         public const byte CommandEmptyFuel = 79; // v70: empty an exact owned fuel-container instance.
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
+        public const byte CommandNearbyInventory = 86; // v76: bounded source Nearby projection and exact transfer.
         public const byte CommandEmptyViewedFuel = 84; // v75: exact authorized container fuel instance.
         public const byte CommandViewedMagazineTransfer = 85; // v75: exact scoped magazine step; owner result60 unchanged.
         public const byte CommandVehicleHitch = 83; // v74: source focused fifth-wheel toggle, independent of rope towing.
@@ -321,6 +322,7 @@ namespace UnturnedGodot.Net
         public const byte EventVehicleMaintenance = 58; // v69: accepted glazing/repair/manual horn facts
         public const byte EventMagazineTransfer = 60; // v71: owner-only exact magazine request completion.
         public const byte EventCraftingContext = 61; // v72: owner-only station access and contextual craft outcome.
+        public const byte EventNearbyInventory = 63; // v76: owner-only full Nearby items and world contributors.
         public const byte EventRespawnPose = 62; // v73: optional owner facing, paired with unchanged PlayerRespawned.
         public const byte EventVehicleDoor = 59; // v70: actual open/close edge, no late-join replay.
         public const byte EventVehicleLighting = 57; // v68: accepted alarm horn/lamp contact facts

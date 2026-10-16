@@ -576,7 +576,7 @@ fn ui_intents(
                     Some(None) => continue,
                     None => {
                         let mut args = args.clone();
-                        if name == "craft" {
+                        if name == "craft" || name == "nearbyInventory" {
                             if let Some(eye) = hand_use.4.as_ref()
                                 .and_then(|eye| eye.request(&hand_use.3, &hand_use.1))
                             {
