@@ -10831,7 +10831,8 @@ namespace UnturnedGodot
             bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
             // the measurements (coverage, kerbs, ground under the paving -- a minute and more of a whole town) are for the
             // renders; a town to PLAY skips them unless UG_TOWNPROBES=1 asks
-            bool probes = !playSeed.HasValue || TownRoadGrid.ProbeEverything;
+            // (UG_TOWNPROBES=0: none for a render either -- a run that is only after the buildings, the culling probe's, skips minutes)
+            bool probes = (!playSeed.HasValue || TownRoadGrid.ProbeEverything) && System.Environment.GetEnvironmentVariable("UG_TOWNPROBES") != "0";
             town.Probes = probes;
             // (UG_TOWNLOTMARKS=0: the renders without them too -- to see the ground as a player does)
             if (playSeed.HasValue || System.Environment.GetEnvironmentVariable("UG_TOWNLOTMARKS") == "0") town.MarkLots = false;
@@ -11064,6 +11065,9 @@ namespace UnturnedGodot
             // UG_TOWNCLOSE=1 frames the busiest junction; UG_TOWNCLOSE=3 frames a THREE-way one, because a
             // tee is a different shape and its through-side pavement cannot be checked on a crossroads.
             var closeEnv = System.Environment.GetEnvironmentVariable("UG_TOWNCLOSE");
+            // UG_TOWNCLOSE=cull: the culling probe takes the camera and the capture over (CullProbe) -- five stops in and round
+            // one building, the renderer's own counters read at each, and its own pictures
+            if (closeEnv == "cull" && CullProbe.Begin(this, town, tcam, _shotPath)) { _shotPath = null; _shotRequested = null; goto noTown; }
             int wantArms = closeEnv == "3" ? 3 : 0;
             var busiest = Vector3.Zero; int bestDeg = 0;
             foreach (var (jp, ends) in rf.Junctions())
