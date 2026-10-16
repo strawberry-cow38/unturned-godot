@@ -469,6 +469,7 @@ public sealed partial class BridgeHost : IDisposable
     {
         if (name == "nearbyInventory") return RequestNearby(args);
         if (name == "nearbyOperation") return RequestNearbyOperation(args);
+        if (name == "nearbyMagazineTransfer") return RequestNearbyMagazineTransfer(args);
         if (name == "craftingContext") return RequestCraftingContext(args);
         if (name == "craft" && args.TryGetProperty("eye",out _)) return RequestCraftingContext(args,craft:true);
         if (name == "vehicleHitch") return new { queued = _client.SendVehicleHitch(VehicleHitchServices.ReadCommand(args)) };

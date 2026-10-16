@@ -200,6 +200,44 @@ public sealed class NearbyInventoryTests
         Assert.That(can.fuelLevel,Is.Zero);Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out _),Is.True);
         Assert.That(Client.Nearby.Rows[0].Jar.item.fuelLevel,Is.Zero,"accepted projection repaints");
     }
+    JsonElement[] MagazineFacts(BridgeHost h)=>State(h).GetProperty("events").EnumerateArray()
+        .Where(e=>e.GetProperty("kind").GetString()=="magazineTransfer").Select(e=>e.GetProperty("data").Clone()).ToArray();
+    JsonElement Magazine(uint request,object args)
+    {
+        Assert.That(Action(_peer,"nearbyMagazineTransfer",args).GetProperty("queued").GetBoolean(),Is.True);Pump();
+        return MagazineFacts(_peer).Last(f=>f.GetProperty("requestId").GetUInt32()==request);
+    }
+    [Test]
+    public void ActualUdpGroundMagazineUnloadAndLoadUseReceivedIdentityAndOwnerOnlyEvent60()
+    {
+        var magAsset=Assets.find(6);var roundAsset=Assets.all().First(a=>a.isAmmo&&!a.IsMagazine&&a.magRound==magAsset.magRound);
+        var ground=new Item(6,3,72);var e=Spawn(ground);Open();var a=Address();
+        var row=Call(_peer,"inventoryView").GetProperty("items").EnumerateArray().Single(r=>r.GetProperty("address").GetProperty("page").GetByte()==8);
+        Assert.That(row.GetProperty("actions").EnumerateArray().Select(b=>b.GetProperty("action").GetString()),Is.EqualTo(new[]{"transfer","unload","close"}));
+        object Unload(uint request,JsonElement at)=>new{requestId=request,scanId=at.GetProperty("scanId").GetUInt32(),revision=at.GetProperty("revision").GetUInt32(),
+            eye=Array(Eye),unloading=true,magWorldId=at.GetProperty("worldId").GetUInt32(),magToken=at.GetProperty("token").GetUInt64(),
+            magX=at.GetProperty("x").GetByte(),magY=at.GetProperty("y").GetByte(),roundId=roundAsset.id};
+        var unload=Unload(1,a);
+        Assert.That(Action(_peer,"nearbyMagazineTransfer",unload).GetProperty("queued").GetBoolean(),Is.True);
+        Assert.That(ground.amount,Is.EqualTo(3),"queued intent mutates nothing");Pump();
+        var fact=MagazineFacts(_peer).Single(f=>f.GetProperty("requestId").GetUInt32()==1);
+        Assert.That((fact.GetProperty("result").GetString(),fact.GetProperty("amount").GetUInt16(),fact.GetProperty("magazineToken").GetUInt64()),
+            Is.EqualTo(("Applied",(ushort)2,a.GetProperty("token").GetUInt64())));
+        Assert.That(ground.amount,Is.EqualTo(2));Assert.That(Client.Nearby.Rows[0].Jar.item.amount,Is.EqualTo(2));
+        var bag=Server.Transactions.InventoryForTest(Client.PlayerId);Assert.That(bag.getItemCount(roundAsset.id),Is.EqualTo(1));
+        Assert.That(MagazineFacts(_host),Is.Empty,"owner-only completion");
+        Assert.That(Magazine(1,unload).GetProperty("amount").GetUInt16(),Is.EqualTo(2),"exact replay resends");Assert.That(ground.amount,Is.EqualTo(2));
+        var round=Call(_peer,"inventoryView").GetProperty("items").EnumerateArray().Single(r=>r.GetProperty("address").GetProperty("id").GetUInt16()==roundAsset.id)
+            .GetProperty("address");a=Address();
+        var load=new{requestId=2,scanId=a.GetProperty("scanId").GetUInt32(),revision=a.GetProperty("revision").GetUInt32(),eye=Array(Eye),unloading=false,
+            magWorldId=a.GetProperty("worldId").GetUInt32(),magToken=a.GetProperty("token").GetUInt64(),magX=a.GetProperty("x").GetByte(),magY=a.GetProperty("y").GetByte(),
+            roundCrateId=0,roundPage=round.GetProperty("page").GetByte(),roundX=round.GetProperty("x").GetByte(),roundY=round.GetProperty("y").GetByte(),
+            roundId=roundAsset.id,roundToken=round.GetProperty("token").GetUInt64()};
+        fact=Magazine(2,load);Assert.That((fact.GetProperty("result").GetString(),fact.GetProperty("amount").GetUInt16()),Is.EqualTo(("Applied",(ushort)3)));
+        Assert.That(ground.amount,Is.EqualTo(3));Assert.That(bag.getItemCount(roundAsset.id),Is.Zero,"the exact owned round was spent");
+        Wall();var blocked=Unload(3,Address());Assert.That(Magazine(3,blocked).GetProperty("result").GetString(),Is.EqualTo("StaleMagazine"),"transfer-time LOS");
+        Assert.That(ground.amount,Is.EqualTo(3));Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out _),Is.True);
+    }
     [Test]
     public void PublishedProtocol76PeersAreRefusedAtTheHandshake()
     {

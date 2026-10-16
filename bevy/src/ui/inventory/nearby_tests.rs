@@ -53,7 +53,10 @@ fn deliver(host: &CoreBridge, app: &mut App) -> Vec<serde_json::Value> {
     for intent in intents {
         if let UiIntent::Action { name, mut args } = intent {
             assert!(
-                matches!(name.as_str(), "nearbyInventory" | "nearbyOperation"),
+                matches!(
+                    name.as_str(),
+                    "nearbyInventory" | "nearbyOperation" | "nearbyMagazineTransfer"
+                ),
                 "{name}"
             );
             // Mirror production player::ui_intents: only listed actions get the
@@ -85,7 +88,8 @@ fn received_nearby_token_ctrl_grab_keeps_ground_until_authority_reply() {
             .iter()
             .map(|a| a.action.as_str())
             .collect::<Vec<_>>(),
-        ["transfer", "close"]
+        ["transfer", "unload", "close"],
+        "source order: Take, then a loaded magazine's Unload"
     );
     let before = app
         .world()
@@ -359,8 +363,19 @@ fn ground_rows_route_only_place_split_and_empty_through_command87() {
         );
     }
     let row = &open_view.items[0];
-    for refused in ["equip", "hold", "drop", "salvage", "unload", "learn"] {
+    for refused in ["equip", "hold", "drop", "salvage", "learn", "autoDrink", "dequip"] {
         assert!(commands::context_refusal(refused, row).is_some(), "{refused}");
+    }
+    for allowed in ["transfer", "close", "emptyFuel", "unload"] {
+        assert!(commands::context_refusal(allowed, row).is_none(), "{allowed}");
+    }
+    let mut unreceived = row.clone();
+    unreceived.address.revision = 0;
+    for needs_identity in ["emptyFuel", "unload"] {
+        assert!(
+            commands::context_refusal(needs_identity, &unreceived).is_some(),
+            "{needs_identity}"
+        );
     }
     let empty = sent(commands::context("emptyFuel", row, &open_view, &open_pages));
     assert_eq!(empty[0].1["operation"], "EmptyFuel");
@@ -656,4 +671,134 @@ fn ground_refusals_keep_source_snap_home_and_send_nothing() {
     pump(&host, &mut app, 8);
     step(&mut app, 0.11);
     assert_eq!(nearby(&app).address.world_id, row.address.world_id);
+}
+fn spawn_ground(host: &CoreBridge, app: &mut App, items: serde_json::Value) {
+    host.request("worldSpawn", json!({ "items": items })).unwrap();
+    pump(host, app, 8);
+}
+fn ground_amount(app: &App, world_id: u32) -> Option<u16> {
+    let menu = app.world().resource::<Menu>();
+    let row = menu
+        .view
+        .items
+        .iter()
+        .find(|r| r.address.page == AREA && r.address.world_id == world_id)?;
+    menu.view.tile(row.address.cell()).map(|t| t.amount)
+}
+#[test]
+fn ground_magazine_unload_job_steps_on_event60_and_nearby_echo_only() {
+    let (host, mut app, _) = setup();
+    spawn_ground(
+        &host,
+        &mut app,
+        json!([{"itemId":6,"amount":4,"quality":70,"position":[0,1.75,-1]}]),
+    );
+    open(&host, &mut app);
+    let magazine = nearby_id(&app, 6);
+    assert!(magazine.actions.iter().any(|a| a.action == "unload"));
+    let world = magazine.address.world_id;
+    let round = magazine.round_id;
+    let owned = |app: &App| {
+        app.world()
+            .resource::<Menu>()
+            .view
+            .tiles
+            .cells
+            .iter()
+            .filter(|c| c.page < OWN_PAGES && c.tile.id == round)
+            .map(|c| c.tile.amount)
+            .sum::<u16>()
+    };
+    {
+        let mut menu = app.world_mut().resource_mut::<Menu>();
+        menu.gesture.selected = Some(magazine.address.cell());
+        menu.pending_actions
+            .push(controller::Action::Context("unload".into()));
+    }
+    step(&mut app, 0.11);
+    assert_eq!(app.world().resource::<Menu>().magazines.operations.len(), 1);
+    let mut seen = vec![];
+    for expected in [3u16, 2, 1] {
+        // One source half-second step, then nothing until the accepted reply,
+        // the owner snapshot and the repainted Nearby revision all arrive.
+        step(&mut app, 0.5);
+        let sent = deliver(&host, &mut app);
+        assert_eq!(sent.len(), 1, "exactly one round per accepted step");
+        assert_eq!(sent[0]["name"], "nearbyMagazineTransfer");
+        assert_eq!(sent[0]["unloading"], true);
+        assert_eq!(sent[0]["magWorldId"], world);
+        assert_eq!(sent[0]["roundId"], round);
+        seen.push(sent[0]["revision"].as_u64().unwrap());
+        assert_eq!(ground_amount(&app, world), Some(expected));
+        assert_eq!(owned(&app), 4 - expected);
+    }
+    assert!(
+        seen.windows(2).all(|w| w[1] > w[0]),
+        "each step names the newest received revision: {seen:?}"
+    );
+    assert_eq!(app.world().resource::<Menu>().magazines.operations.len(), 1);
+}
+#[test]
+fn ground_rounds_dragged_onto_ground_magazine_load_through_findstack_order() {
+    let (host, mut app, window) = setup();
+    spawn_ground(
+        &host,
+        &mut app,
+        json!([{"itemId":6,"amount":10,"position":[0,1.75,-1]}]),
+    );
+    open(&host, &mut app);
+    let round = nearby_id(&app, 6).round_id;
+    spawn_ground(
+        &host,
+        &mut app,
+        json!([{"itemId":round,"amount":3,"position":[0.3,1.75,-1]}]),
+    );
+    action(
+        app.world().resource::<CoreBridge>(),
+        "nearbyInventory",
+        json!({"action":"Open","eye":[0,1.75,0]}),
+    );
+    pump(&host, &mut app, 16);
+    step(&mut app, 0.11);
+    let magazine = nearby_id(&app, 6);
+    let rounds = nearby_id(&app, round);
+    let (area, _) = ground_grids(&mut app);
+    let at = |cell: Cell| area.min + Vec2::new(cell.x as f32, cell.y as f32) * CELL + Vec2::splat(20.);
+    let (from, to) = (at(rounds.address.cell()), at(magazine.address.cell()));
+    pointer(
+        &mut app,
+        window,
+        from,
+        Some((MouseButton::Left, ButtonState::Pressed)),
+    );
+    pointer(
+        &mut app,
+        window,
+        to,
+        Some((MouseButton::Left, ButtonState::Released)),
+    );
+    step(&mut app, 0.11);
+    assert!(app.world().resource::<Menu>().notice.is_empty());
+    assert_eq!(app.world().resource::<Menu>().magazines.operations.len(), 1);
+    for expected in [11u16, 12] {
+        step(&mut app, 0.5);
+        let sent = deliver(&host, &mut app);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["name"], "nearbyMagazineTransfer");
+        assert_eq!(sent[0]["unloading"], false);
+        assert_eq!(sent[0]["magWorldId"], magazine.address.world_id);
+        assert_eq!(sent[0]["roundWorldId"], rounds.address.world_id);
+        assert_eq!(ground_amount(&app, magazine.address.world_id), Some(expected));
+    }
+    assert_eq!(ground_amount(&app, rounds.address.world_id), Some(1));
+    assert!(
+        app.world()
+            .resource::<Menu>()
+            .view
+            .tiles
+            .cells
+            .iter()
+            .all(|c| c.page >= OWN_PAGES || c.tile.id != round),
+        "no owned rounds were invented or spent"
+    );
 }

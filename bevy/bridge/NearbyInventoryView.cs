@@ -103,6 +103,27 @@ public sealed partial class BridgeHost
             Eye=Vec(args,"eye")};
         return new{queued=_client.SendNearbyOperation(command),requestId=request};
     }
+    /// <summary>Command 88. Its request ID belongs to the magazine job's 81/85
+    /// sequence (one host ledger), never to the Nearby counter above. A part
+    /// with a nonzero world ID is a received ground row; otherwise it is the
+    /// exact scoped owned/container address the magazine routes already use.</summary>
+    object RequestNearbyMagazineTransfer(JsonElement args)
+    {
+        if(!args.TryGetProperty("eye",out _))return new{queued=false};
+        uint U(string key)=>args.TryGetProperty(key,out var v)&&v.TryGetUInt32(out uint n)?n:0;
+        ulong L(string key)=>args.TryGetProperty(key,out var v)&&v.TryGetUInt64(out ulong n)?n:0;
+        byte B(string key)=>checked((byte)Int(args,key));
+        ushort S(string key)=>checked((ushort)Int(args,key));
+        bool unloading=Bool(args,"unloading");
+        var command=new NearbyMagazineTransferCommand{RequestId=U("requestId"),ScanId=U("scanId"),Revision=U("revision"),
+            Eye=Vec(args,"eye"),Unloading=unloading,MagazineGround=U("magWorldId")!=0,RoundGround=!unloading&&U("roundWorldId")!=0};
+        if(command.MagazineGround)command.MagazineRow=new(U("magWorldId"),L("magToken"),B("magX"),B("magY"));
+        else command.Magazine=new(U("magCrateId"),B("magPage"),B("magX"),B("magY"),S("magId"),L("magToken"));
+        if(unloading)command.UnloadRoundId=S("roundId");
+        else if(command.RoundGround)command.RoundRow=new(U("roundWorldId"),L("roundToken"),B("roundX"),B("roundY"));
+        else command.Round=new(U("roundCrateId"),B("roundPage"),B("roundX"),B("roundY"),S("roundId"),L("roundToken"));
+        return new{queued=_client.SendNearbyMagazineTransfer(command)};
+    }
     PlayerInventory NearbyInventory(PlayerInventory inventory)
     {
         if(inventory==null||_client.Nearby.ScanId==0)return inventory;

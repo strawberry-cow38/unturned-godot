@@ -22,7 +22,8 @@ public static class InventoryView
         byte StorePage, Destination PaperdollTake, EquipPlan Equip);
     public sealed record QuickCraft(int Index, string Name, ushort ItemId, string Icon);
     public sealed record Load(bool Consumed, bool Allowed, string Message, int Batch, ushort RoundId);
-    public sealed record View(ItemView[] Items, QuickCraft[] QuickCrafts, object Cooker, Load Load, InventoryTiles.View Tiles, uint AcceptedTick, uint OpenCrateId);
+    public sealed record View(ItemView[] Items, QuickCraft[] QuickCrafts, object Cooker, Load Load, InventoryTiles.View Tiles, uint AcceptedTick, uint OpenCrateId,
+        uint NearbyTick = 0);   // accepted tick of the projected Nearby revision; ground magazine echoes wait for it
 
     static ushort RoundId(string round) => string.IsNullOrEmpty(round) ? (ushort)0
         : Assets.all().FirstOrDefault(a => a.isAmmo && a.magRound == round)?.id ?? 0;
@@ -110,12 +111,13 @@ public static class InventoryView
             actions.Add(new("drop", "Drop")); actions.Add(new("close", "Close"));
             if (page.page == PlayerInventory.AREA)
             {
-                // Source Empty edits the selected ground jar itself; command87
-                // applies it to the exact live world item. Hand, wear, drop and
-                // salvage stay off the ground row (see NEARBY_PORT.md).
+                // Source Empty/Unload edit the selected ground jar itself;
+                // commands 87/88 apply them to the exact live world item. Hand,
+                // wear, drop and salvage stay off the ground row (NEARBY_PORT.md).
                 hand = ""; actions.Clear();
                 if (a.IsFuelContainer) actions.Add(new("emptyFuel", "Empty"));
                 actions.Add(new("transfer", inventory.items[PlayerInventory.STORAGE].width > 0 ? "Store" : "Take"));
+                if (a.IsMagazine && item.amount > 0) actions.Add(new("unload", "Unload"));
                 actions.Add(new("close", "Close"));
             }
             var color = ItemTool.RarityColorUI(a.rarity);
@@ -159,7 +161,7 @@ public static class InventoryView
             load = new(consumed, allowed, consumed ? MagRules.Message(check) : "",
                 allowed ? Math.Min(bullet.item.amount, MagRules.Capacity(m) - magazine.item.amount) : 0, b?.id ?? 0);
         }
-        return new(result.ToArray(), quick, cooker, load, InventoryTiles.Read(inventory), acceptedTick, openCrateId);
+        return new(result.ToArray(), quick, cooker, load, InventoryTiles.Read(inventory), acceptedTick, openCrateId, nearby.Tick);
     }
 }
 

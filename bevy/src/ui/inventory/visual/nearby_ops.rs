@@ -15,7 +15,7 @@ struct Journey {
     sent: Vec<Value>,
     ground: Vec<u64>,
 }
-const STAGES: usize = 7;
+const STAGES: usize = 9;
 #[test]
 #[ignore = "requires Vulkan/display; actual UDP Nearby split, rotated place and Empty"]
 fn gpu_nearby_split_rotated_place_and_empty() {
@@ -49,7 +49,8 @@ fn gpu_nearby_split_rotated_place_and_empty() {
             "worldSpawn",
             json!({"items":[
                 {"itemId":6,"amount":23,"quality":67,"position":[0,1.75,-1]},
-                {"itemId":28,"quality":81,"fuelLevel":12000.0,"position":[0.6,1.75,-1]}]}),
+                {"itemId":28,"quality":81,"fuelLevel":12000.0,"position":[0.6,1.75,-1]},
+                {"itemId":17,"amount":12,"quality":64,"position":[-0.6,1.75,-1]}]}),
         )
         .unwrap();
     let ground = spawned["result"]["entities"]
@@ -159,18 +160,36 @@ fn gpu_nearby_split_rotated_place_and_empty() {
     assert_eq!(facts[5]["actions"], json!(["Empty", "Take", "Close"]));
     assert_eq!(facts[5]["fuel"], json!(12000.0));
     assert_eq!(facts[6]["fuel"], json!(0.0));
-    assert_eq!(facts[6]["worldRemaining"], 1, "Empty never takes the can");
-    let journey: Vec<Value> = facts[6]["sent"].as_array().unwrap().clone();
+    assert_eq!(facts[6]["worldRemaining"], 2, "Empty never takes the can");
+    assert_eq!(facts[7]["actions"], json!(["Take", "Unload", "Close"]));
+    let drum = ground_amount(8, 17).unwrap().as_u64().unwrap();
+    let loose = facts[8]["own"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["id"] != 6)
+        .map(|r| r["amount"].as_u64().unwrap())
+        .sum::<u64>();
+    assert!((1..12).contains(&drum), "accepted ground unload in progress: {drum}");
+    assert_eq!(drum + loose, 12, "every round is either in the drum or the bag");
+    assert_eq!(facts[8]["wheel"], json!(true), "source wheel on the ground drum");
+    let journey: Vec<Value> = facts[8]["sent"].as_array().unwrap().clone();
     let operations = journey
         .iter()
         .filter(|s| s["name"] == "nearbyOperation")
         .map(|s| s["args"]["operation"].clone())
         .collect::<Vec<_>>();
     assert_eq!(operations, [json!("Split"), json!("Place"), json!("EmptyFuel")]);
+    let unloads = journey
+        .iter()
+        .filter(|s| s["name"] == "nearbyMagazineTransfer")
+        .count() as u64;
+    assert!(unloads >= 12 - drum, "one accepted request per unloaded round");
     assert!(
-        journey
-            .iter()
-            .all(|s| matches!(s["name"].as_str(), Some("nearbyOperation" | "nearbyInventory"))),
+        journey.iter().all(|s| matches!(
+            s["name"].as_str(),
+            Some("nearbyOperation" | "nearbyInventory" | "nearbyMagazineTransfer")
+        )),
         "no legacy grid command touched AREA: {journey:?}"
     );
     for stage in 0..STAGES {
@@ -314,6 +333,17 @@ fn record(world: &mut World) {
             menu.pending_actions
                 .push(controller::Action::Context("emptyFuel".into()));
         }
+        // 7: the ground drum's source context offers Unload.
+        (7, 10) => {
+            let p = point(world, ground(world, 17));
+            pointer(world, p, MouseButton::Right, ButtonState::Pressed);
+            pointer(world, p, MouseButton::Right, ButtonState::Released);
+        }
+        // 8: timed source unload; each round waits for its accepted reply.
+        (8, 10) => world
+            .resource_mut::<Menu>()
+            .pending_actions
+            .push(controller::Action::Context("unload".into())),
         _ => {}
     }
     if c.frame == 60 {
@@ -350,8 +380,13 @@ fn record(world: &mut World) {
             .iter()
             .filter(|e| c.ground.contains(&e["netId"].as_u64().unwrap()))
             .count();
+        let wheel = menu
+            .magazines
+            .operations
+            .iter()
+            .any(|op| op.magazine.page == AREA && op.unloading);
         c.facts.push(json!({"stage":c.stage,"area":rows(|p|p==AREA),"own":rows(|p|p<OWN_PAGES),
-            "actions":actions,"fuel":fuel,"carry":carry,"split":split,"notice":menu.notice,
+            "actions":actions,"fuel":fuel,"carry":carry,"split":split,"notice":menu.notice,"wheel":wheel,
             "worldRemaining":remaining,"sent":c.sent,"nearby":world.resource::<GameSnapshot>().0["nearby"]}));
         let done = c.done.clone();
         world

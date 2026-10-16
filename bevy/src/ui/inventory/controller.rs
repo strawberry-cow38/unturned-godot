@@ -102,10 +102,11 @@ impl Menu {
         ui: &mut UiState,
         intents: &mut MessageWriter<UiIntent>,
     ) {
-        // Ground rows accept Take/Store, a drag to a cell and a split carry.
-        // Equipment, wear, drop and ground loads stay explicit refusals.
+        // Ground rows accept Take/Store, a drag to a cell, a split carry and a
+        // source round-onto-magazine load. Equipment, wear and drop stay
+        // explicit refusals; a load onto a ground magazine is resolved below.
         let ground = commands::nearby_source(&intent).is_some();
-        if commands::nearby_destination(&intent)
+        if (commands::nearby_destination(&intent) && !matches!(intent, Intent::LoadOrMove { .. }))
             || (ground
                 && !matches!(
                     intent,
@@ -141,11 +142,9 @@ impl Menu {
                             .ok()
                             .and_then(|v| v.load);
                         if let Some(load) = load.filter(|l| l.consumed) {
-                            if from.page == AREA {
-                                // Magazine jobs need an exact live ground round
-                                // source; that adapter is not ported yet.
-                                self.notice = "Take this item into your inventory first.".into();
-                            } else if !load.allowed {
+                            // Source TryStartLoad over any page, ground included:
+                            // the job then follows FindStack order for each round.
+                            if !load.allowed {
                                 self.notice = load.message;
                             } else if let Some(row) = at(&self.pages, to)
                                 .and_then(|item| self.view.at(Cell::item(to.page, item)))
@@ -155,6 +154,9 @@ impl Menu {
                                         "Take the magazine into your inventory first.".into();
                                 }
                             }
+                        } else if to.page == AREA {
+                            // PlayerInventory.TryDrag refuses AREA endpoints.
+                            self.notice = "Take this item into your inventory first.".into();
                         } else {
                             self.dispatch(
                                 commands::dispatch(

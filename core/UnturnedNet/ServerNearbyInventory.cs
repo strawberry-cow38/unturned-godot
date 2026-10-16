@@ -30,6 +30,8 @@ namespace UnturnedGodot.Net
         {
             Commands.Register<NearbyInventoryCommand>(ReplicationIds.CommandNearbyInventory, NearbyInventoryCommand.TryRead, HandleNearby);
             Commands.Register<NearbyOperationCommand>(ReplicationIds.CommandNearbyOperation, NearbyOperationCommand.TryRead, HandleNearbyOperation);
+            Commands.Register<NearbyMagazineTransferCommand>(ReplicationIds.CommandNearbyMagazineTransfer,
+                NearbyMagazineTransferCommand.TryRead, HandleNearbyMagazine);
         }
         bool NearbyEye(ushort owner, Vector3 eye) => Players.TryGetByOwner(owner, out var p)
             && (CraftingEyeAllowed?.Invoke(owner, eye)
@@ -47,7 +49,11 @@ namespace UnturnedGodot.Net
             {
                 if (!WorldItems.TryGet(id, out var item) || item.ServerItem == null
                     || Inventories.ItemIdentityProvider(item.ServerItem) != token || !session.Quota.TryGetValue(id, out int quota)) continue;
-                quota = Math.Min(quota, NearbyUnits(item.ServerItem)); session.Quota[id] = quota;
+                // A non-stacking row was admitted whole; its amount is state
+                // (magazine rounds), not a stack quota, and a ground load grows it.
+                int units = NearbyUnits(item.ServerItem);
+                bool whole = !Currency.IsCurrency(item.ServerItem.id) && (item.ServerItem.GetAsset()?.stackSize ?? 1) <= 1;
+                quota = whole ? units : Math.Min(quota, units); session.Quota[id] = quota;
                 var display = item.ServerItem.Clone();
                 if (Currency.IsCurrency(display.id)) display.id = Currency.StackId;
                 display.amount = checked((ushort)quota);
@@ -255,6 +261,75 @@ namespace UnturnedGodot.Net
             Inventories.ServerMarkDirty(owner);
             if (command.CrateId != 0) Inventories.ServerRepaintCrateViewers(command.CrateId);
             return NearbyResult.Transferred;
+        }
+        void HandleNearbyMagazine(ushort owner, NearbyMagazineTransferCommand command)
+        {
+            if (!_nearby.TryGetValue(owner, out var session)) _nearby[owner] = session = new();
+            Transactions.ProcessMagazineRequest(owner, command.RequestId, command.MagazineToken, command,
+                () => ApplyNearbyMagazine(owner, command, session));
+        }
+        /// <summary>Source StepMagOp on the ground page: the round or magazine is
+        /// the live world item behind an admitted row, never the display clone.
+        /// Rules and add-before-decrement order match ApplyMagazineTransfer.</summary>
+        (MagazineTransferResult, ushort) ApplyNearbyMagazine(ushort owner, NearbyMagazineTransferCommand command, NearbySession session)
+        {
+            if (!Players.TryGetByOwner(owner, out var player) || !Inventories.TryGet(owner, out var entry)) return (MagazineTransferResult.MissingInventory, 0);
+            if (!CombatState.IsAlive(owner)) return (MagazineTransferResult.Dead, 0);
+            bool usable = NearbyVisible != null && Inventories.ItemIdentityProvider != null && NearbyEye(owner, command.Eye);
+            NearbyPacking.Row Ground(NearbyRowRef r) => usable && AdmitNearbyRow(session, command.ScanId, command.Revision, r.X, r.Y,
+                r.WorldId, r.Token, command.Eye, out var row) == NearbyResult.Ready ? row : null;
+            var inv = entry.Inventory;
+            Item magazine; uint magazineWorld = 0;
+            if (command.MagazineGround)
+            {
+                var row = Ground(command.MagazineRow);
+                if (row == null || row.Sources.Length != 1 || !WorldItems.TryGet(row.Sources[0].WorldId, out var e))
+                    return (MagazineTransferResult.StaleMagazine, 0);
+                magazine = e.ServerItem; magazineWorld = e.NetIdValue;
+            }
+            else if ((magazine = Inventories.ServerResolveScoped(owner, command.Magazine, player.Pos)) == null)
+                return (MagazineTransferResult.StaleMagazine, 0);
+            var magAsset = Assets.find(magazine.id);
+            if (magAsset == null || !magAsset.IsMagazine) return (MagazineTransferResult.NotMagazine, 0);
+            if (command.Unloading)
+            {
+                var roundAsset = Assets.find(command.UnloadRoundId);
+                string held = MagRules.EffectiveRound(magazine, magAsset);
+                if (magazine.amount <= 0 || roundAsset == null || roundAsset.IsMagazine || held == null || held != roundAsset.magRound)
+                    return (MagazineTransferResult.RuleRefused, 0);
+                if (!inv.tryAddItem(new Item(command.UnloadRoundId, 1))) return (MagazineTransferResult.NoRoom, 0);
+                MagRules.ApplyUnload(magazine, magAsset);
+            }
+            else
+            {
+                NearbyPacking.Row roundRow = null; Items roundPage = null; byte roundIndex = byte.MaxValue; Item round;
+                if (command.RoundGround)
+                {
+                    if ((roundRow = Ground(command.RoundRow)) == null) return (MagazineTransferResult.StaleRound, 0);
+                    round = roundRow.Jar.item;
+                }
+                else
+                {
+                    var live = Inventories.ServerResolveScoped(owner, command.Round, player.Pos);
+                    roundPage = live == null ? null : inv.items[command.Round.Page];
+                    roundIndex = roundPage?.getIndex(command.Round.X, command.Round.Y) ?? byte.MaxValue;
+                    if (roundIndex == byte.MaxValue || !ReferenceEquals(roundPage.getItem(roundIndex).item, live)) return (MagazineTransferResult.StaleRound, 0);
+                    round = live;
+                }
+                if (round.amount <= 0) return (MagazineTransferResult.StaleRound, 0);
+                if (!MagRules.ApplyLoad(magazine, magAsset, Assets.find(round.id))) return (MagazineTransferResult.RuleRefused, 0);
+                // Spend only after the load is committed: one round of the exact
+                // ground contributor in source order, or of the exact grid stack.
+                if (roundRow != null) DebitNearby(session, roundRow, round.amount, 1);
+                else if (--round.amount <= 0) roundPage.removeItem(roundIndex);
+                if (command.Round.CrateId != 0) Inventories.ServerRepaintCrateViewers(command.Round.CrateId);
+            }
+            if (magazineWorld != 0) WorldItems.ServerItemChanged(magazineWorld, Session.CurrentTick);
+            if (command.Magazine.CrateId != 0) Inventories.ServerRepaintCrateViewers(command.Magazine.CrateId);
+            Inventories.ServerMarkDirty(owner);
+            // The owner's ground picture changes in this tick, before Event60.
+            PublishNearby(owner, session, session.LastRequestId, NearbyResult.Ready, false);
+            return (MagazineTransferResult.Applied, magazine.amount);
         }
         void RefreshNearby()
         {

@@ -174,3 +174,65 @@ fn viewed_timer_shares_request_ids_and_source_stack_order_then_retires_changed_v
         "a new view cannot inherit an old magazine timer"
     );
 }
+#[test]
+fn ground_unload_waits_for_the_repainted_nearby_and_names_its_newest_revision() {
+    let mut view: api::View = serde_json::from_value(json!({"items":[
+        {"address":{"page":8,"x":2,"y":1,"id":6,"token":40,"worldId":77,"scanId":3,"revision":9},
+            "magazine":true,"magazineCapacity":30,"roundId":901}],
+        "tiles":{"cells":[{"page":8,"x":2,"y":1,"tile":{"amount":3}}]}}))
+    .unwrap();
+    let mut ops = Magazines::default();
+    assert!(ops.unload(&view, Cell::at(8, 2, 1)));
+    let sent = ops.step(true, 0.5, &view);
+    let UiIntent::Action { name, args } = &sent[0] else {
+        panic!()
+    };
+    assert_eq!(name, "nearbyMagazineTransfer");
+    assert_eq!(
+        (
+            &args["magWorldId"],
+            &args["scanId"],
+            &args["revision"],
+            &args["magToken"],
+            &args["roundId"],
+            &args["roundWorldId"],
+            &args["unloading"]
+        ),
+        (
+            &json!(77),
+            &json!(3),
+            &json!(9),
+            &json!(40),
+            &json!(901),
+            &json!(0),
+            &json!(true)
+        )
+    );
+    let fact = Completion {
+        request_id: 1,
+        magazine_token: 40,
+        accepted_tick: 6,
+        applied: true,
+        amount: 2,
+    };
+    assert!(ops.receive(&fact, &view).is_some());
+    view.accepted_tick = 6;
+    assert!(
+        ops.step(true, 1., &view).is_empty(),
+        "owner snapshot alone: the ground picture has not caught up"
+    );
+    // The repaint repacked the row to another cell under a newer revision.
+    view.nearby_tick = 6;
+    view.items[0].address.revision = 10;
+    view.items[0].address.x = 0;
+    view.tiles.cells[0].x = 0;
+    view.tiles.cells[0].tile.amount = 2;
+    let sent = ops.step(true, 0., &view);
+    let UiIntent::Action { args, .. } = &sent[0] else {
+        panic!()
+    };
+    assert_eq!((&args["revision"], &args["magX"]), (&json!(10), &json!(0)));
+    view.items[0].address.token = 41;
+    assert!(ops.step(true, 1., &view).is_empty());
+    assert!(ops.operations.is_empty(), "a different live item retires the job");
+}

@@ -19,8 +19,11 @@ pub(super) struct Completion {
 }
 #[derive(Debug)]
 enum Pending {
-    Reply(u32),
-    Echo(u32),
+    /// Request ID, and whether a ground row took part.
+    Reply(u32, bool),
+    /// Accepted tick that the owner snapshot (and, for a ground step, the
+    /// Nearby projection) must reach before the next source stack is chosen.
+    Echo(u32, bool),
 }
 #[derive(Debug)]
 pub(super) struct Operation {
@@ -56,7 +59,11 @@ impl Magazines {
     }
 
     fn start(&mut self, row: &api::Item, batch: u16, round_id: u16, unloading: bool) -> bool {
-        if !row.address.addressable() || !row.magazine || batch == 0 || round_id == 0 {
+        if !(row.address.addressable() || row.address.ground())
+            || !row.magazine
+            || batch == 0
+            || round_id == 0
+        {
             return false;
         }
         self.operations
@@ -88,7 +95,7 @@ impl Magazines {
     pub fn receive(&mut self, fact: &Completion, _view: &api::View) -> Option<i32> {
         let index = self.operations.iter().position(|op| {
             op.magazine.token == fact.magazine_token
-                && matches!(op.pending, Some(Pending::Reply(id)) if id == fact.request_id)
+                && matches!(op.pending, Some(Pending::Reply(id, _)) if id == fact.request_id)
         })?;
         if !fact.applied {
             self.operations.remove(index);
@@ -100,13 +107,15 @@ impl Magazines {
         if op.done >= op.batch || (op.unloading && fact.amount == 0) {
             self.operations.remove(index);
         } else {
-            op.pending = Some(Pending::Echo(fact.accepted_tick));
+            let ground = matches!(op.pending, Some(Pending::Reply(_, true)));
+            op.pending = Some(Pending::Echo(fact.accepted_tick, ground));
         }
         capacity
     }
 
-    /// Source FindStack walks page and item order for each round. Accepted
-    /// container scopes share that order; AREA still needs its own live identity.
+    /// Source FindStack walks page and item order for each round, AREA (page
+    /// 8) included. Ground rows carry their received world identity and route
+    /// through command 88; owned and container scopes keep 81/85.
     pub fn step(&mut self, open: bool, delta: f32, view: &api::View) -> Vec<UiIntent> {
         if !open {
             return vec![];
@@ -114,21 +123,33 @@ impl Magazines {
         let mut requests = Vec::new();
         for index in (0..self.operations.len()).rev() {
             let op = &mut self.operations[index];
-            let cell = op.magazine.cell();
-            let Some(row) = view.at(cell).filter(|r| r.address == op.magazine) else {
+            let Some(row) = (if op.magazine.ground() {
+                view.items
+                    .iter()
+                    .find(|r| r.address.same_instance(op.magazine))
+            } else {
+                view.at(op.magazine.cell())
+                    .filter(|r| r.address == op.magazine)
+            }) else {
                 self.operations.remove(index);
                 continue;
             };
+            // A repaint advances a ground row's revision; keep the newest.
+            op.magazine = row.address;
+            let cell = op.magazine.cell();
             let Some(tile) = view.tile(cell) else {
                 continue;
             };
             op.elapsed += delta.max(0.);
             match op.pending {
-                Some(Pending::Reply(_)) => continue,
-                Some(Pending::Echo(tick)) if (view.accepted_tick.wrapping_sub(tick) as i32) < 0 => {
+                Some(Pending::Reply(..)) => continue,
+                Some(Pending::Echo(tick, ground))
+                    if (view.accepted_tick.wrapping_sub(tick) as i32) < 0
+                        || (ground && (view.nearby_tick.wrapping_sub(tick) as i32) < 0) =>
+                {
                     continue;
                 }
-                Some(Pending::Echo(_)) => op.pending = None,
+                Some(Pending::Echo(..)) => op.pending = None,
                 None => {}
             }
             if op.elapsed < INTERVAL {
@@ -148,7 +169,7 @@ impl Magazines {
             } else {
                 let Some(round) = view.items.iter().find(|r| {
                     r.address.id == op.round_id
-                        && r.address.addressable()
+                        && (r.address.addressable() || r.address.ground())
                         && view.tile(r.address.cell()).is_some_and(|t| t.amount > 0)
                 }) else {
                     self.operations.remove(index);
@@ -161,7 +182,8 @@ impl Magazines {
                 continue;
             }
             self.next_request = self.next_request.wrapping_add(1).max(1);
-            op.pending = Some(Pending::Reply(self.next_request));
+            let ground = op.magazine.ground() || round.ground();
+            op.pending = Some(Pending::Reply(self.next_request, ground));
             op.elapsed -= INTERVAL;
             let scoped = op.magazine.crate_id != 0 || round.crate_id != 0;
             let mut args = json!({
@@ -169,12 +191,23 @@ impl Magazines {
                 "magId":op.magazine.id,"magToken":op.magazine.token,"roundPage":round.page,"roundX":round.x,"roundY":round.y,
                 "roundId":round.id,"roundToken":round.token,"unloading":op.unloading
             });
-            if scoped {
+            if scoped || ground {
                 args["magCrateId"] = json!(op.magazine.crate_id);
                 args["roundCrateId"] = json!(round.crate_id);
             }
+            if ground {
+                // One received scan/revision names every ground part; the
+                // host rechecks camera, range, LOS and full bytes per step.
+                let at = if op.magazine.ground() { op.magazine } else { round };
+                args["scanId"] = json!(at.scan_id);
+                args["revision"] = json!(at.revision);
+                args["magWorldId"] = json!(op.magazine.world_id);
+                args["roundWorldId"] = json!(round.world_id);
+            }
             requests.push(commands::action(
-                if scoped {
+                if ground {
+                    "nearbyMagazineTransfer"
+                } else if scoped {
                     "viewedMagazineTransfer"
                 } else {
                     "magazineTransfer"

@@ -241,8 +241,9 @@ pub(super) fn context_refusal(name: &str, row: &api::Item) -> Option<&'static st
     let a = row.address;
     let area = a.page == AREA;
     let received = a.world_id != 0 && a.token != 0 && a.scan_id != 0 && a.revision != 0;
-    if (area && !matches!(name, "transfer" | "close" | "emptyFuel"))
-        || (name == "emptyFuel" && if area { !received } else { !a.addressable() })
+    if (area && !matches!(name, "transfer" | "close" | "emptyFuel" | "unload"))
+        || (area && matches!(name, "emptyFuel" | "unload") && !received)
+        || (name == "emptyFuel" && !area && !a.addressable())
         || (name == "salvage" && (row.address.page >= OWN_PAGES || row.address.token == 0))
     {
         Some("Take this item into your inventory first.")
