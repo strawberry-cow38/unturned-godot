@@ -1,0 +1,208 @@
+using System.Collections.Generic;
+using Godot;
+
+namespace UnturnedGodot
+{
+    /// <summary>UG_PLAYAT=prop[,nth[,dist[,pitch[,rise]]]]: a PLAY-MODE HARNESS (no effect unless set) for a generated town. A
+    /// player can walk into a building, stand on a table and press F on a fridge; an offline render cannot, so this does it
+    /// for one: it finds the nth piece of furniture named `prop` in the town's generated buildings (a node "Furniture_prop"
+    /// under a "Building_*"), stands the player `dist` metres in front of it looking back at it (`pitch` degrees, negative
+    /// down) -- or, with dist 0, drops them from `rise` metres over it -- and says what happened, in the log:
+    ///   - where the player came to rest against the piece's own floor (on it, or through it to the floor),
+    ///   - with UG_PLAYAT_PRESS=1, what F did (the look-ray's focus, then whether a container opened),
+    ///   - what the piece's building is made of: its furniture, how much of it has a collider, its lights and containers,
+    ///     and the same over every generated building in the town (the light count is the one that matters).
+    /// UG_PLAYAT_CMD runs console lines first (';'-separated: `timeset 22`), and UG_PLAYAT_SHOT=png saves the frame and
+    /// quits once it is over. Frames are counted in PHYSICS ticks, because a frame of a whole town under a software
+    /// rasteriser can be seconds long and the player is a physics body.</summary>
+    public partial class PlayAtProbe : Node
+    {
+        PlayerController _player;
+        Node _world;
+        string _prop; int _nth; float _dist = 2.2f, _pitch = -10f, _rise = 2.5f;
+        bool _press;
+        string _shot;
+        int _tick;
+        Node3D _target;
+
+        public static void AttachIfAsked(Node world, PlayerController player)
+        {
+            var spec = System.Environment.GetEnvironmentVariable("UG_PLAYAT");
+            if (string.IsNullOrEmpty(spec) || world == null || player == null) return;
+            var a = spec.Split(',');
+            var p = new PlayAtProbe { Name = "PlayAtProbe", _player = player, _world = world, _prop = a[0].Trim() };
+            var ic = System.Globalization.CultureInfo.InvariantCulture;
+            var nf = System.Globalization.NumberStyles.Float;
+            if (a.Length > 1) int.TryParse(a[1], out p._nth);
+            if (a.Length > 2) float.TryParse(a[2], nf, ic, out p._dist);
+            if (a.Length > 3) float.TryParse(a[3], nf, ic, out p._pitch);
+            if (a.Length > 4) float.TryParse(a[4], nf, ic, out p._rise);
+            p._press = System.Environment.GetEnvironmentVariable("UG_PLAYAT_PRESS") == "1";
+            p._shot = System.Environment.GetEnvironmentVariable("UG_PLAYAT_SHOT");
+            world.AddChild(p);
+        }
+
+        static void Walk(Node n, System.Action<Node> f)
+        {
+            f(n);
+            foreach (var c in n.GetChildren()) Walk(c, f);
+        }
+
+        /// <summary>A node's name as it was asked for: a sibling with the same name is renamed "@Name@123" by AddChild.</summary>
+        static string BaseName(Node n)
+        {
+            var s = n.Name.ToString().TrimStart('@');
+            int at = s.IndexOf('@');
+            return at >= 0 ? s.Substring(0, at) : s;
+        }
+
+        /// <summary>A generated building's furniture: everything directly under its root but its surfaces (WallSurface) and its
+        /// stairs' invisible ramps (a bare StaticBody3D) -- a piece's mesh, its holder, or a switch.</summary>
+        static IEnumerable<Node3D> Furniture(Node3D building)
+        {
+            foreach (var c in building.GetChildren())
+                if (c is Node3D n && n is not WallSurface && !(n is StaticBody3D && n is not RoomLightSwitch)) yield return n;
+        }
+
+        static Node3D BuildingOf(Node n)
+        {
+            for (; n != null; n = n.GetParent()) if (n is Node3D b && BaseName(b).StartsWith("Building_")) return b;
+            return null;
+        }
+
+        public override void _PhysicsProcess(double delta)
+        {
+            if (!GodotObject.IsInstanceValid(_player)) return;
+            _tick++;
+            if (_tick == 2) Begin();
+            if (_target == null) return;
+            if (_tick < 12) Place();        // held a few ticks: the spawn logic and the interp snapshots settle under it
+            if (_tick == 110) Report();
+            if (_press && _tick == 120)
+            {
+                Log.Print($"[playat] pressing F: looking at {LookedAt()}");
+                Input.ParseInputEvent(new InputEventKey { Keycode = Key.F, PhysicalKeycode = Key.F, Pressed = true });
+                Input.ParseInputEvent(new InputEventKey { Keycode = Key.F, PhysicalKeycode = Key.F, Pressed = false });
+            }
+            if (_press && _tick == 150)
+                Log.Print($"[playat] after F: inventory {(_player.InventoryOpen ? "OPEN" : "closed")}, storage '{_player.OpenStorageLabel ?? "-"}'");
+            if (!string.IsNullOrEmpty(_shot) && _tick == (_press ? 175 : 140))
+            {
+                var img = GetViewport().GetTexture()?.GetImage();
+                if (img == null) Log.Err("[playat] no image -- run with a rendering driver, not --headless");
+                else { var err = img.SavePng(_shot); Log.Print($"[playat] saved {_shot}: {err}"); }
+                GetTree().Quit();
+            }
+        }
+
+        void Begin()
+        {
+            // a piece is a direct child of its building (Furniture() below) that is this prop: by the editor's obj_name meta, by its
+            // name, or -- a duplicate name is renamed "@MeshInstance3D@n" by AddChild -- by wearing the catalogue's own cached mesh
+            var mesh = (_world as Editor)?.Objects?.PreviewMesh(_prop);
+            var found = new List<Node3D>();
+            foreach (var c in _world.GetChildren())
+                if (c is Node3D b && BaseName(b).StartsWith("Building_"))
+                    foreach (var f in Furniture(b))
+                        if ((f.HasMeta("obj_name") && (string)f.GetMeta("obj_name") == _prop) || BaseName(f) == "Furniture_" + _prop
+                            || (mesh != null && f is MeshInstance3D mi && mi.Mesh == mesh))
+                            found.Add(f);
+            Log.Print($"[playat] {found.Count} '{_prop}' in the town's buildings");
+            if (_nth < 0 || _nth >= found.Count) { Log.Err($"[playat] no {_prop} #{_nth}"); if (!string.IsNullOrEmpty(_shot)) GetTree().Quit(1); return; }
+            _target = found[_nth];
+            var console = FindConsole(_world);
+            var cmd = System.Environment.GetEnvironmentVariable("UG_PLAYAT_CMD");
+            if (!string.IsNullOrEmpty(cmd))
+                foreach (var line in cmd.Split(';'))
+                    if (line.Trim().Length > 0) { Log.Print($"[playat] console: {line.Trim()}"); console?.DebugRun(line.Trim()); }
+            Census();
+        }
+
+        /// <summary>What the eye's ray meets within reach, on the player's look-ray layers (world, vehicles, props, interactables),
+        /// and the nearest container above it -- the ancestry PlayerController's ShelfOf walks.</summary>
+        string LookedAt()
+        {
+            var cam = GetViewport().GetCamera3D();
+            if (cam == null) return "no camera";
+            var from = cam.GlobalPosition;
+            var q = PhysicsRayQueryParameters3D.Create(from, from - cam.GlobalBasis.Z * 4f, (1u << 0) | (1u << 5) | (1u << 6) | (1u << 7));
+            q.Exclude = new Godot.Collections.Array<Rid> { _player.GetRid() };
+            var hit = cam.GetWorld3D().DirectSpaceState.IntersectRay(q);
+            if (hit.Count == 0) return "nothing within 4 m";
+            var n = (Node)hit["collider"];
+            string shelf = "no container";
+            Node s = n;
+            for (int i = 0; i < 4 && s != null; i++, s = s.GetParent()) if (s is StoreShelf ss) { shelf = $"container '{ss.LabelText}'"; break; }
+            return $"{n.GetPath()} at {((Vector3)hit["position"]).DistanceTo(from):0.00} m ({shelf} within 4 parents)";
+        }
+
+        static DevConsole FindConsole(Node n)
+        {
+            if (n is DevConsole dc) return dc;
+            foreach (var c in n.GetChildren()) { var f = FindConsole(c); if (f != null) return f; }
+            return null;
+        }
+
+        void Place()
+        {
+            var t = _target.GlobalTransform;
+            var front = t.Basis * Vector3.Up;          // a piece's front is its OBJ +Y (EditorObjects.Upright takes it there)
+            front.Y = 0f;
+            front = front.LengthSquared() > 1e-6f ? front.Normalized() : Vector3.Forward;
+            var at = _dist > 0.01f ? t.Origin + front * _dist + Vector3.Up * 0.05f : t.Origin + Vector3.Up * _rise;
+            _player.TeleportTo(at);
+            // the player looks down its own -Z: turned so that is -front, back at the piece
+            _player.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(front.X, front.Z)), 0f);
+            _player.DebugSetLookPitch(_pitch);
+        }
+
+        void Report()
+        {
+            var t = _target.GlobalTransform;
+            var p = _player.GlobalPosition;
+            Log.Print($"[playat] {_prop} #{_nth} at ({t.Origin.X:0.00}, {t.Origin.Y:0.00}, {t.Origin.Z:0.00}); the player came to rest at "
+                    + $"({p.X:0.00}, {p.Y:0.00}, {p.Z:0.00}) -- {p.Y - t.Origin.Y:0.00} m over the piece's floor, "
+                    + $"{new Vector2(p.X - t.Origin.X, p.Z - t.Origin.Z).Length():0.00} m from its origin in plan");
+        }
+
+        void Census()
+        {
+            var b = BuildingOf(_target);
+            Log.Print($"[playat] {b?.Name}: {Count(b)}");
+            int buildings = 0;
+            var all = new Counts();
+            foreach (var c in _world.GetChildren())
+                if (c is Node3D n && BaseName(n).StartsWith("Building_")) { buildings++; Add(all, n); }
+            Log.Print($"[playat] every generated building ({buildings}): {all}");
+        }
+
+        sealed class Counts
+        {
+            public int Furniture, WithCollider, Lamps, Omni, Spot, Containers, Switches, Outlets;
+            public override string ToString() => $"{Furniture} pieces of furniture, {WithCollider} with a collider, {Lamps} LampLight(s), "
+                                                 + $"{Omni} OmniLight3D + {Spot} SpotLight3D, {Containers} container(s), {Switches} light switch(es), {Outlets} outlet(s)";
+        }
+
+        static Counts Count(Node3D b) { var c = new Counts(); if (b != null) Add(c, b); return c; }
+
+        static void Add(Counts c, Node3D building)
+        {
+            foreach (var f in Furniture(building))
+            {
+                c.Furniture++;
+                bool body = false;
+                Walk(f, d => { if (d is CollisionObject3D) body = true; });
+                if (body) c.WithCollider++;
+            }
+            Walk(building, n =>
+            {
+                if (n is LampLight) c.Lamps++;
+                if (n is OmniLight3D) c.Omni++;
+                if (n is SpotLight3D) c.Spot++;
+                if (n is StoreShelf) c.Containers++;
+                if (n is RoomLightSwitch) c.Switches++;
+                if (n is GridPowerSource) c.Outlets++;
+            });
+        }
+    }
+}

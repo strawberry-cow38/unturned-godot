@@ -258,6 +258,7 @@ namespace UnturnedGodot
             _hint.Text = _editor.NotSaved != null ? "PLAYTEST  —  generated town (not saved: play the seed again) · press Esc to return to the editor"
                                                   : "PLAYTEST  —  map saved · press Esc to return to the editor";
             _hint.Visible = !PlayOnly;      // (playing, not testing: no banner, and Esc is the pause menu's)
+            PlayAtProbe.AttachIfAsked(_editor, _player);   // UG_PLAYAT: a render harness's player, in a generated building (no-op unset)
             Log.Print($"[playmode] {(PlayOnly ? "PLAY (the game's rules)" : "playtest")}: {_mutedTools.Count} editor tool(s) muted, {_editorLayers.Count} editor UI layer(s) hidden, "
                     + $"day {(_dayNight != null ? $"{_dayNight.DayLength:0} s" : "none")}, weather {(WeatherManager.Current != null ? "on" : "off")}, "
                     + $"Esc {(PlayOnly ? "pauses" : "returns to the editor")}");
