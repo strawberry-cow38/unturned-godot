@@ -272,6 +272,7 @@ namespace UnturnedGodot
                 });
                 gcs.Position = Vector3.Zero;
             }
+            RebuildOccluder(solids, plumb != null);
             RebuildGlass();
             RebuildDoors();
             RebuildBarricades();
@@ -847,6 +848,80 @@ namespace UnturnedGodot
         {
             if (cs.Shape is ConvexPolygonShape3D existing) { existing.Points = pts; return; }
             cs.Shape = new ConvexPolygonShape3D { Points = pts };
+        }
+
+        // ---- occlusion ---------------------------------------------------------------------------------
+        // ⭐ THE SURFACE OCCLUDES WITH ITS OWN SOLIDS (strawberry 2026-10-16: "since we make the walls / floors we can probably
+        // do more advanced culling of even more stuff right?"). The partition that makes the mesh and the collider makes the
+        // occluder too, so an opening -- a window, a door, a stairwell -- is a hole in all three by construction: nothing behind
+        // a window can be culled by the wall it is in. Each solid becomes one quad on the surface's MID-PLANE, pulled in from
+        // its edges, which keeps it strictly inside what is drawn: an occluder bigger than its wall culls things you can see
+        // past the wall's edge, and smaller only culls a little less. Stair treads and pieces under OccluderMinArea are
+        // left out -- they hide almost nothing and every quad costs the occlusion rays something.
+        // A hidden surface (the editor's storey cutaway, a basement out of sight) hides its occluder with it (Godot hands an
+        // occluder's visibility to the occlusion culler along with its transform).
+
+        OccluderInstance3D _occluder;
+        /// <summary>A solid smaller than this (m², before the inset) adds no occluder quad.</summary>
+        public const float OccluderMinArea = 1f;
+        /// <summary>How far each occluder quad stands in from its solid's edges, so it never reaches past what is drawn.</summary>
+        const float OccluderInset = 0.05f;
+
+        void RebuildOccluder(List<WallSolid> solids, bool plumb)
+        {
+            if (!Occlusion.Wanted || Kind == SurfaceKind.Stairs)
+            {
+                if (_occluder != null) _occluder.Occluder = null;
+                return;
+            }
+            // a plumb-cut roof slab is shorter than its rectangle at the cut, by up to its thickness: stay that far in
+            float inset = plumb ? OccluderInset + Thickness : OccluderInset;
+            var verts = new List<Vector3>();
+            var idx = new List<int>();
+            foreach (var s in solids)
+            {
+                if (s.Width * s.Height < OccluderMinArea) continue;
+                if (Tapered)
+                {
+                    // the trapezoid's own outline (convex), shrunk toward its centroid by the inset
+                    var poly = ClipToTaper(s);
+                    if (poly.Count < 3) continue;
+                    var c = Vector2.Zero;
+                    foreach (var p in poly) c += p;
+                    c /= poly.Count;
+                    int b0 = verts.Count;
+                    foreach (var p in poly)
+                    {
+                        var d = p - c;
+                        float l = d.Length();
+                        var q = l > inset * 2f ? p - d / l * inset : c;
+                        verts.Add(new Vector3(q.X, q.Y, 0f));
+                    }
+                    for (int k = 1; k + 1 < poly.Count; k++) { idx.Add(b0); idx.Add(b0 + k); idx.Add(b0 + k + 1); }
+                    continue;
+                }
+                float u0 = s.U0 + inset, u1 = s.U1 - inset, v0 = s.V0 + inset, v1 = s.V1 - inset;
+                if (u1 <= u0 || v1 <= v0) continue;
+                int b = verts.Count;
+                verts.Add(new Vector3(u0, v0, 0f)); verts.Add(new Vector3(u1, v0, 0f));
+                verts.Add(new Vector3(u1, v1, 0f)); verts.Add(new Vector3(u0, v1, 0f));
+                idx.Add(b); idx.Add(b + 1); idx.Add(b + 2);
+                idx.Add(b); idx.Add(b + 2); idx.Add(b + 3);
+            }
+            if (verts.Count == 0)
+            {
+                if (_occluder != null) _occluder.Occluder = null;
+                return;
+            }
+            if (_occluder == null)
+            {
+                _occluder = new OccluderInstance3D { Name = "Occluder" };
+                AddChild(_occluder);
+                Occlusion.EnsureOn(GetViewport());
+            }
+            var occ = _occluder.Occluder as ArrayOccluder3D ?? new ArrayOccluder3D();
+            occ.SetArrays(verts.ToArray(), idx.ToArray());
+            _occluder.Occluder = occ;
         }
 
         /// <summary>The trapezoid's outline over one solid (RoofShapes.TaperPolygon: the one definition, which the L0
