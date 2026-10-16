@@ -158,7 +158,7 @@ public sealed partial class BridgeHost
         // A listen host's own client consumes these per-shot presentation facts
         // from PlayerFired/PlayerMeleed; with no client they would only grow.
         _weapons.DiscardPresentationFacts();
-        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+        StepWorldServices();
         _appearance.Tick();
         if (_worldChanged) PublishFullSnapshot();
         // Source order: net.save.autosave, then net.server.replicate LAST.

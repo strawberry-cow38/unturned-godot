@@ -126,10 +126,13 @@ namespace UnturnedNet.Tests
             [77] = "CommandLearnSkillNode", // v70 original graph node purchase
             [78] = "CommandVehicleDoor", // v70 original bus driver/focused toggle
             [79] = "CommandEmptyFuel", // v70 exact owner fuel-container action
+            [90] = "CommandDepositFuel", // v78 exact held fuel container poured into a generator
             [81] = "CommandMagazineTransfer", // v71 exact magazine round request
             [83] = "CommandVehicleHitch", // v74 source fifth-wheel intent; paired vehicle state framing
             [84] = "CommandEmptyViewedFuel", // v75 exact currently viewed container instance
             [86] = "CommandNearbyInventory", // v76 exact world-instance owner projection/transfer
+            [87] = "CommandNearbyOperation", // v77 exact Nearby row split/empty (op 0 reserved); Event63 result, 86 ledger
+            [88] = "CommandNearbyMagazineTransfer", // v77 ground magazine/round MagRules step; Event60 result, 81/85 ledger
             [85] = "CommandViewedMagazineTransfer", // v75 shares owner-only completion60 and81 replay ledger
             [82] = "CommandCraftingContext", // v72 physical-eye station context
             [80] = "CommandSalvageItem", // v70 exact owner copy into source craft queue

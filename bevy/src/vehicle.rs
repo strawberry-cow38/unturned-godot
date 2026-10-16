@@ -20,6 +20,7 @@ mod hearing;
 pub(crate) mod lighting;
 mod npc;
 mod remote;
+mod rope;
 mod render;
 pub(crate) mod seats;
 pub(crate) mod spawns;
@@ -109,6 +110,8 @@ pub struct VehicleBody {
     swamp: water::Swamp,
     wreck: damage::Wreck,
     park: dynamics::Park,
+    rope: rope::Tow,
+    tow_slip: rope::SavedSlip,
 }
 impl VehicleBody {
     pub(crate) fn coupled_trailer(&self) -> u32 { self.coupling.trailer }
@@ -186,12 +189,15 @@ struct Replica {
     wreck_salvageable: bool,
     driver_player_id: u32,
     coupled_trailer_net_id: u32,
+    towed_net_id: u32,
+    tow_rest_len: f32,
     passengers: Option<Vec<u32>>,
     recov_counter: u8,
 }
 pub struct VehiclePlugin;
 impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
+        rope::install(app);
         app.init_resource::<Occupancy>()
             .add_plugins(turrets::fx::MountedEffectsPlugin)
             .add_plugins(npc::NpcFlightPlugin)
@@ -543,6 +549,12 @@ fn sync_vehicles(
         serde_json::from_value(snapshot.0["vehicles"].clone()).unwrap_or_default();
     let local_player = snapshot.0["playerId"].as_u64().unwrap_or(0) as u32;
     let live: HashSet<_> = rows.iter().map(|v| v.net_id).collect();
+    // Accepted rope ends: towed -> tower.
+    let towed_by: HashMap<u32, u32> = rows
+        .iter()
+        .filter(|r| r.towed_net_id != 0)
+        .map(|r| (r.towed_net_id, r.net_id))
+        .collect();
     vehicles.entities.retain(|id, e| {
         if live.contains(id) {
             true
@@ -590,6 +602,16 @@ fn sync_vehicles(
                 let new_owner = if link.cab != 0 { link.driver } else { row.driver_player_id };
                 let changed_link = body.coupling != link;
                 body.coupling = link;
+                let tow = rope::Tow {
+                    towed: row.towed_net_id,
+                    rest: row.tow_rest_len,
+                    by: towed_by.get(&row.net_id).copied().unwrap_or(0),
+                };
+                // AttachTow/DetachTow Wake() both ends.
+                if (body.rope.towed, body.rope.by) != (tow.towed, tow.by) {
+                    body.park.wake();
+                }
+                body.rope = tow;
                 body.driver_player_id = row.driver_player_id;
                 body.passengers = row.passengers.clone().unwrap_or_default();
                 // Handoff uses the last accepted pair, with the current+next
@@ -648,6 +670,12 @@ fn sync_vehicles(
                     swamp: water::Swamp::new(spec),
                     wreck: default(),
                     park: default(),
+                    rope: rope::Tow {
+                        towed: row.towed_net_id,
+                        rest: row.tow_rest_len,
+                        by: towed_by.get(&row.net_id).copied().unwrap_or(0),
+                    },
+                    tow_slip: default(),
                 },
                 pose,
                 remote::Puppet::default(),
@@ -965,6 +993,23 @@ fn step_bodies(
     // would leave its unsupported trailer falling outside streamed collision.
     // OnVehicleContact wakes any non-husk vehicle another vehicle touches.
     let vehicles: HashSet<Entity> = query.iter().map(|(e, ..)| e).collect();
+    // UpdateTow reads both rope ends' pre-step state, symmetric on each host.
+    let query_rest: HashMap<u32, f32> = query
+        .iter()
+        .filter(|(_, body, ..)| body.rope.towed != 0)
+        .map(|(_, body, ..)| (body.net_id, body.rope.rest))
+        .collect();
+    let ends: HashMap<u32, rope::End> = query
+        .iter()
+        .filter(|(_, body, ..)| body.rope.roped())
+        .filter_map(|(_, body, pose, velocity, ..)| {
+            Some((body.net_id, rope::End {
+                pose: *pose,
+                velocity: velocity.linear,
+                spec: &data::definition(body.type_id)?.spec,
+            }))
+        })
+        .collect();
     let outside_region: HashSet<u32> = query.iter().filter_map(|(_,body,pose,_,_,_,_,_,_,_)| {
         (geometry.as_ref().is_some_and(|g| g.loaded_radius > 0.
             && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius)
@@ -1032,6 +1077,28 @@ fn step_bodies(
         }
         *force = ExternalForce::default();
         *impulse = ExternalImpulse::default();
+        // UpdateTow: positioned pull-only forces on whichever ends this host
+        // simulates. StepPlane/StepHeli return before UpdateTow, so an aircraft
+        // tower never pulls; an aircraft towed by a car is pulled. A taut rope
+        // Wake()s both ends.
+        let mut pull = ExternalForce::default();
+        if let (Some(me), true) = (ends.get(&body.net_id), body.flags & 32 == 0) {
+            if let Some((f, at, _)) = ends
+                .get(&body.rope.towed)
+                .filter(|_| !me.aircraft())
+                .and_then(|towed| rope::tension(me, towed, body.rope.rest))
+            {
+                rope::apply(&mut pull, me, f, at);
+                body.park.wake();
+            }
+            if let Some((f, _, at)) = ends.get(&body.rope.by).filter(|t| !t.aircraft()).and_then(|tower| {
+                let rest = query_rest.get(&body.rope.by).copied().unwrap_or(0.);
+                rope::tension(tower, me, rest)
+            }) {
+                rope::apply(&mut pull, me, -f, at);
+                body.park.wake();
+            }
+        }
         if !spec.heli && !spec.plane {
             let (f, i) = body
                 .drivetrain
@@ -1042,12 +1109,18 @@ fn step_bodies(
                 // Source halves actual EngineForce after drivetrain evaluation.
                 for wheel in &mut wheels.wheels { wheel.engine_force *= 0.5; }
             }
+            if body.rope.towed != 0 && !spec.tracked {
+                // `if (Towing != null) eng *= 0.9f` (the tank path returns first).
+                for wheel in &mut wheels.wheels { wheel.engine_force *= 0.9; }
+            }
             tires::apply_physics(
                 spec,
                 body.popped_tire_mask,
                 &mut wheels,
                 body.drivetrain.surface_grip,
             );
+            force.force += pull.force;
+            force.torque += pull.torque;
             // Source StepAntiRoll skips _exploded, _parked and sleeping hulls.
             let driven = body.driver_player_id != 0
                 || pilots.as_ref().is_some_and(|p| p.managed(body.net_id));
@@ -1069,7 +1142,7 @@ fn step_bodies(
                 });
             let cab = body.coupling.cab;
             body.park.update(driven, cab, rammed);
-            let asleep = dynamics::settled(!driven, cab != 0, &velocity);
+            let asleep = dynamics::settled(!driven, cab != 0 || body.rope.roped(), &velocity);
             if body.flags & 32 == 0
                 && !body.park.parked
                 && !asleep
@@ -1095,12 +1168,25 @@ fn step_bodies(
             }
             // Vehicle._Process applies an all-wheel parking brake while unattended.
             // Driver Space only brakes the rear axle and cannot stand in for this.
-            if body.driver_player_id == 0 && body.coupling.cab == 0 && body.flags & 32 == 0 {
+            // Source `towed` (a coupled trailer or either rope end) is never braked.
+            if body.driver_player_id == 0
+                && body.coupling.cab == 0
+                && !body.rope.roped()
+                && body.flags & 32 == 0
+            {
                 for wheel in &mut wheels.wheels {
                     wheel.brake = spec.brake * spec.mass() / 900. * 13.;
                 }
             }
         }
+        if spec.heli || spec.plane {
+            force.force += pull.force;
+            force.torque += pull.torque;
+        }
+        // SetTowedFreeRoll: a towed car free-rolls so the rope can drag it;
+        // release restores the saved per-wheel slip.
+        let towed = body.rope.by != 0;
+        body.tow_slip.free_roll(towed, &mut wheels);
         let mut afloat = false;
         if !spec.heli && !spec.plane && spec.water != "Boat" {
             let exploded = body.flags & 32 != 0;

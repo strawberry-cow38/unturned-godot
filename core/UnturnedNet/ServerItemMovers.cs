@@ -249,8 +249,13 @@ namespace UnturnedGodot.Net
             int n = 0, w = 0;
             foreach (var e in _deployables.All)
             {
-                bool producing = _deployables.Schema.TryGet(e.DefId, out var def) && e.Producing(def);
-                h += Mix(((ulong)e.NetIdValue << 32) | ((ulong)e.DefId << 8) | (producing ? 1u : 0u) | (e.OnFire ? 2u : 0u));
+                bool known = _deployables.Schema.TryGet(e.DefId, out var def);
+                bool producing = known && e.Producing(def);
+                // Solve also reads a switch's conduction and (v78) a turbine's output scale.
+                bool conducting = !known || !def.IsSwitch || e.ToggledOn;
+                uint scale = known ? (uint)System.BitConverter.SingleToInt32Bits(e.OutputScale(def)) : 0u;
+                h += Mix(((ulong)e.NetIdValue << 32) | ((ulong)e.DefId << 8) | (producing ? 1u : 0u) | (e.OnFire ? 2u : 0u) | (conducting ? 4u : 0u))
+                     ^ Mix(((ulong)scale << 32) | e.NetIdValue);
                 n++;
             }
             foreach (var x in _deployables.AllWires)

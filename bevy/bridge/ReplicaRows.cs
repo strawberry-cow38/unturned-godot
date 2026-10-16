@@ -14,7 +14,7 @@ public sealed partial class BridgeHost
         stuckEuler = _warheads?.PoseOf(e.NetIdValue)?.Euler }).ToArray();
     object[] VehicleMountRows(VehicleMountReplication mounts) => mounts.All.Select(v => new { vehicleNetId = v.VehicleNetId, headOut = v.HeadOut, gunnerRise = v.GunnerRise,
         mounts = v.Mounts.Select((m,index) => new { index, yaw = m.Yaw, pitch = m.Pitch, ammo = m.Ammo, cooldownSeconds = m.CooldownSeconds, crewAlive = m.CrewAlive }).ToArray() }).ToArray();
-    object[] DeployableRows(DeployableReplication deployables) => deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, mountUp = e.MountUp, health = e.Health, fuel = e.Fuel, onFire = e.OnFire, burnSeconds = _bodies?.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray();
+    object[] DeployableRows(DeployableReplication deployables) => deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, mountUp = e.MountUp, health = e.Health, fuel = e.Fuel, energy = e.Energy, wind = e.Wind, onFire = e.OnFire, burnSeconds = _bodies?.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray();
     object[] VehicleRows(VehicleReplication vehicles) => vehicles.All.Select(e => new { netId = e.NetIdValue, typeId = e.TypeId, variant = e.Variant,
         position = Array(e.Pos), yaw = e.YawDegrees, eulerDegrees = Array(new(e.PitchDegrees, e.YawDegrees, e.RollDegrees)),
         linVel = Array(e.LinVel), angVel = Array(e.AngVel), steerDegrees = e.SteerSigned,
@@ -22,6 +22,6 @@ public sealed partial class BridgeHost
         mainRotorHealth = _vehicles?.MainRotorHealth(e.NetIdValue), tailRotorHealth = _vehicles?.TailRotorHealth(e.NetIdValue), engineDrowned = _vehicles?.EngineDrowned(e.NetIdValue), onFire = _bodies?.OnFire(true, e.NetIdValue),
         burnSeconds = _bodies?.BurnSeconds(true, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(true, e.NetIdValue),
         driverPlayerId = e.DriverPlayerId, passengers = e.Passengers, seatCount = VehicleSeatCount(e),
-        coupledTrailerNetId = e.CoupledTrailerNetId, towedNetId = e.TowedNetId, towRestLen = e.TowRestLen, paintRgb = e.PaintRgb, poppedTireMask = e.PoppedTireMask,
+        coupledTrailerNetId = e.CoupledTrailerNetId, towedNetId = e.TowedNetId, towRestLen = _vehicleTows?.RestLen(e.NetIdValue, e.TowRestLen) ?? e.TowRestLen, paintRgb = e.PaintRgb, poppedTireMask = e.PoppedTireMask,
         recovCounter = _vehicleRecov.GetValueOrDefault(e.NetIdValue) }).ToArray();
 }

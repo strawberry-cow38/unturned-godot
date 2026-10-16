@@ -58,16 +58,13 @@ pub(super) fn prepare(
     menu: &Menu,
     font: &Handle<Font>,
 ) -> Option<Entity> {
-    let selected = menu
-        .gesture
-        .selected
-        .filter(|cell| cell.page != super::model::AREA)
-        .and_then(|cell| {
-            menu.view
-                .tile(cell)
-                .filter(|tile| tile.amount > 1)
-                .map(|tile| (cell, tile.amount - 1))
-        });
+    // Source OpenSelection offers the split strip for any stack, ground included.
+    let selected = menu.gesture.selected.and_then(|cell| {
+        menu.view
+            .tile(cell)
+            .filter(|tile| tile.amount > 1)
+            .map(|tile| (cell, tile.amount - 1))
+    });
     let Some((cell, max)) = selected.filter(|_| menu.open) else {
         for (entity, _, _) in fields.iter_mut() {
             commands.entity(entity).despawn();
@@ -287,7 +284,7 @@ pub(super) fn draw(
     ) else {
         return;
     };
-    let split = tile.amount > 1 && row.address.page != super::model::AREA;
+    let split = tile.amount > 1;
     let extra: f32 = if split { 166. } else { 0. };
     let height = (300. + extra)
         .max(150. + row.actions.len().saturating_sub(1) as f32 * 44. + 36. + 14. + extra);

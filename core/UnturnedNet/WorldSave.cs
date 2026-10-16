@@ -36,7 +36,7 @@ namespace UnturnedGodot.Net
         /// <summary>Bumped whenever a field is added, removed or reinterpreted. A file whose version this build
         /// does not understand is REFUSED, never partially read -- half-restoring a player is worse than a fresh
         /// start, because it looks like it worked.</summary>
-        public const int CurrentVersion = 2;
+        public const int CurrentVersion = 3;
 
         /// <summary>Formats this build can still READ. v2 added PlayerSave.SteamId.
         /// ⚠ The gate below used to be `!= CurrentVersion`, and the comment above it says to bump the version
@@ -44,9 +44,19 @@ namespace UnturnedGodot.Net
         /// world: v1 files refused, every player's inventory, position and skills gone, with the log calmly
         /// reporting that it declined to read them. Both halves of that rule are worth keeping, so the answer
         /// is a READ SET plus an explicit migration, not a silent non-bump.</summary>
-        static readonly int[] ReadableVersions = { 1, 2 };
+        static readonly int[] ReadableVersions = { 1, 2, 3 };
 
         public int Version { get; set; } = CurrentVersion;
+
+        /// <summary>v3 (protocol78) carries deployable fuel unclipped and battery Energy. Before it, fuel rode
+        /// the signed 12.2 health grid, so any tank above 2047.75 mL was SAVED as 2047.75, and the old server
+        /// never burned it. A legacy generator at that ceiling is restored full; anything below is restored
+        /// as written. Set by TryParse before the header is relabelled, never serialized.</summary>
+        [JsonIgnore] public bool LegacyFuelGrid { get; private set; }
+        public const float LegacyFuelCeiling = 2047.75f;
+        float RestoredFuel(NetWorldServer host, DeployableSave ds) =>
+            LegacyFuelGrid && ds.Fuel >= LegacyFuelCeiling && host.Deployables.Schema.TryGet(ds.DefId, out var def)
+                && def.FuelCapacity > LegacyFuelCeiling ? def.FuelCapacity : ds.Fuel;
 
         /// <summary>Which map this save belongs to. Loading is gated on it: a PEI save must never restore onto
         /// Washington, where the positions in it are arbitrary points in the sea.</summary>
@@ -116,6 +126,8 @@ namespace UnturnedGodot.Net
             public float YawDegrees { get; set; }
             public float Health { get; set; }
             public float Fuel { get; set; }
+            /// <summary>v78: a battery's accepted watt-seconds (0 in older saves and on every other device).</summary>
+            public float Energy { get; set; }
             public bool ToggledOn { get; set; }
             public bool OnFire { get; set; }
             /// <summary>True for a deployable the MAP BUILD makes on every boot -- a grid source, a gas pump,
@@ -419,7 +431,7 @@ namespace UnturnedGodot.Net
                     OwnerName = NameOf(host, d.OwnerPlayerId) ?? "",
                     X = d.Pos.x, Y = d.Pos.y, Z = d.Pos.z,
                     YawDegrees = d.YawDegrees,
-                    Health = d.Health, Fuel = d.Fuel,
+                    Health = d.Health, Fuel = d.Fuel, Energy = d.Energy,
                     ToggledOn = d.ToggledOn, OnFire = d.OnFire,
                     IsMapFixture = isFixture,
                     MountUp = d.MountUp,
@@ -858,7 +870,7 @@ namespace UnturnedGodot.Net
                     Quantize(new Vector3(ds.X, ds.Y, ds.Z), out int qx, out int qy, out int qz);
                     if (!fixtureAt.TryGetValue((qx, qy, qz), out uint existing)) continue;   // map changed under the save
                     netIdBySaveId[ds.SaveId] = existing;
-                    host.Deployables.ServerSetScalars(existing, ds.Health, ds.Fuel, ds.OnFire, tick);
+                    host.Deployables.ServerSetScalars(existing, ds.Health, RestoredFuel(host, ds), ds.OnFire, tick);
                     host.Deployables.ServerToggle(existing, ds.ToggledOn, tick);
                 }
             }
@@ -873,8 +885,9 @@ namespace UnturnedGodot.Net
                 var e = host.Deployables.ServerPlace(id, ds.DefId, owner, new Vector3(ds.X, ds.Y, ds.Z), ds.YawDegrees, tick);
                 if (e == null) continue;   // a def that no longer exists in the schema: skip it, do not abort the load
                 netIdBySaveId[ds.SaveId] = e.NetIdValue;
-                host.Deployables.ServerSetScalars(e.NetIdValue, ds.Health, ds.Fuel, ds.OnFire, tick);
+                host.Deployables.ServerSetScalars(e.NetIdValue, ds.Health, RestoredFuel(host, ds), ds.OnFire, tick);
                 host.Deployables.ServerToggle(e.NetIdValue, ds.ToggledOn, tick);
+                if (ds.Energy > 0f) host.Deployables.ServerSetPowerState(e, e.SimFuel, ds.Energy, e.Wind, tick);
                 if (ds.Storage != null && host.Deployables.Schema.TryGet(ds.DefId, out var pdef)
                     && pdef.StorageWidth > 0 && pdef.StorageHeight > 0)
                 {
@@ -1112,6 +1125,7 @@ namespace UnturnedGodot.Net
             // a v2 file describes for a player who has not signed in -- so the upgrade is a no-op on the data
             // and a relabel on the header. Doing it here rather than at save time means one read-modify-write
             // moves the file forward, and a v1 that is never saved again stays readable indefinitely.
+            parsed.LegacyFuelGrid = parsed.Version < 3;
             if (parsed.Version < CurrentVersion) parsed.Version = CurrentVersion;
             if (!string.IsNullOrEmpty(expectMapId) && !string.IsNullOrEmpty(parsed.MapId)
                 && !string.Equals(parsed.MapId, expectMapId, StringComparison.OrdinalIgnoreCase))

@@ -271,7 +271,10 @@ listed so you can *read* a packet, not so you can retune one.
 | velocity | 3× `ClampedFloat(6,6)` | **±32 m/s** (the doc comment saying ±64 is wrong) |
 | damage | `ClampedFloat(9,4)` | ±512 HP, 1/16 |
 | yaw / pitch | `Degrees(11)` | wraps to `[0,360)` — **wraps, not clamps** |
-| deployable health/fuel | `ClampedFloat(12,2)` | max 4095.75, ¼ |
+| deployable health | `ClampedFloat(12,2)` | signed: max 2047.75, ¼ |
+| deployable fuel (protocol78) | `ClampedFloat(19,2)` (`DeployableReplication.QuantizeFuel`) | signed: max 262143.75 mL, ¼; the 150000 mL generator clipped at 2047.75 before |
+| inventory jar fuel level (protocol78) | `ClampedFloat(19,2)` (`InventoryReplication.JarFuelIntBits`) | signed: max 262143.75 mL; 12.2 echoed a full 20 L can as 2047.75 |
+| battery energy / turbine wind (protocol78) | presence bit + `UnsignedClampedFloat(22,2)` / `(2,8)` (`QuantizeEnergy`/`QuantizeWind`, via `NetQuantization.QuantizeUnsignedClampedFloat`) | 0..4194303.75 W·s, ¼ / 0..3.996, 1/256; zero on other devices costs one bit each |
 | vehicle fuel / hull health | `ClampedFloat(20,1)` / `(17,1)` | protocol69 max 524287.5 mL / 65535.5 HP; original fleet requires 300000 mL / 40000 HP |
 | vitals (food/water/stamina/infection) | `UnsignedNormalized(8)` | 0..1 |
 | time of day | `UnsignedNormalized(16)` | ~1.3 s of a PEI day |
@@ -442,13 +445,20 @@ Companion documents:
 | Read source inventory tile/food/fluid/money facts without seeding replicas | `InventoryTiles.Read` (`bevy/bridge/InventoryTiles.cs`), `inventoryView.tiles` | owns a temporary clone for source ActiveAutoDrink; original denomination and worn-slot order; raw accepted values, no UI mutation |
 | Complete one exact owned magazine round with an explicit result | `MagazineTransferCommand`81, `ServerTransactions.OnMagazineTransfer`/`ApplyMagazineTransfer`, `MagazineTransferEvent`60 | protocol71; owned origin/token+alive; original MagRules mutation; owner-only applied/refused result; request IDs monotonic through UI reopen; legacy39 unchanged |
 | Mutate one exact item in the current authorized container view | `ScopedInventoryAddress`, `InventoryReplication.ServerResolveScoped`, `EmptyViewedFuelCommand`84 / `ViewedMagazineTransferCommand`85 | protocol75; owner System7 token tail includes container pages; current open/viewer/reach/access plus canonical root/token/backing reference;81/85 share replay and original MagRules; repaint all viewers; AREA and viewed Salvage excluded |
-| Project Nearby loot and transfer its exact live world contributions | `NearbyPacking.Pack`, `ServerNearbyInventory`, `NearbyInventoryCommand` 86 / `NearbyInventoryEvent` 63, `NearbyGeometry.Samples` | protocol 76 owner-only full Item rows; source active camera, strict 4m/nine-sample world LOS and 6×6 packing; clone-only view; scan/revision/token/full bytes rechecked for Take/Store; debit actual accepted amount and repaint all viewers; later AREA actions remain refused |
+| Project Nearby loot and transfer its exact live world contributions | `NearbyPacking.Pack`, `ServerNearbyInventory`, `NearbyInventoryCommand` 86 / `NearbyInventoryEvent` 63, `NearbyGeometry.Samples` | protocol 76 owner-only full Item rows; source active camera, strict 4m/nine-sample world LOS and 6×6 packing; clone-only view; scan/revision/token/full bytes rechecked for Take/Store; debit actual accepted amount and repaint all viewers; equip/wear/drop stay refused as in the source |
+| Split or empty an exact Nearby row; run a ground magazine round | `NearbyOperationCommand` 87 / `ServerNearbyInventory.OperateNearby`, `NearbyMagazineTransferCommand` 88 / `ApplyNearbyMagazine`, shared `AdmitNearbyRow` + `DebitNearby`, `ServerTransactions.ProcessMagazineRequest`, native `commands::nearby_operation`, `player::needs_eye` | protocol 77; same admission as Take (88 admits ground parts by scan + identity, not revision, so concurrent jobs survive repaints); a whole ground drag is no operation (TryDrag refuses AREA; wire value 0 reserved, never sent, refused at parse); Split = OnSplitItem named cell plus holster and magazine-merge guards; Empty = EmptyFuelSelected on the live item; 87 rides Event63 + 86 ledger, 88 rides Event60 + 81/85 ledger; every eye-checked bridge action must be listed in `needs_eye` |
 
 ### Bevy accepted deployable bodies
 
 | Need | Reuse | Notes |
 | --- | --- | --- |
-| Materialize an ordinary accepted deployable with source seating and collision | `deployables::DeployablePlugin`, `deployables::geometry::{Bounds,seat,authority}` | original rotated mesh AABB, yaw/stand-up and Ceiling/Wall/Container seating; fixed native box and same host geometry keyed by accepted ID; session/revision retirement, no remote authority upload; specialized fluid/storage/fixture/turbine and utility flows remain separate |
+| Materialize an ordinary accepted deployable with source seating and collision | `deployables::DeployablePlugin`, `deployables::geometry::{Bounds,seat,authority}` | original rotated mesh AABB, yaw/stand-up and Ceiling/Wall/Container seating; fixed native box and same host geometry keyed by accepted ID; session/revision retirement, no remote authority upload; the turbine uses `deployables::turbine` (procedural BuildTurbine) and GridSource/GasPump use `deployables::fixture` endpoints; fluid/storage remain separate |
+| Read the accepted solve for one device port | `deployables::wires::Accepted::{port,powered}` | from the read-only `powerView`; never a local re-solve; the view key (`powerStateHash` = `DeployableReplication.PowerViewHash`) ignores per-tick fuel/charge |
+| Light a source DeployLight / bulb lens from accepted power | `deployables::lamps::{split_lens,update}` | source SplitByUvAndPos predicate (UV centroid + BulbReach, Godot-oracle guarded), 1.3/1.1 s envelope and stutter |
+| Generator spin-up level, engine voice, load fraction | `deployables::engine::{Ramps,run_target,load_fraction}` | cosmetic `_powerLevel` from accepted toggle/fuel/fire; load from the accepted output Draw |
+| Split an OBJ by corner positions AND UVs | `content::ObjData::split_where_uv` | `split_where` delegates to it; attributes and winding preserved |
+| Map fixture endpoint, look box and Grid/Pump panel | `deployables::fixture::{endpoint,spawn,hit_box,readout,pump_powered}` | source `Materialize` frame + `AddInteractionCollider`; pump prompt = mains or wire (the server extract gate is the wire only) |
+| Server power step (fuel burn, battery, turbine, triggers) | `UnturnedGodot.Net.ServerPower` (`NetWorldServer.Power`), wind from `UnturnedBevy.SourceWindField` | host-stepped before the item movers; exact `SimFuel`/`SimEnergy` behind quantized replicated values |
 
 ### Bevy shared held equipment
 

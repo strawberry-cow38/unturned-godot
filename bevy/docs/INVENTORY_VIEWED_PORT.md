@@ -92,16 +92,14 @@ Final broad results are recorded in PROGRESS.md.
 
 ## Remaining external-page work
 
-Nearby is still absent from the native dashboard's authoritative projection.
-Original `PlayerController.ScanNearbyItems` uses the active camera, strict 4 m
-range and LOS, then packs scene-group order into a 6×6 AREA grid on open. Current
-world-item replicas omit the server's full Item state and inventory token. A
-correct follow-up needs an owner-only full-item projection bound to the actual
-world ID plus fresh camera/range/LOS admission; copying ID/amount/quality into a
-substitute inventory is insufficient. AREA Empty/magazine actions stay disabled.
+Nearby now has its own owner-only full-item projection (protocol 76) and the
+ground Split/Empty and magazine operations (protocol 77); see
+NEARBY_PORT.md. A ground magazine job can take its rounds from, or put them into,
+the viewed container scopes described here.
 
-Viewed Salvage also stays disabled. Although the source context offers it,
-`PlayerInvAdapter.Count/Copies` and `removeItemInstance` scan owned pages only.
-Passing a viewed preferred instance can consume a different owned copy. A future
-exact-selected transaction must bind the authorized backing item into the queue's
-consumption and refund lifecycle; this adapter does not reproduce that bug.
+Viewed Salvage is not offered, matching the source. The original
+`InventoryUI.OpenSelection` gates its Salvage button on `_selPage < OWNPAGES`
+("OWN PAGES ONLY": crafting counts and spends owned pages, so a crated or ground
+copy would either do nothing or consume the owned copy instead). An earlier
+revision of this note said the source offered it; that was incorrect. No
+viewed or ground salvage transaction exists to port.

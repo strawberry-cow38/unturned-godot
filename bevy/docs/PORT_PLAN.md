@@ -36,9 +36,9 @@ replacement has evidence of parity.
 Measured source: 187 engine-independent C# files / 60,586 lines, 342 gameplay
 files / 146,706 lines, 319 in-engine test files / 62,166 lines, and 194 core test
 files / 45,176 lines. Historical repository summaries are stale. The current
-source protocol is version61; the port is now version76 for accepted equipment,
+source protocol is version61; the port is now version78 for Nearby row operations (77), host-owned power inputs (fuel burn, battery charge, turbine wind, side triggers), accepted equipment,
 resource contacts, mounted weapons, occupant rise, remote mounted flight
-effects, NPC crew, vehicle electrical/lamp state, glazing/maintenance, full fleet fuel/health ranges, original skill nodes, bus doors, exact owned/viewed inventory and magazine actions, source crafting-station context, accepted respawn facing, fifth-wheel pairing and owner-only Nearby full-item projection with Take/Store. Inventory has22 pages including vehicle compartments; other AREA actions remain pending.
+effects, NPC crew, vehicle electrical/lamp state, glazing/maintenance, full fleet fuel/health ranges, original skill nodes, bus doors, exact owned/viewed inventory and magazine actions, source crafting-station context, accepted respawn facing, fifth-wheel pairing and owner-only Nearby full-item projection with Take/Store, ground split/Empty and ground magazine jobs. Inventory has22 pages including vehicle compartments; AREA whole drags, equipment, wear and drop stay refused as in the source (see NEARBY_PORT.md).
 
 ## Milestones
 
@@ -133,7 +133,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 7 | Save lifecycle (`WorldSaveDriver`) | Manual save/load only; no autosave, entry load or quit save | S | high | agent C (in progress) |
 | 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | agent C (in progress) |
 | 9 | Vehicle hand tools: paint, carjack, spare tire, pump, pour (cmds 29/50/55/56) | Not sent; `paintRgb` not rendered | M | med | queued |
-| 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | queued |
+| 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | DONE (rope checkpoint; remote towing journey with row 16) |
 | 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | queued |
 | 12 | Binoculars, umbrella, fishing | Absent | S-M | low | queued |
 | 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | queued |
@@ -141,7 +141,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data | L | high (MP) | queued |
 | 16 | Hybrid dedicated server and moderation | Landed: `--dedicated` headless host, save/autosave/final save, BanStore console moderation, units ([DEDICATED_SERVER_PORT.md](DEDICATED_SERVER_PORT.md)); remaining: perf headroom, arena mode, live cut-over | L | high (MP) | agent (landed subset) |
 | 17 | Infinite/finite world MP | Origin protocol, island descriptor negotiation | L | med | queued |
-| 18 | Menus/settings/bug report/launcher | Difficulty/config/island list/arena; limited settings; launcher still Godot | L | med | queued |
+| 18 | Menus/settings/bug report/launcher | Difficulty/config/island list/arena; limited settings; launcher still Godot | L | med | agent E (in progress) |
 | 19 | Generated buildings | Preview stage; furniture data only (`61272db6`) | L | med | queued |
 | 20 | World devices (elevator, car lift, crane, train, SAM, flares, magnet, vending, notes, traffic lights, AI drivers) | None native | L | low | queued |
 | 21 | Fluid networks / item pipes (cmds 64-66) | Not sent; pipe events not bridged | L | low-med | check with power agent |

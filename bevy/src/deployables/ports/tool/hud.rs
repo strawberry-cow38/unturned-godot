@@ -5,6 +5,15 @@ use bevy::{
     camera::Hdr, core_pipeline::tonemapping::Tonemapping, image::ImageSampler, text::TextPipeline,
 };
 
+/// Other layer-40 tool readouts sharing the slot (source RopeHudSet uses an
+/// identical label; the held tools are mutually exclusive).
+#[derive(Resource, Default)]
+pub(crate) struct ToolReadouts {
+    pub rope: String,
+}
+/// The layer-40 label draw; readout writers order before it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ToolHud;
 #[derive(Resource, Default)]
 struct Hud {
     text: String,
@@ -18,16 +27,19 @@ pub(super) fn install(app: &mut App) {
     }
     app.init_resource::<OriginalFont>()
         .init_resource::<Hud>()
+        .init_resource::<ToolReadouts>()
         .init_resource::<Preview>()
         .add_systems(
             Update,
             draw.after(super::input)
+                .in_set(ToolHud)
                 .run_if(resource_exists::<TextPipeline>),
         );
 }
 fn draw(
     mut commands: Commands,
     gesture: Res<Gesture>,
+    readouts: Res<ToolReadouts>,
     mut hud: ResMut<Hud>,
     mut raster: Raster,
     mut cameras: Query<&mut Camera>,
@@ -47,7 +59,8 @@ fn draw(
         hud.entity = None;
         hud.text.clear();
     }
-    let visible = !gesture.hud.is_empty();
+    let text = if gesture.hud.is_empty() { &readouts.rope } else { &gesture.hud };
+    let visible = !text.is_empty();
     // The source layer40 canvas draws nothing without a label; skip its pass.
     if let Some(mut camera) = hud.camera.and_then(|c| cameras.get_mut(c).ok())
         && camera.is_active != visible
@@ -61,13 +74,13 @@ fn draw(
         hud.text.clear();
         return;
     }
-    if hud.text == gesture.hud {
+    if hud.text == *text {
         if let Some(entity) = hud.entity {
             commands.entity(entity).insert(Visibility::Inherited);
         }
         return;
     }
-    let Some(mut bitmap) = raster.render_fitted(&gesture.hud, 26., f32::MAX, 1.5, 0.9) else {
+    let Some(mut bitmap) = raster.render_fitted(text, 26., f32::MAX, 1.5, 0.9) else {
         // Never leave the previous text standing for a label that failed to raster.
         if let Some(entity) = hud.entity {
             commands.entity(entity).insert(Visibility::Hidden);
@@ -126,5 +139,5 @@ fn draw(
                 .id(),
         );
     }
-    hud.text = gesture.hud.clone();
+    hud.text = text.clone();
 }

@@ -41,6 +41,7 @@ public sealed partial class BridgeHost : IDisposable
     VehicleMaintenanceServices _vehicleMaintenance;
     VehicleDoorServices _vehicleDoors;
     VehicleHitchServices _vehicleHitches;
+    VehicleTowServices _vehicleTows;
     BodyCombatServices _bodies;
     WeaponServices _weapons;
     CosmeticBulletServices _cosmetic;
@@ -289,6 +290,7 @@ public sealed partial class BridgeHost : IDisposable
                     ushort itemId = checked((ushort)Int(item, "itemId"));
                     if (Assets.find(itemId) == null) throw new ArgumentException($"Unknown item {itemId}");
                     var instance = new Item(itemId, checked((ushort)Int(item, "amount", 1)), checked((byte)Int(item, "quality", 100)));
+                    if (item.TryGetProperty("fuelLevel", out var fuel)) instance.fuelLevel = fuel.GetSingle();   // fixture seam: a filled ground can
                     var entity = _server.WorldItems.ServerSpawn(_server.Ids.Mint(), instance, Vec(item, "position"), _server.Session.CurrentTick);
                     _server.WorldItems.ServerSettle(entity.NetIdValue, entity.Pos, _server.Session.CurrentTick);
                     spawned.Add(new { netId = entity.NetIdValue, itemId });
@@ -337,6 +339,12 @@ public sealed partial class BridgeHost : IDisposable
         if (_listenPort == 0) WorldRebase.EnableUnboundedStorage(_server);
         _server.Transactions.RepositionOwner = _server.PlayerHost.RepositionOwner;
         _environment = new WorldEnvironment(_server, _seed, save);
+        // WindField.SampleWind for the server's turbines: the source noise and weather floor on server time.
+        // UG_WIND is the source's own TestWind override ("flag droop / turbine tests").
+        var wind = new SourceWindField();
+        float? forcedWind = float.TryParse(Environment.GetEnvironmentVariable("UG_WIND"), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float forced) ? forced : null;
+        _server.Power.WindAt = p => forcedWind ?? wind.Sample(p.x, p.z, (float)(_server.Session.CurrentTick * SimClock.FixedDelta), Math.Clamp(_environment.Sim.WindMain, 0f, 1f));
         var initialSpawn = _position;
         _server.SpawnProvider = _listenPort == 0 ? _ => _position : _ => initialSpawn;
         _geometry.DestructibleAlive = i => i >= _server.Destructibles.Count || _server.Destructibles.IsAlive(i);
@@ -359,6 +367,7 @@ public sealed partial class BridgeHost : IDisposable
         _vehicleMaintenance = new VehicleMaintenanceServices(_server, _catalog, _vehicleLights, _geometry); _vehicles.Maintenance = _vehicleMaintenance;
         _vehicleDoors = new VehicleDoorServices(_server, _catalog, _geometry);
         _vehicleHitches = new VehicleHitchServices(_server, _catalog, _geometry);
+        _vehicleTows = new VehicleTowServices(_server, _catalog, () => _client?.PlayerId ?? 0);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
         _zombies = new ZombieServices(_server, _geometry, Emit);
         _services.DoorNoise = _zombies.Noise;
@@ -460,7 +469,7 @@ public sealed partial class BridgeHost : IDisposable
                 if(noise>2)_zombies.Noise(_position,noise);
             }
         }
-        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+        StepWorldServices();
         _appearance.Tick();
         if (_worldChanged) PublishFullSnapshot();
         _server.TickReplication();
@@ -468,9 +477,17 @@ public sealed partial class BridgeHost : IDisposable
         if (_client.Players.TryGetByOwner(_client.PlayerId, out var own)) _client.AckCombat(own.LastProcessedCombatSeq);
     }
 
+    /// <summary>Host world services, shared by the owner tick and the dedicated tick.</summary>
+    void StepWorldServices()
+    {
+        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleTows.Step(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+    }
+
     object Action(string name, JsonElement args)
     {
         if (name == "nearbyInventory") return RequestNearby(args);
+        if (name == "nearbyOperation") return RequestNearbyOperation(args);
+        if (name == "nearbyMagazineTransfer") return RequestNearbyMagazineTransfer(args);
         if (name == "craftingContext") return RequestCraftingContext(args);
         if (name == "craft" && args.TryGetProperty("eye",out _)) return RequestCraftingContext(args,craft:true);
         if (name == "vehicleHitch") return new { queued = _client.SendVehicleHitch(VehicleHitchServices.ReadCommand(args)) };
@@ -478,6 +495,15 @@ public sealed partial class BridgeHost : IDisposable
         if (name == "vehicleMaintenance") return new { queued = _client.SendVehicleMaintenance(VehicleMaintenanceServices.ReadCommand(args)) };
         if (name == "vehicleLighting") return new { queued = _client.SendVehicleLighting(VehicleLightingServices.ReadCommand(args)) };
         if (name == "mountInput") return new { queued = _client.SendMountedInput(MountedWeaponServices.ReadInput(args)) };
+        if (name == "depositFuel")
+        {
+            // TryDepositFuel: the exact held fuel container, by its accepted identity token.
+            byte page = checked((byte)Int(args, "page")), x = checked((byte)Int(args, "x")), y = checked((byte)Int(args, "y"));
+            bool known = _client.Inventories.TryGetItemToken(_client.PlayerId, page, x, y, out ulong token);
+            return new { queued = known && _client.SendDepositFuel(checked((uint)Int(args, "netId")), page, x, y, checked((ushort)Int(args, "id")), token) };
+        }
+        // TryExtractFuel: RMB a gas-pump fixture; the host picks the can and gates on the pump's wired power.
+        if (name == "extractFuel") return new { queued = _client.SendExtractFuel(checked((uint)Int(args, "netId"))) };
         if (IsRemote) return RemoteAction(name, args);
         if (name == "requestGesture") return RequestGesture(args);
         if (name == "console" && PlayerDebugConsole(Text(args, "text"))) return new { queued = true };
@@ -601,7 +627,7 @@ public sealed partial class BridgeHost : IDisposable
             npcHelis = _npcHelis?.Snapshots() ?? [],
             vehicleMounts = VehicleMountRows(_client.VehicleMounts),
             animals = _wildlife?.Snapshots(_client) ?? RemoteAnimals(),
-            powerStateHash = _client.Deployables.StateHash(),
+            powerStateHash = _client.Deployables.PowerViewHash(),
             deployables = DeployableRows(_client.Deployables),
             vehicleRecoveries = _vehicleRecovery.Values.Select(e => new { netId=e.NetId, pos=Array(e.Pos), linVel=Array(e.LinVel),
                 yawDegrees=e.YawDegrees, pitchDegrees=e.PitchDegrees, rollDegrees=e.RollDegrees, recovCounter=e.RecovCounter,
@@ -653,7 +679,7 @@ public sealed partial class BridgeHost : IDisposable
         _serverProbe.Cancel();
         _loot = null; _finiteVehicles = null; _finiteTerrain = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null;
         _udpTransport?.TearDown(); _udpTransport = null;
-        _environment = null; _services = null; _vehicles = null; _vehicleLights = null; _vehicleMaintenance = null; _vehicleDoors = null; _vehicleHitches = null; _bodies = null; _weapons = null;
+        _environment = null; _services = null; _vehicles = null; _vehicleLights = null; _vehicleMaintenance = null; _vehicleDoors = null; _vehicleHitches = null; _vehicleTows = null; _bodies = null; _weapons = null;
         _cosmetic = null; _warheads = null; _mounted = null; _npcHelis = null; _appearance = null; _wildlife = null; _zombies = null;
         _remoteWeapon = null; _remoteMounted = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
         _mapBindings = null;

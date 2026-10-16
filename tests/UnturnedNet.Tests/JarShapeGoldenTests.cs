@@ -124,24 +124,25 @@ namespace UnturnedNet.Tests
             //
             //   whole bytes, unconditional:  x1 y1 rot1 id2 amount2 quality1
             //                                gunAmmo2 gunFiremode1 gunMagId4 gunAttach4        = 19 bytes
-            //   bits, unconditional:         att gate 1, fuelLevel (12,2) 14, fluidType 8,
+            //   bits, unconditional:         att gate 1, fuelLevel (19,2) 21, fluidType 8,
             //                                fluidAmount (20,1) 21, fluidQuality 8, autoDrink 1,
-            //                                magLoadedRound 8, cook gate 1, froz gate 1        = 63 bits
-            //   63 bits flushes to 8 bytes                                        -> 19 + 8   = 27 bytes
+            //                                magLoadedRound 8, cook gate 1, froz gate 1        = 70 bits
+            //   70 bits flushes to 9 bytes                                        -> 19 + 9   = 28 bytes
             //
-            // So the three gates really do cost a bandage 3 BITS and no byte: 63 bits is 1 short of the
-            // 64 that would need a ninth byte, and the gates are the last three of them.
+            // So the three gates really do cost a bandage 3 BITS and no byte: 70 bits sits inside the 72 of
+            // nine bytes, and the gates are the last three of them. (v78 widened fuelLevel 12,2 -> 19,2: the
+            // sum was 63 bits / 27 bytes before; the 7 extra bits cost every jar exactly one byte.)
             //
             // Un-gating the cook block (`bool cook = j.item != null`) was run as the mutation for this
             // one: it read 29, the +2 the arithmetic predicts, and `the_gates_are_what_separates_the_two_forms`
             // independently fell to 18. Two instruments, two frames, one cause.
             //
-            // ⚠ 27 IS DERIVED, NOT MEASURED. It was 24 when this test was written -- a number that felt
+            // ⚠ 28 IS DERIVED, NOT MEASURED (27 before v78's fuel widening). It was 24 when this test was written -- a number that felt
             // right and had no accounting behind it -- and the run said 27. The fix is to redo the sum,
             // never to relax the bound until it passes, because a bound fitted to the output asserts
             // nothing about the schema. If this fails, add up WriteJar again and change BOTH the
-            // arithmetic above and the number below; if the sum still says 27, the schema grew.
-            Assert.That(Hex(PlainJar()).Length / 2, Is.EqualTo(27),
+            // arithmetic above and the number below; if the sum still says 28, the schema grew.
+            Assert.That(Hex(PlainJar()).Length / 2, Is.EqualTo(28),
                 "the un-gated jar's size left the accounting above. Un-gating the att block costs a bandage "
                 + "16 bytes, cooking 2, freezing 1 -- the schema's own comments justify all three gates on "
                 + "the grounds that the common case is a bandage, so if that case is paying for guns, "
@@ -228,7 +229,7 @@ namespace UnturnedNet.Tests
         }
 
         // Captured 2026-09-16 at NetProtocol.Version 52 from the fixtures above.
-        const string GoldenFull = "010203D20422113355040677777707888888083333331354555515767777179899991962C01AB202B003800F102300";
-        const string GoldenPlain = "040506E110010077FFFFFFFFFFFFFFFFFFFFFF001080FFFF031000";
+        const string GoldenFull = "010203D2042211335504067777770788888808333333135455551576777717989999196200600D5901D801C0078811";
+        const string GoldenPlain = "040506E110010077FFFFFFFFFFFFFFFFFFFFFF000008C0FFFF010800";
     }
 }

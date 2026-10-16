@@ -102,9 +102,19 @@ impl Menu {
         ui: &mut UiState,
         intents: &mut MessageWriter<UiIntent>,
     ) {
-        if commands::nearby_destination(&intent)
-            || (commands::nearby_source(&intent).is_some()
-                && !matches!(intent, Intent::QuickTransfer(_) | Intent::TakeToOwn(_)))
+        // Ground rows accept Take/Store, a split carry and a source
+        // round-onto-magazine load, resolved below with the whole-drag refusal.
+        // Equipment, wear and drop stay explicit refusals.
+        let ground = commands::nearby_source(&intent).is_some();
+        if (commands::nearby_destination(&intent) && !matches!(intent, Intent::LoadOrMove { .. }))
+            || (ground
+                && !matches!(
+                    intent,
+                    Intent::QuickTransfer(_)
+                        | Intent::TakeToOwn(_)
+                        | Intent::LoadOrMove { .. }
+                        | Intent::Split { .. }
+                ))
         {
             self.notice = "Take this item into your inventory first.".into();
             self.dirty();
@@ -132,6 +142,8 @@ impl Menu {
                             .ok()
                             .and_then(|v| v.load);
                         if let Some(load) = load.filter(|l| l.consumed) {
+                            // Source TryStartLoad over any page, ground included:
+                            // the job then follows FindStack order for each round.
                             if !load.allowed {
                                 self.notice = load.message;
                             } else if let Some(row) = at(&self.pages, to)
@@ -142,6 +154,10 @@ impl Menu {
                                         "Take the magazine into your inventory first.".into();
                                 }
                             }
+                        } else if to.page == AREA || from.page == AREA {
+                            // PlayerInventory.TryDrag refuses AREA endpoints: a
+                            // whole ground drag snaps home and sends nothing.
+                            self.notice = "Take this item into your inventory first.".into();
                         } else {
                             self.dispatch(
                                 commands::dispatch(
