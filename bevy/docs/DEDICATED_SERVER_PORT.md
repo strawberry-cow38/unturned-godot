@@ -182,10 +182,18 @@ survives restart; console save + restart restores world items and the bag;
 wipe keeps bans; wipe → stop → fresh boot; no-cheats locks give and moderation;
 cheats on by default; unreadable save moved aside and never overwritten; 128 m
 item ring; UG_MAXPLAYERS clamp; host door probes accepted; invalid
-configurations fail before binding. Native: `dedicated::tests` (5) and
-`player::dedicated_tests` (2: a real dedicated app admits a `--connect` client
+configurations fail before binding; a throwing service is logged and the server
+keeps serving; a stop after a failure keeps the last good save; a save from
+another origin is refused without being moved; an unmovable refused save is
+never served over; the deploy script refuses any other branch (22 in all).
+Native: `dedicated::tests` (6, including one-shot sounds ending headless and
+the test ban list/saves staying in the temp directory) and
+`player::dedicated_tests` (3: a real dedicated app admits a `--connect` client
 only after services register, re-poses vehicles on the restore, saves on
-AppExit and releases the port; a bound port fails the start).
+AppExit into `saves/dedicated/` and never the single-player file, and releases
+the port; a bound port fails the start; a failed host exits without saving).
+The opt-in `dedicated::signal_tests` spawns the built binary, sends SIGTERM to
+its process group and finds the final save on disk with exit 0.
 `vehicle::glazing::tests::authority::joined_rider_gets_out_through_a_door_the_host_probes`
 and `vehicle::tests::admission_restore_readopts_the_restored_replica_pose_like_load`
 each carry their own control arm (without the fix the rider stays seated / no
@@ -194,9 +202,12 @@ pose is adopted).
 Negative controls (mutation reverted, named test failed, file restored): admission
 gate, BansChanged save, BanStore.Load, autosave tick, restore on serve, final
 save, EnableSyncCheck, cheats default, wipe flag, item ring, refused-save move,
-door-probe allow-list, max-players clamp (managed); stop → dedicatedStop,
-failed start exits, services gate, WorldRestored on serve, residency
-all-players (native).
+door-probe allow-list, max-players clamp, per-step tick guard, no save after a
+failure, origin check before moving, unmovable save refusal, deploy branch guard
+(managed); stop → dedicatedStop, failed start exits, services gate,
+WorldRestored on serve, residency all-players, one-shot reaper, no save after a
+failure, dedicated save directory (native); the bridge dying on SIGTERM fails
+the signal test.
 
 Two-process journey (frozen debug native + Release bridge, Xvfb + lavapipe
 client, `--dedicated` on UDP 48731, 700 m region): the client joined, walked,
@@ -208,6 +219,16 @@ beside the parked Off_Roader with the Spotlight in its bag. The journey found
 three bugs, fixed here with tests: no host door probe for remote riders (stuck
 in a seat), the probe op refused by the dedicated allow-list, and parked host
 bodies not adopting the restored pose (the car woke at its spawn point).
+
+After merging `port/bevy` b8f90b40 (original menus, outline, packaging), a fresh
+boot was repeated: join (through Play → Direct Connect in the new menus), walk
+4.8 m, SIGTERM, restart, rejoin, and SIGTERM/restart again with no input: the
+client came back at exactly the saved position (−813.05, 34.97, −76.58). Over
+130 heartbeats (≈22 min) the authority held 49.9–50.1 ticks/s with 0 refused
+ticks, the entity count stayed between 8,927 and 9,008 and live sounds at 2; no
+`ClearColor` error was logged. A package-layout boot (`UG_PACKAGE_ROOT` naming a
+`bridge/` + `content/` folder, run from `/tmp`) resolved both through
+`install::Layout`, served, and wrote its shutdown save on SIGTERM with exit 0.
 
 ## Remaining
 
