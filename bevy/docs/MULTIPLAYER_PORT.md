@@ -328,6 +328,11 @@ autosave/final save, BanStore moderation through the source console verbs,
 sync-check, NetLog and systemd units are described in
 [DEDICATED_SERVER_PORT.md](DEDICATED_SERVER_PORT.md).
 
+Any host (listen or dedicated) keeps a fresh door clearance for every seat a
+remote rider holds (`vehicle/remote_exits.rs`). `ResolveExit` only accepts a host
+physics result at most 10 ticks old, and before this only the local driver's F
+sent one, so a joined rider was refused at every door.
+
 ## Remaining integration
 
 Read-only remote map bindings and their authored door/container/seat interactions

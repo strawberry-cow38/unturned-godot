@@ -3,7 +3,8 @@
 `unturned-bevy --dedicated` is the hybrid equivalent of the source `--dedicated`
 (`game/Main.cs` BuildDedicated, `game/DedicatedServer.cs`, `WorldSaveDriver`,
 `BanStore`). It runs the authoritative world headless on UDP 47872 for native
-`--connect` clients at the current protocol (76). The live claw server still
+`--connect` clients at the current hybrid protocol (79; this slice adds no wire
+ids). The live claw server still
 runs the Godot build at protocol 61; nothing here touches it.
 
 ## Where authority lives
@@ -49,8 +50,11 @@ restore, then serve.
    zombies and NPC helicopters against the fresh world (as a listen host does).
 3. Thirty frames after the map services adopt, `dedicatedServe` runs
    `WorldSaveDriver.LoadIntoWorld` semantics through the existing `load` path:
-   missing save → fresh world; unreadable/refused save → logged, file kept, fresh
-   world; otherwise the season start and loot seed are restored first. Then the
+   missing save → fresh world; unreadable/refused save → logged, moved aside to
+   `<save>.refused-UNIX` (the source left it in place for the next autosave to
+   overwrite) and a fresh world; a restore that fails part-way moves the file aside
+   the same way and fails the boot rather than serve a half-restored world;
+   otherwise the season start and loot seed are restored first. Then the
    session starts ticking and the source lines are printed
    (`[SAVE] ...`, `[DEDICATED] world up ...; listening on udp P`).
 
@@ -63,7 +67,8 @@ only changes *when* the restore happens (at admission, `dedicatedServe`, instead
 of the listen host's `entry_restore`), owes it whenever the file exists at boot,
 and adds the shutdown save. `wipe` deletes the file and leaves the live world
 standing; as in the source, the next autosave writes it again unless the server
-restarts first.
+restarts first, and the shutdown save never undoes a wipe (stop after `wipe` → the
+next boot is fresh).
 
 Shutdown improves on the source (Godot ignored SIGTERM and was SIGKILLed after
 5 s, losing up to a minute): SIGINT/SIGTERM/SIGHUP become Bevy's graceful AppExit
@@ -95,6 +100,8 @@ Operator environment, read once at boot: `UG_NAME`, `UG_MOTD`, `UG_MAXPLAYERS`
 or `--netlog` (NetLog on stderr, including the 1 Hz `[NET] 1s:` rollup). CLI
 `--port`, `--server-name` and `--max-players` win over the environment. Flood
 caps (8 half-open, 8 per source IP) are the core defaults. `EnableSyncCheck` is on.
+World items stream on the source 128 m interest ring. `UG_MAXPLAYERS` above 32 is
+clamped with a warning (the source session cap).
 Logs: the source `[DEDICATED]` join/leave/drop lines and 10 s heartbeat from the
 bridge, plus a native heartbeat with the achieved authority rate
 (`[DEDICATED] native: N authority ticks/s (target 50) ...`).
@@ -120,12 +127,62 @@ The Release bridge halves both again. Headless frames are slow (1–12 fps) beca
 the main thread does per-frame JSON snapshot work and re-uploads every moving
 vehicle hull, so the virtual clock may catch up a full second per frame
 (`dedicated::virtual_clock`) rather than letting Bevy's 250 ms clamp slow the
-world. RESULTS_PLACEHOLDER
+world. Measured on the journey below (PEI, 700 m region, one lavapipe client
+on the same loaded box): the authority held 49.9–50.1 ticks/s in every 10 s
+heartbeat (56 windows), 5–6 ms per bridge tick, 12–15 ms per fixed step,
+6–16 headless frames/s; boot to serving 12–15 s, restore of a 12.5 MB save
+included.
 
 ## Verification
 
-VERIFICATION_PLACEHOLDER
+Managed (`tests/UnturnedBevy.Tests/DedicatedServerTests.cs`, 17): no local
+player and no admission before the restore; status counts only remote peers and
+the sync check passes; ban persisted to the TSV and refused after restart; unban
+survives restart; console save + restart restores world items and the bag;
+60 s autosave; graceful stop saves and frees the port; closed pipe saves once;
+wipe keeps bans; wipe → stop → fresh boot; no-cheats locks give and moderation;
+cheats on by default; unreadable save moved aside and never overwritten; 128 m
+item ring; UG_MAXPLAYERS clamp; host door probes accepted; invalid
+configurations fail before binding. Native: `dedicated::tests` (5) and
+`player::dedicated_tests` (2: a real dedicated app admits a `--connect` client
+only after services register, re-poses vehicles on the restore, saves on
+AppExit and releases the port; a bound port fails the start).
+`vehicle::glazing::tests::authority::joined_rider_gets_out_through_a_door_the_host_probes`
+and `vehicle::tests::admission_restore_readopts_the_restored_replica_pose_like_load`
+each carry their own control arm (without the fix the rider stays seated / no
+pose is adopted).
+
+Negative controls (mutation reverted, named test failed, file restored): admission
+gate, BansChanged save, BanStore.Load, autosave tick, restore on serve, final
+save, EnableSyncCheck, cheats default, wipe flag, item ring, refused-save move,
+door-probe allow-list, max-players clamp (managed); stop → dedicatedStop,
+failed start exits, services gate, WorldRestored on serve, residency
+all-players (native).
+
+Two-process journey (frozen debug native + Release bridge, Xvfb + lavapipe
+client, `--dedicated` on UDP 48731, 700 m region): the client joined, walked,
+picked up a Spotlight (gone from the ground, in bag page 2), entered an
+Off_Roader at the driver door, drove 62 m at up to 15 m/s with health intact,
+braked and got out through its door. SIGTERM wrote the shutdown save; the
+restarted server loaded it and a new client process came back at the same spot
+beside the parked Off_Roader with the Spotlight in its bag. The journey found
+three bugs, fixed here with tests: no host door probe for remote riders (stuck
+in a seat), the probe op refused by the dedicated allow-list, and parked host
+bodies not adopting the restored pose (the car woke at its spawn point).
 
 ## Remaining
 
-REMAINING_PLACEHOLDER
+- A software-rendered client's first join stalls more than 5 s while it
+  builds the world, so the session times out; rejoining from the menu works.
+  A client keepalive during world build is the fix (any slow client, any host).
+- Crash damage for remote-driven vehicles is not judged on a dedicated host:
+  the frame-sampled replica velocity would read as crashes there.
+- Headless frames are slow (per-frame JSON snapshot, hull re-uploads); the
+  authority rate holds, the frame rate does not.
+- Headless still opens audio (ALSA noise in the log) and logs one
+  `ClearColor` extract error at boot.
+- The native dedicated tests use the default save directory.
+- Source parity gaps kept on purpose: no admin tier, no stdin console,
+  moderation behind `AllowCheats`, no auth/encryption (MP_PLAN §7).
+- Cutting claw over is a manual operator step; the units and
+  `tools/deploy-bevy-server.sh` are versioned but not run there.

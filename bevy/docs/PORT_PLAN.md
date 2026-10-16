@@ -139,7 +139,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | DONE (crops checkpoint, `CROPS_PORT.md`) |
 | 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | agent H (in progress) |
 | 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data; joined-client proximity vehicle enter (`RequestEnterNearestPuppet`, 4 m, ranks above crop harvest) | L | high (MP) | queued |
-| 16 | Hybrid dedicated server and moderation | No headless bridge host on 47872; live Godot server is protocol 61 | L | high (MP) | agent D (in progress) |
+| 16 | Hybrid dedicated server and moderation | DONE: headless `--dedicated` host, admission restore, autosave/shutdown save, BanStore moderation, sync-check, NetLog, signals, versioned units/deploy script, two-process restart journey ([DEDICATED_SERVER_PORT.md](DEDICATED_SERVER_PORT.md)); remaining: slow-client first-join timeout, remote crash damage on dedicated, claw cut-over | L | high (MP) | agent D (merge with integrator) |
 | 17 | Infinite/finite world MP | Origin protocol, island descriptor negotiation | L | med | queued |
 | 18 | Menus/settings/bug report/launcher | Difficulty/config/island list/arena; limited settings; launcher still Godot | L | med | agent E (in progress) |
 | 19 | Generated buildings | Preview stage; furniture data only (`61272db6`) | L | med | queued |

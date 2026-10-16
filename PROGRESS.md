@@ -3006,3 +3006,20 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - the reference car keeping its spawn paint;
   - the flat tyre gone, then back on;
   - the jacked car in flight, rising from 0.58 m to 1.96 m.
+
+### 2026-10-16 — Hybrid dedicated server and moderation (ledger row 16)
+
+- `unturned-bevy --dedicated` hosts the authoritative world headless on UDP 47872 (`--port`/`UG_PORT`), with no local player. The bridge serves `NetWorldServer` with no client of its own (`DedicatedHost.cs`, `ReplicaRows.cs`). The windowless native host (`dedicated.rs`, no GPU device) keeps collision and every physics-bodied host system, and loads one region covering every authored point plus 160 m.
+- Lifecycle: services register, then the save is restored (refused files are moved aside), then players are admitted. The shared `WorldPersistence` autosave runs, plus a shutdown save on SIGINT/SIGTERM/SIGHUP or a closed pipe that never undoes a `wipe`. A failed start exits non-zero.
+- Moderation is the source surface: `BanStore` linked verbatim, console verbs behind `AllowCheats` (`UG_DEDICATED_NOCHEATS`), flood caps, sync-check, NetLog. Versioned `deploy/systemd/unturned-bevy-server*` units and `tools/deploy-bevy-server.sh`; nothing installed on claw.
+- The journey found three bugs, each fixed with a test:
+  - Remote riders could never leave a car with doors (no host door probe). Any host now re-probes remote seats (`vehicle/remote_exits.rs`).
+  - The dedicated allow-list refused that probe op.
+  - The admission restore left parked host bodies at their spawn pose, which woke and overwrote the save. Serving now emits `WorldRestored`.
+- Verification:
+  - Managed: 307/307, including 17 dedicated.
+  - Native: 838 pass; the 2 failures are the gitignored PEI coupling capture.
+  - 13 managed and 5 native negative controls each fail their guard.
+  - Two-process journey under Xvfb: join, walk, pick up, drive 62 m, exit, SIGTERM, restart, new client restored at the same spot with bag and car (PNGs in `bevy/artifacts/dedicated/final/`).
+  - Authority held 50 ticks/s.
+- Remaining: a slow client's first join times out (rejoin works); no remote crash damage on dedicated; claw cut-over. See `bevy/docs/DEDICATED_SERVER_PORT.md`.
