@@ -44,6 +44,9 @@ impl Lens {
     }
 }
 
+/// Source CanvasLayer 7: after night vision (6), before deadzone grain (8).
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct LensPass;
 pub(super) fn install(app: &mut App) {
     embedded_asset!(app, "chromatic.wesl");
     app.add_plugins((
@@ -59,7 +62,8 @@ pub(super) fn install(app: &mut App) {
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
         .add_systems(
             Core2d,
-            draw.after(crate::nightvision::TubePass)
+            draw.in_set(LensPass)
+                .after(crate::nightvision::render::NightVisionPass)
                 .after(crate::hdr::CompositePass)
                 .before(ui_pass),
         );

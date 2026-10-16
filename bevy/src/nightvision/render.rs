@@ -16,9 +16,6 @@ use bevy::{
     ui_render::render_pass::ui_pass,
 };
 use std::collections::HashMap;
-/// Source CanvasLayer6; later screen passes (lens layer7) order after it.
-#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct TubePass;
 pub(super) fn install(app: &mut App) {
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
         return;
@@ -28,9 +25,14 @@ pub(super) fn install(app: &mut App) {
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
         .add_systems(
             Core2d,
-            draw.in_set(TubePass).after(crate::hdr::CompositePass).before(ui_pass),
+            draw.in_set(NightVisionPass)
+                .after(crate::hdr::CompositePass)
+                .before(ui_pass),
         );
 }
+/// Source layer6 tube pass; later scene-canvas passes (deadzone grain, layer8) follow it.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct NightVisionPass;
 #[derive(Resource)]
 struct Pipeline {
     layout: BindGroupLayoutDescriptor,

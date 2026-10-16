@@ -22,6 +22,7 @@ mod recoil;
 mod rig;
 mod settings;
 mod sound;
+mod survival;
 mod footsteps;
 mod graphics;
 mod ui;
@@ -161,6 +162,7 @@ fn main() -> Result<()> {
             bullets::BulletPlugin,
             avatar::AvatarPlugin,
             footsteps::FootstepPlugin,
+            survival::SurvivalPlugin,
         ))
         .add_systems(Update, capture_frame.after(entities::ApplyInteractions))
         .run();

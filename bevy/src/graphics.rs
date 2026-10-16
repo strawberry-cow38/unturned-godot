@@ -2,7 +2,7 @@
 //! window and presentation services. Menus only edit `Settings`; this plugin owns
 //! every side effect, as the source keeps state + Apply in one model class so the
 //! main-menu and pause views cannot disagree.
-mod chromatic;
+pub(crate) mod chromatic;
 #[cfg(test)]
 mod tests;
 

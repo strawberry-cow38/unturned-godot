@@ -385,7 +385,7 @@ pub(super) fn activate(
         SpAction::Lakes => sp.lakes = !sp.lakes,
         SpAction::SeedFocus => sp.seed_focus = true,
         SpAction::Reset => {
-            let path = crate::player::save_path(&sp.folder);
+            let path = crate::player::persistence::save_path(&sp.folder);
             if !path.is_file() {
                 sp.reset_armed = false;
             } else if !sp.reset_armed {
@@ -656,7 +656,7 @@ fn left(p: &mut ChildSpawnerCommands, c: &Ctx, sp: &Selector, assets: &AssetServ
             option_row(l, c, "Difficulty", Opt::Difficulty, sp.options.difficulty);
             option_row(l, c, "Zombies", Opt::Zombies, sp.options.zombies);
             // Reset Data: two presses, disarmed on any selection change.
-            let exists = crate::player::save_path(&sp.folder).is_file();
+            let exists = crate::player::persistence::save_path(&sp.folder).is_file();
             let mut reset = look(Skin::Default);
             reset.disabled = !exists;
             let text = if !exists {

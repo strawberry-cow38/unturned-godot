@@ -1,7 +1,6 @@
 //! Original NightVision.cs tube modes; its screen pass follows world + hands,
 //! while HUD/console remain above it. Input and goggles ownership live in lights.
-mod render;
-pub(crate) use render::TubePass;
+pub(crate) mod render;
 use bevy::{
     asset::embedded_asset,
     prelude::*,

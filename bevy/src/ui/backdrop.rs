@@ -66,7 +66,7 @@ struct Settings {
 }
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct BackdropRouting;
-pub(super) struct BackdropPlugin;
+pub(crate) struct BackdropPlugin;
 impl Plugin for BackdropPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "backdrop/mips.wesl");

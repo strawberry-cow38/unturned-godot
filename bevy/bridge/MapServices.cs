@@ -126,7 +126,8 @@ public static partial class MapServices
                 if (name is "Counter_1" or "Counter_3" or "Tub_0")
                 {
                     if (!bounds.TryGetValue(name, out var b)) bounds[name] = b = MeshBounds(Path.Combine(objectDir, name + ".obj"));
-                    if (b.lo != null) taps.Add(new { position = pos, rotation = new[] { F(p[4]), yaw, -F(p[6]) }, scale = new[] { F(p[7]), F(p[8]), F(p[9]) }, min = b.lo, max = b.hi });
+                    // WaterTap.LabelFor: a bathtub says so, every counter sink is a "Sink".
+                    if (b.lo != null) taps.Add(new { position = pos, rotation = new[] { F(p[4]), yaw, -F(p[6]) }, scale = new[] { F(p[7]), F(p[8]), F(p[9]) }, min = b.lo, max = b.hi, label = name == "Tub_0" ? "Bathtub" : "Sink" });
                 }
             }
             if (fixtureOrdinal != null || containerOrdinal != null || actualDestructible != null || objectDoorId != null || seatIds.Count > 0)

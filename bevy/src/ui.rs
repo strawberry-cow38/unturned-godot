@@ -39,7 +39,8 @@ mod skills;
 mod swoop;
 pub(crate) use map::MapDiagnostics;
 pub(crate) mod npc;
-mod vitals;
+pub(crate) mod vitals;
+pub(crate) mod feedback;
 mod vehicle_controls;
 pub(crate) mod tank_optics;
 
@@ -105,6 +106,15 @@ pub struct UiModel {
     pub stamina: f32,
     pub infection: f32,
     pub oxygen: f32,
+    /// Accepted owner status bits and hidden dose (PlayerLifeUI status icons, deadzone feedback).
+    pub bleeding: bool,
+    pub broken: bool,
+    pub radiation: f32,
+    pub in_deadzone: bool,
+    /// Owner-side PlayerTemperatureSim reading (the source client shell computes it).
+    pub temperature: vitals::Temperature,
+    /// HUD.Alert and the client session toast, raised by accepted events.
+    pub feedback: feedback::Feedback,
     pub ammo: i32,
     pub held_item_id: u16,
     pub stance: String,
@@ -131,6 +141,12 @@ impl Default for UiModel {
             stamina: 0.0,
             infection: 0.0,
             oxygen: 1.0,
+            bleeding: false,
+            broken: false,
+            radiation: 0.0,
+            in_deadzone: false,
+            temperature: default(),
+            feedback: default(),
             ammo: -1,
             held_item_id: 0,
             stance: String::new(),
@@ -149,6 +165,7 @@ impl Default for UiModel {
 impl UiModel {
     pub fn reset_session(&mut self) {
         self.last_event_seq = 0;
+        self.feedback = default();
         self.notices.clear();
         self.pages.clear();
         self.storage = default();
@@ -166,6 +183,11 @@ impl UiModel {
         self.stamina = number(&p["stamina"]);
         self.infection = number(&p["infection"]);
         self.oxygen = p["oxygen"].as_f64().unwrap_or(1.) as f32;
+        self.bleeding = p["bleeding"].as_bool().unwrap_or(false);
+        self.broken = p["broken"].as_bool().unwrap_or(false);
+        self.radiation = number(&p["radiation"]);
+        self.in_deadzone = p["inDeadzone"].as_bool().unwrap_or(false);
+        self.temperature = vitals::Temperature::read(&p["temperature"]);
         self.ammo = p["ammo"].as_i64().unwrap_or(-1) as i32;
         self.held_item_id = p["heldItemId"].as_u64().unwrap_or(0) as u16;
         self.stance = p["stance"]
@@ -191,6 +213,7 @@ impl UiModel {
                     }
                     self.last_event_seq = seq;
                 }
+                self.feedback.adopt(event);
                 if let Some(text) = event["data"]["text"].as_str() {
                     if let Some(name) = event["data"]["name"]
                         .as_str()
@@ -425,7 +448,7 @@ impl Plugin for GameUiPlugin {
                 vehicle_controls::VehicleControlsPlugin,
                 storage::StoragePlugin,
             ))
-            .add_plugins(input_order::InputOrderPlugin)
+            .add_plugins((input_order::InputOrderPlugin, feedback::FeedbackPlugin))
             .add_plugins(inventory::InventoryPlugin)
             .add_plugins((navbar::NavbarPlugin, skills::SkillsPlugin, crafting::CraftingPlugin))
             .add_plugins((

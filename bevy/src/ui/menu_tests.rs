@@ -246,7 +246,7 @@ fn reset_data_arms_then_deletes_only_the_selected_retail_save() {
     let _guard = FILE.lock().unwrap();
     let mut app = menu_app();
     app.world_mut().resource_mut::<UiState>().menu.sp.loaded = true;
-    let save = crate::player::save_path("Washington");
+    let save = crate::player::persistence::save_path("Washington");
     std::fs::create_dir_all(save.parent().unwrap()).unwrap();
     std::fs::write(&save, "{}").unwrap();
     press(&mut app, SpAction::Select(Entry::Official(1)));
