@@ -21,6 +21,8 @@ namespace UnturnedGodot.Net
     {
         public byte Kind;      // PowerPortKind: 0 Output, 1 Consumer, 2 Passthrough
         public float Watts;
+        /// <summary>DeployableDef.SwitchRole of a side trigger: 0 None, 1 TurnOn, 2 TurnOff. Def-table only.</summary>
+        public byte Role;
     }
 
     /// <summary>A3/A2: a server-placed WORLD FIXTURE kind carried on the DEF table. None = an ordinary
@@ -44,6 +46,12 @@ namespace UnturnedGodot.Net
         /// <summary>Source power switch: a fuel-free manual toggle gates conduction.
         /// Def-table only; the existing ToggledOn bit carries its accepted state.</summary>
         public bool IsSwitch;
+        /// <summary>v78 source power families (def-table only). A battery stores Energy from its IN and produces
+        /// from its OUT while charged; a wind turbine's output follows its accepted Wind factor.</summary>
+        public bool IsBattery, IsWindTurbine;
+        public float EnergyMax, ChargeWatts;   // battery: watt-seconds capacity and IN charge rate
+        /// <summary>Deployable.Burns / DeployableDef.IsGenerator: a fuel tank that is not a battery.</summary>
+        public bool IsGenerator => FuelCapacity > 0f && !IsBattery;
         public float Range;          // placement reach (ItemBarricadeAsset Range) -- the server's range check
         public FixtureKind FixtureKind;   // A3/A2: a server-placed world fixture kind (None = a normal player-placeable deployable). Def-table only, never on the wire.
         public DeployablePortSpec[] Ports = System.Array.Empty<DeployablePortSpec>();
@@ -351,10 +359,23 @@ namespace UnturnedGodot.Net
             public bool ToggledOn;
             public bool OnFire;
             public long LastChangedTick;
+            /// <summary>v78: a battery's stored watt-seconds and a turbine's wind factor (0..2), as accepted by the
+            /// server's power step (ServerPower). Replicated quantized; zero on every other device.</summary>
+            public float Energy, Wind;
+            /// <summary>SERVER ONLY exact accumulators behind the quantized Fuel/Energy, so a per-tick burn or
+            /// charge smaller than the wire grain is not floored away. Never on the wire or in the hash.</summary>
+            public float SimFuel, SimEnergy;
 
-            /// <summary>The engine's effective running state (Deployable.IsPowered's wire mirror): toggled
-            /// on, not on fire, and -- if it has a tank -- fuel left.</summary>
-            public bool Producing(DeployableNetDef def) => ToggledOn && !OnFire && (def.FuelCapacity <= 0f || Fuel > 0f);
+            /// <summary>The device family's Deployable.IsPowered wire mirror. A battery produces while charged,
+            /// a turbine while its accepted wind exceeds 0.03; every other source keeps the unified server's
+            /// toggled, not burning, fuelled rule (the generator's 1.3 s spin-up stays client presentation).</summary>
+            public bool Producing(DeployableNetDef def) =>
+                def.IsBattery ? Energy > 0f && !OnFire
+                : def.IsWindTurbine ? !OnFire && Wind > WindProducing
+                : ToggledOn && !OnFire && (def.FuelCapacity <= 0f || Fuel > 0f);
+
+            /// <summary>Deployable.PowerScale on the wire: a turbine's output cap follows its wind.</summary>
+            public float OutputScale(DeployableNetDef def) => def.IsWindTurbine ? Wind : 1f;
 
             // solver outputs, refreshed by Solve() -- NEVER on the wire (§3.1: inputs only)
             public PowerPortResult[] Solved = System.Array.Empty<PowerPortResult>();
@@ -394,6 +415,8 @@ namespace UnturnedGodot.Net
         /// <summary>Server-side wiring reach: the sender must be near both endpoints (the SP wire tool walks
         /// wire points by hand, so reach per endpoint is the honest bound).</summary>
         public const float WireReach = 16f;
+        /// <summary>Deployable.IsPowered: a turbine produces above this wind factor.</summary>
+        public const float WindProducing = 0.03f;
 
         public byte SystemId => ReplicationIds.SystemDeployables;
 
@@ -545,7 +568,9 @@ namespace UnturnedGodot.Net
                 // every session runs through the loopback, so THIS is the path that actually executes: a generator
                 // picked up on its last drop of fuel came back down full. Free fuel for a pickup and a re-place.
                 Health = QuantizeScalar(Mathf.Clamp(health ?? def.Health, 1f, def.Health)),
-                Fuel = QuantizeScalar(Mathf.Min(fuel ?? def.FuelCapacity, def.FuelCapacity)),
+                // v78: the generator's 150000 mL tank no longer clips at the health grid's 2047.75.
+                Fuel = QuantizeFuel(Mathf.Min(fuel ?? def.FuelCapacity, def.FuelCapacity)),
+                SimFuel = Mathf.Min(fuel ?? def.FuelCapacity, def.FuelCapacity),
                 ToggledOn = def.IsSwitch,   // original Deployable._switchOn defaults ON
                 LastChangedTick = Stamp(tick),
                 ItemConfig = def.HasItemConfig ? new ItemDeviceConfig() : null,   // a fresh mover runs at 32/s, a fresh splitter round-robins
@@ -617,13 +642,29 @@ namespace UnturnedGodot.Net
         public void ServerSetScalars(uint netId, float health, float fuel, bool onFire, long tick)
         {
             if (!TryGet(netId, out var e)) return;
-            float qh = QuantizeScalar(health), qf = QuantizeScalar(fuel);
+            float qh = QuantizeScalar(health), qf = QuantizeFuel(fuel);
             if (e.Health == qh && e.Fuel == qf && e.OnFire == onFire) return;
             // health and the fuel LEVEL do not move power or routing; catching fire and running dry do
             if (e.OnFire != onFire || (e.Fuel > 0f) != (qf > 0f)) GraphVersion++;
+            if (e.Fuel != qf) e.SimFuel = fuel;   // a caller echoing the replicated fuel keeps the exact burn
             e.Health = qh;
             e.Fuel = qf;
             e.OnFire = onFire;
+            e.LastChangedTick = Stamp(tick);
+        }
+
+        /// <summary>v78 accepted power-step state (ServerPower). Quantized at store, exactly as the wire
+        /// carries it, so replicas and the sync hash compare equal. Running dry, a battery crossing empty and a
+        /// turbine crossing its production threshold move GraphVersion like any other producing change.</summary>
+        public void ServerSetPowerState(DeployableEntity e, float fuel, float energy, float wind, long tick)
+        {
+            if (e == null || !Schema.TryGet(e.DefId, out var def)) return;
+            e.SimFuel = fuel; e.SimEnergy = energy;
+            float qf = QuantizeFuel(fuel), qe = QuantizeEnergy(energy), qw = QuantizeWind(wind);
+            if (e.Fuel == qf && e.Energy == qe && e.Wind == qw) return;
+            bool producing = e.Producing(def); float scale = e.OutputScale(def);
+            e.Fuel = qf; e.Energy = qe; e.Wind = qw;
+            if (producing != e.Producing(def) || scale != e.OutputScale(def)) GraphVersion++;
             e.LastChangedTick = Stamp(tick);
         }
 
@@ -677,8 +718,10 @@ namespace UnturnedGodot.Net
                 if (!Schema.TryGet(e.DefId, out var def)) continue;
                 var dev = new PowerDevice { Producing = e.Producing(def), OnFire = e.OnFire,
                     Conducting = !def.IsSwitch || e.ToggledOn };
+                float scale = e.OutputScale(def);   // PowerNet.Recompute: only OUTPUT caps scale
                 for (byte i = 0; i < def.Ports.Length; i++)
-                    portMap[(e.NetIdValue, i)] = dev.AddPort((PowerPortKind)def.Ports[i].Kind, def.Ports[i].Watts);
+                    portMap[(e.NetIdValue, i)] = dev.AddPort((PowerPortKind)def.Ports[i].Kind,
+                        def.Ports[i].Kind == (byte)PowerPortKind.Output ? def.Ports[i].Watts * scale : def.Ports[i].Watts);
                 devices.Add(dev);
                 entities.Add(e);
             }
@@ -775,6 +818,8 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixFloat(h, e.YawDegrees);
                 h = NetHash.MixFloat(h, e.Health);
                 h = NetHash.MixFloat(h, e.Fuel);
+                h = NetHash.MixFloat(h, e.Energy);
+                h = NetHash.MixFloat(h, e.Wind);
                 h = NetHash.MixByte(h, (byte)((e.ToggledOn ? 1 : 0) | (e.OnFire ? 2 : 0) | (e.MountUp ? 4 : 0)));
                 if (e.ItemConfig != null) h = e.ItemConfig.Mix(h);   // ItemCrateId is server-only and deliberately NOT here
             }
@@ -787,9 +832,40 @@ namespace UnturnedGodot.Net
             return Pipes.Mix(h);
         }
 
-        // scalar wire grid: 12 int + 2 frac bits covers health/fuel (max 4095.75, 1/4 grain); quantized at
+        /// <summary>v78: a cache key over exactly what Solve reads (and the device bits a power view reports):
+        /// identity, producing, fire, switch conduction, output scale and wire ends. Unlike StateHash it does
+        /// not move with every tick of fuel burn or battery charge, so a native view is re-read only when the
+        /// solved circuit can actually differ.</summary>
+        public ulong PowerViewHash()
+        {
+            ulong h = NetHash.FnvOffset;
+            foreach (var e in All)
+            {
+                h = NetHash.MixUInt32(h, e.NetIdValue);
+                h = NetHash.MixUInt32(h, e.DefId);
+                bool known = Schema.TryGet(e.DefId, out var def);
+                h = NetHash.MixByte(h, (byte)((known && e.Producing(def) ? 1 : 0) | (e.OnFire ? 2 : 0) | (e.ToggledOn ? 4 : 0)));
+                h = NetHash.MixFloat(h, known ? e.OutputScale(def) : 1f);
+            }
+            foreach (var w in AllWires)
+            {
+                h = NetHash.MixUInt32(h, w.NetIdValue);
+                h = NetHash.MixUInt32(h, w.SrcId); h = NetHash.MixByte(h, w.SrcPort);
+                h = NetHash.MixUInt32(h, w.DstId); h = NetHash.MixByte(h, w.DstPort);
+            }
+            return h;
+        }
+
+        // scalar wire grid: signed 12 int + 2 frac bits covers health (max 2047.75, 1/4 grain); quantized at
         // the authority so server state and replica state compare with exact equality
         public static float QuantizeScalar(float v) => NetQuantization.QuantizeClampedFloat(v, 12, 2);
+        // v78: fuel gets its own signed 19.2 grid (max 262143.75 mL): the source generator holds 150000 mL.
+        const int FuelIntBits = 19, FuelFracBits = 2;
+        public static float QuantizeFuel(float v) => NetQuantization.QuantizeClampedFloat(v, FuelIntBits, FuelFracBits);
+        // v78: battery watt-seconds (source 600 Wh = 2160000) and turbine wind factor (0..2).
+        const int EnergyIntBits = 22, EnergyFracBits = 2, WindIntBits = 2, WindFracBits = 8;
+        public static float QuantizeEnergy(float v) => NetQuantization.QuantizeUnsignedClampedFloat(v, EnergyIntBits, EnergyFracBits);
+        public static float QuantizeWind(float v) => NetQuantization.QuantizeUnsignedClampedFloat(v, WindIntBits, WindFracBits);
 
         static void WriteEntity(NetPakWriter w, DeployableEntity e)
         {
@@ -799,10 +875,16 @@ namespace UnturnedGodot.Net
             NetWire.WritePos(w, e.Pos);
             w.WriteDegrees(e.YawDegrees, NetQuantization.YawBits);
             w.WriteClampedFloat(e.Health, 12, 2);
-            w.WriteClampedFloat(e.Fuel, 12, 2);
+            w.WriteClampedFloat(e.Fuel, FuelIntBits, FuelFracBits);   // v78: widened from the health grid
             w.WriteBit(e.ToggledOn);
             w.WriteBit(e.OnFire);
             w.WriteBit(e.MountUp);   // v56: an adapter on its container's top face
+            // v78: accepted battery charge and turbine wind, each behind a presence bit (zero on most devices).
+            // Like the config below, the parse never depends on the two sides agreeing about a def.
+            w.WriteBit(e.Energy > 0f);
+            if (e.Energy > 0f) w.WriteUnsignedClampedFloat(e.Energy, EnergyIntBits, EnergyFracBits);
+            w.WriteBit(e.Wind > 0f);
+            if (e.Wind > 0f) w.WriteUnsignedClampedFloat(e.Wind, WindIntBits, WindFracBits);
             // v56: a presence bit and then the config, rather than a schema lookup deciding whether to read it --
             // the parse must not depend on the two sides agreeing about a def, or a def drift becomes a desync of
             // every entity after it instead of one wrong splitter.
@@ -819,10 +901,15 @@ namespace UnturnedGodot.Net
             if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadClampedFloat(12, 2, out float health)) return false;
-            if (!r.ReadClampedFloat(12, 2, out float fuel)) return false;
+            if (!r.ReadClampedFloat(FuelIntBits, FuelFracBits, out float fuel)) return false;
             if (!r.ReadBit(out bool on)) return false;
             if (!r.ReadBit(out bool fire)) return false;
             if (!r.ReadBit(out bool up)) return false;
+            float energy = 0f, wind = 0f;
+            if (!r.ReadBit(out bool hasEnergy)) return false;
+            if (hasEnergy && !r.ReadUnsignedClampedFloat(EnergyIntBits, EnergyFracBits, out energy)) return false;
+            if (!r.ReadBit(out bool hasWind)) return false;
+            if (hasWind && !r.ReadUnsignedClampedFloat(WindIntBits, WindFracBits, out wind)) return false;
             if (!r.ReadBit(out bool hasConfig)) return false;
             ItemDeviceConfig cfg = null;
             if (hasConfig && !ItemDeviceConfig.TryRead(r, out cfg)) return false;
@@ -830,6 +917,7 @@ namespace UnturnedGodot.Net
             {
                 NetIdValue = id, DefId = defId, OwnerPlayerId = owner, Pos = pos, YawDegrees = yaw,
                 Health = health, Fuel = fuel, ToggledOn = on, OnFire = fire, ItemConfig = cfg, MountUp = up,
+                Energy = energy, Wind = wind, SimFuel = fuel, SimEnergy = energy,
             };
             return true;
         }

@@ -69,6 +69,10 @@ impl ObjData {
     /// Source SplitMeshBy, returning (outside, inside) without changing triangle
     /// winding or attributes. The predicate receives all three local corners.
     pub fn split_where(&self, predicate: impl Fn([Vec3; 3]) -> bool) -> (Self, Self) {
+        self.split_where_uv(|corners, _| predicate(corners))
+    }
+    /// As `split_where`, with each corner's UV too (source `SplitByUvAndPos`).
+    pub fn split_where_uv(&self, predicate: impl Fn([Vec3; 3], [Vec2; 3]) -> bool) -> (Self, Self) {
         let empty = || Self {
             min: Vec3::splat(f32::INFINITY),
             max: Vec3::splat(f32::NEG_INFINITY),
@@ -76,7 +80,10 @@ impl ObjData {
         };
         let (mut outside, mut inside) = (empty(), empty());
         for (n, triangle) in self.positions.chunks_exact(3).enumerate() {
-            let enclosed = predicate([0, 1, 2].map(|i| Vec3::from_array(triangle[i])));
+            let enclosed = predicate(
+                [0, 1, 2].map(|i| Vec3::from_array(triangle[i])),
+                [0, 1, 2].map(|i| Vec2::from_array(self.uvs[n * 3 + i])),
+            );
             let out = if enclosed { &mut inside } else { &mut outside };
             for i in n * 3..n * 3 + 3 {
                 let p = Vec3::from_array(self.positions[i]);

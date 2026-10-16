@@ -9,6 +9,14 @@ pub(super) struct Art {
     pub bounds: Bounds,
     label: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
     switch_lamp: Option<switch::Art>,
+    /// Upright procedural turbine: the tower sits at (0, H/2, 0) in the body.
+    turbine: Option<(Vec3, turbine::Art)>,
+    lamps: Option<lamps::Art>,
+}
+/// The body mesh child (`Deployable._mesh`), for presentation that moves it.
+#[derive(Component)]
+pub(super) struct BodyMesh {
+    pub net_id: u32,
 }
 #[cfg(test)]
 impl Art {
@@ -24,7 +32,21 @@ pub(super) fn load(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) -> anyhow::Result<Art> {
+    if def.is_wind_turbine {
+        let (mesh, material, bounds, art) = turbine::load(meshes, materials);
+        return Ok(Art {
+            mesh,
+            material,
+            mesh_rotation: Quat::IDENTITY,
+            bounds,
+            label: None,
+            switch_lamp: None,
+            turbine: Some((Vec3::new(0., 1.3, 0.), art)),
+            lamps: None,
+        });
+    }
     let size = Vec3::from(def.size);
+    let mut lamps = None;
     let (mesh, bounds) = if def.proc_box {
         (
             meshes.add(Cuboid::from_size(size)),
@@ -39,14 +61,20 @@ pub(super) fn load(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("source model absent"))?;
         let (mesh, data) = cache.load_mesh(&root.join(format!("objects/{name}.obj")), meshes)?;
+        lamps = lamps::Art::load(def, Some(&data), meshes);
         (
-            mesh,
+            // SplitLampLens takes the lens triangles out of the body mesh.
+            lamps.as_ref().and_then(|l| l.body.clone()).unwrap_or(mesh),
+            // The collider and seat still use the whole original mesh AABB.
             Bounds {
                 min: data.min,
                 max: data.max,
             },
         )
     };
+    if lamps.is_none() {
+        lamps = lamps::Art::load(def, None, meshes);
+    }
     let rotation = mesh_rotation(def);
     // Transform the original mesh AABB's eight corners, as Godot Aabb operator*,
     // rather than recomputing a tighter bound from rotated triangle vertices.
@@ -95,6 +123,8 @@ pub(super) fn load(
         bounds,
         label,
         switch_lamp,
+        turbine: None,
+        lamps,
     })
 }
 pub(super) fn spawn(
@@ -119,14 +149,32 @@ pub(super) fn spawn(
             CollisionGroups::new(Group::GROUP_1, Group::ALL),
         ))
         .id();
+    let mesh_transform =
+        Transform::from_translation(art.turbine.as_ref().map_or(Vec3::ZERO, |t| t.0))
+            .with_rotation(art.mesh_rotation);
     let mesh = commands
         .spawn((
             Mesh3d(art.mesh.clone()),
             MeshMaterial3d(art.material.clone()),
-            Transform::from_rotation(art.mesh_rotation),
+            mesh_transform,
+            BodyMesh { net_id: id },
             ChildOf(root),
         ))
         .id();
+    if let Some((_, turbine)) = &art.turbine {
+        turbine.spawn(commands, mesh, id);
+    }
+    if let Some(lamps) = &art.lamps {
+        lamps::spawn(
+            commands,
+            def,
+            lamps,
+            root,
+            id,
+            mesh_transform,
+            art.material.clone(),
+        );
+    }
     if let Some((mesh_handle, material)) = &art.label {
         commands.spawn((
             Mesh3d(mesh_handle.clone()),

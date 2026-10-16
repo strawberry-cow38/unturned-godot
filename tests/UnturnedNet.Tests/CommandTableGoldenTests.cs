@@ -126,6 +126,7 @@ namespace UnturnedNet.Tests
             [77] = "CommandLearnSkillNode", // v70 original graph node purchase
             [78] = "CommandVehicleDoor", // v70 original bus driver/focused toggle
             [79] = "CommandEmptyFuel", // v70 exact owner fuel-container action
+            [90] = "CommandDepositFuel", // v78 exact held fuel container poured into a generator
             [81] = "CommandMagazineTransfer", // v71 exact magazine round request
             [83] = "CommandVehicleHitch", // v74 source fifth-wheel intent; paired vehicle state framing
             [84] = "CommandEmptyViewedFuel", // v75 exact currently viewed container instance

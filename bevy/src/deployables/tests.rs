@@ -54,12 +54,14 @@ fn original_catalog_routes_specialized_bodies_and_materializes_every_ordinary_me
     let bridge = initialize();
     let defs = catalog(&bridge);
     assert_eq!(defs.len(), 61);
-    for id in [9200, 9201, 9106, 9130, 9110, 9112, 9114] {
+    for id in [9200, 9201, 9130, 9110, 9112, 9114] {
         assert!(
             !defs.iter().find(|d| d.id == id).unwrap().ordinary(),
             "special body #{id}"
         );
     }
+    // The source turbine is a Deployable.Spawn body with procedural BuildTurbine art.
+    assert!(defs.iter().find(|d| d.id == 9106).unwrap().ordinary());
     let mut app = fixture(bridge, json!({"deployables":[]}));
     let world = app.world_mut();
     let asset_server = world.resource::<AssetServer>().clone();
@@ -78,7 +80,12 @@ fn original_catalog_routes_specialized_bodies_and_materializes_every_ordinary_me
         .unwrap_or_else(|e| panic!("{}: {e}", def.name));
         assert!(art.bounds.min.is_finite());
         let material = materials.get(&art.material_for_test()).unwrap();
-        if !def.proc_box {
+        if def.is_wind_turbine {
+            // BuildTurbine's gray tower keeps Godot's default back-face culling.
+            assert!(material.cull_mode.is_some());
+            assert_eq!(art.bounds.min, Vec3::new(-1.15, 0., -0.15));
+            assert!((art.bounds.max - Vec3::new(1.15, 3.75, 1.05)).length() < 1e-5);
+        } else if !def.proc_box {
             assert!(material.double_sided);
             assert!(material.cull_mode.is_none());
         }

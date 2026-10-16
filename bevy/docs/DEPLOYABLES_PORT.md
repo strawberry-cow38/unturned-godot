@@ -25,15 +25,23 @@ Source contracts:
   revision changes force upload again after terrain replacement. Remote UDP
   clients render bodies but never upload authority geometry.
 
-Specialized fixture, fluid, storage-appliance and wind-turbine branches remain
-separate work. Ordinary bodies now provide source camera focus, basic health/fuel
-readouts, hold-F pickup and short generator toggle intents. The foundation does
-not yet complete power ports/networks, battery/load/time readouts, lights,
-fire/wreck presentation, configurable-device panels, placement ghosts, window
-snapping, item pipes, or those specialized bodies. The fuel-free source switch
-now accepts the existing toggle and gates solver conduction, with its original
-red/green native state indicator; the foundation and remaining utility scope are
-tracked in [POWER_PORT.md](POWER_PORT.md).
+Fluid and storage-appliance branches remain separate work. The wind turbine is
+now an ordinary `Deployable.Spawn` body built from the procedural
+`BuildTurbine` parts and the source's hand-written AABB, and GridSource/GasPump
+world fixtures materialize as port endpoints at the `Materialize` frame with the
+source `AddInteractionCollider` look box and their Grid Power / Gas Pump panels
+(the map object keeps its mesh and collision; no authority geometry is
+uploaded). Ordinary bodies provide source camera focus, the source utility
+readouts (runtime and turbine-output suffixes; health, fuel/charge/wind and
+load bars), hold-F pickup, short generator toggle intents, accepted consumer
+lights and bulb lenses, and the generator engine voice. A held fuel container
+pours into a focused generator (LMB, Command 90) and fills at a focused pump
+(RMB, Command 29); only the owner echo changes the can. The foundation does not
+yet complete room-lamp (`LampLight`) fixtures, fire/wreck presentation,
+configurable-device panels, placement ghosts, window snapping, item pipes or
+vehicle pour/siphon. The fuel-free source switch accepts the existing toggle
+and gates solver conduction, with its original red/green native state
+indicator; power scope is tracked in [POWER_PORT.md](POWER_PORT.md).
 Retaining the original backend rules does not make those native flows playable.
 
 ## Focus and accepted pickup
@@ -52,8 +60,9 @@ toggle intent. Completion sends one existing pickup intent and clears the
 gesture without locally removing the body or granting an item. Only the
 accepted replica and owner inventory echo perform those changes. Generator
 warmup/cooldown gates quick toggles with the source 1.3s/1.1s cosmetic ramps;
-singleplayer pause freezes these ramps. This adapter does not simulate power
-production or fuel drain.
+singleplayer pause freezes these ramps. The ramp lives in `deployables::engine`
+and also drives the engine voice and shake; power production and fuel drain are
+the server's `ServerPower` step (see POWER_PORT.md), never this adapter.
 
 Nine focused native tests pass on `native-pickup-reviewed-tests`, including an
 actual UDP owner exercising the production focus/hold systems: occlusion,

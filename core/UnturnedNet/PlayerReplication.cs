@@ -248,6 +248,7 @@ namespace UnturnedGodot.Net
         public const byte CommandLearnSkillNode = 77; // v70: owner-only original skill graph purchase
         public const byte CommandVehicleDoor = 78; // v70: source bus driver/focused toggle intent.
         public const byte CommandEmptyFuel = 79; // v70: empty an exact owned fuel-container instance.
+        public const byte CommandDepositFuel = 90; // v78: pour the exact held fuel container into a generator (TryDepositFuel).
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
         public const byte CommandNearbyInventory = 86; // v76: bounded source Nearby projection and exact transfer.
         public const byte CommandEmptyViewedFuel = 84; // v75: exact authorized container fuel instance.

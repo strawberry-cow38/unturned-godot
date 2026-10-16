@@ -40,6 +40,9 @@ pub struct ItemVisual {
     pub is_consumable: bool,
     #[serde(default)]
     pub is_fluid_container: bool,
+    /// ItemAsset.fuelCapacity: above zero, a source fuel container (gas can, jerrycan).
+    #[serde(default)]
+    pub fuel_capacity: f32,
     #[serde(default)]
     pub is_deployable: bool,
     #[serde(default)]

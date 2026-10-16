@@ -200,6 +200,7 @@ public sealed partial class WorldServices
         long tick = _server.Session.CurrentTick;
         ReleaseInvalidStationaryOccupants(tick);
         StepDoors();
+        _server.Power.Step((float)SimClock.FixedDelta);   // v78 accepted fuel/charge/wind before the movers read power
         _server.ItemMovers.Step((float)SimClock.FixedDelta);
         _containers.Tick(); Harvesting.Step();
         foreach (int i in Regrown(tick)) _server.Transactions.SetResourceAlive(i, true);

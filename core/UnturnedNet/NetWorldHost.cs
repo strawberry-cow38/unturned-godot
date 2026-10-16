@@ -92,6 +92,9 @@ namespace UnturnedGodot.Net
         /// <summary>v56: the item movers. Stepped by the HOST (a DelegateSimStep beside the container publish), not
         /// from TickSimulation, so a bare harness that never asked for it is not moving items behind its back.</summary>
         public readonly ServerItemMovers ItemMovers;
+        /// <summary>v78: generator fuel burn, battery charge, turbine wind and side triggers. Host-stepped like
+        /// ItemMovers (before them), so a bare harness keeps the unified server's static power inputs.</summary>
+        public readonly ServerPower Power;
         /// <summary>v55: which locked recipes each player knows. See ServerBlueprints.</summary>
         public readonly ServerBlueprints BlueprintKnowledge = new ServerBlueprints();
         public readonly ServerNpcs Npcs = new ServerNpcs();   // v47: conversations, quests and trades, server-side
@@ -150,6 +153,7 @@ namespace UnturnedGodot.Net
             Freezing = new ServerFreezing(Inventories);
             CraftQueue = new ServerCrafting(Inventories);
             ItemMovers = new ServerItemMovers(Deployables, Inventories);
+            Power = new ServerPower(Deployables, () => Session.CurrentTick) { SeaLevel = () => SeaLevelY };
             // destructible props (rubble): health/respawn authority; combat routes an object hit into it
             DestructibleHost = new ServerDestructibles(Destructibles, BroadcastEvent);
             Combat.DamageObject = (index, amount, tick) => DestructibleHost.DamageObject(index, amount, tick);

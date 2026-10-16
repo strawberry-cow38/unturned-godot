@@ -1,15 +1,21 @@
 //! Source DeployableReplicaView: accepted objects own their only rendered body.
 //! Specialized fluid/storage/fixture bodies are implemented separately, never
 //! approximated by the ordinary Deployable.Spawn mesh.
+mod engine;
+mod fixture;
 mod geometry;
 mod interaction;
+mod lamps;
 mod pickup;
 mod ports;
+#[cfg(test)]
+mod power_tests;
 mod presentation;
 mod switch;
-mod wires;
 #[cfg(test)]
 mod tests;
+mod turbine;
+mod wires;
 
 use crate::{
     bridge::CoreBridge,
@@ -66,10 +72,17 @@ pub(crate) struct Definition {
     is_item_configurable: bool,
     #[serde(default)]
     ports: Vec<wires::Port>,
+    /// Source `DeployLight`s a powered consumer lights (Spotlight, Cagelight).
+    #[serde(default)]
+    lights: Vec<lamps::Light>,
+    #[serde(default)]
+    energy_max: f32,
 }
 impl Definition {
+    /// The `Deployable.Spawn` branch of `DeployableReplicaView`: the turbine is
+    /// a Deployable body with its procedural `BuildTurbine` art.
     fn ordinary(&self) -> bool {
-        self.fixture == "None" && self.fluid.is_null() && !self.is_storage && !self.is_wind_turbine
+        self.fixture == "None" && self.fluid.is_null() && !self.is_storage
     }
 }
 
@@ -137,13 +150,22 @@ impl Plugin for DeployablePlugin {
         interaction::install(app);
         wires::install(app);
         ports::install(app);
+        engine::install(app);
         app.init_resource::<Replicas>()
             .add_systems(
                 Update,
                 sync.after(WorldServicesReady)
                     .before(crate::entities::CollectInteractions),
             )
-            .add_systems(Update, switch::update.after(sync));
+            .add_systems(
+                Update,
+                (
+                    switch::update,
+                    turbine::spin,
+                    lamps::update.after(wires::refresh),
+                )
+                    .after(sync),
+            );
     }
 }
 
@@ -170,6 +192,8 @@ fn sync(
         replicas.epoch = epoch.0;
     }
     let mut live = HashSet::new();
+    // Fixture endpoints retire with `live` but never upload authority geometry.
+    let mut endpoints = HashSet::new();
     if model.connected {
         for row in snapshot.0["deployables"].as_array().into_iter().flatten() {
             let Some((id, def_id, pose)) = Pose::read(row) else {
@@ -178,10 +202,34 @@ fn sync(
             let Some(def) = catalog
                 .deployables
                 .iter()
-                .find(|d| d.id == def_id && d.ordinary())
+                .find(|d| d.id == def_id && (d.ordinary() || fixture::endpoint(d)))
             else {
                 continue;
             };
+            if fixture::endpoint(def) {
+                live.insert(id);
+                endpoints.insert(id);
+                let transform = fixture::transform(pose);
+                // The look box undoes the root basis, so a moved fixture is rebuilt whole.
+                match replicas.instances.get(&id) {
+                    Some(instance) if instance.def_id == def_id && instance.pose == pose => {}
+                    _ => {
+                        if let Some(old) = replicas.instances.remove(&id) {
+                            commands.entity(old.entity).despawn();
+                        }
+                        let entity = fixture::spawn(&mut commands, def, id, transform);
+                        replicas.instances.insert(
+                            id,
+                            Instance {
+                                entity,
+                                def_id,
+                                pose,
+                            },
+                        );
+                    }
+                }
+                continue;
+            }
             if !replicas.art.contains_key(&def_id) {
                 match presentation::load(
                     def,
@@ -264,7 +312,8 @@ fn sync(
             )?;
             replicas.published.remove(&id);
         }
-        for id in live {
+        for id in live.difference(&endpoints) {
+            let id = *id;
             let instance = &replicas.instances[&id];
             let stamp = (instance.pose, instance.def_id, geometry.revision);
             if replicas.published.get(&id) == Some(&stamp) {
