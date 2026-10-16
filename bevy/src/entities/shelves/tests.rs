@@ -64,6 +64,94 @@ fn a_diagonal_icon_up_stands_the_item_on_its_longest_axis() {
 }
 
 #[test]
+fn axes_sort_like_dotnet_array_sort_and_stand_the_loonie_supply_on_x() {
+    // ArraySortHelper: SwapIfGreater (0,1), (0,2), (1,2) -- equal dims reversed.
+    assert_eq!(layout::sorted_axes([0.126, 0.126, 0.0525]), [2, 1, 0]);
+    assert_eq!(layout::sorted_axes([0.3, 0.1, 0.2]), [1, 2, 0]);
+    let config = WorldConfig::default();
+    let mesh = crate::content::ObjData::load(&config.content_root.join("items/1056.txt")).unwrap();
+    let size = mesh.max - mesh.min;
+    assert_eq!(size.x, size.y, "the Loonie Supply's two equal dims (the tie under test)");
+    let poses = layout::poses(&std::fs::read_to_string(config.content_root.join("items/item_poses.json")).unwrap());
+    let pose = poses[&1056];
+    assert!((pose.up - Vec3::new(0.7071, 0.7071, 0.)).length() < 1e-4, "a diagonal icon up");
+    let m = layout::orient(1056, size, Some(pose), layout::Facts { item_type: Some("supply"), name: Some("Loonie Supply") });
+    assert_eq!(m.x_axis, Vec3::Y, "ax[2] is X after the unstable sort: it stands on X");
+    assert_eq!(m.z_axis, Vec3::NEG_Z, "icon front (-Z) faces the aisle axis");
+}
+
+#[test]
+fn a_repeated_digest_cell_keeps_the_last_item_like_sync_current() {
+    let mut catalog = ItemCatalog::default();
+    for id in [13u16, 14] {
+        catalog.items.insert(id, serde_json::from_value(json!({"id":id,"name":"x","type":"food","width":1,"height":1})).unwrap());
+    }
+    let display = json!([{"cell":3,"itemId":13,"rot":0},{"cell":3,"itemId":14,"rot":0}]);
+    assert_eq!(cells(&display, 8, &catalog), [Cell { x: 3, y: 0, eff_w: 1, item_id: 14 }]);
+}
+
+fn local_catalog() -> ItemCatalog {
+    let mut catalog = ItemCatalog::default();
+    for (id, name) in [(13u16, "Canned Beans"), (14, "Bottled Water")] {
+        catalog.items.insert(id, serde_json::from_value(json!({"id":id,"name":name,"type":"food","width":1,"height":1})).unwrap());
+    }
+    catalog.containers = serde_json::from_value(json!([{"kindId":0,"mesh":"Shelf_1","display":true,"label":"Store Shelf","width":8,"height":3}])).unwrap();
+    catalog
+}
+/// SyncDisplay's STABLE slot: taking the neighbour never re-places a cell
+/// that stays, and an unchanged digest is not re-applied.
+#[test]
+fn a_cell_that_stays_keeps_its_model_when_a_neighbour_leaves() {
+    let config = WorldConfig::default();
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin { file_path: config.content_root.to_string_lossy().into(), ..default() }))
+        .init_asset::<Mesh>()
+        .init_asset::<StandardMaterial>()
+        .init_asset::<Image>()
+        .insert_resource(config)
+        .insert_resource(local_catalog())
+        .insert_resource(GameSnapshot(Value::Null))
+        .init_resource::<UiModel>()
+        .init_resource::<ContentCache>()
+        .init_resource::<WorldSessionEpoch>()
+        .init_resource::<items::Models>()
+        .init_resource::<Shelves>()
+        .add_systems(Update, sync);
+    let rows = |display: Value| json!({"connected":true,"containers":[{"netId":5,"kindId":0,"position":[0,0,0],"yaw":0,"width":8,"height":3,"display":display}]});
+    let set = |app: &mut App, v: Value| {
+        app.world_mut().resource_mut::<UiModel>().adopt_snapshot(&v);
+        app.world_mut().resource_mut::<GameSnapshot>().0 = v;
+        app.update();
+    };
+    let by_cell = |app: &mut App| {
+        let mut q = app.world_mut().query::<(Entity, &ShelfItem)>();
+        let mut v: Vec<_> = q.iter(app.world()).map(|(e, i)| ((i.x, i.y), e)).collect();
+        v.sort();
+        v
+    };
+    set(&mut app, rows(json!([{"cell":0,"itemId":13,"rot":0},{"cell":1,"itemId":14,"rot":0}])));
+    let before = by_cell(&mut app);
+    assert_eq!(before.len(), 2);
+    assert_eq!(app.world().resource::<Shelves>().applied, 1);
+    set(&mut app, rows(json!([{"cell":0,"itemId":13,"rot":0},{"cell":1,"itemId":14,"rot":0}])));
+    app.update();
+    assert_eq!(by_cell(&mut app), before, "an unchanged digest keeps every model");
+    assert_eq!(app.world().resource::<Shelves>().applied, 1, "DisplaySig: an unchanged digest is not re-applied");
+    set(&mut app, rows(json!([{"cell":0,"itemId":13,"rot":0}])));
+    let after = by_cell(&mut app);
+    assert_eq!(after, [before[0]], "the stayer keeps its entity; the taken neighbour despawns");
+    assert!(app.world().get_entity(before[1].1).is_err());
+    assert_eq!(app.world().resource::<Shelves>().applied, 2);
+    // A catalogue that arrives (or changes) after the digest re-applies it:
+    // an item unknown before (Assets.makeLoot null) now shows.
+    set(&mut app, rows(json!([{"cell":0,"itemId":13,"rot":0},{"cell":2,"itemId":81,"rot":0}])));
+    assert_eq!(by_cell(&mut app).len(), 1, "81 is not in this catalogue yet");
+    app.world_mut().resource_mut::<ItemCatalog>().items.insert(81, serde_json::from_value(json!({"id":81,"name":"MRE","type":"food","width":1,"height":1})).unwrap());
+    app.update();
+    assert_eq!(by_cell(&mut app).len(), 2, "the catalogue change re-applied the unchanged digest");
+}
+
+#[test]
 fn digest_cells_decode_the_linear_index_rotation_and_unknown_items() {
     let mut catalog = ItemCatalog::default();
     for (id, w, h) in [(13u16, 1u8, 1u8), (277, 2, 1)] {
@@ -121,20 +209,63 @@ fn item(net_id: u32, x: u8) -> ShelfItem {
 fn the_ray_claims_the_nearest_box_and_the_sphere_refines_at_the_ray_end() {
     let (a, b) = (item(1, 0), item(1, 1));
     let at = |p: Vec3| Mat4::from_translation(p);
-    let items = [(&a, at(Vec3::new(0., 0., -1.5))), (&b, at(Vec3::new(0., 0., -1.0)))];
-    let (hit, t) = pick(&items, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH).unwrap();
+    let items = [(0, &a, at(Vec3::new(0., 0., -1.5))), (1, &b, at(Vec3::new(0., 0., -1.0)))];
+    let nothing = RayStop::Nothing;
+    let (hit, t) = pick(items, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH, nothing).unwrap();
     assert_eq!(hit, 1, "nearest box along the ray");
     assert!((t - 0.9).abs() < 1e-5);
-    assert!(pick(&items[..1], Vec3::ZERO, Vec3::NEG_Z, 1.2).is_none(), "the world stopped the ray first");
+    assert!(pick(items[..1].iter().copied(), Vec3::ZERO, Vec3::NEG_Z, 1.2, RayStop::Other).is_none(), "the world stopped the ray first");
     // Ray misses (0.2 m to the side) but the box is inside the 0.16 m sphere at the 2.6 m end.
     let c = item(2, 0);
-    let side = [(&c, at(Vec3::new(0.2, 0., -2.6)))];
-    assert_eq!(pick(&side, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH), Some((0, LOOK_REACH - LOOK_SPHERE)));
-    let far = [(&c, at(Vec3::new(0.3, 0., -2.6)))];
-    assert!(pick(&far, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH).is_none(), "0.2 m clear of the sphere");
+    let side = [(0, &c, at(Vec3::new(0.2, 0., -2.6)))];
+    assert_eq!(pick(side, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH, nothing), Some((0, LOOK_REACH - LOOK_SPHERE)));
+    assert_eq!(pick(side, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH, RayStop::Shelf), Some((0, LOOK_REACH - LOOK_SPHERE)), "a looked-at shelf refines");
+    assert!(pick(side, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH, RayStop::Other).is_none(), "rayTerminal: any other ray claim ends arbitration");
+    let far = [(0, &c, at(Vec3::new(0.3, 0., -2.6)))];
+    assert!(pick(far, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH, nothing).is_none(), "0.2 m clear of the sphere");
     // A scaled model: the box and the sphere both scale with it.
-    let scaled = [(&c, Mat4::from_scale_rotation_translation(Vec3::splat(0.5), Quat::IDENTITY, Vec3::new(0.12, 0., -1.)))];
-    assert!(pick(&scaled, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH).is_none(), "half-size box ends at x=0.07");
+    let scaled = [(0, &c, Mat4::from_scale_rotation_translation(Vec3::splat(0.5), Quat::IDENTITY, Vec3::new(0.12, 0., -1.)))];
+    assert!(pick(scaled, Vec3::ZERO, Vec3::NEG_Z, LOOK_REACH, nothing).is_none(), "half-size box ends at x=0.07");
+}
+
+/// ResolveFocus with real Rapier: the eye ray hits a body 0.95 m out and a
+/// shelf item sits 0.12 m beside the hit point (inside the 0.16 m sphere, off
+/// the ray). A non-container claim (a seat here) is terminal and wins; only
+/// when the ray stopped on a container may the sphere refine to the item.
+#[test]
+fn a_ray_hit_target_beats_a_sphere_refined_shelf_item_unless_it_is_a_container() {
+    use bevy_rapier3d::prelude::{Collider, NoUserData, RapierPhysicsPlugin, RigidBody};
+    for container in [false, true] {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule()))
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(20)))
+            .insert_resource(Time::<Fixed>::from_hz(50.))
+            .insert_resource(UiState { screen: crate::ui::Screen::Playing, ..default() })
+            .insert_resource(GameSnapshot(json!({"player":{"alive":true}})))
+            .init_resource::<ServiceManifest>()
+            .init_resource::<InteractionFocus>()
+            .init_resource::<FocusedShelfItem>()
+            .add_systems(Update, (reset_focus, offer, |mut f: ResMut<InteractionFocus>| f.offer(0.95, "Sit", "sitSeat", json!({"netId":4}), false)).chain());
+        app.world_mut().resource_mut::<ServiceManifest>().objects.insert(7, json!({"containerNetId":3}));
+        app.world_mut().spawn((PlayerCamera, Transform::IDENTITY));
+        let body = app.world_mut().spawn((Transform::from_xyz(0., 0., -1.), RigidBody::Fixed, Collider::cuboid(0.05, 0.05, 0.05))).id();
+        if container {
+            app.world_mut().entity_mut(body).insert(crate::world::WorldObject { guid: String::new(), asset_name: "Shelf_1".into(), source_index: 7 });
+        }
+        let root = app.world_mut().spawn((ShelfRoot, Transform::from_xyz(0.22, 0., -0.95), Visibility::default())).id();
+        app.world_mut().spawn((item(3, 0), Transform::IDENTITY, ChildOf(root)));
+        for _ in 0..4 {
+            app.update();
+        }
+        let focus = app.world().resource::<InteractionFocus>();
+        let action = focus.candidate.as_ref().map(|c| c.action.clone());
+        if container {
+            assert_eq!(action.as_deref(), Some(TAKE), "a looked-at shelf: the sphere refines to its item");
+        } else {
+            assert_eq!(action.as_deref(), Some("sitSeat"), "a ray claim on a seat ends arbitration");
+            assert!(app.world().resource::<FocusedShelfItem>().0.is_none());
+        }
+    }
 }
 
 #[test]
@@ -188,6 +319,7 @@ fn app(bridge: CoreBridge, catalog: ItemCatalog) -> App {
         .init_resource::<ContentCache>()
         .init_resource::<WorldSessionEpoch>()
         .init_resource::<items::Models>()
+        .init_resource::<ServiceManifest>()
         .configure_sets(Update, ApplyInteractions.after(CollectInteractions))
         .add_systems(Update, (reset_focus.before(sync).before(CollectInteractions), apply_interaction.in_set(ApplyInteractions)));
     // The production schedule: digest sync, then the look offer, then F.
@@ -340,6 +472,7 @@ fn f_on_a_looked_at_shelf_item_takes_that_cell_through_the_authority() {
     let state = tick(&mut app);
     app.update();
     assert_eq!(display(&state).as_array().unwrap().len(), 1, "refused beyond StorageReach");
+    assert_eq!(shelf_takes(&app), (0, 1), "the server's CommandTakeFromStorage verdict: rejected");
     assert_eq!(bag_count(&state, 13), 0);
     assert_eq!(shelf_items(&mut app).len(), 1);
     action(&app, "console", json!({"text":"teleport 0 0 0"}));
@@ -350,8 +483,13 @@ fn f_on_a_looked_at_shelf_item_takes_that_cell_through_the_authority() {
     let state = tick(&mut app);
     app.update();
     assert_eq!(display(&state), json!([]), "the accepted take drops the cell from the digest");
+    assert_eq!(shelf_takes(&app), (1, 1), "...and the server counted it applied");
     assert_eq!(bag_count(&state, 13), 1, "...into the taker's bag");
     assert!(shelf_items(&mut app).is_empty(), "and the model leaves with it");
+}
+fn shelf_takes(app: &App) -> (u64, u64) {
+    let d = app.world().resource::<CoreBridge>().request("diagnostics", json!({})).unwrap()["result"]["shelfTakes"].clone();
+    (d["applied"].as_u64().unwrap(), d["rejected"].as_u64().unwrap())
 }
 fn action_services(app: &App) -> Value {
     app.world()

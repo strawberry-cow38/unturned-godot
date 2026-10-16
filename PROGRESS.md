@@ -3004,5 +3004,21 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
     - 1.1 hitbox;
     - core reach check;
     - core exact-cell check.
-  - Full suites: 276 managed tests pass. Native: 820 pass and 55 are ignored. Two coupling `main_schedule` tests read the gitignored `bevy/artifacts/bevy-coupling-os-entered.json`, and pass once it is copied into the worktree.
+  - Full suites: 276 managed tests pass. Native: 824 pass and 55 are ignored. Two coupling `main_schedule` tests read the gitignored `bevy/artifacts/bevy-coupling-os-entered.json`, which must be copied into the worktree.
+- Review fixes:
+  - **Arbitration:** `ResolveFocus`/`rayTerminal`. The sphere refines only when the eye ray hit nothing or hit a container object.
+  - **Axis sort:** the .NET three-key `Array.Sort` (unstable SwapIfGreater 0-1, 0-2, 1-2). The Loonie/Toonie Supply now stands on X.
+  - **Repeated cells:** a repeated digest cell keeps the last item.
+  - **Sync cost:** sync runs only on a snapshot or catalogue change, and re-applies a digest only when its signature changes. `stood` is looked up by `&str`, and scratch buffers are reused.
+  - **Offer cost:** offer culls by shelf-root distance, inverts each matrix once, computes the tag only for the winner, and allocates nothing per frame.
+  - **New tests:** slot stability plus the signature gate; the server verdict via the bridge `diagnostics` `shelfTakes` counter and the managed `Diag` counters; a full-bag (add-first) case; and a real-Rapier arbitration test.
+  - **Negative controls:** 8 more, each failing as intended:
+    - refine after any ray claim;
+    - every hit counts as a shelf;
+    - stable sort;
+    - first-wins repeated cell;
+    - signature gate removed;
+    - catalogue re-apply removed;
+    - core remove-before-add;
+    - core reach (now caught by the rejection counter).
 - Vulkan: Godot oracle vs native renders of the shelfdemo, default and top views, were opened: same items, orientation, placement and scale, with only the lighting different. The focused Carjack tag matches the Godot label's position, size and colour. Renders: `bevy/artifacts/{godot,bevy}-shelfdemo*.png`.

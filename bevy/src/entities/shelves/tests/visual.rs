@@ -56,6 +56,7 @@ fn render_source_shelfdemo_through_the_production_display() {
     .init_resource::<WorldSessionEpoch>()
     .init_resource::<InteractionFocus>()
     .init_resource::<items::Models>()
+    .init_resource::<ServiceManifest>()
     .init_resource::<Shelves>()
     .init_resource::<FocusedShelfItem>()
     // BuildCrateDemo: colour background, colour ambient (0.6,0.62,0.65) x0.75.

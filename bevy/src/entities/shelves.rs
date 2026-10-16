@@ -94,6 +94,8 @@ struct Entry {
     root: Entity,
     pose: (Vec3, f32),
     cells: HashMap<u16, Entity>,
+    /// StorageReplicaView.DisplaySig: the digest is re-applied only when it changes.
+    sig: Option<u64>,
 }
 #[derive(Resource, Default)]
 pub(crate) struct Shelves {
@@ -101,6 +103,8 @@ pub(crate) struct Shelves {
     poses: Option<Arc<HashMap<u16, Pose>>>,
     stood: HashMap<String, Option<(Vec3, Vec3)>>,
     epoch: u64,
+    /// How many digests were (re)applied: the DisplaySig gate keeps this flat.
+    pub(crate) applied: u64,
 }
 
 /// One digest cell as SyncDisplay sees it: the item's grid anchor, its
@@ -119,24 +123,53 @@ impl Cell {
 }
 /// ApplyDisplay: digest Cell = y*Width+x; an item the asset table cannot
 /// make (Assets.makeLoot null) is skipped. SyncDisplay's footprint swaps
-/// size_x/size_y on an odd rotation.
-pub(crate) fn cells(display: &Value, width: u8, catalog: &ItemCatalog) -> Vec<Cell> {
+/// size_x/size_y on an odd rotation, and its `_syncCurrent[key] = ...` keeps
+/// the LAST item for a repeated cell.
+pub(crate) fn cells_into(display: &Value, width: u8, catalog: &ItemCatalog, out: &mut Vec<Cell>) {
+    out.clear();
     if width == 0 {
-        return Vec::new();
+        return;
     }
-    display
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|d| {
-            let cell = u8::try_from(d["cell"].as_u64()?).ok()?;
-            let item_id = u16::try_from(d["itemId"].as_u64()?).ok()?;
-            let rot = d["rot"].as_u64().unwrap_or(0);
-            let item = catalog.items.get(&item_id)?;
-            let w = if rot % 2 == 1 { item.height } else { item.width };
-            Some(Cell { x: cell % width, y: cell / width, eff_w: w.max(1), item_id })
-        })
-        .collect()
+    for d in display.as_array().into_iter().flatten() {
+        let (Some(cell), Some(item_id)) = (
+            d["cell"].as_u64().and_then(|c| u8::try_from(c).ok()),
+            d["itemId"].as_u64().and_then(|i| u16::try_from(i).ok()),
+        ) else {
+            continue;
+        };
+        let Some(item) = catalog.items.get(&item_id) else {
+            continue;
+        };
+        let w = if d["rot"].as_u64().unwrap_or(0) % 2 == 1 { item.height } else { item.width };
+        let cell = Cell { x: cell % width, y: cell / width, eff_w: w.max(1), item_id };
+        match out.iter_mut().find(|c| c.key() == cell.key()) {
+            Some(previous) => *previous = cell,
+            None => out.push(cell),
+        }
+    }
+}
+#[cfg(test)]
+pub(crate) fn cells(display: &Value, width: u8, catalog: &ItemCatalog) -> Vec<Cell> {
+    let mut out = Vec::new();
+    cells_into(display, width, catalog, &mut out);
+    out
+}
+/// StorageReplicaView.DisplaySig: FNV-1a over each cell, item id and rotation.
+pub(crate) fn display_sig(display: &Value) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    for d in display.as_array().into_iter().flatten() {
+        for v in [d["cell"].as_u64(), d["itemId"].as_u64(), d["rot"].as_u64()] {
+            for b in v.unwrap_or(u64::MAX).to_le_bytes() {
+                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+    }
+    h
+}
+#[derive(Default)]
+pub(super) struct SyncScratch {
+    seen: HashSet<u32>,
+    cells: Vec<Cell>,
 }
 
 /// StorageReplicaView + StoreShelf.ApplyDisplay/SyncDisplay: diff-driven.
@@ -156,6 +189,7 @@ pub(super) fn sync(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut scratch: Local<SyncScratch>,
 ) {
     if shelves.epoch != epoch.0 || !model.connected {
         for (_, entry) in shelves.entries.drain() {
@@ -165,6 +199,13 @@ pub(super) fn sync(
         if !model.connected {
             return;
         }
+    }
+    if catalog.is_changed() {
+        for entry in shelves.entries.values_mut() {
+            entry.sig = None; // the footprints/names may have arrived since
+        }
+    } else if !snapshot.is_changed() {
+        return;
     }
     if catalog.containers.is_empty() {
         return;
@@ -177,7 +218,9 @@ pub(super) fn sync(
             ))
         })
         .clone();
-    let mut seen = HashSet::new();
+    let SyncScratch { seen, cells: current } = &mut *scratch;
+    seen.clear();
+    let mut applied = 0;
     for row in snapshot.0["containers"].as_array().into_iter().flatten() {
         let Some(id) = row["netId"].as_u64().and_then(|n| u32::try_from(n).ok()) else {
             continue;
@@ -196,11 +239,17 @@ pub(super) fn sync(
         ) else {
             continue;
         };
-        let Some(stood) = *shelves.stood.entry(kind.mesh.clone()).or_insert_with(|| {
-            crate::content::ObjData::load(&config.content_root.join(format!("objects/{}.obj", kind.mesh)))
-                .ok()
-                .map(|d| layout::stood_box(d.min, d.max))
-        }) else {
+        let stood = match shelves.stood.get(kind.mesh.as_str()) {
+            Some(stood) => *stood,
+            None => {
+                let stood = crate::content::ObjData::load(&config.content_root.join(format!("objects/{}.obj", kind.mesh)))
+                    .ok()
+                    .map(|d| layout::stood_box(d.min, d.max));
+                shelves.stood.insert(kind.mesh.clone(), stood);
+                stood
+            }
+        };
+        let Some(stood) = stood else {
             continue; // PlaceItem: no shelf mesh, nothing placed
         };
         seen.insert(id);
@@ -216,21 +265,27 @@ pub(super) fn sync(
                 .id(),
             pose: (position, yaw),
             cells: HashMap::new(),
+            sig: None,
         });
         if entry.pose != (position, yaw) {
             entry.pose = (position, yaw);
             commands.entity(entry.root).insert(transform);
         }
-        let current = cells(&row["display"], kind.width, &catalog);
-        let keys: HashSet<u16> = current.iter().map(Cell::key).collect();
+        let sig = display_sig(&row["display"]);
+        if entry.sig == Some(sig) {
+            continue;
+        }
+        entry.sig = Some(sig);
+        applied += 1;
+        cells_into(&row["display"], kind.width, &catalog, current);
         entry.cells.retain(|key, model| {
-            let keep = keys.contains(key);
+            let keep = current.iter().any(|c| c.key() == *key);
             if !keep {
                 commands.entity(*model).try_despawn();
             }
             keep
         });
-        for cell in current {
+        for &cell in current.iter() {
             if entry.cells.contains_key(&cell.key()) {
                 continue;
             }
@@ -291,6 +346,7 @@ pub(super) fn sync(
             entry.cells.insert(cell.key(), model);
         }
     }
+    shelves.applied += applied;
     // The server retired a fixture: its display leaves too.
     shelves.entries.retain(|id, entry| {
         let keep = seen.contains(id);
@@ -311,9 +367,10 @@ pub(crate) fn tag_tint(rarity: Color) -> Color {
 pub(crate) fn item_matrix(root: &Transform, item: &Transform) -> Mat4 {
     root.to_matrix() * item.to_matrix()
 }
-/// The ray parameter where `from + dir*t` enters the item's look box, within `limit`.
-pub(crate) fn ray_hit(item: &ShelfItem, world: Mat4, from: Vec3, dir: Vec3, limit: f32) -> Option<f32> {
-    let inverse = world.inverse();
+/// The ray parameter where `from + dir*t` enters the item's look box, within
+/// `limit`. `inverse` is the item's inverse world matrix (affine, so `t`
+/// stays in world units).
+pub(crate) fn ray_hit(item: &ShelfItem, inverse: &Mat4, from: Vec3, dir: Vec3, limit: f32) -> Option<f32> {
     let (o, d) = (inverse.transform_point3(from) - item.center, inverse.transform_vector3(dir));
     let (mut near, mut far) = (0f32, limit);
     for a in 0..3 {
@@ -333,12 +390,21 @@ pub(crate) fn ray_hit(item: &ShelfItem, world: Mat4, from: Vec3, dir: Vec3, limi
     Some(near)
 }
 /// Does the look sphere (world centre, world radius) overlap the item's box?
-/// Shelf models are uniformly scaled, so the radius scales with them.
-pub(crate) fn sphere_hits(item: &ShelfItem, world: Mat4, center: Vec3, radius: f32) -> bool {
-    let scale = world.x_axis.truncate().length().max(1e-6);
-    let local = world.inverse().transform_point3(center) - item.center;
+/// Shelf models are uniformly scaled by `scale`, so the radius scales with them.
+pub(crate) fn sphere_hits(item: &ShelfItem, scale: f32, inverse: &Mat4, center: Vec3, radius: f32) -> bool {
+    let local = inverse.transform_point3(center) - item.center;
     let nearest = local.clamp(-item.half, item.half);
-    local.distance_squared(nearest) <= (radius / scale).powi(2)
+    local.distance_squared(nearest) <= (radius / scale.max(1e-6)).powi(2)
+}
+
+/// What the eye ray stopped on, for ResolveFocus: a ray claim on anything
+/// but a shelf/container is terminal (`rayTerminal`), so only an empty ray
+/// or one that hit a container lets the sphere refine to a shelf item.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum RayStop {
+    Nothing,
+    Shelf,
+    Other,
 }
 
 /// The shelf item the look settled on this frame, for the tag.
@@ -346,10 +412,11 @@ pub(crate) fn sphere_hits(item: &ShelfItem, world: Mat4, center: Vec3, radius: f
 pub(crate) struct FocusedShelfItem(pub Option<(Value, Vec3, String, Color)>);
 
 /// UpdateLookFocus for shelf items: the eye ray (2.6 m, stopped by the
-/// world) claims an item box it hits; otherwise the 0.16 m sphere at the
-/// ray's end refines to the item nearest it (by its origin). Offered as an
-/// ordinary candidate with no HUD prompt, so it beats the shelf behind it
-/// (ResolveFocus: Shelf -> ShelfItem) and crop harvest never overrides it.
+/// world) claims an item box it hits; otherwise, when the ray hit nothing or
+/// a container, the 0.16 m sphere at the ray's end refines to the item
+/// nearest it (by its origin). Offered as an ordinary candidate with no HUD
+/// prompt, so it beats the shelf behind it (ResolveFocus: Shelf -> ShelfItem)
+/// and crop harvest never overrides it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn offer(
     ui: Res<UiState>,
@@ -358,8 +425,10 @@ pub(super) fn offer(
     camera: Query<&Transform, With<PlayerCamera>>,
     player: Query<Entity, With<PlayerBody>>,
     context: ReadRapierContext,
-    roots: Query<&Transform, With<ShelfRoot>>,
-    items: Query<(&ShelfItem, &Transform, &ChildOf)>,
+    services: Res<ServiceManifest>,
+    objects: Query<&crate::world::WorldObject>,
+    roots: Query<(Entity, &Transform, &Children), With<ShelfRoot>>,
+    items: Query<(&ShelfItem, &Transform)>,
     mut focus: ResMut<InteractionFocus>,
     mut focused: ResMut<FocusedShelfItem>,
 ) {
@@ -375,52 +444,78 @@ pub(super) fn offer(
         return;
     };
     let (origin, direction) = (camera.translation, *camera.forward());
-    let reach = context
-        .single()
-        .ok()
-        .and_then(|context| {
-            let mut filter = QueryFilter::default().exclude_sensors();
-            if let Ok(player) = player.single() {
-                filter = filter.exclude_collider(player);
-            }
-            context.cast_ray(origin, direction, LOOK_REACH, true, filter)
-        })
-        .map_or(LOOK_REACH, |hit| hit.1);
-    let looked: Vec<_> = items
+    let hit = context.single().ok().and_then(|context| {
+        let mut filter = QueryFilter::default().exclude_sensors();
+        if let Ok(player) = player.single() {
+            filter = filter.exclude_collider(player);
+        }
+        context.cast_ray(origin, direction, LOOK_REACH, true, filter)
+    });
+    let (reach, stop) = match hit {
+        None => (LOOK_REACH, RayStop::Nothing),
+        Some((entity, distance)) => {
+            let container = objects.get(entity).ok().is_some_and(|object| {
+                services.objects.get(&object.source_index).is_some_and(|row| row["containerNetId"].is_u64())
+            });
+            (distance, if container { RayStop::Shelf } else { RayStop::Other })
+        }
+    };
+    // Only shelves whose root is within reach of the eye can hold a candidate
+    // (a gondola is 5 m wide, so its farthest slot is ~2.5 m from the root).
+    let cull = (LOOK_REACH + 3.).powi(2);
+    let candidates = roots
         .iter()
-        .filter_map(|(item, transform, parent)| {
-            let root = roots.get(parent.parent()).ok()?;
-            Some((item, item_matrix(root, transform), root.transform_point(item.tag)))
-        })
-        .collect();
-    let worlds: Vec<_> = looked.iter().map(|(item, world, _)| (*item, *world)).collect();
-    if let Some((index, distance)) = pick(&worlds, origin, direction, reach) {
-        let (item, _, tag) = looked[index];
-        let args = json!({"netId":item.net_id,"x":item.x,"y":item.y});
-        offer_silent(&mut focus, distance, args.clone());
-        focused.0 = Some((args, tag, item.name.clone(), item.tint));
-    }
+        .filter(|(_, root, _)| root.translation.distance_squared(origin) <= cull)
+        .flat_map(|(root_entity, root, children)| {
+            let items = &items;
+            children.iter().filter_map(move |child| {
+                let (item, local) = items.get(child).ok()?;
+                Some(((root_entity, child), item, item_matrix(root, local)))
+            })
+        });
+    let Some(((root, child), distance)) = pick(candidates, origin, direction, reach, stop) else {
+        return;
+    };
+    let (Ok((_, root, _)), Ok((item, _))) = (roots.get(root), items.get(child)) else {
+        return;
+    };
+    let args = json!({"netId":item.net_id,"x":item.x,"y":item.y});
+    offer_silent(&mut focus, distance, args.clone());
+    focused.0 = Some((args, root.transform_point(item.tag), item.name.clone(), item.tint));
 }
-/// The ray claim (nearest hit) or else the sphere refinement, with the
-/// distance offered: the hit, or the sphere's near face so a refined item
-/// beats the shelf the ray stopped on.
-pub(crate) fn pick(items: &[(&ShelfItem, Mat4)], origin: Vec3, direction: Vec3, reach: f32) -> Option<(usize, f32)> {
-    let ray = items
-        .iter()
-        .enumerate()
-        .filter_map(|(i, (item, world))| ray_hit(item, *world, origin, direction, reach).map(|t| (i, t)))
-        .min_by(|a, b| a.1.total_cmp(&b.1));
-    if ray.is_some() {
-        return ray;
-    }
+/// One pass: the ray claim (nearest hit) or else, if `stop` allows it, the
+/// sphere refinement. The offered distance is the hit, or the sphere's near
+/// face so a refined item beats the shelf the ray stopped on.
+pub(crate) fn pick<'a, K: Copy>(
+    items: impl IntoIterator<Item = (K, &'a ShelfItem, Mat4)>,
+    origin: Vec3,
+    direction: Vec3,
+    reach: f32,
+    stop: RayStop,
+) -> Option<(K, f32)> {
     let end = origin + direction * reach;
-    let from_end = |world: &Mat4| world.transform_point3(Vec3::ZERO).distance_squared(end);
-    items
-        .iter()
-        .enumerate()
-        .filter(|(_, (item, world))| sphere_hits(item, *world, end, LOOK_SPHERE))
-        .min_by(|a, b| from_end(&a.1.1).total_cmp(&from_end(&b.1.1)))
-        .map(|(i, _)| (i, (reach - LOOK_SPHERE).max(0.)))
+    let mut ray: Option<(K, f32)> = None;
+    let mut sphere: Option<(K, f32)> = None;
+    for (key, item, world) in items {
+        let inverse = world.inverse();
+        if let Some(t) = ray_hit(item, &inverse, origin, direction, reach) {
+            if ray.is_none_or(|(_, best)| t < best) {
+                ray = Some((key, t));
+            }
+            continue;
+        }
+        if ray.is_some() || stop == RayStop::Other {
+            continue;
+        }
+        let scale = world.x_axis.truncate().length();
+        if sphere_hits(item, scale, &inverse, end, LOOK_SPHERE) {
+            let d = world.w_axis.truncate().distance_squared(end);
+            if sphere.is_none_or(|(_, best)| d < best) {
+                sphere = Some((key, d));
+            }
+        }
+    }
+    ray.or(sphere.map(|(key, _)| (key, (reach - LOOK_SPHERE).max(0.))))
 }
 /// An ordinary (not open_storage) candidate without a HUD prompt: the source
 /// shows only the floating tag for a looked-at shelf item.

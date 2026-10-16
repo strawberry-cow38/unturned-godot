@@ -9,8 +9,9 @@ using UnturnedGodot.Net;
 namespace UnturnedBevyTests;
 /// <summary>Original StoreShelf take-one over actual UDP: a joined client's
 /// `takeFromStorage` is CommandTakeFromStorage (45), validated by the server's
-/// ServerTakeFromStorage (StorageReach, exact cell, add-first) and reflected
-/// back through the container's display digest and the owner's bag.</summary>
+/// ServerTakeFromStorage -- StorageReach, the exact cell, and add-first (a
+/// full bag leaves the item on the shelf) -- with each verdict counted, and
+/// reflected back through the container's display digest and the owner's bag.</summary>
 [TestFixture, NonParallelizable]
 public sealed class ShelfTests
 {
@@ -54,19 +55,30 @@ public sealed class ShelfTests
 
         Action(_peer,"console",new{text="teleport 30 0 30"});Pump();
         Action(_peer,"takeFromStorage",new{netId=id,x=3,y=1});Pump();
-        Assert.That(Display(_peer),Has.Length.EqualTo(2),"beyond StorageReach the server refuses");
+        Assert.That(Server.Transactions.Diag.ShelfTakesRejected,Is.EqualTo(1),"beyond StorageReach the server refuses the command");
+        Assert.That(Display(_peer),Has.Length.EqualTo(2),"...and nothing moves");
         Assert.That(Bag(13),Is.Zero);
 
         Action(_peer,"console",new{text="teleport 0 0 0"});Pump();
         Action(_peer,"takeFromStorage",new{netId=id,x=4,y=1});Pump();
+        Assert.That(Server.Transactions.Diag.ShelfTakesRejected,Is.EqualTo(2));
         Assert.That(Display(_peer),Has.Length.EqualTo(2),"an empty (stale) cell is not a licence to take the neighbour");
 
         Action(_peer,"takeFromStorage",new{netId=id,x=3,y=1});Pump();
+        Assert.That(Server.Transactions.Diag.ShelfTakesApplied,Is.EqualTo(1));
         Assert.That(Display(_peer),Is.EqualTo(new[]{(21,14)}),"the accepted take drops only that cell");
         Assert.That(Bag(13),Is.EqualTo(1),"...into the taker's own bag");
         Assert.That(Bag(14),Is.Zero);
         Assert.That(State(_peer).GetProperty("inventory").GetProperty("pages").EnumerateArray()
             .Where(p=>p.GetProperty("index").GetInt32()==PlayerInventory.STORAGE).Sum(p=>p.GetProperty("width").GetInt32()),Is.Zero,
             "a grab is not an open: the taker's STORAGE page stays empty");
+
+        // ADD FIRST, REMOVE ONLY ON SUCCESS: with no room in the bag the item stays on the shelf.
+        var bag=Server.Transactions.InventoryForTest(State(_peer).GetProperty("playerId").GetUInt16());
+        for(byte page=PlayerInventory.SLOTS;page<PlayerInventory.OWNPAGES;page++)bag.items[page].loadSize(0,0);
+        Action(_peer,"takeFromStorage",new{netId=id,x=5,y=2});Pump();
+        Assert.That(Server.Transactions.Diag.ShelfTakesRejected,Is.EqualTo(3),"a full bag refuses the take");
+        Assert.That(Display(_peer),Is.EqualTo(new[]{(21,14)}),"...and the item never leaves the shelf");
+        Assert.That(crate.Storage.getItemCount(),Is.EqualTo(1));
     }
 }

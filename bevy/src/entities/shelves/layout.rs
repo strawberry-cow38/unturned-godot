@@ -104,10 +104,18 @@ pub(crate) struct Facts<'a> {
 }
 const CLOTHING: [&str; 7] = ["hat", "pants", "shirt", "mask", "backpack", "vest", "glasses"];
 
-/// The mesh AABB's axes, shortest first (Array.Sort on three is stable).
-fn sorted_axes(d: [f32; 3]) -> [usize; 3] {
+/// The mesh AABB's axes, shortest first, exactly as .NET `Array.Sort` orders
+/// three keys: ArraySortHelper's SwapIfGreater on (0,1), (0,2), (1,2). It is
+/// NOT stable: equal dims can come out reversed (0.126 x 0.126 x 0.0525 sorts
+/// to [2, 1, 0], not [2, 0, 1]), and the longest axis decides how a
+/// diagonal-up item stands.
+pub(crate) fn sorted_axes(d: [f32; 3]) -> [usize; 3] {
     let mut ax = [0, 1, 2];
-    ax.sort_by(|a, b| d[*a].total_cmp(&d[*b]));
+    for (i, j) in [(0, 1), (0, 2), (1, 2)] {
+        if d[ax[i]] > d[ax[j]] {
+            ax.swap(i, j);
+        }
+    }
     ax
 }
 /// The stand vs lie-flat rule: drinks always stand; flat slabs, clothing,
