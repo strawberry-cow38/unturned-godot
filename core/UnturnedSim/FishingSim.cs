@@ -132,9 +132,13 @@ namespace SDG.Unturned
 
         // The catch window: press primary while this is open to land the fish (UseableFisher.startPrimary /
         // UpdateBobber tug window). Opens WARNING_DURATION after the bite, stays open for CATCH_WINDOW.
-        public bool IsBiteWindowOpen => _biteActive
+        public bool IsBiteWindowOpen => BiteWindowOpen(0f);
+
+        /// <summary>The catch window, closing <paramref name="lateGrace"/> seconds later than the client's: retail's
+        /// server allows SERVER_LENIENCY_WINDOW past it for the press's travel time.</summary>
+        public bool BiteWindowOpen(float lateGrace) => _biteActive
             && _timeSinceFishNotification >= WARNING_DURATION
-            && _timeSinceFishNotification <= WARNING_DURATION + CATCH_WINDOW;
+            && _timeSinceFishNotification <= WARNING_DURATION + CATCH_WINDOW + lateGrace;
 
         public bool HasBite => _biteActive;
 
@@ -158,7 +162,10 @@ namespace SDG.Unturned
 
         // Primary pressed (LMB). In Idle -> start the strength gauge. In LineDeployed -> attempt the catch:
         // a press inside the window lands the fish; a press outside just reels the empty line back in.
-        public FishingCatch Press()
+        public FishingCatch Press() => Press(0f);
+
+        /// <summary><see cref="Press()"/> judged with the server's <paramref name="lateGrace"/> on the catch window.</summary>
+        public FishingCatch Press(float lateGrace)
         {
             if (State == EFishingState.Idle)
             {
@@ -169,7 +176,7 @@ namespace SDG.Unturned
             }
             if (State == EFishingState.LineDeployed)
             {
-                if (IsBiteWindowOpen)
+                if (BiteWindowOpen(lateGrace))
                 {
                     if (EnableCatchChallenge) { EnterChallenge(); return FishingCatch.None; }   // opt-in rods -> minigame, reward on win
                     var caught = ResolveCatch();   // challenge-disabled: press-in-window catches instantly
@@ -271,6 +278,16 @@ namespace SDG.Unturned
         }
 
         static int ClampInt(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
+
+        /// <summary>Bevy port, the SERVER's sim: the line goes straight into the water at the cast's strength. The
+        /// gauge and the bobber's flight are the casting client's (UseableFisher: the server learns the strength with
+        /// the cast and starts its bite timer at ReceiveBobberInWaterConfirmation), so the authority skips them.</summary>
+        public void BeginLine(float strength)
+        {
+            StrengthMultiplier = strength < 0f ? 0f : strength > 1f ? 1f : strength;
+            State = EFishingState.LineDeployed;
+            ResetTimeUntilFishAppears();
+        }
 
         // The game layer calls this once the bobber rigidbody has settled below a water surface
         // (UseableFisher.UpdateBobber -> ReceiveBobberInWaterConfirmation). Starts the server bite timer.

@@ -251,6 +251,8 @@ namespace UnturnedGodot.Net
         public const byte CommandDepositFuel = 90; // v78: pour the exact held fuel container into a generator (TryDepositFuel).
         public const byte CommandPourVehicleFuel = 99; // v79: TryDepositFuel's vehicle branch -- pour the exact held can into a car.
         public const byte CommandSiphonVehicleFuel = 100; // v79: TryExtractFuel's vehicle branch -- siphon a car into the exact held can.
+        public const byte CommandFishingCast = 103; // v80: the bobber landed in fishable water at this point and gauge strength; the server starts its bite timer.
+        public const byte CommandFishingInput = 104; // v80: primary pressed/released on the server's line (catch, reel, challenge pull), or the rod put away.
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
         public const byte CommandNearbyInventory = 86; // v76: bounded source Nearby projection and exact transfer.
         public const byte CommandNearbyOperation = 87; // v77: exact Nearby row split to a cell or emptied (op 0 reserved, refused); result rides Event63.
@@ -328,6 +330,7 @@ namespace UnturnedGodot.Net
         public const byte EventMagazineTransfer = 60; // v71: owner-only exact magazine request completion.
         public const byte EventCraftingContext = 61; // v72: owner-only station access and contextual craft outcome.
         public const byte EventNearbyInventory = 63; // v76: owner-only full Nearby items and world contributors.
+        public const byte EventFishingState = 78; // v80: to the caster only -- the server's line state (idle/line/bite/challenge) and a landed fish.
         public const byte EventRespawnPose = 62; // v73: optional owner facing, paired with unchanged PlayerRespawned.
         public const byte EventVehicleDoor = 59; // v70: actual open/close edge, no late-join replay.
         public const byte EventVehicleLighting = 57; // v68: accepted alarm horn/lamp contact facts

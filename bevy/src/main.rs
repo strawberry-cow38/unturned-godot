@@ -8,6 +8,7 @@ mod content;
 mod deployables;
 mod entities;
 mod environment;
+mod fishing;
 mod hdr;
 mod nightvision;
 mod outline;
@@ -168,6 +169,7 @@ fn main() -> Result<()> {
             footsteps::FootstepPlugin,
             survival::SurvivalPlugin,
             restraints::RestraintsPlugin,
+            fishing::FishingPlugin,
         ))
         .add_systems(Update, capture_frame.after(entities::ApplyInteractions))
         .run();

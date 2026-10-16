@@ -246,5 +246,28 @@ namespace UnturnedSim.Tests
                 s.TryTakePendingCatch(out _);
             }
         }
-    }
+    
+        // Bevy port: the SERVER's sim starts at the water (BeginLine) and judges a press with retail's
+        // SERVER_LENIENCY_WINDOW past the client's catch window.
+        [Test]
+        public void ServerLineStartsInTheWaterAndAcceptsALatePressWithinTheLeniency()
+        {
+            var s = MakeSim();
+            s.BeginLine(2f);
+            Assert.That((s.State, s.StrengthMultiplier), Is.EqualTo((EFishingState.LineDeployed, 1f)), "strength clamped");
+            StepUntil(s, () => s.HasBite);
+            float late = FishingSim.WARNING_DURATION + FishingSim.CATCH_WINDOW + 0.5f;
+            for (float t = 0f; t < late; t += Dt) s.Simulate(Dt);
+            Assert.That(s.IsBiteWindowOpen, Is.False, "the client's window has closed");
+            Assert.That(s.BiteWindowOpen(FishingSim.SERVER_LENIENCY_WINDOW), Is.True);
+            var caught = s.Press(FishingSim.SERVER_LENIENCY_WINDOW);
+            Assert.That(caught.Success && (caught.ItemId == Trout || caught.ItemId == Salmon), Is.True, "landed with the server's grace");
+            Assert.That(s.State, Is.EqualTo(EFishingState.Idle));
+            var t2 = MakeSim();
+            t2.BeginLine(0.3f);
+            StepUntil(t2, () => t2.HasBite);
+            for (float t = 0f; t < late; t += Dt) t2.Simulate(Dt);
+            Assert.That(t2.Press().Success, Is.False, "without the grace the same press reels in empty");
+        }
+}
 }

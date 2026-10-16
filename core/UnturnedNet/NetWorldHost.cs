@@ -1102,6 +1102,7 @@ namespace UnturnedGodot.Net
             Events.Register<ImpactFxEvent>(ReplicationIds.EventImpactFx, ImpactFxEvent.TryRead, e => ImpactFx?.Invoke(e));
             Events.Register<PlayerDiedEvent>(ReplicationIds.EventPlayerDied, PlayerDiedEvent.TryRead, e => PlayerDied?.Invoke(e));
             RegisterRespawnPoseEvents();
+            RegisterFishingEvents();
             Events.Register<PlayerRespawnedEvent>(ReplicationIds.EventPlayerRespawned, PlayerRespawnedEvent.TryRead, ReceiveRespawned);
             Events.Register<ZombieHitEvent>(ReplicationIds.EventZombieHit, ZombieHitEvent.TryRead, e => ZombieHit?.Invoke(e));
             Events.Register<ZombieDiedEvent>(ReplicationIds.EventZombieDied, ZombieDiedEvent.TryRead, e => ZombieDied?.Invoke(e));

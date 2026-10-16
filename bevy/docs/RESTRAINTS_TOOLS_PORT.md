@@ -188,3 +188,86 @@ ordinary `holdItem`.
   fixture light. Raised, both show the two-hole retail overlay over a 4x view. The eyepiece discs
   face the eye from below the view in both, so the PiP is not visible in either frame and has
   no visual check beyond its pose test. Renders: `bevy/artifacts/{bevy,godot}-binoculars-{lowered,raised}.png`.
+
+## Fishing (row 12)
+
+### Source
+
+- `core/UnturnedSim/FishingSim.cs` (the UseableFisher port: gauge tock, bite timer, catch window,
+  catch challenge, weighted reward) and `game/inventory/FishingContent.cs` (`ConfigureForPei`:
+  Rod_Fishing values, 6-14 s bites, the PEI ocean table, the challenge enabled).
+- `game/PlayerController.cs`: `EquipHeldFisher` (EmptyHands), `FisherPrimary`/`FisherRelease`,
+  `TickFishing`, `SpawnBobber`, `UpdateFishLine`, `BobberOverFishableWater`, `GrantFish`, `ClearFisher`.
+
+### What the source did, and why the port adds a server
+
+The whole loop ran in the client's `FishingSim`, and `GrantFish` called `tryAddItem` and
+`AwardExperience` on the client's own copies. In the unified game those are server-adopted: the next
+owner-inventory echo drops the fish, and the per-tick skills adoption drops the XP. A local grant is not
+possible at all in the Bevy port (the native client has no inventory to mutate), so the catch is made
+server-authoritative, as retail's UseableFisher is.
+
+### Authority (protocol v80)
+
+- **Command 103 `FishingCast`** (bobber position, gauge strength as a byte): the bridge
+  `FishingServices` (host, like the v79 fuel handlers) checks a living, on-foot caster with a FISHER
+  in the replicated hand and in the bag, a landing within 64 m horizontally and at most 2 m above the
+  caster, on the sea plane (±1 m) with at least 4 m of water under it (a world ray). It then builds a
+  `FishingSim` exactly as `ConfigureForPei` does (with the caster's server-side FISHING level) and
+  `BeginLine`s it. A refusal answers `Idle`.
+- **Command 104 `FishingInput`** (press, release, stop): press is `FishingSim.Press` with retail's
+  `SERVER_LENIENCY_WINDOW` (1 s) past the client window; release sets the challenge cursor falling;
+  stop drops the line.
+- The host steps every line at 50 Hz (`Tock` + `Simulate`), drops it when the rod leaves the living
+  hand, and grants as `GrantFish` does: `tryAddItem` (a full bag keeps nothing) and the XP through
+  `SkillsReplication.ServerAward`.
+- **Event 78 `FishingState`**, to the caster only: idle, line, bite or challenge, and the fish landed.
+- Core additions: `FishingSim.BeginLine` and `Press(lateGrace)`/`BiteWindowOpen(lateGrace)`; the wire
+  structs and `NetWorldClient.SendFishingCast/SendFishingInput/FishingState` (`core/UnturnedNet/Fishing.cs`).
+
+⚠ As with commands 99/100, the handlers live in the bridge. A non-bridge host (the Godot
+`DedicatedServer`, a bare `NetWorldServer`) registers no 103/104 and never answers a cast.
+
+### Native
+
+`bevy/src/fishing.rs`: LMB on a held rod starts the gauge (the source's 50 Hz tock, period
+100 + 20 × FISHING level, no HUD in the source); release flings the bobber from 0.6 m along the aim
+at Lerp(12, 26, strength) plus 3 m/s up under 20 m/s² gravity; a splash into water with 4 m of depth
+under it (a Rapier ray against world solids; no physics world trusts the plane) sends 103, otherwise
+the cast is dropped, as is one that falls 60 m. While the server's line is out, every press and release
+is sent as 104; the bobber floats on the sea with a 0.06 m bob, is tugged 0.35 m under in the catch
+window (1.0-2.4 s after the bite event) and held 0.5 m under during the challenge. The line runs from
+the source's rod-tip point (camera + 0.5 forward + 0.25 right - 0.2 up) to the bobber, unshaded. Putting
+the rod away, dying or getting into a vehicle with a line out sends stop.
+
+### Deviations
+
+- **Server-side catch** (above): new wire ids 103/104/78 and protocol 80; the integrator renumbers at merge.
+- **No catch-challenge UI,** as in the source: the fish is played blind with LMB held/released.
+- **Event timing:** the catch window opens when the bite event arrives, so the client's tug lags the
+  server's window by the link delay; the server's 1 s leniency covers the press's return trip.
+- **Other players' bobbers are not shown,** as in the source (the bobber is the caster's local node).
+- **Flat sea:** the bobber rides the mean sea level (`WaveField.Flat`), as the native water does.
+
+### Verification (fishing)
+
+- **Core:** `FishingWireTests` (round trips, truncation, out-of-range kind/state, ids, version);
+  `FishingSimTests.ServerLineStartsInTheWaterAndAcceptsALatePressWithinTheLeniency`.
+- **Managed** (`FishingTests`, real UDP, joined peer casting at a listen host with water): no rod,
+  beyond reach and off the sea plane are refused; a press with no line catches nothing; an early
+  press reels in empty; after the server's bite a press in the window opens the challenge, which a
+  bot plays with real 104 presses/releases until the server lands a PEI fish into the replicated bag
+  with +3 XP; equipping anything else ends the line with an `Idle`.
+- **Native** (`fishing`, 4): the gauge formula; hold/release/flight/deep-only cast; the server line
+  driving the bobber (bob, tug window, challenge depth), presses and releases sent, stop on put-away,
+  no line without a rod; an integrated native host casting into its own server: the bobber flies and
+  splashes, 103 is sent, the server's `Line` arrives, an early press reels in empty and no fish appears.
+- **Negative controls**, each failing as intended: the 104 kind range, the server leniency, the rod in
+  hand and bag, the fishable check, the cast reach, clearing on a switch, the grant, the native press on
+  a line, the native fishable check, stop on a switch and the catch-window tug. The rod and fishable
+  controls first passed (the test's refusals had other causes); the test now stands the caster on the
+  shore and casts 1.5 m off the plane, and the rod control mutates both the hand and bag checks.
+- **Visual** (opened): `render_bobber_and_line_on_open_water` shows the red bobber floating on the line
+  and pulled under the surface in the window, with the line from the rod-tip point. There is no Godot
+  oracle: no source harness casts a line.
+  Renders: `bevy/artifacts/bevy-fishing-{line,bite}.png`.

@@ -53,6 +53,8 @@ public sealed partial class BridgeHost
             if (_server == null) _events.Add(new(++_eventSequence, EquipmentJson.FactName(e.Kind), EquipmentJson.Fact(_client.PlayerId,e), e.Tick));
         };
         _client.StorageClosed += e => { _storageView.Close(); InventoryClosed(); Emit("storageClosed", e); };
+        // v80: the server's fishing line, to the caster only (the native bobber follows it).
+        _client.FishingState += e => Emit("fishingState", new { state = e.State, caughtItemId = e.CaughtItemId });
         _client.VehicleDoor += e => Emit("vehicleDoor", new { netId=e.NetId, open=e.Open, position=Array(e.Position), acceptedTick=e.Tick });
         _client.VehicleMaintenance += e => Emit(e.Kind switch { VehicleMaintenanceKind.GlassBroken => "vehicleGlassBroken", VehicleMaintenanceKind.GlassRepaired => "vehicleGlassRepaired", VehicleMaintenanceKind.TireRepaired => "vehicleTireRepaired", _ => "vehicleHorn" }, new { netId=e.NetId, index=e.Index, label=e.Kind is VehicleMaintenanceKind.GlassBroken or VehicleMaintenanceKind.GlassRepaired?VehicleMaintenanceServices.Labels[e.Index]:null, position=Array(e.Position), normal=e.Kind==VehicleMaintenanceKind.GlassBroken?Array(e.Normal):null, halfSize=e.Kind==VehicleMaintenanceKind.GlassBroken?Array(e.HalfSize):null, acceptedTick=e.Tick });
         _client.VehicleLighting += e => Emit(e.Kind switch { VehicleLightingKind.AlarmHorn => "vehicleAlarmHorn", VehicleLightingKind.LampBroken => "vehicleLampBroken", _ => "vehicleLampRepaired" }, new { netId=e.NetId, lamp=e.Lamp, label=e.Lamp<VehicleLightRules.LampLabels.Length?VehicleLightRules.LampLabels[e.Lamp]:null, position=Array(e.Position), acceptedTick=e.Tick });
