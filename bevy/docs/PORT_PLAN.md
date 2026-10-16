@@ -149,7 +149,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | — | Nearby AREA operations and selected-item Salvage | Drag/split/equip/drop/Empty/magazine/Salvage | M | high | DONE (`0b3075df`, protocol 77; whole ground drag refused as source) |
 | — | Remaining power utilities | Specialized endpoints, fuel/ramp, consumer lights/audio, readouts | L | med | DONE (`17b9a035`, protocol 78; vehicle pour/siphon with row 9) |
 | — | Fifth-wheel towing | Full-game rocking fixed; remote/MP towing journey, rigid cargo | M | med | integrator |
-| — | Focus outlines (`OutlineOverlay`: items, shelves/containers, notes, puppets, fruit) | No silhouette/rim renderer natively; focus is prompt-only | M | med | queued |
+| — | Focus outlines (`OutlineOverlay`: items, shelves/containers, notes, puppets, fruit) | Renderer + items/containers DONE (`OUTLINE_PORT.md`); other claimers and the settings toggle remain | M | med | integrator (in progress) |
 | — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | queued |
 
 N/A: the zombie attack loop/death loot and NPC map placements/quest persistence

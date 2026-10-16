@@ -292,7 +292,7 @@ fn visible_rounds(amount: u16, stack: u16, rounds: usize) -> usize {
     }
     ((usize::from(amount) * (rounds + 1)) / usize::from(stack)).clamp(1, rounds)
 }
-fn rarity_color(rarity: &str) -> Color {
+pub(super) fn rarity_color(rarity: &str) -> Color {
     match rarity {
         "uncommon" => Color::srgb(31. / 255., 135. / 255., 31. / 255.),
         "rare" => Color::srgb(75. / 255., 20. / 51., 50. / 51.),

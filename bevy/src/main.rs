@@ -9,6 +9,7 @@ mod entities;
 mod environment;
 mod hdr;
 mod nightvision;
+mod outline;
 mod network;
 mod impact;
 mod info_billboard;
@@ -149,6 +150,7 @@ fn main() -> Result<()> {
         .add_plugins((
             hdr::HdrPlugin,
             nightvision::NightVisionPlugin,
+            outline::OutlinePlugin,
             character::CharacterPlugin,
             zombie::ZombiePlugin,
             bullets::BulletPlugin,

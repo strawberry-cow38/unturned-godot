@@ -3006,3 +3006,12 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - the reference car keeping its spawn paint;
   - the flat tyre gone, then back on;
   - the jacked car in flight, rising from 0.58 m to 1.96 m.
+
+### 2026-10-16 — Original focus outline (OutlineOverlay)
+
+- **New `bevy/src/outline.rs`** ports `OutlineOverlay`/`MakeOutline`/`ShowOutline` and `item_outline.gdshader`:
+  - The winning `InteractionFocus` candidate claims a silhouette and the single `FocusColor`.
+  - Its meshes are mirrored white and unlit onto render layer 19, and a mask camera slaved to the player camera renders only that layer.
+  - A fullscreen dilate draws the 3.5 px rim at the canvas-50 slot (new `OUTLINE_ORDER`, between the tool label and modal), tinted by night vision and warped underwater.
+- **Claimers so far:** world items (rarity colour) and map containers (white). The others are listed in `bevy/docs/OUTLINE_PORT.md`.
+- **Verification:** unit tests with 3 negative controls; full native suite 832/0. A Vulkan `BuildItemTest`+`UG_FOCUS` fixture shows the rare-blue rim around the AR-15, matching the Godot 4.6.2 oracle (`bevy/artifacts/{bevy,godot}-outline-itemfocus.png`). Found and fixed on the way: mask coverage now read from red, the overlay node is no longer parented to its camera, and the fixture's injected item no longer sits below ground.
