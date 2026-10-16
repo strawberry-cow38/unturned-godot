@@ -21,6 +21,7 @@ fn app() -> App {
         .init_resource::<viewport::ViewmodelViewport>()
         .insert_resource(SourceSettings {
             enabled: true,
+            menu_bloom: true,
             aces: true,
             intensity: 0.8,
             threshold: 0.9,
@@ -140,11 +141,17 @@ fn separate_viewport_keeps_one_tonemap_and_tracks_resize_and_inactive_arms() {
 fn source_night_vision_changes_world_glow_but_not_viewmodel_profile() {
     let source = SourceSettings {
         enabled: true,
+        menu_bloom: true,
         aces: true,
         intensity: 0.8,
         threshold: 0.9,
         exposure: 1.,
     };
+    // GraphicsOptions.Bloom off removes world and hands glow, keeps the tonemap.
+    let off = SourceSettings { menu_bloom: false, ..source };
+    assert_eq!(off.world(false, false, false).glow.x, 0.);
+    assert_eq!(off.viewmodel().glow.x, 0.);
+    assert_eq!(off.world(false, false, false).tone, source.world(false, false, false).tone);
     let mil = source.world(true, true, false);
     let civ = source.world(true, false, false);
     assert!((mil.glow - Vec4::new(1.76, 0.45, 0.495, 1.)).length() < 1e-6);

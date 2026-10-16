@@ -3063,3 +3063,31 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
     - core remove-before-add;
     - core reach (now caught by the rejection counter).
 - Vulkan: Godot oracle vs native renders of the shelfdemo, default and top views, were opened: same items, orientation, placement and scale, with only the lighting different. The focused Carjack tag matches the Godot label's position, size and colour. Renders: `bevy/artifacts/{godot,bevy}-shelfdemo*.png`.
+
+### 2026-10-16 — Original menus, settings and bug reporter (ledger row 18, partial)
+
+- **Settings.** `Settings.graphics` now holds every GraphicsOptions row, with source defaults. `bevy/src/graphics.rs` applies them for real:
+  - window mode and resolution, UI scale and the frame limiter;
+  - MSAA on every camera, including cameras added later, with an adapter fallback;
+  - FXAA, TAA (removing it clears its components) and SSAO;
+  - shadow filter, cascades and atlas, bloom, water planar quality and particle quality;
+  - scope size, foliage wind and grass, ragdolls, the render thread;
+  - a layer-7 chromatic pass after night vision and before the deadzone.
+
+  `settings.graphics.outline` (default on) is ready for the Outline renderer. The Godot-themed settings screen has Graphics, Controls and Key Binds tabs. Rebinding uses source labels and saves immediately; sliders commit on release.
+- **Main menu.** Dashboard, Play/Survivors/Configuration/Workshop submenus, and the singleplayer selector (Official/Proc/Curated/Workshop/Misc tabs) with difficulty, zombies, the Config block and the Advanced table. Generate Island goes through `finite::bootstrap::open` with seed and Lakes, and saved islands can be listed, played or deleted. `--lakes` and `--no-zombies` are the CLI equivalents. The zombie rule reaches the host bridge (`ZombiesDisabledFor`) and `FinitePopulationServices`. No protocol change.
+- **Bug reporter.** `bevy/src/bugreport.rs` ports ReportSession:
+  - cpal mic, with before and after shots in private 0700 staging;
+  - the console `report <text>` command, which is byte-safe;
+  - the "● REC m:ss" label and toast, in Open Sans with a DejaVu fallback for ● and ✓.
+
+  The bridge `BugReportOutbox` reuses BugReportCore for the outbox, Bearer upload, 4xx park and launch retry. The launcher is unchanged; the decision is recorded in `bevy/docs/SETTINGS_MENU_PORT.md`.
+- **Tests** (after merging port/bevy 7c47a6b5). Native: 852 passed, 58 ignored, 2 failed. The two failures are the pre-existing `vehicle::coupling::tests::main_schedule` cases that need the untracked `bevy-coupling-os-entered.json`. Managed: 297 passed. Negative controls each failed and were restored:
+  - Rust: camera-add MSAA, keybind persist, bloom row, DisarmReset, zombie rule, overlay font at the 0.5 stretch;
+  - C#: finite zombie gate, permanent-4xx park, amplitude verdict.
+- **Visual.** All captures were rendered under Xvfb/lavapipe and opened (`bevy/artifacts/settings-menu/`). Eight Godot 4.6.2 `--menushot` originals match the native dashboard, Play, Survivors, Configuration, map selector, Proc and Advanced screens in layout and type. The remaining differences:
+  - the town backdrop instead of the garage diorama;
+  - the added Host row;
+  - the Workshop new-map/saved-maps block is a "not native yet" note.
+
+  The fx captures show the chromatic fringe with the HUD untouched, shadows off, and TAA+AO at UI scale 1.3. The mouse-driven journey goes Play → Singleplayer → Generate Island → PLAY into the generated island, then Esc → Settings → back. The bug-report journey shows ● REC, "sending…" and "report sent ✓" (X-framebuffer grabs), two POSTs received, an empty outbox, and the console typed report.

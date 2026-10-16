@@ -141,7 +141,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data; joined-client proximity vehicle enter (`RequestEnterNearestPuppet`, 4 m, ranks above crop harvest) | L | high (MP) | queued |
 | 16 | Hybrid dedicated server and moderation | No headless bridge host on 47872; live Godot server is protocol 61 | L | high (MP) | agent D (in progress) |
 | 17 | Infinite/finite world MP | Origin protocol, island descriptor negotiation | L | med | queued |
-| 18 | Menus/settings/bug report/launcher | Difficulty/config/island list/arena; limited settings; launcher still Godot | L | med | agent E (in progress) |
+| 18 | Menus/settings/bug report/launcher | Landed: source dashboard/submenus, singleplayer selector (retail, Generate Island, Proc list, Infinite, Zombies rule to the host), full settings rows/tabs/key binds with native effects, hold-to-report outbox/upload. Remaining: barn diorama, Playground world, render scale/distance, sun shafts/fog, SSR, outline, Workshop editor rows, arena (dedicated, row 16), launcher Bevy release path. See [SETTINGS_MENU_PORT.md](SETTINGS_MENU_PORT.md) | L | med | agent E (partial) |
 | 19 | Generated buildings | Preview stage; furniture data only (`61272db6`) | L | med | queued |
 | 20 | World devices (elevator, car lift, crane, train, SAM, flares, magnet, vending, notes, traffic lights, AI drivers) | None native | L | low | queued |
 | 21 | Fluid networks / item pipes (cmds 64-66) | Not sent; pipe events not bridged | L | low-med | check with power agent |

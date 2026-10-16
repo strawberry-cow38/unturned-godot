@@ -20,8 +20,13 @@ pub(crate) fn save_path(map: &str) -> PathBuf {
     save_dir().join(format!("{}.json", sanitize(map)))
 }
 fn save_dir() -> PathBuf {
-    std::env::var_os("UG_BEVY_SAVES")
-        .or_else(|| std::env::var_os("UG_SAVE_DIR"))
+    // Tests never touch a real save, even where UG_SAVE_DIR is exported.
+    let overridden = if cfg!(test) {
+        None
+    } else {
+        std::env::var_os("UG_BEVY_SAVES").or_else(|| std::env::var_os("UG_SAVE_DIR"))
+    };
+    overridden
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             Settings::path()

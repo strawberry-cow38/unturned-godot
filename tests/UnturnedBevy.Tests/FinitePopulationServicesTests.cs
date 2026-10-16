@@ -70,6 +70,47 @@ public sealed class FinitePopulationServicesTests
         Assert.That(saved.RootElement.GetProperty("BevyBridge").GetProperty("Loot").GetProperty("GeneratedPoints").GetArrayLength(),Is.EqualTo(2));
         Assert.That(Directory.GetFiles(Path.Combine(temporary,"Spawns")),Is.Empty,"no retail positions invented");
     }
+    // MainMenuPlay Zombies: Off -> WorldBuilder.ZombiesOverride. The host never
+    // builds the field, while loot/animals/vehicles of the same plan still install.
+    [Test] public void MenuZombiesOffSkipsTheZombieFieldOnTheHostButKeepsTheRestOfThePlan()
+    {
+        using var host=new BridgeHost();
+        Call(host,"init",new{contentRoot=content,mapId="Island_Population",spawn=new[]{20f,2,20},zombies=false});
+        Call(host,"worldGeometry",new{meshes=new[]{new{terrain=true,vertices=new[]{
+            new[]{-2000f,1,-2000},new[]{2000f,1,-2000},new[]{2000f,1,2000},
+            new[]{-2000f,1,-2000},new[]{2000f,1,2000},new[]{-2000f,1,2000}}}}});
+        var result=Call(host,"finitePopulation",Plan);
+        Assert.That(result.GetProperty("installed").GetBoolean(),Is.True);
+        Assert.That(result.GetProperty("zombies").GetProperty("disabled").GetBoolean(),Is.True);
+        Assert.That(result.GetProperty("animals").GetProperty("points").GetInt32(),Is.EqualTo(1));
+        Assert.That(result.GetProperty("loot").GetProperty("points").GetInt32(),Is.EqualTo(2));
+        var retail=Call(host,"worldZombies",new{mapRoot=temporary});
+        Assert.That(retail.GetProperty("disabled").GetBoolean(),Is.True);
+        var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+        var zombies=(ZombieServices)typeof(BridgeHost).GetField("_zombies",flags).GetValue(host);
+        using var summary=JsonDocument.Parse(JsonSerializer.Serialize(zombies.Summary(),Json));
+        Assert.That(summary.RootElement.GetProperty("points").GetInt32(),Is.Zero,"no zombie spawn points exist");
+        Tick(host);
+        Assert.That(State(host).TryGetProperty("zombies",out var z)?z.GetArrayLength():0,Is.Zero);
+        // A fresh init without the field returns to the source env default (zombies on).
+        Call(host,"init",new{contentRoot=content,mapId="Island_Population",spawn=new[]{20f,2,20},zombies=true});
+        Init(host);
+        Assert.That(Call(host,"finitePopulation",Plan).GetProperty("zombies").GetProperty("points").GetInt32(),Is.EqualTo(1));
+    }
+    [Test] public void ZombieRulePrefersTheMenuOverrideOverTheSourceEnvironmentSwitches()
+    {
+        string old=Environment.GetEnvironmentVariable("UG_NOZOMBIES");
+        try
+        {
+            Environment.SetEnvironmentVariable("UG_NOZOMBIES","1");
+            Assert.That(BridgeHost.ZombiesDisabledFor(JsonSerializer.SerializeToElement(new{})),Is.True);
+            Assert.That(BridgeHost.ZombiesDisabledFor(JsonSerializer.SerializeToElement(new{zombies=true})),Is.False);
+            Environment.SetEnvironmentVariable("UG_NOZOMBIES",null);
+            Assert.That(BridgeHost.ZombiesDisabledFor(JsonSerializer.SerializeToElement(new{})),Is.False);
+            Assert.That(BridgeHost.ZombiesDisabledFor(JsonSerializer.SerializeToElement(new{zombies=false})),Is.True);
+        }
+        finally { Environment.SetEnvironmentVariable("UG_NOZOMBIES",old); }
+    }
     [Test] public void RebasePreservesPendingVehicleAndLootFramesAcrossReloadAndInitClearsPlan()
     {
         using var host=new BridgeHost();Init(host);Call(host,"finitePopulation",Plan);

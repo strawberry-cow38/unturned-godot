@@ -96,6 +96,7 @@ fn install(app: &mut App) {
         .add_systems(
             Core2d,
             draw.after(crate::nightvision::render::NightVisionPass)
+                .after(crate::graphics::chromatic::LensPass)
                 .before(ui_pass),
         );
 }

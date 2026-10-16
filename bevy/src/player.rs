@@ -20,7 +20,7 @@ pub(crate) mod lean;
 pub(crate) mod flinch;
 mod crafting_eye;
 pub(crate) use crafting_eye::{CraftingEye, needs_eye};
-mod persistence;
+pub(crate) mod persistence;
 use persistence::save_path;
 
 #[cfg(test)]
@@ -361,6 +361,8 @@ fn initialize_session(
         request["finiteDirectory"] = json!(path);
     }
     request["useLocalProfile"] = json!(profile.is_some_and(|profile| profile.ready));
+    // MainMenuPlay Zombies row -> WorldBuilder.ZombiesOverride, decided by the host.
+    request["zombies"] = json!(options.0.zombies);
     options.0.network.configure(&mut request);
     // WorldSaveDriver owns one file per map on the host; a remote client has none,
     // and neither does the native vehicle render harness (source harness entries
@@ -581,7 +583,8 @@ fn ui_intents(
                 if name == "console"
                     && (crate::entities::npcs::is_console_command(args["text"].as_str().unwrap_or(""))
                         || crate::ui::npc::is_console_command(args["text"].as_str().unwrap_or(""))
-                        || crate::entities::crops::is_console_command(args["text"].as_str().unwrap_or("")))
+                        || crate::entities::crops::is_console_command(args["text"].as_str().unwrap_or(""))
+                        || crate::bugreport::is_console_command(args["text"].as_str().unwrap_or("")))
                 {
                     continue;
                 }
