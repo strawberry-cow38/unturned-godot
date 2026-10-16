@@ -73,3 +73,20 @@ fn the_outline_graphics_option_turns_the_whole_pass_off() {
     app.update();
     assert!(!active(&mut app), "Outline off: no mask, no rim");
 }
+
+#[test]
+fn net_id_claims_follow_the_winner_and_vehicles_carry_their_dat_rarity() {
+    let mut focus = InteractionFocus::default();
+    let (car, crate_) = (Entity::from_raw_u32(5).unwrap(), Entity::from_raw_u32(6).unwrap());
+    focus.offer(1., "Enter Roadster", "enterVehicle", json!({"netId":40,"seat":1}), false);
+    focus.outline_net_id(41, crate_, Color::WHITE);
+    assert_eq!(focus.outlined(), None, "another net id cannot claim");
+    let rare = crate::entities::items::rarity_color("rare");
+    focus.outline_net_id(40, car, rare);
+    assert_eq!(focus.outlined(), Some((car, rare)), "any action the winner offered for that id");
+    let rarities: Vec<_> = ["roadster", "bus", "sedan"]
+        .iter()
+        .map(|k| crate::vehicle::data::named(k).map(|d| d.spec.rarity.clone()))
+        .collect();
+    assert_eq!(rarities, [Some("RARE".into()), Some("UNCOMMON".into()), Some("COMMON".into())]);
+}

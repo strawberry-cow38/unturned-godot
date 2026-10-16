@@ -4,6 +4,7 @@ mod runtime;
 
 use anyhow::{Context, Result, anyhow, bail};
 use bevy::prelude::Resource;
+use crate::install::Layout;
 use runtime::RuntimeCopy;
 use serde_json::{Value, json};
 use std::{
@@ -33,24 +34,34 @@ impl CoreBridge {
             process.origin_epoch = epoch;
         }
     }
+    /// The checkout's dev bridge (tests); `UG_BRIDGE_DLL` still overrides.
     pub fn launch(manifest: &Path) -> Result<Self> {
-        let dll = std::env::var_os("UG_BRIDGE_DLL")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| manifest.join("bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll"));
+        Self::launch_installed(&Layout::Dev(manifest.to_path_buf()))
+    }
+
+    /// The bridge of a package or checkout; see [`crate::install`].
+    pub fn launch_installed(layout: &Layout) -> Result<Self> {
+        let dll = layout.bridge_dll();
         if !dll.is_file() {
             bail!(
-                "Game bridge is missing at {}. Run bevy/run.sh to build it.",
-                dll.display()
+                "Game bridge is missing at {}. {}",
+                dll.display(),
+                layout.bridge_hint()
             );
         }
-        Self::launch_from_dll(&dll)
+        if layout.needs_private_copy(&dll) {
+            Self::launch_from_dll(&dll)
+        } else {
+            // A package's own bridge is immutable: run it where it is.
+            Self::launch_command(&mut host_command(&dll))
+        }
     }
 
     fn launch_from_dll(dll: &Path) -> Result<Self> {
         // .NET maps assemblies for the process lifetime. Building or promoting
         // the shared output in place must never change those mapped inodes.
         let runtime_copy = RuntimeCopy::from_dll(dll)?;
-        let bridge = Self::launch_command(Command::new(dotnet_path()).arg(runtime_copy.dll()))?;
+        let bridge = Self::launch_command(&mut host_command(runtime_copy.dll()))?;
         bridge.0.lock().unwrap().runtime_copy = Some(runtime_copy);
         Ok(bridge)
     }
@@ -79,7 +90,7 @@ impl CoreBridge {
         let (tx, rx) = mpsc::sync_channel(4);
         let process = BridgeProcess {
             child,
-            stdin,
+            stdin: Some(stdin),
             replies: rx,
             next_id: 1,
             failed: false,
@@ -102,6 +113,12 @@ impl CoreBridge {
         Ok(Self(Mutex::new(process)))
     }
 
+    /// The pipe to the core broke (or a reply never came): every later request
+    /// fails. A refused operation (`ok:false`) leaves the transport healthy.
+    pub fn transport_failed(&self) -> bool {
+        self.0.lock().map_or(true, |process| process.failed)
+    }
+
     pub fn request(&self, operation: &str, fields: Value) -> Result<Value> {
         self.0
             .lock()
@@ -112,7 +129,8 @@ impl CoreBridge {
 
 struct BridgeProcess {
     child: Child,
-    stdin: ChildStdin,
+    // None once Drop has closed it (end of input asks the core to finish).
+    stdin: Option<ChildStdin>,
     replies: mpsc::Receiver<Result<Value>>,
     next_id: u64,
     failed: bool,
@@ -158,9 +176,14 @@ impl BridgeProcess {
                 .or_insert_with(|| json!(self.origin_epoch));
         }
         let result = (|| {
-            serde_json::to_writer(&mut self.stdin, &request)?;
-            self.stdin.write_all(b"\n")?;
-            self.stdin.flush()?;
+            // One write per request: ChildStdin is unbuffered, and streaming the
+            // serializer into it issued a syscall per JSON token (tens of ms
+            // for a vehicle hit mesh, seconds for a world geometry upload).
+            let mut line = serde_json::to_vec(&request)?;
+            line.push(b'\n');
+            let stdin = self.stdin.as_mut().context("core input is closed")?;
+            stdin.write_all(&line)?;
+            stdin.flush()?;
             let response = self
                 .replies
                 .recv_timeout(Duration::from_secs(60))
@@ -196,7 +219,16 @@ impl BridgeProcess {
 
 impl Drop for BridgeProcess {
     fn drop(&mut self) {
-        // Always reap the owned child, including panic/failed-handshake paths.
+        // Close the input first: a healthy core treats end of input as a stop
+        // (a dedicated host writes its final save then) and exits by itself.
+        // Bounded, then always reap, including panic/failed-handshake paths.
+        drop(self.stdin.take());
+        if !self.failed {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while matches!(self.child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -217,6 +249,15 @@ fn read_reply(reader: &mut impl BufRead) -> Result<Value> {
         bail!("game core sent an incomplete response");
     }
     serde_json::from_slice(&bytes).context("decoding game core JSON response")
+}
+
+fn host_command(dll: &Path) -> Command {
+    if let Some(apphost) = crate::install::self_contained_apphost(dll) {
+        return Command::new(apphost);
+    }
+    let mut command = Command::new(dotnet_path());
+    command.arg(dll);
+    command
 }
 
 fn dotnet_path() -> PathBuf {
@@ -272,6 +313,31 @@ mod tests {
         assert!(running_directory.exists());
         drop(bridge);
         assert!(!running_directory.exists());
+    }
+
+    #[test]
+    fn a_package_bridge_runs_in_place_without_a_temp_copy() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = std::env::temp_dir().join(format!(
+            "unturned-bevy-package-bridge-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("bridge")).unwrap();
+        runtime::copy_directory(&manifest.join("bridge/bin/Debug/net8.0"), &root.join("bridge"))
+            .expect("build original core with bevy/run.sh");
+        let layout = Layout::Package(root.clone());
+        let bridge = CoreBridge::launch_installed(&layout).unwrap();
+        assert!(bridge.0.lock().unwrap().runtime_copy.is_none());
+        bridge
+            .request(
+                "init",
+                json!({"contentRoot":manifest.join("../game/content"),
+                    "mapId":"Procedural","spawn":[1025.,40.,12.],"origin":[0.,0.]}),
+            )
+            .unwrap();
+        drop(bridge);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

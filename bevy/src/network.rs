@@ -17,6 +17,13 @@ pub enum Target {
         host: String,
         port: u16,
     },
+    /// Headless dedicated host: the bridge serves UDP with no local player.
+    /// Unset name/capacity fall back to the source UG_NAME/UG_MAXPLAYERS.
+    Dedicated {
+        port: u16,
+        name: Option<String>,
+        max_players: Option<u8>,
+    },
 }
 impl Target {
     pub fn networked(&self) -> bool {
@@ -24,6 +31,9 @@ impl Target {
     }
     pub fn owns_world(&self) -> bool {
         !matches!(self, Self::Client { .. })
+    }
+    pub fn dedicated(&self) -> bool {
+        matches!(self, Self::Dedicated { .. })
     }
     pub fn configure(&self, request: &mut Value) {
         match self {
@@ -40,6 +50,20 @@ impl Target {
             Self::Client { host, port } => {
                 request["connectHost"] = json!(host);
                 request["connectPort"] = json!(port);
+            }
+            Self::Dedicated {
+                port,
+                name,
+                max_players,
+            } => {
+                request["dedicated"] = json!(true);
+                request["listenPort"] = json!(port);
+                if let Some(name) = name {
+                    request["serverName"] = json!(name);
+                }
+                if let Some(max_players) = max_players {
+                    request["maxPlayers"] = json!(max_players);
+                }
             }
         }
     }
@@ -80,7 +104,7 @@ impl Default for State {
 }
 impl State {
     pub fn networked(&self) -> bool {
-        self.mode == "client" || self.mode == "listen"
+        matches!(self.mode.as_str(), "client" | "listen" | "dedicated")
     }
     pub fn read(snapshot: &Value) -> Self {
         serde_json::from_value(snapshot["network"].clone()).unwrap_or_default()
@@ -92,7 +116,7 @@ pub fn owns_world(snapshot: &Value) -> bool {
 pub fn is_networked(snapshot: &Value) -> bool {
     matches!(
         snapshot["network"]["mode"].as_str(),
-        Some("client" | "listen")
+        Some("client" | "listen" | "dedicated")
     )
 }
 pub fn parse_address(host: &str, port: &str) -> Result<(String, u16), String> {

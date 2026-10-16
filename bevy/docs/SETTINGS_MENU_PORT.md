@@ -144,6 +144,8 @@ release, the launcher should download that release per branch and start it with
 the same environment. The native build already honours `UG_UNTURNED_DIR`,
 `UG_USERNAME`, `UG_PROFILE_PNG`, `UG_FACE`, `UG_OFFLINE` and `UG_BUGREPORT_KEY`;
 `UG_AUTH_TOKEN`/`UG_AUTH_KEY` (signed identity) are not consumed yet.
+The relocatable release now exists (`bevy/tools/package.sh`); the launcher's
+download-and-run step is specified in [PACKAGING_PORT.md](PACKAGING_PORT.md).
 
 ## Verification
 

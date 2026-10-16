@@ -3102,9 +3102,63 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 
 - **Review fixes:** RMB or a hand switch now cancels a gesture in flight before Command 7 (as `ClearDeployable` zeroes `_placeTimer`); a storage offer can no longer displace the crop harvest fall-through in either system order; `DefaultAttachable` reads only the hit collider, so a fridge (a child StaticBody) is a legal support; the door look ray is the source 2.6 m `LookReach` and settles only at endpoints (players and zombies); the fridge label stroke is 2.5 px. The cancel, ordering, support and reach fixes each have a guarding test that fails under revert; the stroke and the endpoint-only solidify are checked by render and review only.
 
+### 2026-10-16 — Packaging: a relocatable native release (ledger "Packaging")
+
+- **Paths at run time.** `bevy/src/install.rs` replaces the compile-time `CARGO_MANIFEST_DIR` bridge, content and `.local` paths in `main.rs`, `cli.rs`, `world.rs`, `player.rs` and `bugreport.rs`. Resolution order:
+  1. `UG_BRIDGE_DLL`, `UG_CONTENT_DIR` (`--content` still wins) and `UG_DATA_DIR`, then `UG_PACKAGE_ROOT`;
+  2. `unturned-bevy-package.json` beside the executable, which marks a package with `bridge/` and `content/` beside it;
+  3. otherwise the unchanged checkout layout.
+
+  A package never falls back to the checkout. A self-contained bridge (its runtimeconfig lists `includedFrameworks`) starts through its apphost; anything else starts on `dotnet` as before.
+- **Package script.** `bevy/tools/package.sh` does a self-contained `dotnet publish`, then `cargo build --release`. It copies the git-tracked `game/content`, writes a marker, licenses and README, swaps the staged folder in and runs a headless smoke. For linux-x64 at 5707bbba the folder is 787 MB (420 MB as .tar.gz): content 554 MB, bridge 77 MB, binary 157 MB unstripped.
+- **Relocation proof.** The package was copied to `/tmp/claude-1000/pkg-test` and run in a private mount namespace with the checkout under an empty tmpfs. The environment was reset: fresh HOME, PATH `/usr/bin:/bin`, no `dotnet`, only `UG_UNTURNED_DIR` for retail maps.
+  - `--headless` smoke passed.
+  - Removing the marker made the same run fail: "bridge missing at …/bin/Debug", because the checkout was unreachable.
+  - `--play --shot` rendered PEI under Xvfb/lavapipe. Opened: trees, beach, water, buildings and HUD (`bevy/artifacts/packaging/relocated-play-pei.png`).
+  - A two-process `--listen 47990` / `--connect 127.0.0.1` run from the package joined. The client state was Connected to "Package host", and the opened client frame shows the host player with the "Host" nameplate (`relocated-client-joined-host.png`).
+  - The release binary run from `bevy/target/release` (no marker there) still took the checkout bridge: headless smoke passed.
+- **Tests.** Six `install::` unit tests cover exe-relative, overrides, `UG_PACKAGE_ROOT`, checkout fallback, no-fallback-from-package and apphost selection. A scoped release run of `install:: bridge:: cli::` passed 17 of 17. Negative controls ran through a std-only harness and each was restored from `bevy/.local/nc-backup/`:
+  - disabling the marker check failed 2 tests;
+  - ignoring `UG_CONTENT_DIR` failed 1;
+  - taking the apphost without `includedFrameworks` failed 1.
+- **Review fixes** (after merging port/bevy 7ce272f6). Each has a guarding test that fails under revert.
+  - A package's own bridge now runs in place: no per-launch copy of the .NET runtime into `/tmp`, so it also works on a noexec `/tmp` and leaves nothing behind after a SIGKILL. Checkout builds are still copied.
+  - Packaged bug reports carry the marker commit (`buildCommit` → `BuildStamp.UsePackagedCommit`) and never walk up to an enclosing `.git`.
+  - A wrong `UG_BRIDGE_DLL` now names the variable in the error.
+  - `package.sh` now has path guards, smokes the stage before the swap, cleans up on failure through an EXIT trap, handles `--no-content` smoke, records `commit: unknown` for `--skip-build`, and is safe on bash older than 4.4.
+  - The package now includes Rust crate notices (`third_party_licenses.py`, 434 crates), the .NET runtime's LICENSE and THIRD-PARTY-NOTICES, and a README note that the content is retail data for private use.
+- **Review verification.**
+  - Tests: native `install:: bridge:: cli:: bugreport::` passed 26 of 26, BugReportCore 26 of 26, managed BugReportOutbox 6 of 6.
+  - Negative controls, each failing under revert:
+    - always copying the package bridge;
+    - a hint that ignores `UG_BRIDGE_DLL`;
+    - a packaged stamp that walks `.git` (2 failures).
+  - Script guards were exercised for `/`, an empty path, the repo itself, a non-package folder, a forced failure (the stage was removed), and `--no-content` with and without `UG_CONTENT_DIR`.
+  - A fresh package (787 MB, marker commit 820d5671, clean) passed the masked relocated headless smoke with `TMPDIR` pointing at a nonexistent directory. The copy was then deleted.
+- **Not done.** The launcher is unchanged; the precise download-and-run step is in `bevy/docs/PACKAGING_PORT.md`. Windows and macOS packages are untested.
+
+### 2026-10-16 — Hybrid dedicated server and moderation (ledger row 16)
+
+- `unturned-bevy --dedicated` hosts the authoritative world headless on UDP 47872 (`--port`/`UG_PORT`), with no local player. The bridge serves `NetWorldServer` with no client of its own (`DedicatedHost.cs`, `ReplicaRows.cs`). The windowless native host (`dedicated.rs`, no GPU device) keeps collision and every physics-bodied host system, and loads one region covering every authored point plus 160 m.
+- Lifecycle: services register, then the save is restored (refused files are moved aside), then players are admitted. The shared `WorldPersistence` autosave runs, plus a shutdown save on SIGINT/SIGTERM/SIGHUP or a closed pipe that never undoes a `wipe`. A failed start exits non-zero.
+- Moderation is the source surface: `BanStore` linked verbatim, console verbs behind `AllowCheats` (`UG_DEDICATED_NOCHEATS`), flood caps, sync-check, NetLog. Versioned `deploy/systemd/unturned-bevy-server*` units and `tools/deploy-bevy-server.sh`; nothing installed on claw.
+- The journey found three bugs, each fixed with a test:
+  - Remote riders could never leave a car with doors (no host door probe). Any host now re-probes remote seats (`vehicle/remote_exits.rs`).
+  - The dedicated allow-list refused that probe op.
+  - The admission restore left parked host bodies at their spawn pose, which woke and overwrote the save. Serving now emits `WorldRestored`.
+- Verification:
+  - Managed: 307/307, including 17 dedicated.
+  - Native: 838 pass; the 2 failures are the gitignored PEI coupling capture.
+  - 13 managed and 5 native negative controls each fail their guard.
+  - Two-process journey under Xvfb: join, walk, pick up, drive 62 m, exit, SIGTERM, restart, new client restored at the same spot with bag and car (PNGs in `bevy/artifacts/dedicated/final/`).
+  - Authority held 50 ticks/s.
+- Second review and merges: guarded tick steps (a throw is logged, never fatal), no save after an unrecovered failure, its own `saves/dedicated/` directory, origin refusals that leave the file in place, one-shot sounds ended headless, a branch-guarded deploy script running from its own worktree, and an opt-in SIGTERM process-group test. After merging `port/bevy` b8f90b40: managed 321/321, native 900 pass (the same 2 capture failures), core suites green except 5 UnturnedSim procedural-building tests (their code and data are identical to `port/bevy`; this slice touches neither). A fresh boot rejoined at the exact saved spot after two SIGTERM restarts, with entities flat over 22 min. A package-layout `--dedicated` boot ran from `/tmp`.
+- Remaining: a slow client's first join times out (rejoin works); no remote crash damage on dedicated; claw cut-over. See `bevy/docs/DEDICATED_SERVER_PORT.md`.
+
 ### 2026-10-16 — Restraints, binoculars, umbrella and fishing (ledger rows 11-12)
 
 - **Restraints (row 11).** Native LMB with handcuffs, the cable tie or the key (`bevy/src/restraints.rs`) ports `TryRestraintUse`/`TickArrest`: `AimedPlayer` over the puppets, the source alerts, `Cuff_Use` then command 52 at its end, the key's command 53 at the click. The bridge refuses equips while the owner is `ARREST_START` ("Your hands are bound."). Core review fix: 52/53 now need the restraint or key in the sender's bag and a living sender (the client-reported `HeldId` cuffed with pairs nobody owned). Details: `bevy/docs/RESTRAINTS_TOOLS_PORT.md`.
 - **Binoculars and umbrella (row 12).** `bevy/src/viewmodel/binoculars.rs` ports the 333 carry pose, the eyepiece PiP, the raised overlay/zoom/sensitivity (sharing the tank periscope overlay) and the LMB 4/8/12x cycle. The umbrella's fall gravity reaches the bridge `simulate`, and its fall-damage gate (PlayerLife:2399) now runs on the server-derived fall damage (core `FallGravityMultiplier`, `bridge/UmbrellaServices.cs`).
 - **Fishing (row 12).** The source granted fish and XP on the client, which adoption overwrote. Protocol 80 adds command 103 (cast), 104 (press/release/stop) and caster-only event 78; the bridge `FishingServices` owns the `FishingSim` (as `ConfigureForPei`), the window with retail's 1 s leniency, the challenge and the grant. `bevy/src/fishing.rs` keeps the gauge, the bobber's flight, the 4 m depth test, the bob/tug and the line.
-- **Tests:** core 774/774, managed 303/303, native 894 passed / 63 ignored. UnturnedSim has 8 BuildingGen failures in code this branch does not touch. 31 negative controls fail as intended (two fishing controls first passed and their test was tightened). Opened Godot oracles: `--rig` gestures, `--vm --gun=handcuffs`, PEI binoculars lowered/raised; native fixtures beside them, and the fishing bobber without an oracle (`bevy/artifacts/*restraint*`, `*gesture*`, `*binoculars*`, `*fishing*`).
+- **Merged the dedicated server** (port/bevy 1266b052): the fishing/umbrella services serve the headless host (`StartSession`/`StepWorldServices`, managed dedicated cast test); restraints/fishing input and the binocular presentation stay out of `--dedicated`.
+- **Tests (after the merge):** core 774/774, managed 327/327, native 917 passed / 64 ignored. UnturnedSim has 8 BuildingGen failures in code this branch does not touch. 31 negative controls fail as intended (two fishing controls first passed and their test was tightened). Opened Godot oracles: `--rig` gestures, `--vm --gun=handcuffs`, PEI binoculars lowered/raised; native fixtures beside them, and the fishing bobber without an oracle (`bevy/artifacts/*restraint*`, `*gesture*`, `*binoculars*`, `*fishing*`).

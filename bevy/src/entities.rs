@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 pub(crate) mod crops;
-mod items;
+pub(crate) mod items;
 pub(crate) mod forage;
 mod map_bindings;
 pub(crate) mod npcs;
@@ -223,6 +223,15 @@ impl InteractionFocus {
         if let Some(candidate) = &mut self.candidate
             && candidate.action == action
             && candidate.args == *args
+        {
+            candidate.outline = Some((target, color));
+        }
+    }
+    /// The same claim keyed by replicated identity: whichever action the
+    /// winner offered for `net_id` (NetIds are minted from one server space).
+    pub(crate) fn outline_net_id(&mut self, net_id: u32, target: Entity, color: Color) {
+        if let Some(candidate) = &mut self.candidate
+            && candidate.args["netId"].as_u64() == Some(u64::from(net_id))
         {
             candidate.outline = Some((target, color));
         }

@@ -271,3 +271,14 @@ the rod away, dying or getting into a vehicle with a line out sends stop.
   and pulled under the surface in the window, with the line from the rod-tip point. There is no Godot
   oracle: no source harness casts a line.
   Renders: `bevy/artifacts/bevy-fishing-{line,bite}.png`.
+
+## Dedicated host (after merging the hybrid dedicated server)
+
+- The bridge services (`UmbrellaServices`, `FishingServices`) are created in `StartSession` and stepped in
+  `StepWorldServices`, which the headless host shares, so a `--dedicated` host answers casts with Event 78
+  and applies the umbrella fall gate. Commands 52/53/54 are core handlers and need nothing.
+  Managed `DedicatedServerTests.ARemoteCastOnTheDedicatedHostIsAnsweredWithItsLineState` covers the
+  cast, with a negative control that removes the registration.
+- The local presentation stays out of the headless app: `RestraintsPlugin` and `FishingPlugin` are added
+  only with a window (next to the graphics/bug-reporter/outline plugins), and the binocular systems inside
+  `ViewmodelPlugin` run only with a local player (`dedicated::has_local_player`).

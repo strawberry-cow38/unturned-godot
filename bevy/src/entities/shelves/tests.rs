@@ -200,6 +200,7 @@ fn item(net_id: u32, x: u8) -> ShelfItem {
         item_id: 13,
         name: "Canned Beans".into(),
         tint: Color::WHITE,
+        rim: Color::WHITE,
         center: Vec3::ZERO,
         half: Vec3::splat(0.1),
         tag: Vec3::ZERO,

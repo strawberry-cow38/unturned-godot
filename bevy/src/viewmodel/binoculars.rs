@@ -128,11 +128,25 @@ impl Plugin for BinocularsPlugin {
         app.add_plugins(MaterialPlugin::<LensMaterial>::default())
             .insert_resource(Binoculars { force_raise: force, ..default() })
             .init_resource::<Pip>()
-            .add_systems(Update, input.after(crate::ui::UiUpdate).before(PlayerUpdate))
-            .add_systems(Update, hide_arms.after(build_viewmodel).before(RigAnimation))
+            // Local presentation only: a dedicated host has no hand, camera or window.
+            .add_systems(
+                Update,
+                input
+                    .after(crate::ui::UiUpdate)
+                    .before(PlayerUpdate)
+                    .run_if(crate::dedicated::has_local_player),
+            )
+            .add_systems(
+                Update,
+                hide_arms
+                    .after(build_viewmodel)
+                    .before(RigAnimation)
+                    .run_if(crate::dedicated::has_local_player),
+            )
             .add_systems(
                 PostUpdate,
-                pose.after(bevy::transform::TransformSystems::Propagate)
+                pose.run_if(crate::dedicated::has_local_player)
+                    .after(bevy::transform::TransformSystems::Propagate)
                     .before(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
                     .before(VisibilitySystems::UpdateFrusta),
             );

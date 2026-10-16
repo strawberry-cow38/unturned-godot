@@ -61,7 +61,7 @@ impl Drop for RuntimeCopy {
     }
 }
 
-fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
+pub(super) fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let target = destination.join(entry.file_name());

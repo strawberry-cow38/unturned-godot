@@ -147,6 +147,7 @@ pub fn detect(
     objects: Query<&crate::world::WorldObject>,
     parents: Query<&ChildOf>,
     services: Res<ServiceManifest>,
+    residency: Option<Res<crate::dedicated::Residency>>,
     mut hits: MessageWriter<DamageRequest>,
 ) {
     if snapshot
@@ -162,8 +163,20 @@ pub fn detect(
             continue;
         }
         let spec = &data::definition(body.type_id).unwrap().spec;
-        if let Some((amount, explode_now)) =
-            state.impact(spec, velocity.linear, *rigid == RigidBody::Fixed, 0.02)
+        // A dedicated host advances many fixed steps per headless frame while a
+        // remote driver's replica velocity changes once per frame, so that step
+        // reads as a crash. The crash impact is judged only for bodies this host
+        // simulates there (see DEDICATED_SERVER_PORT.md, Remaining).
+        let sampled_replica = residency.is_some()
+            && snapshot
+                .as_ref()
+                .is_some_and(|s| !coupling::state::simulates(&s.0, &body));
+        if sampled_replica {
+            state.adopt_velocity(spec, velocity.linear);
+        }
+        if let Some((amount, explode_now)) = (!sampled_replica)
+            .then(|| state.impact(spec, velocity.linear, *rigid == RigidBody::Fixed, 0.02))
+            .flatten()
         {
             hits.write(DamageRequest {
                 vehicle: entity,

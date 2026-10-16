@@ -20,20 +20,33 @@ pub(crate) fn save_path(map: &str) -> PathBuf {
     save_dir().join(format!("{}.json", sanitize(map)))
 }
 fn save_dir() -> PathBuf {
+    overridden_save_dir().unwrap_or_else(default_save_dir)
+}
+fn overridden_save_dir() -> Option<PathBuf> {
     // Tests never touch a real save, even where UG_SAVE_DIR is exported.
-    let overridden = if cfg!(test) {
-        None
-    } else {
-        std::env::var_os("UG_BEVY_SAVES").or_else(|| std::env::var_os("UG_SAVE_DIR"))
-    };
-    overridden
+    if cfg!(test) {
+        return None;
+    }
+    std::env::var_os("UG_BEVY_SAVES")
+        .or_else(|| std::env::var_os("UG_SAVE_DIR"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Settings::path()
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("saves")
-        })
+}
+fn default_save_dir() -> PathBuf {
+    Settings::path()
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("saves")
+}
+
+/// A dedicated host's world file. An operator's `UG_SAVE_DIR`/`UG_BEVY_SAVES`
+/// is used as given (the source dedicated server's own directory). Without one
+/// it lives in `saves/dedicated/`, so a local `--dedicated` run can never move
+/// aside, restore or overwrite the single-player world of the same map, and no
+/// legacy single-player name is adopted.
+pub(crate) fn dedicated_save_path(map: &str) -> PathBuf {
+    overridden_save_dir()
+        .unwrap_or_else(|| default_save_dir().join("dedicated"))
+        .join(format!("{}.json", sanitize(map)))
 }
 
 /// The earlier native pause-menu Save wrote ASCII-alphanumeric, case-kept names
@@ -142,6 +155,12 @@ mod tests {
         assert_eq!(sanitize("a/b\\c.d"), "a_b_c_d");
         assert_eq!(sanitize(""), "world");
         assert!(save_path("PEI").ends_with("pei.json"));
+        assert!(dedicated_save_path("PEI").ends_with("saves/dedicated/pei.json"));
+        assert_ne!(
+            dedicated_save_path("PEI"),
+            save_path("PEI"),
+            "dedicated never shares the single-player world file"
+        );
     }
     fn app() -> App {
         let mut app = App::new();
