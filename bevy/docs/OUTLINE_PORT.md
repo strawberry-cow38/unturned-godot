@@ -27,11 +27,12 @@ Claimers wired so far:
 - map containers/shelves (`openStorage`), in white;
 - store-shelf items, in their rarity colour (`ShelfItemBody.SetFocused`);
 - deployables, in `Deployable.OutlineColor` (0.82/0.83/0.90);
-- vehicles, in their `.dat` `Rarity` colour, through `InteractionFocus::outline_net_id` (any action the winner offered for that NetId).
+- vehicles, in their `.dat` `Rarity` colour, through `InteractionFocus::outline_net_id` (any action the winner offered for that NetId);
+- map doors, container doors and prop seats, which outline the whole prop (body plus leaf) in white. These are wired through the same claim but have no render yet.
 
 ## Deviations and gaps
 
-- **Claimers not yet wired:** the vehicle's red "can't act" tool colour, doors, seats, beds, lamps, notes, TVs, radios, vending machines, NPC/puppet bodies (skinned meshes are not mirrored yet) and forage fruit. They join by calling `focus.outline` beside their `offer`.
+- **Claimers not yet wired:** the vehicle's red "can't act" tool colour, beds (natively an emissive highlight), lamps, notes, TVs, radios, vending machines, NPC/puppet bodies (skinned meshes are not mirrored yet) and forage fruit. They join by calling `focus.outline` beside their `offer`.
 - **`GraphicsOptions.Outline`:** the native `settings.graphics.outline` (default on) disables the whole pass, with no mask and no rim; a unit test and a negative control cover it.
 - **No `DrivingSuppress`:** nothing offers focus from a seat natively, so the pass is already idle there.
 
