@@ -127,11 +127,11 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | No held ghost/snapping/LMB place; cmd 7 test-only | L | high | agent G (in progress) |
 | 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | `ordinary()` excludes storage/fixture/fluid/turbine bodies | M | high | powered fixtures DONE (`17b9a035`); rest agent G |
 | 3 | Player structures (`BuildTool`, `StructureManager`) | Absent; source is local-only, no command/save | XL | high | needs authority design |
-| 4 | Survival HUD status icons (`HUD.cs`) | Bleeding/broken/starved/dehydrated/deadzone/temperature rows | S | high | agent C (in progress) |
-| 5 | Temperature (`PlayerTemperatureSim`, `ThermalField`) | Band never computed/streamed (`TempBand`) | M | med | agent C (in progress) |
-| 6 | Deadzones (`DeadzoneOverlay`, `GeigerCounter`) | Volumes exist, no overlay/Geiger | S | med | agent C (in progress) |
-| 7 | Save lifecycle (`WorldSaveDriver`) | Manual save/load only; no autosave, entry load or quit save | S | high | agent C (in progress) |
-| 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | agent C (in progress) |
+| 4 | Survival HUD status icons (`HUD.cs`) | Bleeding/broken/starved/dehydrated/deadzone/temperature rows | S | high | DONE (`bc01598c`) |
+| 5 | Temperature (`PlayerTemperatureSim`, `ThermalField`) | Band never computed/streamed (`TempBand`) | M | med | DONE (`bc01598c`) |
+| 6 | Deadzones (`DeadzoneOverlay`, `GeigerCounter`) | Volumes exist, no overlay/Geiger | S | med | DONE (`bc01598c`; remote deadzone/tap aim, tank fill, mains switch, Reset Data open) |
+| 7 | Save lifecycle (`WorldSaveDriver`) | Manual save/load only; no autosave, entry load or quit save | S | high | DONE (`bc01598c`) |
+| 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | DONE (`bc01598c`; remote deadzone/tap aim, tank fill, mains switch, Reset Data open) |
 | 9 | Vehicle hand tools: paint, carjack, spare tire, pump, pour (cmds 29/50/55/56) | Not sent; `paintRgb` not rendered | M | med | agent F: paint/tire/carjack (cmd 29 with agent B) |
 | 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | DONE (rope checkpoint; remote towing journey with row 16) |
 | 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | queued |
