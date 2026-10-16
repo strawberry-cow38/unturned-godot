@@ -21,8 +21,9 @@ already does:
   GPU device (`RenderCreation` with no backends), driven by `ScheduleRunnerPlugin` at
   the source's 60 FPS cap, with the same game/host plugins as a listen host. Rapier
   and every host-authority system keep working: world collision and the authoritative
-  geometry upload, unattended/NPC vehicle bodies, zombie HOT bodies, door and
-  deployable geometry. Remote drivers stay client-authoritative exactly as on a
+  geometry upload, unattended/NPC vehicle bodies, door and deployable geometry.
+  As in the source, a dedicated host builds no zombie horde (row 15A, see
+  [MP_WIRE_GAPS_PORT.md](MP_WIRE_GAPS_PORT.md)). Remote drivers stay client-authoritative exactly as on a
   listen host.
 - Local-player systems (`spawn_player`, input, `simulate`, `publish_body`, camera,
   lean) are gated off by `dedicated::has_local_player`. `dedicated::tick` takes the
@@ -46,8 +47,8 @@ restore, then serve.
 1. `init {dedicated:true, listenPort, savePath, bansPath, mapRoot}` creates the
    server but `TickDedicated` does nothing, so no datagram is read and nobody is
    admitted.
-2. Native host systems register map services, geometry, loot, vehicles, wildlife,
-   zombies and NPC helicopters against the fresh world (as a listen host does).
+2. Native host systems register map services, geometry, loot, vehicles, wildlife
+   (the zombie field answers `disabled`) and NPC helicopters against the fresh world (as a listen host does).
 3. Thirty frames after the map services adopt, `dedicatedServe` runs
    `WorldSaveDriver.LoadIntoWorld` semantics through the existing `load` path:
    missing save → fresh world; unreadable/refused save → logged, moved aside to

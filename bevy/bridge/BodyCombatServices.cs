@@ -22,6 +22,12 @@ public sealed class BodyCombatServices
     /// <summary>One held-tool session per owner. The source shell ran its blowtorch per player; a single
     /// shared owner/target/clock here let a second repairer's ToolUse overwrite the first one's (row 15A).</summary>
     sealed class Tool { public long Until = -1, Started; public (bool vehicle, uint id)? Target; }
+    /// <summary>How long one ToolUse(true) keeps the tool held. The native shell repeats it every frame and a
+    /// remote at most once per bridge tick, but a remote's copy rides ReliableOrdered, whose retransmit
+    /// floor is NetProtocol.MinRtoTicks (5): a window of 5 lapsed on a single lost datagram, dropping the
+    /// target and restarting a 150-tick wreck salvage. Five RTO floors survive ordinary loss; an explicit
+    /// release still ends it at once.</summary>
+    public const long ToolHoldTicks = 5 * NetProtocol.MinRtoTicks;
     readonly Dictionary<ushort, Tool> _tools = new();
     public Func<ushort, float> RepairRate;
     /// <summary>(owner, wreck) -- the cooled deployable wreck salvage that the owner's tool completed.</summary>
@@ -58,7 +64,7 @@ public sealed class BodyCombatServices
     {
         if (!active) { _tools.Remove(owner); return true; }
         if (!_tools.TryGetValue(owner, out var tool)) _tools[owner] = tool = new();
-        tool.Until = Tick + 5;
+        tool.Until = Tick + ToolHoldTicks;
         return RepairRate?.Invoke(owner) > 0;
     }
     /// <summary>Owners whose tool is currently held (diagnostics/tests).</summary>
@@ -67,7 +73,8 @@ public sealed class BodyCombatServices
     {
         foreach (var (owner, tool) in _tools.ToArray())
         {
-            if (tool.Until < Tick || !_server.CombatState.TryGet(owner, out _)) { _tools.Remove(owner); continue; }
+            // Released, timed out, dead or gone: a dead or disconnected owner's tool never outlives its life.
+            if (tool.Until < Tick || !_server.CombatState.TryGet(owner, out var life) || !life.Alive) { _tools.Remove(owner); continue; }
             StepTool(owner, tool);
         }
     }

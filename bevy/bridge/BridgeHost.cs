@@ -111,7 +111,9 @@ public sealed partial class BridgeHost : IDisposable
                 ConfigureLocalProfile(r); _map = Text(r, "mapId", "bevy");
                 _seed = Int(r, "seed", 1337);
                 _allowCheats = Bool(r, "allowCheats", (_listenPort == 0 || _dedicated) && Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1");
-                _zombiesDisabled = ZombiesDisabledFor(r);
+                // Source parity (row 15A): the source dedicated server builds no horde (WorldBuilder Dedicated
+                // branch; DedicatedServer removed ZombieNetSync), so a dedicated host steps none.
+                _zombiesDisabled = ZombiesDisabledFor(r) || _dedicated;
                 if (r.TryGetProperty("origin", out var initialOrigin))
                 {
                     if (initialOrigin.GetArrayLength() != 2) throw new ArgumentException("origin must be [doubleX,doubleZ]");
@@ -390,6 +392,11 @@ public sealed partial class BridgeHost : IDisposable
         _ = new VehicleFuelServices(_server, _catalog, _vehicles);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
         _zombies = new ZombieServices(_server, _geometry, Emit);
+        // Source parity (row 15A): the horde is the listen owner's (ZombieChunkField{Player=player}); it
+        // anchors, sees and is hurt only through that player, and its System3 rows go only to that
+        // player's own client -- the source publishes none to a joined client and renders none there.
+        _zombies.Owner = () => _client?.PlayerId ?? 0;
+        _server.Zombies.Audience = id => _client != null && id == _client.PlayerId;
         _services.DoorNoise = _zombies.Noise;
         _vehicleLights.Noise = _zombies.Noise; _vehicleMaintenance.Noise = _zombies.Noise;
         _zombies.RainIntensity=()=>_environment.Sim.BlendAlpha*_environment.Severity;
@@ -405,7 +412,7 @@ public sealed partial class BridgeHost : IDisposable
                 _serviceSpecs.Add(request);_worldChanged=true;return result.GetProperty("vehicles")[0].GetProperty("netId").GetUInt32();
             },new((float)-_originX,0,(float)-_originZ));
         _appearance = new PlayerAppearanceNetSync(_server);
-        _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
+        _weapons.Noise=(owner,radius)=>{if(_zombies.Participant(owner)&&_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
         _movingInput=false;_footNoiseTimer=0;
         _bodies.RepairRate = _weapons.RepairRate;
         // The listen owner's salvage rides its own client as before; a remote (or dedicated-host) owner's tool

@@ -10,6 +10,9 @@ public sealed partial class ZombieServices
     public bool Ray(CombatWorldRayDetailed previous,UVector from,UVector to,out CombatWorldHit hit)
     {
         bool found=previous(from,to,out hit);
+        // Source parity: the horde lives only in the listen owner's world, so another player's round
+        // passes where one of these bodies stands (ServerCombat.RayShooter names the round's owner).
+        if(!Participant(_server.Combat.RayShooter))return found;
         var direction=to-from;float length=direction.magnitude;
         if(length<=0)return found;
         direction/=length;float nearest=found?(hit.Point-from).magnitude:length;
@@ -46,6 +49,7 @@ public sealed partial class ZombieServices
     }
     bool Melee(ushort owner,UVector origin,UVector direction,float reach,float damage)
     {
+        if(!Participant(owner))return false;
         if(_geometry.RayDetailed(origin,origin+direction*reach,out var blocker)
             &&(blocker.ResourceIndex>=0||blocker.DestructibleIndex>=0||blocker.VehicleNetId!=0||blocker.DeployableNetId!=0))return false;
         foreach(var b in _bodies.Values)

@@ -3173,9 +3173,14 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - Engine, main rotor and tail rotor are sent as u8 fractions, with drowned, fuse and burn tick.
   - Remote rows now carry part health, `onFire`, `burnSeconds` and `wreckSalvageable`.
 - **`network.sourceAbsent`.** The tokens the source never sent a joined client either were checked against `game/` and moved here. `wireGaps` keeps only the slice B pair.
-- **Zombie finding.** In the source, remotes see no zombies, and the current horde never damages players. The Bevy host streams the horde around remote players too. This is left as a user decision.
+- **Zombies: source parity, as decided.** In the source, remotes see no zombies, the horde never damages players and dedicated builds none. The extractor now anchors the horde on the listen owner only. A dedicated host steps none. Remote rounds, swings and gunfire no longer reach it (`ServerCombat.RayShooter`). System 3 rows go only to the listen owner's client (`ZombieReplication.Audience`). There are no wire changes.
 - **Verification.**
   - Core: 773/773, including 5 new wire tests and three updated goldens.
   - Managed: 325/325 full run; the RemoteSession suite is 24/24 with the day-wrap assertion.
   - Each new behaviour has a negative control that fails under revert: Command 101 unregistered, single shared tool, environment publish dropped, part publish dropped, remote day not derived from the clock.
   - Two-process capture: a managed v80 listen host plus a native UDP client under Xvfb. Host `weather rain` makes the client draw rain (`bevy/artifacts/row15a/client-rain-joined.png`); the `weather clear` control is dry (`client-clear-joined.png`). Both PNGs were opened.
+- **Review follow-ups.**
+  - The tool hold window was 5 ticks, equal to the RTO floor; it is now 25, and a dead or disconnected owner's tool is dropped.
+  - New tests: salvage across a command gap, deployable salvage under the remote's identity, tool cleanup, fuse/burn/drowned on the remote row, System 21 in the sync check, three zombie parity tests, and dedicated with no horde.
+  - Ten negative controls each failed their named test.
+  - Full runs after the follow-ups: core 775/775, managed 333/333. No Rust was touched.

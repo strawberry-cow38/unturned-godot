@@ -1,8 +1,10 @@
+using System.Reflection;
 using System.Text.Json;
 using NUnit.Framework;
 using UnturnedBevy;
 using SDG.Unturned;
 using UnturnedGodot.Net;
+using UnityEngine;
 
 namespace UnturnedBevyTests;
 
@@ -20,7 +22,9 @@ public sealed partial class RemoteSessionTests
                 hitRegions = new object[] {
                     new { bodyPart = "mainRotor", center = new[] { 0f, 3f, 0f }, size = new[] { 1f, 1f, 1f }, health = 450f },
                     new { bodyPart = "tailRotor", center = new[] { 0f, 2f, 6f }, size = new[] { 1f, 1f, 1f }, health = 280f } } }
-            : (object)new { typeId = type, position = new[] { Spawn[0], Spawn[1], z }, seatCount = 4, health, healthMax, fuel = 1000, battery = 10000, speedMax = 30 } },
+            : (object)new { typeId = type, position = new[] { Spawn[0], Spawn[1], z }, seatCount = 4, health, healthMax, fuel = 1000, battery = 10000, speedMax = 30,
+                // what native registration sends for the sedan (Health 600 -> engine 600*10*0.4)
+                engineRegion = new { rear = false, threshold = 0f, health = 2400f } } },
     }).GetProperty("vehicles")[0].GetProperty("netId").GetUInt32();
 
     /// <summary>A vertical vehicle-tagged quad across the look ray, at <paramref name="z"/>, on the host's
@@ -143,5 +147,109 @@ public sealed partial class RemoteSessionTests
         Assert.That(row.GetProperty("onFire").GetBoolean(), Is.False);
         Action(_host, "console", new { text = "killtail" }); Pump();
         Assert.That(Row(_remote, heli).GetProperty("tailRotorHealth").GetSingle(), Is.Zero, "a dead rotor stays exactly dead");
+    }
+
+    // ---- review follow-ups (d45982de) ----
+
+    BodyCombatServices Bodies => (BodyCombatServices)typeof(BridgeHost).GetField("_bodies", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_host);
+    ushort RemoteId => State(_remote).GetProperty("playerId").GetUInt16();
+    /// <summary>A wreck that burnt out 62 s ago: past BodyRules.CoolSeconds, so a blowtorch salvages it.</summary>
+    void Cooled(bool vehicle, uint id)
+    {
+        long tick = Server.Session.CurrentTick;
+        if (vehicle)
+        {
+            Server.Vehicles.TryGet(id, out var v);
+            Server.Vehicles.ServerPublishVitals(new(id), v.Fuel, 0, v.Battery, true, tick + 1);
+            int ordinal = Array.FindIndex(Server.Vehicles.All.ToArray(), e => e.NetIdValue == id);
+            Bodies.Restore([new BodyCombatServices.Saved(true, ordinal, 0, null, -1, 3100)]);
+        }
+        else
+        {
+            Server.Deployables.TryGet(id, out var d);
+            Server.Deployables.ServerSetScalars(id, 0, d.Fuel, true, tick);
+            Bodies.Restore([new BodyCombatServices.Saved(false, -1, d.DefId, [d.Pos.x, d.Pos.y, d.Pos.z], -1, 3100)]);
+        }
+    }
+
+    [Test]
+    public void RemoteWreckSalvageSurvivesAShortGapInToolCommands()
+    {
+        Listen(); Join(); Pump();
+        uint wreck = HostVehicle(-23.5f, 500, 1000); HostPanel(wreck, -23.5f); Pump();
+        Cooled(true, wreck); Pump();
+        Hold(_remote, Blowtorch);
+        // 100 + 100 ticks of holding with an 8-tick hole between them (a lost or late ReliableOrdered copy,
+        // RTO floor 5): the 150-tick salvage completes only if the hole does not reset the timer.
+        for (int i = 0; i < 100; i++) { Face(_remote, 0); Action(_remote, "toolUse", new { active = true }); Pump(1); }
+        Assert.That(Server.Vehicles.TryGet(wreck, out _), Is.True, "not yet: 3 s of torch");
+        Pump(8);
+        for (int i = 0; i < 100 && Server.Vehicles.TryGet(wreck, out _); i++) { Face(_remote, 0); Action(_remote, "toolUse", new { active = true }); Pump(1); }
+        Assert.That(Server.Vehicles.TryGet(wreck, out _), Is.False, "the remote's salvage finished across the gap");
+        Pump(4);
+        Assert.That(State(_remote).GetProperty("vehicles").EnumerateArray().Any(v => v.GetProperty("netId").GetUInt32() == wreck), Is.False);
+    }
+
+    [Test]
+    public void RemoteSalvagesADeployableWreckUnderItsOwnIdentity()
+    {
+        Listen(); Join(); Pump();
+        var bench = Server.Deployables.ServerPlace(Server.Ids.Mint(), 1916, 0, new Vector3(35, 8, -23.6f), 0, Server.Session.CurrentTick);
+        uint id = bench.NetIdValue;
+        Call(_host, "worldDynamicGeometry", new { key = $"deployable-{id}", meshes = new[] { new {
+            vertices = new[] { new[] { 33f, 7f, -23.5f }, new[] { 37f, 7f, -23.5f }, new[] { 37f, 12f, -23.5f }, new[] { 33f, 12f, -23.5f } },
+            indices = new[] { 0, 1, 2, 0, 2, 3 }, deployableNetId = id } } });
+        Cooled(false, id); Pump();
+        Hold(_remote, Blowtorch);
+        for (int i = 0; i < 200 && Server.Deployables.TryGet(id, out _); i++) { Face(_remote, 0); Action(_remote, "toolUse", new { active = true }); Pump(1); }
+        Assert.That(Server.Deployables.TryGet(id, out _), Is.False,
+            "the host dispatched the wreck salvage under the remote's identity, which CanSalvageWreck approved");
+        Pump(4);
+        Assert.That(State(_remote).GetProperty("deployables").EnumerateArray().Any(d => d.GetProperty("netId").GetUInt32() == id), Is.False);
+    }
+
+    [Test]
+    public void ToolStateEndsWithItsOwnersLifeAndConnection()
+    {
+        Listen(); Join(); Pump();
+        uint car = HostVehicle(-23.5f, 500, 1000); HostPanel(car, -23.5f); Pump();
+        Hold(_remote, Blowtorch);
+        ushort remote = RemoteId;
+        for (int i = 0; i < 6; i++) { Face(_remote, 0); Action(_remote, "toolUse", new { active = true }); Pump(1); }
+        Assert.That(Bodies.ToolOwners, Does.Contain(remote));
+        Server.Combat.DamagePlayerExternal(remote, 150); Pump(2);
+        Assert.That(Bodies.ToolOwners, Does.Not.Contain(remote), "a dead owner's tool is gone at once, not after the hold window");
+
+        Pump(300);   // automatic respawn
+        Hold(_remote, Blowtorch);
+        for (int i = 0; i < 6; i++) { Face(_remote, 0); Action(_remote, "toolUse", new { active = true }); Pump(1); }
+        Assert.That(Bodies.ToolOwners, Does.Contain(remote));
+        Call(_remote, "disconnect");
+        for (int i = 0; i < 4; i++) { Call(_host, "tick"); Thread.Sleep(1); }
+        Assert.That(Bodies.ToolOwners, Does.Not.Contain(remote), "a disconnected owner's tool is gone");
+    }
+
+    [Test]
+    public void FuseBurnAndDrownedReachTheRemoteRow()
+    {
+        Listen(); Join(); Pump();
+        uint drowned = HostVehicle(-80, 500, 1000), fused = HostVehicle(-140, 500, 1000), burnt = HostVehicle(-200, 500, 1000);
+        Pump();
+        Assert.That(Row(_remote, drowned).GetProperty("engineDrowned").GetBoolean(), Is.False);
+        Call(_host, "worldVehicleState", new { vehicles = new[] { new { netId = drowned, engineDrowned = true } } });
+        Call(_host, "worldVehicleDamage", new { netId = fused, amount = 500f });           // hull 0: the 4 s fuse is lit
+        Call(_host, "worldVehicleDamage", new { netId = burnt, amount = 1f, explodeNow = true });
+        Pump(10);
+        var row = Row(_remote, drowned);
+        Assert.That(row.GetProperty("engineDrowned").GetBoolean(), Is.True);
+        Assert.That(row.GetProperty("engineHealth").GetSingle(), Is.Zero, "a drowned engine is dead");
+        row = Row(_remote, fused);
+        Assert.That(row.GetProperty("onFire").GetBoolean(), Is.True, "the lit fuse reads on fire");
+        Assert.That(row.GetProperty("burnSeconds").GetSingle(), Is.EqualTo(-1), "not burning yet, as on the host");
+        row = Row(_remote, burnt); var host = Row(_host, burnt);
+        Assert.That(row.GetProperty("onFire").GetBoolean(), Is.True);
+        Assert.That(row.GetProperty("burnSeconds").GetSingle(), Is.GreaterThanOrEqualTo(0f), "the burn tick arrived");
+        Assert.That(row.GetProperty("burnSeconds").GetSingle(), Is.EqualTo(host.GetProperty("burnSeconds").GetSingle()).Within(.3f));
+        Assert.That(row.GetProperty("wreckSalvageable").GetBoolean(), Is.False, "still hot");
     }
 }

@@ -164,7 +164,7 @@ client. These are not to be ported. Each was checked in `game/`:
 | acceptedShotTick | `PlayerFiredEvent` carries origin, direction and gun only. |
 | zombieHostState | See the finding below. |
 
-### Zombie finding (decision for the user)
+### Zombies: source parity (decided)
 
 **Source.** In the Godot source, remote MP players do **not** see zombies:
 
@@ -173,31 +173,47 @@ client. These are not to be ported. Each was checked in `game/`:
 - `DedicatedServer.cs:63` removed `ZombieNetSync`. Nothing publishes
   `Server.Zombies`.
 - The current horde (`ZombieChunkField`) is built only in the SP/listen
-  `WorldBuilder` branches, with `Player = player`. It streams and sights on that
-  one local player. The dedicated build creates none.
+  `WorldBuilder` branches (`WorldBuilder.cs:2370/2869`), with `Player = player`.
+  It streams and sights on that one local player. The dedicated build creates
+  none.
 - The rewrite has no attack on players at all (`ZombieBody.Damage` is only
   incoming).
 
-**Bevy port.**
+**What the hybrid did.** The extractor mapped the field's `Player == null`
+branch (server worlds, which the source never builds a horde for) to every
+server player. Invisible zombies therefore:
 
-- The extractor maps the field's `Player == null` branch to every server
-  player, so on a listen or dedicated host the horde streams around remote
-  players and chases them.
-- No zombie damages anyone, so the planner's worry ("remote players are attacked
-  by zombies they cannot see") does not hold today.
-- A remote does receive `hasBody:false` System 3 rows, which native drops.
+- streamed around and chased remote players;
+- absorbed remote players' rounds on the server ray;
+- were lured by remote gunfire.
 
-**Decision needed.** Two options:
+**Now (the user's decision: match the source).**
 
-1. Keep source parity: remotes see no zombies, and the horde should anchor only
-   on the local player, as in the source.
-2. Add a remote zombie presentation path, which the source removed.
+- `extract_data.py` maps the anchor to the source's
+  `else if (Player != null) _anchors.Add(Player.GlobalPosition)` through
+  `ZombieServices.OwnerAnchor`. `Owner` is the listen owner (`_client.PlayerId`),
+  so the horde streams and sees only that player. `ZombieField.g.cs` is
+  generated; it is not hand-edited.
+- A `--dedicated` host steps no horde: `worldZombies` and finite population
+  answer `disabled`, as with `--no-zombies`.
+- `ServerCombat.RayShooter` names the player whose bullet or melee ray is in
+  flight. This is server-only context, with no wire change. `ZombieServices.Ray`
+  and its melee cone ignore anyone but the listen owner, so a remote's round
+  passes where a zombie stands. NPC rounds (shooter 0) still hit.
+- Weapon noise lures only for the listen owner. World noises (doors, alarms,
+  horns) stay world facts at their own position.
+- `ZombieReplication.Audience` (server-only, no wire change) composes an empty
+  System 3 block for every client except the listen owner's own. The owner's
+  client still renders its horde from System 3 exactly as before.
+- Not changed: zombie hit and death events are still broadcast, but a remote
+  has no row to apply them to.
 
-Nothing was changed here.
+A remote zombie presentation path would be a deliberate future divergence from
+the source.
 
 ## Verification
 
-- **Core (`HostEnrichmentWireTests`, 5).**
+- **Core (`HostEnrichmentWireTests`, 7).**
   - System 21: full, delta, unchanged (one-bit delta, a sub-quantum republish
     does not dirty), truncation and hash.
   - System 21 over the real snapshot plane.
@@ -205,6 +221,9 @@ Nothing was changed here.
     negative burn tick; truncation keeps the accepted view; delta and
     no-dirty-on-same; the 0/1/254/255 rules.
   - Command 101 round-trip.
+  - System 21 is in the sync-check set: a diverged replica is reported.
+  - `ZombieReplication.Audience` composes nothing for an excluded client; the
+    owner still gets rows and removals.
   - A v79 handshake is refused.
   - The three goldens are updated.
 - **Managed, real UDP (`RemoteSessionTests.HostEnrichment.cs`, 4).**
@@ -245,3 +264,32 @@ Nothing was changed here.
   (DEDICATED_SERVER_PORT "Remaining"). Rejoining through Play → Direct Connect
   worked, and the menu capture before the rejoin already carried the replicated
   weather at blend 0.23.
+- **Review follow-ups (second commit).**
+  - **Tool hold window.** It was 5 ticks, equal to the reliable channel's RTO
+    floor, so one lost `ToolUse` copy dropped the target and restarted a
+    150-tick salvage. It is now `ToolHoldTicks = 5 * MinRtoTicks` (25). A dead
+    or disconnected owner's tool is removed at once.
+  - **Managed tests (UDP).**
+    - A remote's wreck salvage completes across an 8-tick command gap.
+    - A remote salvages a deployable wreck under its own identity.
+    - Tool state ends on death and on disconnect.
+    - Lit fuse, burn tick and drowned reach the remote row.
+    - `ZombieParityTests`: the listen owner's horde is unchanged and the remote
+      receives no rows; the horde anchors only on the owner; a remote's shot
+      passes the zombie into the car behind and its gunfire does not lure,
+      while the owner's shot is absorbed and lures.
+    - `DedicatedServerTests`: the dedicated host steps no horde and a peer sees
+      none.
+  - **Negative controls.** Each failed its named test; backups are in
+    `bevy/.local/nc-backup/r2/`.
+    - hold window back to 5;
+    - salvage sent through the listen client;
+    - alive check removed;
+    - fuse bit forced false;
+    - `Audience` unset;
+    - extractor anchored on all players;
+    - dedicated horde allowed;
+    - zombie ray participant check removed;
+    - weapon-noise gate removed;
+    - System 21 removed from the sync-check list.
+  - **Full runs.** Core 775/775 and managed 333/333.

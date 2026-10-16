@@ -133,4 +133,40 @@ public sealed class HostEnrichmentWireTests
         Assert.That(old.RejectReason, Is.EqualTo(NetRejectReason.VersionMismatch));
         Assert.That(old.RejectServerVersion, Is.EqualTo(NetProtocol.Version));
     }
+
+    [Test]
+    public void EnvironmentIsInTheSyncCheckSetSoADivergedReplicaIsReported()
+    {
+        var h = new TransactionalHarness(8081).Connected("joiner"); var c = h.Clients[0];
+        h.Server.EnableSyncCheck(5);
+        var reports = new System.Collections.Generic.List<DesyncReport>();
+        c.Applier.DesyncDetected += reports.Add;
+        h.Server.Environment.ServerSet(42, 3, 0, WeatherStage.Active, 1f, .5f, 0f, h.Server.Session.CurrentTick);
+        Assert.That(h.StepUntil(() => c.Environment.StateHash() == h.Server.Environment.StateHash(), 200), Is.True);
+        h.Step(30);
+        Assert.That(reports, Is.Empty, "a mirrored environment passes the check");
+        // Diverge the replica only (a client that rolled its own weather): the next checks name System21.
+        c.Environment.ServerSet(42, 3, 1, WeatherStage.Active, 1f, .5f, 0f, 0);
+        h.Step(30);
+        Assert.That(reports.Exists(r => r.SystemId == ReplicationIds.SystemEnvironment), Is.True,
+            "SystemEnvironment is in NetWorldServer.EnableSyncCheck's list");
+    }
+
+    [Test]
+    public void ZombieAudienceComposesNothingForAClientOutsideIt()
+    {
+        var host = new ZombieReplication(); var owner = new ZombieReplication(); var remote = new ZombieReplication();
+        host.Audience = id => id == 1;
+        host.ServerSpawn(new NetId(5), 0, new Vector3(1, 0, 1), 1);
+        owner.ReadSnapshot(Reader(Pack(w => host.WriteFull(w, new ReplicationContext(1, 1, Vector3.zero)))), true);
+        remote.ReadSnapshot(Reader(Pack(w => host.WriteFull(w, new ReplicationContext(1, 2, Vector3.zero)))), true);
+        Assert.That(owner.Count, Is.EqualTo(1), "the listen owner's own client still gets its horde");
+        Assert.That(remote.Count, Is.Zero, "a joined client is composed an empty block");
+        host.ServerPublish(new NetId(5), new Vector3(2, 0, 2), 90, 0, 3);
+        host.ServerRemove(new NetId(5), 4);
+        remote.ReadSnapshot(Reader(Pack(w => host.WriteDelta(w, new ReplicationContext(5, 2, Vector3.zero), 1))), false);
+        Assert.That(remote.Count, Is.Zero);
+        owner.ReadSnapshot(Reader(Pack(w => host.WriteDelta(w, new ReplicationContext(5, 1, Vector3.zero), 1))), false);
+        Assert.That(owner.Count, Is.Zero, "the owner still receives the removal");
+    }
 }

@@ -495,4 +495,26 @@ public sealed class DedicatedServerTests
         using var check = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         check.Bind(new IPEndPoint(IPAddress.Any, _port));
     }
+
+    /// <summary>Row 15A source parity: the source dedicated server builds no horde (WorldBuilder's Dedicated
+    /// branch has no ZombieChunkField; DedicatedServer removed ZombieNetSync), so neither does this host,
+    /// even with a field offered right where a joined player stands.</summary>
+    [Test]
+    public void TheDedicatedHostStepsNoZombieHorde()
+    {
+        Boot();
+        Call("worldGeometry", new { meshes = new[] { new { terrain = true, vertices = new[] {
+            new[] { -2000f, 0, -2000 }, new[] { 2000f, 0, -2000 }, new[] { 2000f, 0, 2000 },
+            new[] { -2000f, 0, -2000 }, new[] { 2000f, 0, 2000 }, new[] { -2000f, 0, 2000 } } } } });
+        var field = JsonSerializer.SerializeToElement(Call("worldZombies", new { mapRoot = _dir,
+            points = new[] { new[] { 2f, 1, 2 }, new[] { -2f, 1, 3 }, new[] { 3f, 1, -2 } } }), JsonOptions);
+        Assert.That(field.TryGetProperty("disabled", out var disabled) && disabled.GetBoolean(), Is.True);
+        var peer = Peer("near the field"); Pump(150);
+        Assert.That(peer.State, Is.EqualTo(NetSessionState.Connected));
+        var zombies = (ZombieServices)typeof(BridgeHost).GetField("_zombies", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(_host);
+        Assert.That(JsonSerializer.SerializeToElement(zombies.Summary(), JsonOptions).GetProperty("bodies").GetInt32(), Is.Zero);
+        Assert.That(State().GetProperty("zombies").ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+            || State().GetProperty("zombies").GetArrayLength() == 0, Is.True);
+        Assert.That(peer.Zombies.Count, Is.Zero, "a joined player sees none");
+    }
 }
