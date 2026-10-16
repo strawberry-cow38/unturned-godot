@@ -85,7 +85,7 @@ public sealed class VehicleDoorServices
     }
     // Original LookRayHitsHull fallback tests direct box children, never the
     // enclosing bounds of a concave hull. Source access still picks the zone.
-    static bool HitsHull(JsonElement source,Vector3 from,Vector3 to)
+    internal static bool HitsHull(JsonElement source,Vector3 from,Vector3 to)
     {
         var spec=source.GetProperty("spec");
         bool Boxes(string key,out JsonElement rows)=>spec.TryGetProperty(key,out rows)&&rows.ValueKind==JsonValueKind.Array;

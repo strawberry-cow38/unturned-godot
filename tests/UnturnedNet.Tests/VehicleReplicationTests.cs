@@ -539,7 +539,9 @@ namespace UnturnedNet.Tests
             // bits; health600 becomes biased66136 in17+1. Keep prior89-bit tail
             // beginning at oldbattery offset283; append44 zero pane/tire bits.
             // 253+21+18+89+44=425bits =>54bytes (0x36), replacing47bytes.
-            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000093600010009000000050200000C10302040F80306100E8E6F0220308120004220C09EBB00610904712E000000002000000000000000000000"));
+            // v74: append32 zero fifth-wheel bits after the v70 absent-door bit.
+            // 426+32=458bits =>58bytes (0x3A); prior contents remain byte-identical.
+            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000093A00010009000000050200000C10302040F80306100E8E6F0220308120004220C09EBB00610904712E00000000200000000000000000000000000000"));
         }
 
         static ushort Driver(Harness h, uint veh)

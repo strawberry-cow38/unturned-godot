@@ -115,6 +115,13 @@ public sealed class VehicleLightingServices
         foreach (uint id in _states.Keys.ToArray()) if (!_server.Vehicles.TryGet(id, out _)) _states.Remove(id);
         foreach (var vehicle in _server.Vehicles.All)
         {
+            var s = Ensure(vehicle.NetIdValue).State;
+            s.CoupledTrailer = vehicle.CoupledTrailerNetId != 0 ? Ensure(vehicle.CoupledTrailerNetId)?.State : null;
+            s.CoupledCab = _server.Vehicles.TryGetCoupledCab(vehicle.NetIdValue, out var cab) ? Ensure(cab.NetIdValue)?.State : null;
+            if (s.CoupledCab != null) s._taillightsOn = cab.EngineOn && s.CoupledCab.Battery > 0;
+        }
+        foreach (var vehicle in _server.Vehicles.All)
+        {
             var e = Ensure(vehicle.NetIdValue); var s = e.State;
             // Engine is still an accepted body/control field (including the
             // source NPC warm-start writer); lights themselves have no such writer.
@@ -136,7 +143,10 @@ public sealed class VehicleLightingServices
     void Publish(uint id, Entry e)
     {
         if (!_server.Vehicles.TryGet(id, out var v)) return;
-        _server.Vehicles.ServerPublishLighting(new(id), e.State.Flags(v.Flags), e.State.Battery,
+        byte flags = v.Flags;
+        if (_server.Vehicles.TryGetCoupledCab(id, out var cab))
+            flags = (byte)((flags & ~VehicleReplication.FlagBraking) | (cab.Flags & VehicleReplication.FlagBraking));
+        _server.Vehicles.ServerPublishLighting(new(id), e.State.Flags(flags), e.State.Battery,
             e.State._headlightsOn && e.State._highBeam, checked((byte)e.State.LightbarPattern), e.Lamps, e.Broken, _server.Session.CurrentTick + 1);
     }
     public object RegisterGeometry(JsonElement request)

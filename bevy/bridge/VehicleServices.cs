@@ -174,7 +174,7 @@ public sealed class VehicleServices
             if (Bool(state, "engineDrowned") && _parts.TryGetValue(id, out var parts)) { parts.Drowned = true; parts.Engine = 0; }
             Lighting?.BodyState(id, state);
             if (Lighting != null) { flags = Lighting.NormalizeFlags(id, flags); battery = Lighting.BatteryFor(id, battery); }
-            if (e.DriverPlayerId == 0)
+            if (e.DriverPlayerId == 0 && !(_server.Vehicles.TryGetCoupledCab(id, out var cab) && cab.DriverPlayerId != 0))
                 _server.Vehicles.ServerPublish(new(id), Vec(state, "position", e.Pos), Vec(state, "eulerDegrees", new(e.PitchDegrees, e.YawDegrees, e.RollDegrees)),
                     Vec(state, "linVel", e.LinVel), Vec(state, "angVel", e.AngVel), Float(state, "steerDegrees", e.SteerDegrees), fuel, health, battery, flags, tick);
             else _server.Vehicles.ServerPublishVitals(new(id), fuel, health, battery, (flags & VehicleReplication.FlagExploded) != 0, tick);

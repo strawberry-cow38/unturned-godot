@@ -326,7 +326,8 @@ namespace UnturnedNet.Tests
                 RecovCounter = 7,
             };
             byte[] packed = NetMessagePak.Pack(ReplicationIds.EventVehicleRecov, evt.Write);
-            Assert.That(ToHex(packed), Is.EqualTo("1D02ADDE006410902110C903002007C63F021FC80207"));
+            // v74 absent pair gate adds one zero bit after the aligned legacy fact.
+            Assert.That(ToHex(packed), Is.EqualTo("1D02ADDE006410902110C903002007C63F021FC8020700"));
 
             var r = new SDG.NetPak.NetPakReader();
             r.SetBufferSegment(packed, packed.Length);

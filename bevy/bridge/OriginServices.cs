@@ -29,6 +29,7 @@ public sealed partial class BridgeHost
         DrainNetwork();
         var delta = -shift;
         WorldRebase.Translate(_server, _client, delta);
+        TranslateVehicleRecoveries(delta);
         _position += delta;
         _geometry.TranslateWorld(delta);
         _services.TranslateWorld(delta);
@@ -144,7 +145,10 @@ internal static class CoordinateJson
     {
         var node = JsonSerializer.SerializeToNode(data, Options);
         if (node is JsonObject obj)
+        {
             foreach (string key in new[] { "pos", "position", "point", "sourcePos", "origin", "muzzleAnchor", "muzzle" }) Move(obj, key, d);
+            if (obj["trailer"] is JsonObject trailer) Move(trailer, "pos", d);
+        }
         return JsonSerializer.SerializeToElement(node);
     }
 }

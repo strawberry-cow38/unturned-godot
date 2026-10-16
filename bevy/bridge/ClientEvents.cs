@@ -7,6 +7,15 @@ namespace UnturnedBevy;
 
 public sealed partial class BridgeHost
 {
+    void TranslateVehicleRecoveries(Vector3 delta)
+    {
+        foreach (uint id in _vehicleRecovery.Keys.ToArray())
+        {
+            var recovery = _vehicleRecovery[id]; recovery.Pos += delta;
+            if (recovery.Trailer is { } trailer) { trailer.Pos += delta; recovery.Trailer = trailer; }
+            _vehicleRecovery[id] = recovery;
+        }
+    }
     void CreateClient(IClientTransport transport)
     {
         _npcView = new();
@@ -53,7 +62,7 @@ public sealed partial class BridgeHost
             Emit("vehicleExited", e);
         };
         _client.VehicleExitRefused += e => Emit("vehicleExitRefused", e);
-        _client.VehicleRecov += e => { _vehicleRecov[e.NetId] = e.RecovCounter; Emit("vehicleRecov", e); };
+        _client.VehicleRecov += e => { _vehicleRecov[e.NetId] = e.RecovCounter; _vehicleRecovery[e.NetId] = e; Emit("vehicleRecov", e); };
         _client.ChatMessage += e => Emit("chat", e);
         _client.ImpactFx += e => {
             var facts=_warheads?.TakeImpact();

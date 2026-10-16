@@ -104,6 +104,11 @@ namespace UnturnedGodot.Net
             public bool HasBiFoldDoor { get; internal set; }
             public bool DoorOpen { get; internal set; }
             public float DoorFold { get; internal set; }
+            // v74 fifth-wheel relation; inverse is derived, never rope TowedNetId.
+            public uint CoupledTrailerNetId { get; internal set; }
+            // Host-only link generation: detach/relink of the same ID must not
+            // reuse a raw driver pose from the previous physical joint.
+            internal ulong CouplingRevision;
             // A6 rope tow (published by the disjoint ServerPublishTow writer, never the transform/vitals paths):
             public uint TowedNetId { get; internal set; }   // the vehicle THIS entity tows (0 = not towing). "Am I towed" is DERIVED client-side (being someone else's TowedNetId) -- NEVER replicated (a redundant TowedByNetId would be a hash-divergence footgun).
             public float TowRestLen { get; internal set; }  // the tow rope's rest length (quantized via QuantizeClampedFloat); cosmetic sag on the client rope. 0 when not towing.
@@ -371,6 +376,9 @@ namespace UnturnedGodot.Net
 
         public void ServerRemove(NetId id, long tick)
         {
+            // Retiring either body cannot leave a dangling accepted hitch.
+            foreach (var body in All)
+                if (body.CoupledTrailerNetId == id.Value) ServerSetCoupledTrailer(body.NetIdValue, 0, tick);
             if (_vehicles.Remove(id)) _removedAtTick[id.Value] = tick;
         }
 
@@ -524,6 +532,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixUInt32(h, e.GlassMask); h = NetHash.MixUInt32(h, e.BrokenGlassMask); h = NetHash.MixByte(h, e.TireMask);
                 h = NetHash.MixByte(h, e.HasBiFoldDoor ? (byte)1 : (byte)0);
                 if (e.HasBiFoldDoor) { h = NetHash.MixByte(h, e.DoorOpen ? (byte)1 : (byte)0); h = NetHash.MixUInt32(h, BitConverter.SingleToUInt32Bits(e.DoorFold)); }
+                h = NetHash.MixUInt32(h, e.CoupledTrailerNetId);
             }
             return h;
         }
@@ -576,6 +585,7 @@ namespace UnturnedGodot.Net
             w.WriteBits(e.GlassMask,18); w.WriteBits(e.BrokenGlassMask,18); w.WriteUInt8(e.TireMask);
             w.WriteBit(e.HasBiFoldDoor);
             if (e.HasBiFoldDoor) { w.WriteBit(e.DoorOpen); w.WriteFloat(e.DoorFold); }
+            w.WriteUInt32(e.CoupledTrailerNetId);
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -622,8 +632,10 @@ namespace UnturnedGodot.Net
             if (!r.ReadBit(out bool hasDoor)) return false;
             bool doorOpen = false; float doorFold = 0;
             if (hasDoor && (!r.ReadBit(out doorOpen) || !r.ReadFloat(out doorFold) || !float.IsFinite(doorFold) || doorFold < 0 || doorFold > 1)) return false;
+            if (!r.ReadUInt32(out uint coupledTrailer) || coupledTrailer == id) return false;
             e = new VehicleEntity
             {
+                CoupledTrailerNetId = coupledTrailer,
                 HasBiFoldDoor = hasDoor, DoorOpen = doorOpen, DoorFold = doorFold,
                 GlassMask = glassMask, BrokenGlassMask = brokenGlass, TireMask = tireMask,
                 HighBeam = highBeam, LightbarPattern = (byte)pattern, LampMask = (byte)lampMask, BrokenLampMask = (byte)brokenMask,
@@ -711,6 +723,7 @@ namespace UnturnedGodot.Net
         public float Steer;        // [-1,1]
         public bool Handbrake;
         public byte Flags;         // VehicleReplication.Flag* dressing bits (engine/lights/siren/braking); Exploded is never client-writable
+        public VehiclePairPose? Trailer; // v74: exact linked trailer, adopted/recovered atomically
 
         public void Write(NetPakWriter w)
         {
@@ -728,6 +741,7 @@ namespace UnturnedGodot.Net
             w.WriteSignedNormalizedFloat(Clamp1(Steer), 8);
             w.WriteBit(Handbrake);
             w.WriteUInt8(Flags);
+            VehiclePairPose.WriteOptional(w, Trailer);
         }
 
         public static bool TryRead(NetPakReader r, out VehicleStateCommand cmd)
@@ -747,12 +761,13 @@ namespace UnturnedGodot.Net
             if (!r.ReadSignedNormalizedFloat(8, out float steer)) return false;
             if (!r.ReadBit(out bool handbrake)) return false;
             if (!r.ReadUInt8(out byte flags)) return false;
+            if (!VehiclePairPose.ReadOptional(r, out var trailer)) return false;
             cmd = new VehicleStateCommand
             {
                 Seq = seq, NetId = netId, RecovAck = recovAck,
                 Pos = pos, YawDegrees = yaw, PitchDegrees = pitch, RollDegrees = roll,
                 LinVel = lin, AngVel = ang, SteerDegrees = steerDeg,
-                Throttle = throttle, Steer = steer, Handbrake = handbrake, Flags = flags,
+                Throttle = throttle, Steer = steer, Handbrake = handbrake, Flags = flags, Trailer = trailer,
             };
             return true;
         }
@@ -774,6 +789,7 @@ namespace UnturnedGodot.Net
         public float YawDegrees, PitchDegrees, RollDegrees;
         public Vector3 LinVel;
         public byte RecovCounter;
+        public VehiclePairPose? Trailer;
 
         public void Write(NetPakWriter w)
         {
@@ -784,6 +800,7 @@ namespace UnturnedGodot.Net
             w.WriteDegrees(RollDegrees, NetQuantization.PitchBits);
             NetWire.WriteVel(w, LinVel);
             w.WriteUInt8(RecovCounter);
+            VehiclePairPose.WriteOptional(w, Trailer);
         }
 
         public static bool TryRead(NetPakReader r, out VehicleRecovEvent evt)
@@ -796,10 +813,11 @@ namespace UnturnedGodot.Net
             if (!r.ReadDegrees(out float roll, NetQuantization.PitchBits)) return false;
             if (!NetWire.ReadVel(r, out Vector3 lin)) return false;
             if (!r.ReadUInt8(out byte counter)) return false;
+            if (!VehiclePairPose.ReadOptional(r, out var trailer)) return false;
             evt = new VehicleRecovEvent
             {
                 NetId = netId, Pos = pos, YawDegrees = yaw, PitchDegrees = pitch, RollDegrees = roll,
-                LinVel = lin, RecovCounter = counter,
+                LinVel = lin, RecovCounter = counter, Trailer = trailer,
             };
             return true;
         }
@@ -1117,6 +1135,8 @@ namespace UnturnedGodot.Net
             public bool Predicted;                 // latched by the first ACCEPTED state -- flips VehicleNetSync to hold mode
             public bool HasAdopted;
             public PredictedVehicleState Adopted;
+            public VehiclePairPose? AdoptedTrailer;
+            public ulong AdoptedCouplingRevision;
         }
         readonly Dictionary<uint, DrivenState> _driven = new Dictionary<uint, DrivenState>();
 
@@ -1225,13 +1245,28 @@ namespace UnturnedGodot.Net
         /// <summary>True once the driver's client has had a state packet ACCEPTED for this vehicle -- the
         /// game-side sync flips the node to the freeze-hold and stops calling Drive.</summary>
         public bool IsPredictedDriven(uint vehicleNetId)
-            => _driven.TryGetValue(vehicleNetId, out var st) && st.Predicted;
+            => (_driven.TryGetValue(vehicleNetId, out var st) && st.Predicted)
+                || (_vehicles.TryGetCoupledCab(vehicleNetId, out var cab)
+                    && _driven.TryGetValue(cab.NetIdValue, out st) && st.Predicted);
 
         public bool TryGetPredictedState(uint vehicleNetId, out PredictedVehicleState state)
         {
             if (_driven.TryGetValue(vehicleNetId, out var st) && st.Predicted && st.HasAdopted)
             {
                 state = st.Adopted;
+                return true;
+            }
+            if (_vehicles.TryGetCoupledCab(vehicleNetId, out var cab)
+                && _driven.TryGetValue(cab.NetIdValue, out st) && st.Predicted
+                && _vehicles.TryGet(new NetId(vehicleNetId), out var body))
+            {
+                var trailer = st.AdoptedCouplingRevision == cab.CouplingRevision
+                    && st.AdoptedTrailer is { } raw && raw.NetId == vehicleNetId
+                        ? raw : VehiclePairPose.From(body);
+                state = new PredictedVehicleState {
+                    Pos = trailer.Pos, YawDegrees = trailer.YawDegrees, PitchDegrees = trailer.PitchDegrees,
+                    RollDegrees = trailer.RollDegrees, LinVel = trailer.LinVel, AngVel = trailer.AngVel,
+                };
                 return true;
             }
             state = default;
@@ -1291,6 +1326,7 @@ namespace UnturnedGodot.Net
                 violation = Math.Abs(dy) / dt > validSpeed;
             }
 
+            violation |= !PairAllowed(e, cmd);
             if (violation)
             {
                 // recov (retail tellRecov): counter++, ship the LAST-GOOD entity state to the driver,
@@ -1302,7 +1338,7 @@ namespace UnturnedGodot.Net
                 {
                     NetId = e.NetIdValue, Pos = e.Pos,
                     YawDegrees = e.YawDegrees, PitchDegrees = e.PitchDegrees, RollDegrees = e.RollDegrees,
-                    LinVel = e.LinVel, RecovCounter = st.RecovCounter,
+                    LinVel = e.LinVel, RecovCounter = st.RecovCounter, Trailer = PairRecovery(e),
                 };
                 _sendTo?.Invoke(sender, NetMessagePak.Pack(ReplicationIds.EventVehicleRecov, evt.Write));
                 return;
@@ -1314,6 +1350,8 @@ namespace UnturnedGodot.Net
             st.LastAcceptedTick = tick;
             st.Predicted = true;
             st.HasAdopted = true;
+            st.AdoptedTrailer = cmd.Trailer;
+            st.AdoptedCouplingRevision = e.CouplingRevision;
             st.Adopted = new PredictedVehicleState
             {
                 Pos = cmd.Pos, YawDegrees = cmd.YawDegrees, PitchDegrees = cmd.PitchDegrees, RollDegrees = cmd.RollDegrees,
@@ -1323,6 +1361,7 @@ namespace UnturnedGodot.Net
             _vehicles.ServerAdoptDriverState(new NetId(cmd.NetId), cmd.Pos,
                 new Vector3(cmd.PitchDegrees, cmd.YawDegrees, cmd.RollDegrees),
                 cmd.LinVel, cmd.AngVel, cmd.SteerDegrees, cmd.Flags, tick);
+            AdoptPair(cmd, tick);
         }
 
         public bool IsDriver(ushort playerId) => _drivenByPlayer.ContainsKey(playerId);

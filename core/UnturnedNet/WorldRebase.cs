@@ -99,7 +99,13 @@ namespace UnturnedGodot.Net
     public sealed partial class ServerVehicles
     {
         internal void TranslateWorld(Vector3 d)
-        { foreach (var state in _driven.Values) if (state.HasAdopted) state.Adopted.Pos += d; }
+        {
+            foreach (var state in _driven.Values)
+            {
+                if (state.HasAdopted) state.Adopted.Pos += d;
+                if (state.AdoptedTrailer is { } trailer) { trailer.Pos += d; state.AdoptedTrailer = trailer; }
+            }
+        }
     }
     public sealed partial class ServerCombat
     {

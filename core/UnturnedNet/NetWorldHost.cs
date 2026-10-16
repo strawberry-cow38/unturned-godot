@@ -346,6 +346,7 @@ namespace UnturnedGodot.Net
             RegisterVehicleLightingCommands();
             RegisterVehicleMaintenanceCommands();
             RegisterVehicleDoorCommands();
+            RegisterVehicleHitchCommands();
             RegisterCraftingContextCommands();
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
@@ -1685,7 +1686,7 @@ namespace UnturnedGodot.Net
         /// VehicleRecovEvent counter received (the session tracks it; 0 = none yet). Returns the seq
         /// (0 = not connected, nothing sent).</summary>
         public ushort SendVehicleState(uint vehicleNetId, Vector3 pos, Vector3 eulerDegrees, Vector3 linVel, Vector3 angVel,
-                                       float steerDegrees, float throttle, float steer, bool handbrake, byte flags, byte recovAck)
+                                       float steerDegrees, float throttle, float steer, bool handbrake, byte flags, byte recovAck, VehiclePairPose? trailer = null)
         {
             if (Session.State != NetSessionState.Connected) return 0;
             if (++_vehStateSeq == 0) _vehStateSeq = 1;
@@ -1694,7 +1695,7 @@ namespace UnturnedGodot.Net
                 Seq = _vehStateSeq, NetId = vehicleNetId, RecovAck = recovAck,
                 Pos = pos, YawDegrees = eulerDegrees.y, PitchDegrees = eulerDegrees.x, RollDegrees = eulerDegrees.z,
                 LinVel = linVel, AngVel = angVel, SteerDegrees = steerDegrees,
-                Throttle = throttle, Steer = steer, Handbrake = handbrake, Flags = flags,
+                Throttle = throttle, Steer = steer, Handbrake = handbrake, Flags = flags, Trailer = trailer,
             };
             Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandVehicleState, cmd.Write));
             return cmd.Seq;
