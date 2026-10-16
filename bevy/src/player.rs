@@ -554,7 +554,8 @@ fn ui_intents(
             UiIntent::Action { name, args } => {
                 if name == "console"
                     && (crate::entities::npcs::is_console_command(args["text"].as_str().unwrap_or(""))
-                        || crate::ui::npc::is_console_command(args["text"].as_str().unwrap_or("")))
+                        || crate::ui::npc::is_console_command(args["text"].as_str().unwrap_or(""))
+                        || crate::entities::crops::is_console_command(args["text"].as_str().unwrap_or("")))
                 {
                     continue;
                 }

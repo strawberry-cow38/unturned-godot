@@ -465,7 +465,7 @@ public sealed partial class BridgeHost : IDisposable
                 if(noise>2)_zombies.Noise(_position,noise);
             }
         }
-        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleTows.Step(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleTows.Step(); StepFarmSpeed(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
         _appearance.Tick();
         if (_worldChanged) PublishFullSnapshot();
         _server.TickReplication();
@@ -497,6 +497,7 @@ public sealed partial class BridgeHost : IDisposable
         if (IsRemote) return RemoteAction(name, args);
         if (name == "requestGesture") return RequestGesture(args);
         if (name == "console" && PlayerDebugConsole(Text(args, "text"))) return new { queued = true };
+        if (name == "console" && CropConsole(args, remote: false)) return new { queued = true };
         if (name == "console" && WeatherConsole(Text(args, "text"))) return new { queued = true };
         if (name == "console" && RotorConsole(Text(args, "text"))) return new { queued = true };
         if (name == "console" && _wildlife.Console(_client.PlayerId, Text(args, "text"))) return new { queued = true };

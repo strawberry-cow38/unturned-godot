@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+pub(crate) mod crops;
 mod items;
 pub(crate) mod forage;
 mod map_bindings;
@@ -185,6 +186,31 @@ impl InteractionFocus {
     pub fn has_candidate(&self) -> bool {
         self.candidate.is_some()
     }
+    /// A source F branch tried after every look target except the shelf and
+    /// crate ones (`PlayerController` runs `RequestHarvestNearestCrop` before
+    /// `_focusShelf`/`OpenNearestCrate`). It has no prompt of its own: a storage
+    /// candidate keeps its label, but F dispatches this action instead.
+    pub(crate) fn fall_through(&mut self, action: &str, args: Value) {
+        match &mut self.candidate {
+            None => {
+                self.candidate = Some(InteractionCandidate {
+                    distance: f32::INFINITY,
+                    label: String::new(),
+                    action: action.into(),
+                    args,
+                    open_storage: false,
+                    manual: false,
+                    show_binding: false,
+                })
+            }
+            Some(candidate) if candidate.open_storage => {
+                candidate.action = action.into();
+                candidate.args = args;
+                candidate.open_storage = false;
+            }
+            Some(_) => {}
+        }
+    }
 
     pub fn offer(
         &mut self,
@@ -238,6 +264,7 @@ pub struct CoreEvent {
 pub struct EntityPlugin;
 impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
+        crops::install(app);
         app.add_plugins(npcs::NpcPlugin)
             .init_resource::<ItemCatalog>()
             .init_resource::<ServiceManifest>()
@@ -245,6 +272,7 @@ impl Plugin for EntityPlugin {
             .init_resource::<InteractionFocus>()
             .init_resource::<Replicas>()
             .init_resource::<items::Models>()
+
             .add_plugins(items::material::AlphaDepthPlugin)
             .configure_sets(
                 Update,
@@ -260,6 +288,7 @@ impl Plugin for EntityPlugin {
                     sync_static_life,
                     forage::prepare,
                     sync_world_items,
+                    crops::sync,
                     forward_events.in_set(CoreEventsReady),
                 )
                     .chain()
@@ -825,7 +854,11 @@ fn apply_interaction(
     } else {
         candidate.label.clone()
     };
-    if candidate.manual || !settings.just_pressed(GameAction::Interact, &keys, &mouse) {
+    // PlayerController: Interact while ALT-looking interacts with nothing.
+    if candidate.manual
+        || !settings.just_pressed(GameAction::Interact, &keys, &mouse)
+        || settings.pressed(GameAction::FreeLook, &keys, &mouse)
+    {
         return;
     }
     match bridge.request(

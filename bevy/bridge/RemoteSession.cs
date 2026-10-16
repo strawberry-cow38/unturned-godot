@@ -125,6 +125,9 @@ public sealed partial class BridgeHost
             Emit("actionRejected", new { text = reason });
             return new { queued = false, reason };
         }
+        // DevConsole `plant` on a joined client: no CropManager, so it sends
+        // PlantCrop with the resolved seed (the server spends one).
+        if (name == "console" && CropConsole(args, remote: true)) return new { queued = true };
         // Original Send* methods use connection identity. No console/repair/
         // damage shortcut can accidentally run a local authority in this mode.
         return SendAction(name, args);
