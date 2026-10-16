@@ -118,6 +118,8 @@ namespace UnturnedGodot
 
         void Save(string path)
         {
+            var cam = GetViewport().GetCamera3D();
+            if (cam != null) Log.Print($"[playat] shot from {cam.GlobalPosition}, looking at {LookedAt()}");
             var img = GetViewport().GetTexture()?.GetImage();
             if (img == null) { Log.Err("[playat] no image -- run with a rendering driver, not --headless"); return; }
             var err = img.SavePng(path);
@@ -239,11 +241,50 @@ namespace UnturnedGodot
             var front = t.Basis * Vector3.Up;          // a piece's front is its OBJ +Y (EditorObjects.Upright takes it there)
             front.Y = 0f;
             front = front.LengthSquared() > 1e-6f ? front.Normalized() : Vector3.Forward;
-            var at = _dist > 0.01f ? t.Origin + front * _dist + Vector3.Up * 0.05f : t.Origin + Vector3.Up * _rise;
+            if (_dist > 0.01f && _clearDist < 0f) _clearDist = ClearDistance(t, front);
+            var at = _dist > 0.01f ? t.Origin + front * _clearDist + Vector3.Up * 0.05f : t.Origin + Vector3.Up * _rise;
             _player.TeleportTo(at);
             // the player looks down its own -Z: turned so that is -front, back at the piece
             _player.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(front.X, front.Z)), 0f);
             _player.DebugSetLookPitch(_pitch);
+        }
+
+        float _clearDist = -1f;
+
+        /// <summary>The nearest distance from `dist` out (0.1 m steps, 3 m at most) along the piece's front where a player can
+        /// STAND: no piece of the building's furniture standing on the floor within a capsule's reach of the spot (by its MESH
+        /// bounds -- the same whether or not the furniture has colliders, so a before and an after pick the same spot), and no
+        /// wall between the piece and it. Without it a spot inside a coffee table is a fine place to stand only while the table
+        /// is a ghost.</summary>
+        float ClearDistance(Transform3D t, Vector3 front)
+        {
+            float floorY = t.Origin.Y;
+            var boxes = new List<Aabb>();
+            var b = BuildingOf(_target);
+            if (b != null)
+                foreach (var f in Furniture(b))
+                    Walk(f, n =>
+                    {
+                        if (n is not MeshInstance3D mi || mi.Mesh == null) return;
+                        var w = mi.GlobalTransform * mi.GetAabb();
+                        if (w.Size.Y > 0.1f && w.Position.Y < floorY + 1.8f && w.End.Y > floorY + 0.1f) boxes.Add(w);   // standing in the way: not a rug, not a lamp
+                    });
+            var space = _target.GetWorld3D().DirectSpaceState;
+            for (float d = _dist; d <= _dist + 3f; d += 0.1f)
+            {
+                var p = t.Origin + front * d;
+                bool blocked = false;
+                foreach (var w in boxes)
+                    if (p.X > w.Position.X - 0.45f && p.X < w.End.X + 0.45f && p.Z > w.Position.Z - 0.45f && p.Z < w.End.Z + 0.45f) { blocked = true; break; }
+                if (blocked) continue;
+                var from = t.Origin + Vector3.Up * 1.2f;
+                var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, p + front * 0.45f + Vector3.Up * 1.2f, 1u << 0));
+                if (hit.Count > 0) break;                                                       // the next spot is through a wall
+                Log.Print($"[playat] standing {d:0.0} m in front (asked {_dist:0.0}): clear of {boxes.Count} pieces' bounds");
+                return d;
+            }
+            Log.Print($"[playat] no clear spot within 3 m past {_dist:0.0} m -- standing at {_dist:0.0} as asked");
+            return _dist;
         }
 
         void Report()
