@@ -1,5 +1,45 @@
 use super::*;
 
+/// A dedicated host restores at admission, not through UiIntent::Load: its
+/// parked bodies must still adopt the restored replica pose, or the first player
+/// to arrive wakes a car at its spawn pose that then overwrites the saved one
+/// (found on the dedicated restart journey).
+#[test]
+fn admission_restore_readopts_the_restored_replica_pose_like_load() {
+    for restore in [false, true] {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<Image>()
+            .init_resource::<ContentCache>()
+            .init_resource::<WorldConfig>()
+            .init_resource::<Vehicles>()
+            .add_message::<crate::ui::UiIntent>()
+            .add_message::<WorldRestored>()
+            .add_systems(Update, sync_vehicles);
+        let mut model = UiModel::default();
+        model.connected = true;
+        model.network.owns_world = true;
+        app.insert_resource(model);
+        let car = body(&mut app, "sedan", Vec3::ZERO);
+        app.world_mut().get_mut::<VehicleBody>(car).unwrap().driver_player_id = 0;
+        app.world_mut().resource_mut::<Vehicles>().entities.insert(1, car);
+        let type_id = data::named("sedan").unwrap().type_id;
+        app.insert_resource(GameSnapshot(serde_json::json!({"playerId":0,"vehicles":[{
+            "netId":1,"typeId":type_id,"position":[30.,1.,-12.],"health":1000.,"battery":10000.}]})));
+        if restore {
+            app.world_mut().write_message(WorldRestored);
+        }
+        app.update();
+        let adopted = app
+            .world()
+            .get::<coupling::recovery::AdoptPose>(car)
+            .map(|a| a.pose.translation);
+        assert_eq!(adopted, restore.then_some(Vec3::new(30., 1., -12.)));
+    }
+}
+
 pub(super) fn physics_app(sea: Option<f32>) -> App {
     let mut app = App::new();
     app.add_plugins((

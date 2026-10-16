@@ -209,6 +209,7 @@ impl Plugin for DedicatedPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Host>()
             .init_resource::<Residency>()
+            .add_message::<crate::vehicle::WorldRestored>()
             .add_systems(
                 Update,
                 serve
@@ -323,6 +324,7 @@ fn serve(
     mut model: ResMut<UiModel>,
     mut snapshot: ResMut<GameSnapshot>,
     mut exit: MessageWriter<AppExit>,
+    mut restored: MessageWriter<crate::vehicle::WorldRestored>,
 ) {
     if host.serving || host.failed {
         return;
@@ -362,6 +364,7 @@ fn serve(
             );
             model.adopt_snapshot(&reply["state"]);
             snapshot.0 = reply["state"].take();
+            restored.write(crate::vehicle::WorldRestored);
         }
         Err(error) => fail(&mut host, &mut exit, error),
     }

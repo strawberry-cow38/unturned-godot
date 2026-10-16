@@ -221,6 +221,7 @@ impl Plugin for VehiclePlugin {
             .init_resource::<damage::WreckMaterial>()
             .init_resource::<effects::Effects>()
             .add_message::<contacts::DamageRequest>()
+            .add_message::<WorldRestored>()
             .add_message::<contacts::Feedback>()
             .add_systems(Update, seats::input.after(crate::ui::UiUpdate).before(PlayerUpdate))
             .add_systems(
@@ -537,6 +538,13 @@ pub(crate) fn registration(
         "hitRegions":hit_regions,"engineRegion":{"rear":s.rear_engine,"threshold":s.box_center[2] + if s.rear_engine { 0.15 } else { -0.15 } * s.box_size[2],"health":s.health * 10. * 0.4},
         "storage":{"trunkWidth":if trunk{6}else{0},"trunkHeight":if trunk{4}else{0},"gloveboxWidth":if hood{3}else{0},"gloveboxHeight":if hood{2}else{0},"seats":seats}})
 }
+/// The authority restored a save outside the `UiIntent::Load` path (a dedicated
+/// host restores at admission): host bodies adopt the restored replica poses
+/// exactly as on Load, or a parked body would wake at its spawn pose and
+/// publish it over the restored one.
+#[derive(Message)]
+pub(crate) struct WorldRestored;
+
 fn sync_vehicles(
     mut commands: Commands,
     snapshot: Res<GameSnapshot>,
@@ -550,10 +558,12 @@ fn sync_vehicles(
     mut images: ResMut<Assets<Image>>,
     assets: Res<AssetServer>,
     mut intents: MessageReader<crate::ui::UiIntent>,
+    mut restores: MessageReader<WorldRestored>,
 ) {
-    let restored = intents
+    let loaded = intents
         .read()
         .any(|intent| matches!(intent, crate::ui::UiIntent::Load));
+    let restored = restores.read().count() > 0 || loaded;
     if !model.connected {
         return;
     }

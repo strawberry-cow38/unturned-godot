@@ -84,8 +84,18 @@ fn dedicated_host_has_no_body_opens_after_services_admits_a_client_and_saves_on_
     host.world_mut().resource_mut::<ServiceManifest>().map = map.clone();
     for _ in 0..40 {
         host.update();
+        if state(&host)["network"]["state"] == json!("Serving") {
+            break;
+        }
     }
     assert_eq!(state(&host)["network"]["state"], json!("Serving"));
+    assert!(
+        !host
+            .world()
+            .resource::<bevy::ecs::message::Messages<crate::vehicle::WorldRestored>>()
+            .is_empty(),
+        "the admission restore re-poses host vehicle bodies like a Load"
+    );
     let before = state(&host)["tick"].as_u64().unwrap();
 
     let mut client = client_app(
