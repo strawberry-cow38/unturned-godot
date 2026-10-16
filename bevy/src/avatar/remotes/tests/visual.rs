@@ -22,6 +22,11 @@ fn render_remote_pose_fixture() {
     let lamps = std::env::var("UG_REMOTE_POSE_LAMPS").ok();
     let profiles = std::env::var_os("UG_REMOTE_POSE_PROFILES").is_some();
     let beds = std::env::var_os("UG_REMOTE_POSE_BEDS").is_some();
+    // UG_REMOTE_POSE_GESTURES=6,11,..: every peer standing, with these replicated gestures
+    // (SURRENDER_START 6, ARREST_START 11) through the production overlay.
+    let gestures: Option<Vec<u64>> = std::env::var("UG_REMOTE_POSE_GESTURES")
+        .ok()
+        .map(|v| v.split(',').filter_map(|g| g.trim().parse().ok()).collect());
     for (i, stance) in [0, 2, 3, 4].into_iter().enumerate() {
         let mut peer = row(i as u16 + 2, Vec3::new((i as f32 - 1.5) * 2., 0., 0.));
         peer["stance"] = json!(stance);
@@ -41,6 +46,10 @@ fn render_remote_pose_fixture() {
             peer["stance"] = json!(0);
             peer["worn"]["hat"] = json!(0);
             peer["profile"]["face"] = json!(0);
+        }
+        if let Some(gestures) = &gestures {
+            peer["stance"] = json!(0);
+            peer["gesture"] = json!(gestures.get(i).copied().unwrap_or(0));
         }
         if beds && i < 2 {
             let yaw = i as f32 * std::f32::consts::FRAC_PI_2;

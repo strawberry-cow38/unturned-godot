@@ -20,6 +20,7 @@ mod player;
 mod profile;
 mod projectiles;
 mod recoil;
+mod restraints;
 mod rig;
 mod settings;
 mod sound;
@@ -165,6 +166,7 @@ fn main() -> Result<()> {
             avatar::AvatarPlugin,
             footsteps::FootstepPlugin,
             survival::SurvivalPlugin,
+            restraints::RestraintsPlugin,
         ))
         .add_systems(Update, capture_frame.after(entities::ApplyInteractions))
         .run();

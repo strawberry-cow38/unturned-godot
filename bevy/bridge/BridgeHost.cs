@@ -496,6 +496,13 @@ public sealed partial class BridgeHost : IDisposable
 
     object Action(string name, JsonElement args)
     {
+        // PlayerController.EquipItemAsset: "CUFFED HANDS ARE NOT FREE HANDS". The source gate is the
+        // client's, on every equip path, against its accepted ARREST_START; what is already in the hand stays.
+        if (name is "holdItem" or "equipAndHold" && Int(args, "page", -1) >= 0 && OwnerArrested())
+        {
+            Emit("actionRejected", new { text = HandsBound });
+            return new { queued = false, reason = HandsBound, heldItemId = _held };
+        }
         if (name == "nearbyInventory") return RequestNearby(args);
         if (name == "nearbyOperation") return RequestNearbyOperation(args);
         if (name == "nearbyMagazineTransfer") return RequestNearbyMagazineTransfer(args);

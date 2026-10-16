@@ -640,7 +640,12 @@ namespace UnturnedGodot.Net
                 (sender, cmd) =>
                 {
                     if (!_combat.TryGet(sender, out var captor) || !_combat.TryGet(cmd.TargetPlayerId, out var victim)) return;
+                    if (!captor.Alive || !victim.Alive) return;   // Bevy port review: a corpse neither cuffs nor is cuffed
                     if (!SDG.Unturned.ArrestDef.IsRestraint(captor.HeldId)) return;   // not holding cuffs
+                    // Bevy port review: HeldId is the CLIENT's MoveInput.HeldItemId, so "in your hand" must also mean
+                    // "in your bag". Without it a forged 52 cuffed with a 128-strength pair the captor never owned, and
+                    // the SpendAnyOf below quietly spent nothing.
+                    if (!OwnsItem(sender, captor.HeldId)) return;
                     if (!InArrestReach(sender, cmd.TargetPlayerId)) return;
                     bool surrendering = victim.Gesture == (byte)SDG.Unturned.EPlayerGesture.SURRENDER_START;
                     if (!_arrest.TryArrest(sender, cmd.TargetPlayerId, captor.HeldId, surrendering)) return;
@@ -655,7 +660,9 @@ namespace UnturnedGodot.Net
                 (sender, cmd) =>
                 {
                     if (!_combat.TryGet(sender, out var freer) || !_combat.TryGet(cmd.TargetPlayerId, out var victim)) return;
+                    if (!freer.Alive) return;                                         // Bevy port review, as for 52
                     if (!SDG.Unturned.ArrestDef.IsKey(freer.HeldId)) return;
+                    if (!OwnsItem(sender, freer.HeldId)) return;                      // the key must really be in the bag
                     if (!InArrestReach(sender, cmd.TargetPlayerId)) return;
                     ushort recovered = _arrest.TryUnlock(cmd.TargetPlayerId, freer.HeldId);
                     if (!_arrest.IsArrested(cmd.TargetPlayerId))
@@ -2553,6 +2560,9 @@ namespace UnturnedGodot.Net
 
         /// <summary>Who is cuffed, for the game layer (a cuffed player cannot equip) and for tests.</summary>
         public bool IsArrested(ushort playerId) => _arrest.IsArrested(playerId);
+
+        /// <summary>The sender's authoritative bag holds at least one of <paramref name="itemId"/>.</summary>
+        bool OwnsItem(ushort sender, ushort itemId) => itemId != 0 && SenderInventory(sender) is { } inv && inv.getItemCount(itemId) > 0;
 
         /// <summary>The AUTHORITATIVE inventory, for tests. Exposed deliberately: the magazine bug was that
         /// every client-side assertion passed while this object never changed, so a test that cannot read

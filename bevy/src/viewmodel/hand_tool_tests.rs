@@ -6,6 +6,9 @@ use crate::{bridge::CoreBridge, entities::CoreEvent, use_items::HandEvent};
 const CAN: u16 = 1842; // Turquoise 25C891
 const SPARE: u16 = 1451;
 const JACK: u16 = 277;
+const CUFFS: u16 = 1195;
+const KEY: u16 = 1196;
+const TIE: u16 = 1197;
 
 fn catalog() -> ItemCatalog {
     let bridge = CoreBridge::launch(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
@@ -15,7 +18,7 @@ fn catalog() -> ItemCatalog {
     let items: Vec<crate::entities::ItemVisual> =
         serde_json::from_value(bridge.request("catalog", serde_json::json!({})).unwrap()["result"]["items"].clone()).unwrap();
     let mut catalog = ItemCatalog::default();
-    catalog.items = items.into_iter().filter(|i| [CAN, SPARE, JACK].contains(&i.id)).map(|i| (i.id, i)).collect();
+    catalog.items = items.into_iter().filter(|i| [CAN, SPARE, JACK, CUFFS, KEY, TIE].contains(&i.id)).map(|i| (i.id, i)).collect();
     catalog
 }
 fn install(app: &mut App, catalog: ItemCatalog, held: u16) {
@@ -49,6 +52,10 @@ fn vehicle_tools_hold_their_own_clips_meshes_and_paint_tint() {
         // EmptyHands wins the source equip precedence: bare hands, Melee_Equip.
         (SPARE, "Melee_Equip", "Tire_Use", None, None),
         (JACK, "Jack_Equip", "Jack_Use", Some("carjack.txt"), Some("carjack_albedo.png")),
+        // EquipHeldRestraint: EmptyHands, no carry model, the restraint's own Use clip.
+        (CUFFS, "Melee_Equip", "Cuff_Use", None, None),
+        (TIE, "Melee_Equip", "Cuff_Use", None, None),
+        (KEY, "Melee_Equip", "Key_Use", None, None),
     ] {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default()))
@@ -110,12 +117,15 @@ mod visual {
     /// (item, name, frames to hold at 20 ms, whether the Use clip is running).
     /// The jack stages match the source `--vm=DIR --gun=carjack` harness
     /// captures at 30 fps frames 25 and 60 (0.83 s, then 2.0 s on the same hold).
-    const STAGES: [(u16, &str, usize, bool); 5] = [
+    const STAGES: [(u16, &str, usize, bool); 7] = [
         (CAN, "spraypaint", 60, false),
         (SPARE, "spare", 60, false),
         (JACK, "carjack", 42, false),
         (JACK, "carjack-2s", 58, false),
         (JACK, "carjack-use", 45, true),
+        // The source `--vm=DIR --gun=handcuffs` harness: the hold, then 1.0 s into Cuff_Use (its frame 120).
+        (CUFFS, "handcuffs", 60, false),
+        (CUFFS, "handcuffs-use", 70, true),
     ];
     #[test]
     #[ignore = "Vulkan/display; UG_TOOL_VIEWMODEL_SHOT sets capture prefix"]

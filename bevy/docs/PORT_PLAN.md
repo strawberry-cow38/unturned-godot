@@ -134,7 +134,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | DONE (`bc01598c`; remote deadzone/tap aim, tank fill, mains switch, Reset Data open) |
 | 9 | Vehicle hand tools: paint, carjack, spare tire, vehicle pour/siphon (cmds 50/55/56, new 99/100; pump fill 29 and generator pour 90 are the power port) | DONE: source timelines, accepted respray render, host-applied carjack, exact-can pour/siphon at v79 (`VEHICLE_HAND_TOOLS_PORT.md`); wheel choice is the authority's lowest flat bit | M | med | agent F (merge with integrator) |
 | 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | DONE (rope checkpoint; remote towing journey with row 16) |
-| 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | agent I (in progress) |
+| 11 | Restraints (`ArrestSim`, cmds 52/53) | DONE: cuff/key LMB use on the aimed puppet, `Cuff_Use` timeline, bound-hands equip gate; core now requires the restraint/key in the bag and a living captor ([RESTRAINTS_TOOLS_PORT.md](RESTRAINTS_TOOLS_PORT.md)) | S | low-med | agent I (merge with integrator) |
 | 12 | Binoculars, umbrella, fishing | Absent | S-M | low | agent I (in progress) |
 | 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | DONE (crops checkpoint, `CROPS_PORT.md`) |
 | 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | DONE (shelves checkpoint, `STORE_SHELVES_PORT.md`; outline glow with the focus-outlines row; back-to-back twin needs server registration) |

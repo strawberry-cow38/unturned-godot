@@ -141,6 +141,15 @@ public sealed class Catalog
             HandRules.HandKind.Carjack => new { kind = "carjack", equip = "Jack_Equip", use = "Jack_Use",
                 useSeconds = Use("Jack_Use", HandRules.CarjackFallbackUseSeconds), applyFraction = HandRules.CarjackApplyFraction,
                 mesh = Existing("carjack.txt"), texture = Existing("carjack_albedo.png"), paintRgb = (uint?)null },
+            // EquipHeldRestraint: EmptyHands (so Melee_Equip wins the equip precedence) with the
+            // restraint's own Use clip; RestraintUseSeconds = that clip, else 1.300 / 1.633.
+            // The cuffs land when the clip ends (applyFraction 1); the key's unlock is sent at the click.
+            HandRules.HandKind.Restraint => new { kind = "restraint", equip = "Melee_Equip", use = "Cuff_Use",
+                useSeconds = Use("Cuff_Use", 1.300f), applyFraction = 1f,
+                mesh = (string)null, texture = (string)null, paintRgb = (uint?)null },
+            HandRules.HandKind.RestraintKey => new { kind = "restraintKey", equip = "Melee_Equip", use = "Key_Use",
+                useSeconds = Use("Key_Use", 1.633f), applyFraction = 0f,
+                mesh = (string)null, texture = (string)null, paintRgb = (uint?)null },
             _ => (object)null,
         };
     }
