@@ -105,3 +105,86 @@ joined clients alike.
   pre-existing framing difference as the spare tire's hold. Renders:
   `bevy/artifacts/{bevy,godot}-restraint-handcuffs-{hold,use}.png`,
   `bevy/artifacts/bevy-restraint-remote-gestures.png`, `bevy/artifacts/godot-gesture-{surrender,arrest}.png`.
+
+## Binoculars (row 12)
+
+### Source
+
+`game/PlayerController.cs`: `KindOf` (`EItemType.OPTIC`), `EquipHeldOptic`, `UpdateOptic`,
+`CycleOpticZoom`, `ClearHeldOptic`, `OpticZoomLevels` (4/8/12), the eyepiece constants, the LMB
+dispatch and the `sens /= zoom` look line; `game/BinocularsView.cs`; `game/Viewmodel.cs`
+(the DeployableMesh follow branch with `HoldPos`/`HoldRoll`/`NaturalHold`, `AddHeldLens`);
+`game/content/binoculars.gdshader`, `binoculars_overlay.gdshader`, `ui/binoculars_overlay.png`.
+
+### Authority
+
+None: the source's binoculars are local presentation (zoom, overlay, PiP). Holding them is the
+ordinary `holdItem`.
+
+### Native
+
+`bevy/src/viewmodel/binoculars.rs`:
+- **Carried:** `Catalog.HandTool` gives OPTIC items the `items/333.txt`/`.png` carry model and
+  `Deploy_Equip` (the NaturalHold clip `Fuel_Equip` is not in the rig, so the source falls back too).
+  Each frame the pair takes the hook's basis times `HoldRoll (0,0,-90)` at the hook plus
+  `HoldPos (0,0.44,-0.14)` in view space.
+- **PiP:** one camera 0.12 m up the barrels renders the world at FOV / zoom into a linear HDR
+  target; a disc sunk 3 cm into each eyepiece samples it at its own screen position (corrected
+  for the oversized arms target), with the 0.30 vignette. No inverse ACES is needed: the scene is
+  untonemapped and the viewmodel pass tonemaps once, as the scope glass does.
+- **Raised** (RMB held, captured mouse, no UI, alive, not in a vehicle): the arms camera is off,
+  the tank optics' periscope overlay (the same `ui/binoculars_overlay.png` cover-fit) is shown, the
+  main FOV is divided by the zoom once per frame, and look sensitivity is divided by it.
+- **LMB** on foot steps 4x → 8x → 12x → 4x and plays `sounds/firemode.wav`; a fresh equip starts
+  lowered at 4x. `UG_ADS=1` holds them up, as the source harness does.
+
+## Umbrella (row 12)
+
+### Source
+
+`game/Umbrellas.cs` (the eight `Cloud` items, Gravity 0.25, `FallDamageGravityFloor` 0.67),
+`PlayerController.EquipHeldUmbrella` (EmptyHands, `Melee_Equip`), the PhysicsTick line that sets
+`_move.GravityMultiplier` from the held umbrella once `IsEquipComplete`, `PlayerMovementSim`
+(gravity on the way down and the terminal clamp) and `CheckFallDamage`'s gate.
+
+### Authority and native
+
+- Movement is client-authoritative: `bevy/src/umbrella.rs` hands the bridge `simulate` the
+  multiplier (the held item's catalog `gravityMultiplier` once the viewmodel is `ready`), and the
+  existing `PlayerMovementSim` applies it.
+- Fall damage is server-derived in this port, so the source's gate moved there: core
+  `ServerPlayerAuthority.FallGravityMultiplier` skips the landing at or below 0.67, and
+  `bevy/bridge/UmbrellaServices.cs` answers it from the replicated hand: an umbrella held at least
+  `Melee_Equip`'s length is up. This covers the listen host and joined clients.
+- The hold is the existing EmptyHands viewmodel (no carry model), as in the source.
+
+### Deviations
+
+- **No rain behaviour and no third-person umbrella:** the source has neither (nothing in
+  `RainOverlay`, no carry model, no puppet visual), so neither does the port.
+- **Equip timing on the server** is the time since the replicated hand changed, against the
+  `Melee_Equip` length, rather than the client's animation state. They agree to within the input
+  latency.
+- **Wiring coverage:** the `gravityMultiplier` field in the native `simulate` request has no
+  automated test of its own; the helper and the server gate do.
+
+### Verification (binoculars and umbrella)
+
+- **Core:** `FallDamage_SkippedWhileTheLandingGravityMultiplierIsAtOrBelowTheFloor` (0.25 and 0.67
+  unhurt, 0.68 hurt).
+- **Managed** (`UmbrellaTests`): a 30 m/s landing hurts bare-handed, not with the umbrella up all
+  the way, not when opened after the peak speed, and fully when tapped 0.1 s before impact.
+- **Native:** the umbrella helper; the binocular zoom cycle, equip reset, raise, sensitivity,
+  `UG_ADS` and held-item tests; the carry and PiP pose maths; the production tank-optics `apply`
+  showing the overlay and dividing the FOV exactly once; the hand-tool test (333 holds
+  `Deploy_Equip` with the 333 mesh and texture; the umbrella and the rod hold `Melee_Equip` with no mesh).
+- **Negative controls**, each failing as intended: the core 0.67 gate, the bridge hook, the
+  bridge equip wait, the native equip wait, the binocular overlay, the zoom reset, the
+  sensitivity, the hold roll, and the catalog carry model.
+- **Visual** (opened): Godot 4.6.2 on PEI (`--peidrive`, `UG_HOLDITEM=333`, with and without
+  `UG_ADS=1`) beside the native fixture `render_carried_and_raised_binoculars`. Carried, both show
+  the pair low and centred with the barrels up and the two crossbars toward the eye, and the same
+  framing; the native material reads lighter grey than Godot's near-black under its brighter
+  fixture light. Raised, both show the two-hole retail overlay over a 4x view. The eyepiece discs
+  face the eye from below the view in both, so the PiP is not visible in either frame and has
+  no visual check beyond its pose test. Renders: `bevy/artifacts/{bevy,godot}-binoculars-{lowered,raised}.png`.

@@ -62,6 +62,7 @@ public sealed partial class BridgeHost : IDisposable
     readonly Dictionary<uint, VehicleRecovEvent> _vehicleRecovery = new();
     readonly List<JsonElement> _serviceSpecs = new();
     WildlifeServices _wildlife;
+    UmbrellaServices _umbrellas;
     ZombieServices _zombies;
     int _seed = 1337;
     bool _worldChanged;
@@ -385,6 +386,7 @@ public sealed partial class BridgeHost : IDisposable
         _vehicleTows = new VehicleTowServices(_server, _catalog, () => _client?.PlayerId ?? 0);
         _ = new VehicleHandToolServices(_server, Emit);
         _ = new VehicleFuelServices(_server, _catalog, _vehicles);
+        _umbrellas = new UmbrellaServices(_server, _catalog);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
         _zombies = new ZombieServices(_server, _geometry, Emit);
         _services.DoorNoise = _zombies.Noise;
@@ -485,7 +487,7 @@ public sealed partial class BridgeHost : IDisposable
                 if(noise>2)_zombies.Noise(_position,noise);
             }
         }
-        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleTows.Step(); StepFarmSpeed(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleTows.Step(); StepFarmSpeed(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _umbrellas.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
         _appearance.Tick();
         if (_worldChanged) PublishFullSnapshot();
         TickAutosave();
@@ -722,7 +724,7 @@ public sealed partial class BridgeHost : IDisposable
         _loot = null; _finiteVehicles = null; _finiteTerrain = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null;
         _udpTransport?.TearDown(); _udpTransport = null;
         _environment = null; _services = null; _vehicles = null; _vehicleLights = null; _vehicleMaintenance = null; _vehicleDoors = null; _vehicleHitches = null; _vehicleTows = null; _bodies = null; _weapons = null;
-        _cosmetic = null; _warheads = null; _mounted = null; _npcHelis = null; _appearance = null; _wildlife = null; _zombies = null;
+        _cosmetic = null; _warheads = null; _mounted = null; _npcHelis = null; _appearance = null; _wildlife = null; _umbrellas = null; _zombies = null;
         _remoteWeapon = null; _remoteMounted = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
         _mapBindings = null;
         if (_finiteSpawns != null) SDG.Unturned.LootCondition.Clear();

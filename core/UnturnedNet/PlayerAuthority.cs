@@ -224,6 +224,13 @@ namespace UnturnedGodot.Net
         /// Null keeps every pre-P3b authority harness byte-identical. (victim, damage).</summary>
         public Action<ushort, float> DamageOwner;
 
+        /// <summary>The other half of PlayerLife:2399 -- `velocity &lt; -threshold and totalGravityMultiplier &gt; 0.67f`
+        /// (PlayerController.CheckFallDamage, Umbrellas.FallDamageGravityFloor). The landing owner's fall gravity
+        /// multiplier: an umbrella that has finished its equip reads 0.25 and lands unhurt from any height, even when
+        /// it was opened after the peak speed was reached. Set by the host (core has no item catalogue); null = 1.</summary>
+        public Func<ushort, float> FallGravityMultiplier;
+        public const float FallDamageGravityFloor = 0.67f;
+
         /// <summary>The world floor for the client-auth walker: an adopted authoritative Y below this is
         /// out-of-bounds -> lethal (else an owner who clips through the floor falls forever, review finding 1).
         /// NOTE it is NOT the SP shell's -1030 (PlayerController.cs:3386): the wire Pos.y clamps to [-256, 256)
@@ -478,7 +485,7 @@ namespace UnturnedGodot.Net
                     // -100 -> 100). Safe direction (never over-punishes); the OOB net below catches true void
                     // plunges. Full-range parity needs a wider LinVel encoding (wire-format change) or deriving the
                     // fall speed from the unclamped-within-±256 position stream -- both deferred to review.
-                    int dmg = FallMath.Damage(-st.PeakFallSpeed);
+                    int dmg = (FallGravityMultiplier?.Invoke(sender) ?? 1f) <= FallDamageGravityFloor ? 0 : FallMath.Damage(-st.PeakFallSpeed);
                     if (dmg > 0) DamageOwner(sender, dmg);
                     st.PeakFallSpeed = 0f;
                 }

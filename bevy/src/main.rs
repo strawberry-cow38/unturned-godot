@@ -28,6 +28,7 @@ mod survival;
 mod footsteps;
 mod graphics;
 mod ui;
+mod umbrella;
 mod use_items;
 mod vehicle;
 mod viewmodel;

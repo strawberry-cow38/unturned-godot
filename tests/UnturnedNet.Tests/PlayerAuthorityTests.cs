@@ -422,6 +422,27 @@ namespace UnturnedNet.Tests
             Assert.That(dmg, Is.LessThanOrEqualTo((float)FallMath.Damage(-trueSpeed) + 2f), "and it tracks the true fall speed, not wildly over");
         }
 
+        // PlayerLife:2399 / CheckFallDamage: no fall damage at all while the landing owner's gravity multiplier is at
+        // or below 0.67 (an equipped umbrella, 0.25), however fast the peak was; just above it the curve applies.
+        [TestCase(0.25f, false)]
+        [TestCase(0.67f, false)]
+        [TestCase(0.68f, true)]
+        public void FallDamage_SkippedWhileTheLandingGravityMultiplierIsAtOrBelowTheFloor(float gravity, bool hurts)
+        {
+            var h = new Harness(4205).Connected("glider");
+            var a = h.Clients[0];
+            float dmg = 0f;
+            h.Server.PlayerHost.DamageOwner = (v, d) => { if (v == a.PlayerId) dmg += d; };
+            h.Server.PlayerHost.FallGravityMultiplier = v => v == a.PlayerId ? gravity : 1f;
+            var pos = h.Entity(a).Pos;
+            void Claim(bool grounded) => a.SendPlayerState(pos, 90f, -5f,
+                new Vector3(0f, grounded ? 0f : -30f, 0f), MoveInput.PackStance(EPlayerStance.STAND), grounded, 0);
+            h.Step(6, () => Claim(true));
+            for (int i = 0; i < 12; i++) { pos.y -= 30f * 0.02f; h.Step(() => Claim(false)); }
+            h.Step(6, () => Claim(true));
+            Assert.That(dmg > 0f, Is.EqualTo(hurts), $"x{gravity} gravity at the landing: {dmg} damage");
+        }
+
         // goldened on first landing (v9); v10 (mp-event-coalesce) appends the EventCount=0 byte
         // v57: + HeldItemId (u16) after Grounded. DERIVED, not pasted: the golden command holds nothing (0), so 16 ZERO
         // bits land between Grounded and a zero EventCount -- every earlier byte is unchanged and the tail grows by two

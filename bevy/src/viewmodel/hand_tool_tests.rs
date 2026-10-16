@@ -9,6 +9,9 @@ const JACK: u16 = 277;
 const CUFFS: u16 = 1195;
 const KEY: u16 = 1196;
 const TIE: u16 = 1197;
+const BINOCULARS: u16 = 333;
+const UMBRELLA: u16 = 1103;
+const ROD: u16 = 503;
 
 fn catalog() -> ItemCatalog {
     let bridge = CoreBridge::launch(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
@@ -18,7 +21,7 @@ fn catalog() -> ItemCatalog {
     let items: Vec<crate::entities::ItemVisual> =
         serde_json::from_value(bridge.request("catalog", serde_json::json!({})).unwrap()["result"]["items"].clone()).unwrap();
     let mut catalog = ItemCatalog::default();
-    catalog.items = items.into_iter().filter(|i| [CAN, SPARE, JACK, CUFFS, KEY, TIE].contains(&i.id)).map(|i| (i.id, i)).collect();
+    catalog.items = items.into_iter().filter(|i| [CAN, SPARE, JACK, CUFFS, KEY, TIE, BINOCULARS, UMBRELLA, ROD].contains(&i.id)).map(|i| (i.id, i)).collect();
     catalog
 }
 fn install(app: &mut App, catalog: ItemCatalog, held: u16) {
@@ -56,6 +59,11 @@ fn vehicle_tools_hold_their_own_clips_meshes_and_paint_tint() {
         (CUFFS, "Melee_Equip", "Cuff_Use", None, None),
         (TIE, "Melee_Equip", "Cuff_Use", None, None),
         (KEY, "Melee_Equip", "Key_Use", None, None),
+        // EquipHeldOptic: the 333 carry model on Deploy_Equip (no Fuel_Equip in the rig).
+        (BINOCULARS, "Deploy_Equip", "", Some("items/333.txt"), Some("items/333.png")),
+        // EquipHeldUmbrella / EquipHeldFisher: EmptyHands, no carry model, no Use clip.
+        (UMBRELLA, "Melee_Equip", "", None, None),
+        (ROD, "Melee_Equip", "", None, None),
     ] {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default()))
@@ -93,6 +101,9 @@ fn vehicle_tools_hold_their_own_clips_meshes_and_paint_tint() {
             id == JACK,
             "item {id}: only Jack_Equip is a looping carry hold (loop: true)"
         );
+        if use_clip.is_empty() {
+            continue; // the binoculars have no Use clip
+        }
         app.world_mut().write_message(HandEvent::Start(id));
         app.update();
         assert_eq!(app.world().get::<RigPlayback>(root).unwrap().clip, use_clip, "Start plays the tool's Use");

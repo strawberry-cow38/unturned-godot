@@ -14,6 +14,8 @@ public sealed class Catalog
     public readonly Dictionary<ushort, MeleeDef> MeleeDefs = new();
     readonly Dictionary<ushort, double> _reloadSeconds = new();
     readonly Dictionary<string, double> _clips = new();
+    /// <summary>A first-person clip's length in seconds (rig.json plus the per-item tables), 0 if unknown.</summary>
+    public double ClipSeconds(string clip) => _clips.GetValueOrDefault(clip);
     public double ReloadSeconds(ushort id) => _reloadSeconds.GetValueOrDefault(id, 1.633);
     public double Clip(string name, string suffix, string fallback = null)
     {
@@ -150,6 +152,11 @@ public sealed class Catalog
             HandRules.HandKind.RestraintKey => new { kind = "restraintKey", equip = "Melee_Equip", use = "Key_Use",
                 useSeconds = Use("Key_Use", 1.633f), applyFraction = 0f,
                 mesh = (string)null, texture = (string)null, paintRgb = (uint?)null },
+            // EquipHeldOptic: the 333 carry model on the NaturalHold carry (Fuel_Equip is not in the
+            // rig, so the source falls back to Deploy_Equip); no Use clip.
+            HandRules.HandKind.Optic => new { kind = "optic", equip = _clips.ContainsKey("Fuel_Equip") ? "Fuel_Equip" : "Deploy_Equip", use = "",
+                useSeconds = 0f, applyFraction = 0f,
+                mesh = Existing("items/333.txt"), texture = Existing("items/333.png"), paintRgb = (uint?)null },
             _ => (object)null,
         };
     }

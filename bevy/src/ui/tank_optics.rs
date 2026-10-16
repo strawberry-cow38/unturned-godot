@@ -77,7 +77,7 @@ impl UiMaterial for OpticsMaterial {
         "embedded://unturned_bevy/ui/tank_optics/overlay.wesl".into()
     }
 }
-pub(super) struct TankOpticsPlugin;
+pub(crate) struct TankOpticsPlugin;
 impl Plugin for TankOpticsPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "tank_optics/overlay.wesl");
@@ -268,6 +268,7 @@ fn apply(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut overlay: Query<(&mut Visibility, &MaterialNode<OpticsMaterial>), With<Overlay>>,
     mut materials: ResMut<Assets<OpticsMaterial>>,
+    binoculars: Option<Res<crate::viewmodel::binoculars::Binoculars>>,
 ) {
     // Seat materialization can complete later in VehicleUpdate. Reconcile its
     // visual gate after that stage without consuming the input edge twice.
@@ -277,7 +278,13 @@ fn apply(
     } else {
         optics.source_mode
     };
-    let active = optics.mode != Mode::None;
+    // Held binoculars at the eyes (PlayerController.UpdateOptic / BinocularsView) share the
+    // retail overlay this periscope draws and the same main-camera FOV division.
+    let hand = binoculars
+        .as_ref()
+        .and_then(|b| b.raised_zoom())
+        .filter(|_| optics.mode == Mode::None && facts.config.fixed_camera.is_none());
+    let active = optics.mode != Mode::None || hand.is_some();
     let mut shown = false;
     if let Ok((entity, mut projection)) = cameras.single_mut() {
         if let Projection::Perspective(p) = &mut *projection {
@@ -286,7 +293,7 @@ fn apply(
                     saved.base_fov = p.fov;
                 }
                 saved.camera = Some(entity);
-                p.fov = saved.base_fov / optics.zoom();
+                p.fov = saved.base_fov / hand.unwrap_or_else(|| optics.zoom());
                 shown = true;
             } else if saved.camera.take().is_some() {
                 p.fov = saved.base_fov;
@@ -308,6 +315,7 @@ fn apply(
             material.settings = Vec4::new(
                 aspect,
                 match optics.mode {
+                    Mode::None if hand.is_some() => 1.,
                     Mode::None => 0.,
                     Mode::Periscope => 1.,
                     Mode::Gunsight => 2.,
