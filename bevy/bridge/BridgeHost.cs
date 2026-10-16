@@ -337,6 +337,12 @@ public sealed partial class BridgeHost : IDisposable
         if (_listenPort == 0) WorldRebase.EnableUnboundedStorage(_server);
         _server.Transactions.RepositionOwner = _server.PlayerHost.RepositionOwner;
         _environment = new WorldEnvironment(_server, _seed, save);
+        // WindField.SampleWind for the server's turbines: the source noise and weather floor on server time.
+        // UG_WIND is the source's own TestWind override ("flag droop / turbine tests").
+        var wind = new SourceWindField();
+        float? forcedWind = float.TryParse(Environment.GetEnvironmentVariable("UG_WIND"), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float forced) ? forced : null;
+        _server.Power.WindAt = p => forcedWind ?? wind.Sample(p.x, p.z, (float)(_server.Session.CurrentTick * SimClock.FixedDelta), Math.Clamp(_environment.Sim.WindMain, 0f, 1f));
         var initialSpawn = _position;
         _server.SpawnProvider = _listenPort == 0 ? _ => _position : _ => initialSpawn;
         _geometry.DestructibleAlive = i => i >= _server.Destructibles.Count || _server.Destructibles.IsAlive(i);
@@ -479,6 +485,15 @@ public sealed partial class BridgeHost : IDisposable
         if (name == "vehicleMaintenance") return new { queued = _client.SendVehicleMaintenance(VehicleMaintenanceServices.ReadCommand(args)) };
         if (name == "vehicleLighting") return new { queued = _client.SendVehicleLighting(VehicleLightingServices.ReadCommand(args)) };
         if (name == "mountInput") return new { queued = _client.SendMountedInput(MountedWeaponServices.ReadInput(args)) };
+        if (name == "depositFuel")
+        {
+            // TryDepositFuel: the exact held fuel container, by its accepted identity token.
+            byte page = checked((byte)Int(args, "page")), x = checked((byte)Int(args, "x")), y = checked((byte)Int(args, "y"));
+            bool known = _client.Inventories.TryGetItemToken(_client.PlayerId, page, x, y, out ulong token);
+            return new { queued = known && _client.SendDepositFuel(checked((uint)Int(args, "netId")), page, x, y, checked((ushort)Int(args, "id")), token) };
+        }
+        // TryExtractFuel: RMB a gas-pump fixture; the host picks the can and gates on the pump's wired power.
+        if (name == "extractFuel") return new { queued = _client.SendExtractFuel(checked((uint)Int(args, "netId"))) };
         if (IsRemote) return RemoteAction(name, args);
         if (name == "requestGesture") return RequestGesture(args);
         if (name == "console" && PlayerDebugConsole(Text(args, "text"))) return new { queued = true };
@@ -605,8 +620,8 @@ public sealed partial class BridgeHost : IDisposable
             vehicleMounts = _client.VehicleMounts.All.Select(v => new { vehicleNetId = v.VehicleNetId, headOut = v.HeadOut, gunnerRise = v.GunnerRise,
                 mounts = v.Mounts.Select((m,index) => new { index, yaw = m.Yaw, pitch = m.Pitch, ammo = m.Ammo, cooldownSeconds = m.CooldownSeconds, crewAlive = m.CrewAlive }).ToArray() }).ToArray(),
             animals = _wildlife?.Snapshots(_client) ?? RemoteAnimals(),
-            powerStateHash = _client.Deployables.StateHash(),
-            deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, mountUp = e.MountUp, health = e.Health, fuel = e.Fuel, onFire = e.OnFire, burnSeconds = _bodies?.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray(),
+            powerStateHash = _client.Deployables.PowerViewHash(),
+            deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, mountUp = e.MountUp, health = e.Health, fuel = e.Fuel, energy = e.Energy, wind = e.Wind, onFire = e.OnFire, burnSeconds = _bodies?.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray(),
             vehicleRecoveries = _vehicleRecovery.Values.Select(e => new { netId=e.NetId, pos=Array(e.Pos), linVel=Array(e.LinVel),
                 yawDegrees=e.YawDegrees, pitchDegrees=e.PitchDegrees, rollDegrees=e.RollDegrees, recovCounter=e.RecovCounter,
                 trailer=e.Trailer is {} t ? new { netId=t.NetId, pos=Array(t.Pos), linVel=Array(t.LinVel), angVel=Array(t.AngVel),

@@ -1348,6 +1348,9 @@ namespace UnturnedGodot.Net
             ReplicaUpdated?.Invoke(owner);
         }
 
+        /// <summary>v78 fuel-container grid: signed 19.2 (max 262143.75 mL), the deployable fuel grid.</summary>
+        const int JarFuelIntBits = 19, JarFuelFracBits = 2;
+
         internal static void WriteJar(NetPakWriter w, ItemJar j)
         {
             w.WriteUInt8(j.x); w.WriteUInt8(j.y); w.WriteUInt8(j.rot);
@@ -1385,7 +1388,9 @@ namespace UnturnedGodot.Net
             // owner-inventory echo re-adopts it, so the level MUST ride the wire or a filled can shows empty on the
             // client ("can won't fill", the unified-SP regression from the old local-fill path). -1 (non-fuel /
             // fresh) clamps to 0; only fuel containers ever read it back (Mathf.Max(0) on use).
-            w.WriteClampedFloat(Mathf.Max(0f, j.item?.fuelLevel ?? 0f), 12, 2);
+            // v78: the deployable fuel grid (signed 19.2). The old 12.2 grid topped out at 2047.75 mL, so a
+            // 20 L can filled at a pump read back as 2 L on its owner's screen.
+            w.WriteClampedFloat(Mathf.Max(0f, j.item?.fuelLevel ?? 0f), JarFuelIntBits, JarFuelFracBits);
             // fluid-CONTAINER contents (water bottle / canteen / soda / …): type + mL + quality, server-owned exactly like
             // fuelLevel. MUST ride the wire — the consuming loopback re-adopts the owner inventory through this schema, so
             // if the contents didn't travel, a drunk-empty bottle would round-trip to fluidAmount -1 and lazily REFILL to
@@ -1449,7 +1454,7 @@ namespace UnturnedGodot.Net
                 if (!r.ReadBit(out chambered)) return false;
                 if (!r.ReadBit(out attachSeeded)) return false;
             }
-            if (!r.ReadClampedFloat(12, 2, out float fuelLevel)) return false;   // gas-can fuel level (server-filled)
+            if (!r.ReadClampedFloat(JarFuelIntBits, JarFuelFracBits, out float fuelLevel)) return false;   // gas-can fuel level (server-filled)
             if (!r.ReadUInt8(out byte fluidType)) return false;                  // fluid-container contents (server-owned)
             if (!r.ReadClampedFloat(20, 1, out float fluidAmount)) return false;
             if (!r.ReadUInt8(out byte fluidQuality)) return false;
@@ -1533,7 +1538,7 @@ namespace UnturnedGodot.Net
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunFiremode ?? -1));
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunMagId ?? -1));
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunAttach ?? -1));
-                    h = NetHash.MixFloat(h, NetQuantization.QuantizeClampedFloat(Mathf.Max(0f, j.item?.fuelLevel ?? 0f), 12, 2));   // gas-can fuel level, quantized to the wire value so both sides mix the same
+                    h = NetHash.MixFloat(h, NetQuantization.QuantizeClampedFloat(Mathf.Max(0f, j.item?.fuelLevel ?? 0f), JarFuelIntBits, JarFuelFracBits));   // gas-can fuel level, quantized to the wire value so both sides mix the same
                     h = NetHash.MixByte(h, j.item?.fluidType ?? (byte)0);   // fluid-container contents ride the parity hash too (quantized to the wire values)
                     h = NetHash.MixFloat(h, NetQuantization.QuantizeClampedFloat(j.item?.fluidAmount ?? -1f, 20, 1));
                     h = NetHash.MixByte(h, j.item?.fluidQuality ?? (byte)0);

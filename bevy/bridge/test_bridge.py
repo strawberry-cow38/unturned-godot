@@ -383,7 +383,8 @@ class BridgeTests(unittest.TestCase):
             before = self.call('snapshot')['state']['inventory']
             self.call('save', path=path)
             saved = json.loads(Path(path).read_text())
-            self.assertEqual(2, saved['Version'])
+            # v3 (protocol 78) saves battery charge and marks the unclipped fuel grid.
+            self.assertEqual(3, saved['Version'])
             self.assertGreater(len(saved['Players']), 0)
             item = before['pages'][2]['items'][0]
             self.call('action', name='dropItem', args=dict(page=2, x=item['x'], y=item['y']))

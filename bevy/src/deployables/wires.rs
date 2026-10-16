@@ -69,8 +69,24 @@ pub(super) struct Accepted {
     pub(super) graph: Option<Graph>,
     error: Option<String>,
 }
+impl Accepted {
+    pub(super) fn port(&self, net_id: u32, index: usize) -> Option<&SolvedPort> {
+        self.graph
+            .as_ref()?
+            .devices
+            .iter()
+            .find(|d| d.net_id == net_id)?
+            .ports
+            .iter()
+            .find(|p| p.index == index)
+    }
+    /// The accepted solve's verdict for one consumer port (false when unknown).
+    pub(super) fn powered(&self, net_id: u32, index: usize) -> bool {
+        self.port(net_id, index).is_some_and(|p| p.powered)
+    }
+}
 #[derive(Component)]
-struct WireSegment(u32);
+pub(super) struct WireSegment(pub(super) u32);
 #[derive(Resource, Default)]
 pub(super) struct Visuals {
     epoch: u64,
