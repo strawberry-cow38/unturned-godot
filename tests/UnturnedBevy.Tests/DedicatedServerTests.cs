@@ -296,6 +296,53 @@ public sealed class DedicatedServerTests
     }
 
     [Test]
+    public void WipeThenGracefulStopBootsAFreshWorld()
+    {
+        Boot();
+        var admin = Peer("admin");
+        Pump();
+        Call("worldSpawn", new { items = new[] { new { itemId = 13, amount = 1, position = new[] { 2f, 1f, 2f } } } });
+        Run(admin, "save");
+        Assert.That(Run(admin, "wipe"), Does.StartWith("save deleted"));
+        var stopped = JsonSerializer.SerializeToElement(Call("dedicatedStop"));
+        Assert.That(stopped.GetProperty("saved").GetBoolean(), Is.False, "the shutdown save must not undo the wipe");
+        Assert.That(File.Exists(SavePath), Is.False);
+        _peers.Clear();
+        _host.Dispose();
+        _host = new BridgeHost();
+        Boot();
+        Assert.That(State().GetProperty("persistence").GetProperty("restorePending").GetBoolean(), Is.False);
+        var back = Peer("admin");
+        Pump(30);
+        Assert.That(back.State, Is.EqualTo(NetSessionState.Connected));
+        Assert.That(back.WorldItems.All.Any(e => e.ItemId == 13), Is.False, "the wiped world's item is gone");
+    }
+
+    [Test]
+    public void WorldItemsStreamOnTheSourceInterestRing()
+    {
+        Boot();
+        var peer = Peer("near");
+        Pump();
+        Assert.That(peer.State, Is.EqualTo(NetSessionState.Connected));
+        Call("worldSpawn", new { items = new[] {
+            new { itemId = 13, amount = 1, position = new[] { 2f, 1f, 2f } },
+            new { itemId = 13, amount = 1, position = new[] { 400f, 1f, 400f } } } });
+        Pump(30);
+        Assert.That(peer.WorldItems.Count, Is.EqualTo(1), "only items inside the 128 m ring around the player replicate");
+    }
+
+    [Test]
+    public void OversizedMaxPlayersIsClampedToTheSessionCap()
+    {
+        Environment.SetEnvironmentVariable("UG_MAXPLAYERS", "64");
+        Boot();
+        var peer = Peer("one");
+        Pump(20);
+        Assert.That(peer.Session.ServerMaxPlayers, Is.EqualTo(32));
+    }
+
+    [Test]
     public void NoCheatsLocksGivesAndModerationOnTheConsole()
     {
         Environment.SetEnvironmentVariable("UG_DEDICATED_NOCHEATS", "1");
@@ -327,11 +374,15 @@ public sealed class DedicatedServerTests
         Boot(serve: false);
         var served = JsonSerializer.SerializeToElement(Call("dedicatedServe"));
         Assert.That(served.GetProperty("save").GetString(), Does.StartWith("save refused"));
-        Assert.That(File.ReadAllText(SavePath), Is.EqualTo("{ not a save"), "the file is left for recovery");
+        var aside = Directory.GetFiles(_dir, Path.GetFileName(SavePath) + ".refused-*");
+        Assert.That(aside, Has.Length.EqualTo(1), "the file is moved aside for recovery");
+        Assert.That(File.ReadAllText(aside[0]), Is.EqualTo("{ not a save"));
         Assert.That(Network().GetProperty("serving").GetBoolean(), Is.True);
         var peer = Peer("fresh");
         Pump(20);
         Assert.That(peer.State, Is.EqualTo(NetSessionState.Connected));
+        Run(peer, "save");
+        Assert.That(File.ReadAllText(aside[0]), Is.EqualTo("{ not a save"), "a later save never overwrites the refused file");
     }
 
     [Test]

@@ -1290,6 +1290,7 @@ fn publish_bodies(
     ui: Res<UiState>,
     occupancy: Res<Occupancy>,
     residency: Option<Res<crate::dedicated::Residency>>,
+    pilots: Option<Res<npc::Autopilots>>,
     query: Query<(&VehicleBody, &Transform, &Velocity)>,
 ) {
     if !model.connected || crate::player::simulation_paused(&ui) {
@@ -1320,7 +1321,8 @@ fn publish_bodies(
             if let Err(e) = bridge.request("action",json!({"name":"vehicleState","args":args})) { warn!("Vehicle state: {e}"); }
         } else if coupling::state::driver(body) == 0
             // Parked outside every player's region: frozen, nothing to report.
-            && !residency.as_ref().is_some_and(|r| r.outside(pose.translation))
+            && !(residency.as_ref().is_some_and(|r| r.outside(pose.translation))
+                && !pilots.as_ref().is_some_and(|p| p.managed(body.net_id)))
         {
             unattended.push(json!({"netId":body.net_id,"position":pose.translation.to_array(),"eulerDegrees":angles,"linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),
             "steerDegrees":body.drivetrain.steering,"flags":body.flags,"engineDrowned":body.engine_drowned,"swamped":body.swamp.active}));

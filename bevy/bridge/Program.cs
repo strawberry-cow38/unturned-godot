@@ -11,6 +11,8 @@ using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Creat
     System.Runtime.InteropServices.PosixSignal.SIGTERM, context => context.Cancel = host.DedicatedActive);
 using var sigint = System.Runtime.InteropServices.PosixSignalRegistration.Create(
     System.Runtime.InteropServices.PosixSignal.SIGINT, context => context.Cancel = host.DedicatedActive);
+using var sighup = System.Runtime.InteropServices.PosixSignalRegistration.Create(
+    System.Runtime.InteropServices.PosixSignal.SIGHUP, context => context.Cancel = host.DedicatedActive);
 var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, IncludeFields = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 options.Converters.Add(new JsonStringEnumConverter());
 options.Converters.Add(new VectorJson());

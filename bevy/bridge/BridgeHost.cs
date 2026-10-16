@@ -77,7 +77,7 @@ public sealed partial class BridgeHost : IDisposable
         }
         CheckRemoteOperation(op);
         CheckDedicatedOperation(op);
-        if (op is "dedicatedServe" or "dedicatedStop") return DedicatedOperation(op, r);
+        if (op is "dedicatedServe" or "dedicatedStop" || (op == "disconnect" && _dedicated)) return DedicatedOperation(op, r);
         switch (op)
         {
             case "serverProbeStart": return _serverProbe.Start(Text(r, "host"), Int(r, "port", 47872));

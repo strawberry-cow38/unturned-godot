@@ -162,22 +162,21 @@ pub fn detect(
         if body.flags & 32 != 0 {
             continue;
         }
-        // A dedicated host advances many fixed steps per headless frame while
-        // a remote driver's replica velocity only changes once per frame, so
-        // that frame-sampled step reads as a crash. Only bodies this host
-        // simulates are judged there (remote crash damage: see
-        // DEDICATED_SERVER_PORT.md).
-        if residency.is_some()
+        let spec = &data::definition(body.type_id).unwrap().spec;
+        // A dedicated host advances many fixed steps per headless frame while a
+        // remote driver's replica velocity changes once per frame, so that step
+        // reads as a crash. The crash impact is judged only for bodies this host
+        // simulates there (see DEDICATED_SERVER_PORT.md, Remaining).
+        let sampled_replica = residency.is_some()
             && snapshot
                 .as_ref()
-                .is_some_and(|s| !coupling::state::simulates(&s.0, &body))
-        {
-            state.adopt_velocity(&data::definition(body.type_id).unwrap().spec, velocity.linear);
-            continue;
+                .is_some_and(|s| !coupling::state::simulates(&s.0, &body));
+        if sampled_replica {
+            state.adopt_velocity(spec, velocity.linear);
         }
-        let spec = &data::definition(body.type_id).unwrap().spec;
-        if let Some((amount, explode_now)) =
-            state.impact(spec, velocity.linear, *rigid == RigidBody::Fixed, 0.02)
+        if let Some((amount, explode_now)) = (!sampled_replica)
+            .then(|| state.impact(spec, velocity.linear, *rigid == RigidBody::Fixed, 0.02))
+            .flatten()
         {
             hits.write(DamageRequest {
                 vehicle: entity,

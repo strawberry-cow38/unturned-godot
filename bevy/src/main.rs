@@ -160,7 +160,10 @@ fn main() -> Result<()> {
         app.add_plugins(dedicated::DedicatedPlugin);
         // A signal is the normal stop (Bevy's handler exits with 130); only a
         // failed authority exits non-zero, so systemd records a crash.
-        if let AppExit::Error(code) = app.run() {
+        let exit = app.run();
+        // Drop first: the bridge child and its runtime copy are reaped by drop.
+        drop(app);
+        if let AppExit::Error(code) = exit {
             if code.get() != 130 {
                 std::process::exit(i32::from(code.get()));
             }

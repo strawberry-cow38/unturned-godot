@@ -79,7 +79,7 @@ impl CoreBridge {
         let (tx, rx) = mpsc::sync_channel(4);
         let process = BridgeProcess {
             child,
-            stdin,
+            stdin: Some(stdin),
             replies: rx,
             next_id: 1,
             failed: false,
@@ -112,7 +112,8 @@ impl CoreBridge {
 
 struct BridgeProcess {
     child: Child,
-    stdin: ChildStdin,
+    // None once Drop has closed it (end of input asks the core to finish).
+    stdin: Option<ChildStdin>,
     replies: mpsc::Receiver<Result<Value>>,
     next_id: u64,
     failed: bool,
@@ -163,8 +164,9 @@ impl BridgeProcess {
             // for a vehicle hit mesh, seconds for a world geometry upload).
             let mut line = serde_json::to_vec(&request)?;
             line.push(b'\n');
-            self.stdin.write_all(&line)?;
-            self.stdin.flush()?;
+            let stdin = self.stdin.as_mut().context("core input is closed")?;
+            stdin.write_all(&line)?;
+            stdin.flush()?;
             let response = self
                 .replies
                 .recv_timeout(Duration::from_secs(60))
@@ -200,7 +202,16 @@ impl BridgeProcess {
 
 impl Drop for BridgeProcess {
     fn drop(&mut self) {
-        // Always reap the owned child, including panic/failed-handshake paths.
+        // Close the input first: a healthy core treats end of input as a stop
+        // (a dedicated host writes its final save then) and exits by itself.
+        // Bounded, then always reap, including panic/failed-handshake paths.
+        drop(self.stdin.take());
+        if !self.failed {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while matches!(self.child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
