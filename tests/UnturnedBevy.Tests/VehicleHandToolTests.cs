@@ -43,6 +43,40 @@ public sealed class VehicleHandToolTests
     void Wreck(uint id){Server.Vehicles.TryGet(id,out var v);Server.Vehicles.ServerPublish(new(id),v.Pos,new(0,v.YawDegrees,0),v.LinVel,v.AngVel,0,v.Fuel,0,v.Battery,VehicleReplication.FlagExploded,Server.Session.CurrentTick+1);Pump();}
     JsonElement[] Jacks(BridgeHost h)=>State(h).GetProperty("events").EnumerateArray().Where(e=>e.GetProperty("kind").GetString()=="carjack").ToArray();
 
+    const ushort GasCan=28; // Portable Gas Can, 20000 mL; the sedan tank is 50000 mL
+    uint SpawnFuel(float z,float fuel)=>Call(_host,"worldVehicles",new{replace=false,vehicles=new[]{new{typeId=3,position=new[]{0,0,z},seatCount=4,health=6000,healthMax=6000,fuel,battery=10000,speedMax=30}}}).GetProperty("vehicles")[0].GetProperty("netId").GetUInt32();
+    float Tank(uint id)=>Row(id).GetProperty("fuel").GetSingle();
+    float CanFuel()=>Call(_peer,"inventoryView").GetProperty("items").EnumerateArray().Single(i=>i.GetProperty("address").GetProperty("id").GetUInt16()==GasCan).GetProperty("fuel").GetSingle();
+    (byte Page,byte X,byte Y) CanCell()
+    {
+        foreach(var p in State(_peer).GetProperty("inventory").GetProperty("pages").EnumerateArray())
+            foreach(var i in p.GetProperty("items").EnumerateArray())
+                if(i.GetProperty("id").GetUInt16()==GasCan)return(p.GetProperty("index").GetByte(),i.GetProperty("x").GetByte(),i.GetProperty("y").GetByte());
+        throw new InvalidOperationException("no can");
+    }
+    void Can(string action,uint car){var c=CanCell();Action(_peer,action,new{vehicleNetId=car,page=c.Page,x=c.X,y=c.Y,id=GasCan});Pump();}
+
+    [Test]
+    public void ARemoteCanSiphonsAndPoursTheExactHeldInstanceThroughTheHost()
+    {
+        uint car=SpawnFuel(0,1000),full=SpawnFuel(-8,50000);Give(GasCan);Teleport(3,-3);
+        Assert.That(CanFuel(),Is.Zero,"a fresh Portable Gas Can is empty");
+        Can("pourVehicleFuel",car);Assert.That(Tank(car),Is.EqualTo(1000f),"[fuel] can is empty: refused");
+        Can("siphonVehicleFuel",car);
+        Assert.That(Tank(car),Is.Zero,"min(free can 20000, tank 1000) left the car");
+        Assert.That(CanFuel(),Is.EqualTo(1000f),"and reached the exact held can through the owner echo");
+        Can("siphonVehicleFuel",car);Assert.That(CanFuel(),Is.EqualTo(1000f),"[fuel] that vehicle is empty: refused");
+        Can("pourVehicleFuel",full);Assert.That((Tank(full),CanFuel()),Is.EqualTo((50000f,1000f)),"[fuel] that tank is full: refused");
+        Teleport(30,30);Can("pourVehicleFuel",car);Assert.That(Tank(car),Is.Zero,"beyond reach");
+        Teleport(3,-3);
+        var client=(NetWorldClient)typeof(BridgeHost).GetField("_client",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(_peer)!;
+        var c=CanCell();client.SendPourVehicleFuel(car,c.Page,c.X,c.Y,GasCan,77);Pump();
+        Assert.That(Tank(car),Is.Zero,"a stale or forged instance token is refused");
+        Can("pourVehicleFuel",car);
+        Assert.That((Tank(car),CanFuel()),Is.EqualTo((1000f,0f)),"min(can, free tank) poured back");
+        Assert.That(Tank(car),Is.EqualTo(Row(_host,car).GetProperty("fuel").GetSingle()),"host and remote agree");
+    }
+
     [Test]
     public void ARemoteResprayIsSpentFromTheBagAndReplicatesTheCansColour()
     {

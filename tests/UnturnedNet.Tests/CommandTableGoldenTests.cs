@@ -127,6 +127,8 @@ namespace UnturnedNet.Tests
             [78] = "CommandVehicleDoor", // v70 original bus driver/focused toggle
             [79] = "CommandEmptyFuel", // v70 exact owner fuel-container action
             [90] = "CommandDepositFuel", // v78 exact held fuel container poured into a generator
+            [99] = "CommandPourVehicleFuel", // v82 exact held fuel container poured into a car (TryDepositFuel vehicle branch)
+            [100] = "CommandSiphonVehicleFuel", // v82 car siphoned into the exact held fuel container (TryExtractFuel vehicle branch)
             [81] = "CommandMagazineTransfer", // v71 exact magazine round request
             [83] = "CommandVehicleHitch", // v74 source fifth-wheel intent; paired vehicle state framing
             [84] = "CommandEmptyViewedFuel", // v75 exact currently viewed container instance

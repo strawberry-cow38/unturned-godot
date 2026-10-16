@@ -399,4 +399,50 @@ fn held_spare_refits_a_flat_and_a_held_jack_reaches_the_physics_owner() {
     assert_eq!(count(&state, JACK), 1, "the jack is a tool, not consumed");
 }
 
+#[test]
+fn vehicle_pour_and_siphon_refuse_in_the_source_order() {
+    assert_eq!(fuel_transfer(true, -1., 20000., 0., 50000.), Err("[fuel] can is empty"), "a fresh -1 can");
+    assert_eq!(fuel_transfer(true, 500., 20000., 50000., 50000.), Err("[fuel] that tank is full"));
+    assert_eq!(fuel_transfer(true, 500., 20000., 100., 50000.), Ok(()));
+    assert_eq!(fuel_transfer(false, 20000., 20000., 0., 50000.), Err("[fuel] can is full"), "full can before the empty car");
+    assert_eq!(fuel_transfer(false, 0., 20000., 0., 50000.), Err("[fuel] that vehicle is empty"));
+    assert_eq!(fuel_transfer(false, 0., 20000., 10., 50000.), Ok(()));
+    assert!(fuel_transfer(true, 500., 20000., 0., 0.).is_err(), "FuelMax 0: no tank to fill");
+    assert_eq!(fuel_sound(1440), "audio/items/fuels_gas_large_use.wav");
+    assert_eq!(fuel_sound(28), "audio/items/fuels_gas_use.wav");
+}
+
+fn can_fuel(rig: &Rig) -> f64 {
+    rig.app.world().resource::<CoreBridge>().request("inventoryView", json!({})).unwrap()["result"]["items"]
+        .as_array().unwrap().iter().find(|i| i["address"]["id"] == 28).unwrap()["fuel"].as_f64().unwrap()
+}
+fn rmb(rig: &mut Rig) {
+    let window = rig.window;
+    rig.app.world_mut().resource_mut::<FrameInput>().push(WindowEvent::MouseButtonInput(MouseButtonInput {
+        button: MouseButton::Right,
+        state: ButtonState::Pressed,
+        window,
+    }));
+    step(rig, 1);
+}
+
+#[test]
+fn held_gas_can_siphons_and_pours_the_aimed_car_only_through_accepted_state() {
+    let mut rig = rig();
+    rig.app.world().resource::<CoreBridge>().request("action", json!({"name":"console","args":{"text":"give 28"}})).unwrap();
+    hold(&mut rig, 28);
+    assert_eq!(row(&mut rig)["fuel"], 50000., "registered full");
+    assert_eq!(can_fuel(&rig), 0.);
+    rmb(&mut rig);
+    assert_eq!(can_fuel(&rig), 0., "the intent alone moves nothing");
+    assert_eq!(row(&mut rig)["fuel"], 30000., "siphoned min(free can 20000, tank)");
+    assert_eq!(can_fuel(&rig), 20000.);
+    assert_eq!(rig.app.world().get::<VehicleBody>(rig.entity).unwrap().fuel, 30000., "adopted by the native body");
+    rmb(&mut rig);
+    assert_eq!(row(&mut rig)["fuel"], 30000., "[fuel] can is full: no request");
+    click(&mut rig);
+    assert_eq!(row(&mut rig)["fuel"], 50000., "poured back");
+    assert_eq!(can_fuel(&rig), 0.);
+}
+
 mod visual;

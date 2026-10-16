@@ -249,6 +249,8 @@ namespace UnturnedGodot.Net
         public const byte CommandVehicleDoor = 78; // v70: source bus driver/focused toggle intent.
         public const byte CommandEmptyFuel = 79; // v70: empty an exact owned fuel-container instance.
         public const byte CommandDepositFuel = 90; // v78: pour the exact held fuel container into a generator (TryDepositFuel).
+        public const byte CommandPourVehicleFuel = 99; // v82: TryDepositFuel's vehicle branch -- pour the exact held can into a car.
+        public const byte CommandSiphonVehicleFuel = 100; // v82: TryExtractFuel's vehicle branch -- siphon a car into the exact held can.
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
         public const byte CommandNearbyInventory = 86; // v76: bounded source Nearby projection and exact transfer.
         public const byte CommandNearbyOperation = 87; // v77: exact Nearby row split to a cell or emptied (op 0 reserved, refused); result rides Event63.

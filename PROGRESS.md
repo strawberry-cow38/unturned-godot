@@ -2974,3 +2974,27 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - Vulkan: the `gpu_status_temperature_deadzone_and_drink_round_trip` fixture passes. It uses production vitals, feedback and deadzone plugins with the HDR scene canvas. Stages 0–4 and 8 inject owner replicas; stages 5–7 use a real host bridge, an accepted Hold, the same `fluid_hand` request simulate makes, and the echoed empty bottle. All nine `bevy/artifacts/bevy-survival-*.png` were opened: all five status icons with a cold 1 °C/34 °F bar; hot 38 °C/100 °F; tame and full grain with the HUD sharp; the bottle line, "drank 1.0 L (+100% water)" and "empty (1.0 L)"; alert plus toast.
 
   In the full-game PEI journey (above), the opened frames show the readout "19 °C / 66 °F", the real deadzone icon and grain at dose 0.58 in the farm-field deadzone, with the HUD text sharp, and the icon clearing on leaving. The snow wetness that drove the body from 19 °C to 11 °C stayed within Comfortable.
+
+### 2026-10-16 — Original vehicle hand tools: spraypaint, spare tire, carjack, can pour/siphon (protocol 82)
+
+- Ledger row 9 (`bevy/docs/VEHICLE_HAND_TOOLS_PORT.md`). The source timelines run in `vehicle/hand_tools.rs` and send one intent each:
+  - Spray: sends at 85 % of `Paint_Use`, against the focus at that moment.
+  - Spare: validated at the click with the source alerts; goes on at 75 %.
+  - Carjack: refused before the wind-up where the physics is local; lifts at 75 %, and the hand stays busy for the whole clip.
+  - The viewmodel uses each tool's own Equip/Use clips, the tinted can and the jack mesh, with the source sounds and the carjack's zombie noise.
+- Paint, cmd 50: the bridge never set `PaintColorFor`, so every respray was refused. It now uses the `VehiclePaints` table, and `repaint` swaps only the body material for a palette bake of the accepted `paintRgb`, the same rule as `vehicle_paint.gdshader`.
+- Spare, cmd 55: accepted `poppedTireMask`. Core fits the lowest flat bit, a stated deviation from the source's aimed wheel.
+- Carjack, cmd 56: the host rolls the source force/torque. Only the physics owner applies them, behind `Vehicle.Carjack`'s empty/wreck/`JackableNow` gate, at retail's dv for the real mass.
+- Vehicle pour/siphon: the source only mutated its local car. New Commands 99/100 name the exact held can (B's v78 address+token) and are validated by `VehicleFuelServices`.
+- Tests:
+  - Managed: 7 UDP `VehicleHandToolTests`; full suite 286/286.
+  - Native: 10 hand-tool tests plus the ignored Vulkan fixture; full suite 818 passed, 55 ignored. The two coupling PEI tests need the gitignored `bevy-coupling-os-entered.json` capture, and pass with it.
+  - Core: `VehicleFuelCanWireTests`, the command-table golden, and the keepalive golden (only its version byte moves, 0x4E→0x52); full suite 766/766.
+- Negative controls fail as intended:
+  - Managed: no paint table, no carjack emit, no fuel service.
+  - Native: no material swap, no `paintRgb` adoption, no passenger gate, no RMB siphon.
+- Vulkan fixture `render_source_spraypaint_spare_and_carjack_on_accepted_state` passes with real sedans, injected LMB and a real local authority. The opened frames show:
+  - the turquoise respray, with lamps, bumper and glass keeping their palette colours;
+  - the reference car keeping its spawn paint;
+  - the flat tyre gone, then back on;
+  - the jacked car in flight, rising from 0.58 m to 1.96 m.

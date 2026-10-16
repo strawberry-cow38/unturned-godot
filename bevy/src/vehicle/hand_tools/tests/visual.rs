@@ -18,6 +18,8 @@ struct Proof {
     acted: bool,
     last_event: u64,
     lift: f32,
+    rest: f32,
+    clicked: Option<usize>,
     prefix: String,
 }
 /// Turquoise (1842 = 25C891) contrasts with the random-hue spawn paint.
@@ -162,6 +164,8 @@ fn render_source_spraypaint_spare_and_carjack_on_accepted_state() {
         acted: false,
         last_event: 0,
         lift: 0.,
+        rest: 0.,
+        clicked: None,
         prefix: std::env::var("UG_HAND_TOOLS_SHOT").unwrap_or_else(|_| "/tmp/bevy-hand-tools".into()),
     });
     app.run();
@@ -194,6 +198,9 @@ fn advance(
             body.popped_tire_mask = row["poppedTireMask"].as_u64().unwrap_or(0) as u8;
         }
         if id == proof.car && proof.stage == 4 {
+            if proof.clicked.is_none() {
+                proof.rest = pose.translation.y;
+            }
             proof.lift = proof.lift.max(pose.translation.y);
             let _ = velocity;
         }
@@ -219,29 +226,40 @@ fn advance(
         events.push(WindowEvent::MouseButtonInput(MouseButtonInput { button: MouseButton::Left, state: ButtonState::Pressed, window }));
         events.push(WindowEvent::MouseButtonInput(MouseButtonInput { button: MouseButton::Left, state: ButtonState::Released, window }));
     };
-    // Each stage acts once after the hold has been accepted (a couple of frames).
-    match (proof.stage, proof.frame) {
-        (1, 1) => hold(TURQUOISE),
-        (1, 4) => { click(); proof.acted = true; }
-        (2, 1) => {
+    // Each tool stage asks for the hold once, then clicks on the accepted hold.
+    let item = match proof.stage {
+        1 => TURQUOISE,
+        3 => SPARE,
+        4 => JACK,
+        2 if proof.frame == 1 => {
             let car = proof.car;
             bridge.request("worldVehicleDamage", json!({"netId":car,"bodyPart":"tire:1","amount":50})).unwrap();
             proof.acted = true;
+            return;
         }
-        (3, 1) => hold(SPARE),
-        (3, 4) => { click(); proof.acted = true; }
-        (4, 1) => hold(JACK),
-        (4, 4) => { click(); proof.acted = true; }
-        _ => {}
+        _ => return,
+    };
+    if proof.frame == 1 {
+        hold(item);
+    } else if proof.frame > 2 && state["weapon"]["held"]["id"] == item {
+        click();
+        proof.acted = true;
+        proof.clicked = Some(proof.frame);
     }
 }
 fn capture(mut commands: Commands, mut proof: ResMut<Proof>, bodies: Query<(&VehicleBody, &Transform, &BodyPaint)>) {
-    if proof.pending {
+    // Frames still run between the exit request and shutdown.
+    if proof.pending || proof.stage >= STAGES.len() {
         return;
     }
     proof.frame += 1;
-    // Spray 2.8 s, spare 2.8 s (on at 75%), jack 1.967 s (lift at 75%) + flight.
-    let target = [40, 170, 40, 170, 102][proof.stage];
+    // From the click: spray 2.8 s, spare 75% of 2.8 s, jack 75% of 1.967 s + ~0.5 s rise.
+    let target = match (proof.stage, proof.clicked) {
+        (0 | 2, _) => 40,
+        (1 | 3, Some(at)) => at + 165,
+        (4, Some(at)) => at + 98,
+        _ => usize::MAX,
+    };
     if proof.frame < target {
         return;
     }
@@ -256,7 +274,7 @@ fn capture(mut commands: Commands, mut proof: ResMut<Proof>, bodies: Query<(&Veh
         }
         2 => assert_eq!(row(car).0.popped_tire_mask, 2),
         3 => assert_eq!(row(car).0.popped_tire_mask, 0, "accepted refit"),
-        4 => assert!(proof.lift > 1.6, "host shove lifted the car: peak y {}", proof.lift),
+        4 => assert!(proof.lift > proof.rest + 0.6, "host shove lifted the car: rest {} peak {}", proof.rest, proof.lift),
         _ => unreachable!(),
     }
     let name = STAGES[proof.stage];
@@ -264,7 +282,7 @@ fn capture(mut commands: Commands, mut proof: ResMut<Proof>, bodies: Query<(&Veh
         format!("{}-{name}.json", proof.prefix),
         serde_json::to_string_pretty(&json!({
             "stage": name, "paintRgb": row(car).0.paint_rgb, "rendered": row(car).2.rgb,
-            "poppedTireMask": row(car).0.popped_tire_mask, "car": row(car).1.translation.to_array(), "peakY": proof.lift,
+            "poppedTireMask": row(car).0.popped_tire_mask, "car": row(car).1.translation.to_array(), "peakY": proof.lift, "restY": proof.rest,
             "input": "injected ordered LMB edges; real local authority acceptance",
         }))
         .unwrap(),
@@ -280,6 +298,7 @@ fn capture(mut commands: Commands, mut proof: ResMut<Proof>, bodies: Query<(&Veh
                 proof.frame = 0;
                 proof.pending = false;
                 proof.acted = false;
+                proof.clicked = None;
                 if proof.stage == STAGES.len() {
                     exit.write(AppExit::Success);
                 }

@@ -369,6 +369,7 @@ public sealed partial class BridgeHost : IDisposable
         _vehicleHitches = new VehicleHitchServices(_server, _catalog, _geometry);
         _vehicleTows = new VehicleTowServices(_server, _catalog, () => _client?.PlayerId ?? 0);
         _ = new VehicleHandToolServices(_server, Emit);
+        _ = new VehicleFuelServices(_server, _catalog, _vehicles);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
         _zombies = new ZombieServices(_server, _geometry, Emit);
         _services.DoorNoise = _zombies.Noise;
@@ -496,6 +497,15 @@ public sealed partial class BridgeHost : IDisposable
             byte page = checked((byte)Int(args, "page")), x = checked((byte)Int(args, "x")), y = checked((byte)Int(args, "y"));
             bool known = _client.Inventories.TryGetItemToken(_client.PlayerId, page, x, y, out ulong token);
             return new { queued = known && _client.SendDepositFuel(checked((uint)Int(args, "netId")), page, x, y, checked((ushort)Int(args, "id")), token) };
+        }
+        if (name is "pourVehicleFuel" or "siphonVehicleFuel")
+        {
+            // v82 TryDepositFuel/TryExtractFuel vehicle branches: the exact held can by its accepted token.
+            byte page = checked((byte)Int(args, "page")), x = checked((byte)Int(args, "x")), y = checked((byte)Int(args, "y"));
+            uint car = checked((uint)Int(args, "vehicleNetId")); ushort id = checked((ushort)Int(args, "id"));
+            bool known = _client.Inventories.TryGetItemToken(_client.PlayerId, page, x, y, out ulong token);
+            return new { queued = known && (name == "pourVehicleFuel"
+                ? _client.SendPourVehicleFuel(car, page, x, y, id, token) : _client.SendSiphonVehicleFuel(car, page, x, y, id, token)) };
         }
         // TryExtractFuel: RMB a gas-pump fixture; the host picks the can and gates on the pump's wired power.
         if (name == "extractFuel") return new { queued = _client.SendExtractFuel(checked((uint)Int(args, "netId"))) };

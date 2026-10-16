@@ -352,6 +352,7 @@ fn input(
         && !seated
         && window.is_some_and(|(_, w, c)| w.focused && !c.visible && c.grab_mode != CursorGrabMode::None);
     let mut press = false;
+    let mut siphon = false;
     if let (true, Some(events), Some(settings), Some((window, ..))) =
         (active, events.as_ref(), settings.as_ref(), window)
     {
@@ -365,6 +366,7 @@ fn input(
                 _ => continue,
             };
             press |= down && settings.bindings[&GameAction::Fire].matches_window_event(&event.event);
+            siphon |= down && settings.bindings[&GameAction::Aim].matches_window_event(&event.event);
         }
     }
     let owns = crate::network::owns_world(&snapshot.0);
@@ -389,6 +391,45 @@ fn input(
         hand_events.write(HandEvent::Cancel);
     }
     let master = settings.as_ref().map_or(1., |s| s.master_volume);
+    // TryDepositFuel (LMB) / TryExtractFuel (RMB), vehicle branches: generators
+    // and pumps are the deployable interaction's; this is the car focus.
+    let can = Cell::held(&snapshot.0)
+        .filter(|_| alive)
+        .and_then(|c| Some((c, catalog.items.get(&c.id).filter(|i| i.fuel_capacity > 0.)?.fuel_capacity)));
+    if let (Some((cell, capacity)), Some(v)) = (can, look)
+        && let Some((_, body, ..)) = bodies.iter().find(|r| r.1.net_id == v.net_id)
+    {
+        let tank_max = super::data::definition(body.type_id).map_or(0., |d| d.spec.fuel);
+        for pour in [true, false].into_iter().filter(|p| if *p { press } else { siphon }) {
+            // The exact can's accepted fuel (the owner view; the snapshot omits it).
+            let fuel = bridge.request("inventoryView", json!({})).ok().and_then(|view| {
+                view["result"]["items"].as_array()?.iter().find(|i| {
+                    let a = &i["address"];
+                    a["page"] == cell.page && a["x"] == cell.x && a["y"] == cell.y && a["id"] == cell.id
+                })?["fuel"].as_f64()
+            });
+            let Some(fuel) = fuel else { continue };
+            match fuel_transfer(pour, fuel as f32, capacity, body.fuel, tank_max) {
+                Ok(()) => {
+                    let name = if pour { "pourVehicleFuel" } else { "siphonVehicleFuel" };
+                    let args = json!({"vehicleNetId":v.net_id,"page":cell.page,"x":cell.x,"y":cell.y,"id":cell.id});
+                    if let Err(error) = bridge.request("action", json!({"name":name,"args":args})) {
+                        model.notice(error.to_string());
+                    }
+                    // GameAudio.Play2D(.., FuelPour(id), -5f): the can glugging, either direction.
+                    let sound = fuel_sound(cell.id);
+                    if config.content_root.join(sound).is_file() {
+                        commands.spawn((
+                            AudioPlayer::new(assets.load(sound)),
+                            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(db_gain(-5.) * master)),
+                        ));
+                    }
+                }
+                Err(log) if !log.is_empty() => info!("{log}"),
+                Err(_) => {}
+            }
+        }
+    }
     for outcome in outcomes {
         match outcome {
             Outcome::Swing { kind, item, at } => {
@@ -441,6 +482,43 @@ fn input(
 }
 fn db_gain(db: f32) -> f32 {
     10_f32.powf(db / 20.)
+}
+/// The source refusals of the vehicle pour/siphon, in the source order, from
+/// accepted state. Only the host's answer moves any fuel.
+pub(crate) fn fuel_transfer(pour: bool, can: f32, capacity: f32, tank: f32, tank_max: f32) -> Result<(), &'static str> {
+    let can = can.max(0.); // a fresh can's -1 reads as empty
+    if pour {
+        if can <= 0.01 {
+            return Err("[fuel] can is empty");
+        }
+        if tank_max <= 0. {
+            return Err("");
+        }
+        if tank_max - tank <= 0.01 {
+            return Err("[fuel] that tank is full");
+        }
+    } else {
+        if capacity - can <= 0.01 {
+            return Err("[fuel] can is full");
+        }
+        if tank_max <= 0. {
+            return Err("");
+        }
+        if (capacity - can).min(tank) <= 0.01 {
+            return Err("[fuel] that vehicle is empty");
+        }
+    }
+    Ok(())
+}
+/// GameAudio.FuelPour.
+pub(crate) fn fuel_sound(item: u16) -> &'static str {
+    match item {
+        1440 => "audio/items/fuels_gas_large_use.wav",
+        1114 => "audio/items/fuels_jerrycan_maple_use.wav",
+        1115 => "audio/items/fuels_jerrycan_birch_use.wav",
+        1116 => "audio/items/fuels_jerrycan_pine_use.wav",
+        _ => "audio/items/fuels_gas_use.wav",
+    }
 }
 
 fn read_jacks(mut events: MessageReader<CoreEvent>, mut pending: ResMut<PendingJacks>) {
