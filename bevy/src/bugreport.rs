@@ -557,20 +557,24 @@ fn overlay(
     mut label: Query<(&mut Text, &mut Visibility, &mut Node, &mut TextFont), With<Overlay>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     font: Option<Res<crate::character::nameplate::OriginalFont>>,
+    symbols: Option<Res<crate::ui::godot::MenuSymbols>>,
+    mut styled: Local<Option<f32>>,
 ) {
     let r = &mut *reporter;
     let Ok((mut text, mut visibility, mut node, mut text_font)) = label.single_mut() else { return };
     // Label: CenterTop, Position (-120, 18), 240x24, default 16 px, under the
     // project's 2560x1440 canvas stretch.
     let k = windows.single().map_or(0.5, |w| crate::ui::godot::stretch(Vec2::new(w.width(), w.height())));
-    if node.top != px(18. * k) {
+    // Keyed on the applied stretch, not the spawn values: at exactly 0.5 the
+    // spawn geometry already matches and the font would never be set.
+    if *styled != Some(k) {
+        *styled = Some(k);
         node.top = px(18. * k);
         node.margin = UiRect::left(px(-120. * k));
         node.width = px(240. * k);
         text_font.font_size = bevy::text::FontSize::Px(16. * k);
-        if let Some(font) = font.as_ref() {
-            text_font.font = font.0.clone().into();
-        }
+        // Open Sans lacks U+25CF; Godot's TextServer falls back to DejaVu Sans.
+        text_font.font = crate::ui::godot::ctx(k, font.as_deref(), symbols.as_deref()).font;
     }
     let (value, show) = if r.session.state == ReportState::Recording {
         let s = r.session.elapsed as u64;
@@ -635,6 +639,31 @@ mod tests {
         state.capturing = None;
         state.menu.sp.seed_focus = true;
         assert!(typing(&state));
+    }
+    /// At exactly the 0.5 stretch the spawn geometry already matched, so the
+    /// label kept the default font and drew U+25CF as a missing glyph.
+    #[test]
+    fn overlay_styles_the_label_with_the_symbol_fallback_at_half_stretch() {
+        use crate::character::nameplate::OriginalFont;
+        use crate::ui::godot::MenuSymbols;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Font>()
+            .init_resource::<OriginalFont>()
+            .init_resource::<MenuSymbols>()
+            .init_resource::<BugReporter>()
+            .add_systems(Startup, spawn_overlay)
+            .add_systems(Update, overlay);
+        app.world_mut().spawn((
+            Window { resolution: (1280, 720).into(), ..default() },
+            bevy::window::PrimaryWindow,
+        ));
+        app.update();
+        let world = app.world_mut();
+        let font = world.query_filtered::<&TextFont, With<Overlay>>().single(world).unwrap().clone();
+        let expected = crate::ui::godot::ctx(0.5, world.get_resource::<OriginalFont>(), world.get_resource::<MenuSymbols>()).font;
+        assert_eq!(font.font, expected, "Open Sans first, then the DejaVu symbol fallback");
+        assert!(matches!(font.font_size, bevy::text::FontSize::Px(px) if px == 8.), "16 px under the 0.5 stretch");
     }
     #[test]
     fn console_report_command_is_recognised_exactly() {

@@ -120,7 +120,9 @@ Holding the BugReport binding (default `\`, physical; ignored with
 Ctrl/Alt/Super or while a text field has focus) captures a screenshot at press,
 records the default input device through cpal while held and a second screenshot
 at release (60 s cap, 0.4 s tap = screenshot only, focus loss ends it). The
-"● REC m:ss" label and toasts use the source canvas layer 260 position. The
+"● REC m:ss" label and toasts use the source canvas layer 260 position; ●
+and the "report sent ✓" check come from the DejaVu MenuSymbols fallback, as
+Godot's TextServer does, because Open Sans lacks both. The
 bridge's `BugReportOutbox` reuses BugReportCore (`AudioBuffer` amplitude verdict,
 `Wav.FitRate`/`Encode`, `BuildStamp`, `AudioStatusWire`) and ports WriteOutbox,
 UploadDir (Bearer header, 2xx delete, permanent 4xx parked as `rejected_CODE_`,
