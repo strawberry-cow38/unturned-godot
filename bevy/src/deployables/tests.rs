@@ -27,7 +27,7 @@ fn tick(bridge: &CoreBridge) -> Value {
     }
     state
 }
-fn fixture(bridge: CoreBridge, state: Value) -> App {
+pub(super) fn fixture(bridge: CoreBridge, state: Value) -> App {
     let mut defs = ItemCatalog::default();
     defs.deployables = catalog(&bridge);
     let mut model = UiModel::default();

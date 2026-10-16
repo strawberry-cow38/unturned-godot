@@ -2,6 +2,8 @@
 //! Specialized fluid/storage/fixture bodies are implemented separately, never
 //! approximated by the ordinary Deployable.Spawn mesh.
 mod geometry;
+mod interaction;
+mod pickup;
 mod presentation;
 #[cfg(test)]
 mod tests;
@@ -49,6 +51,16 @@ pub(crate) struct Definition {
     is_wind_turbine: bool,
     proc_box: bool,
     mesh_euler: SourceVector,
+    #[serde(default)]
+    health: f32,
+    #[serde(default)]
+    fuel: f32,
+    #[serde(default)]
+    is_battery: bool,
+    #[serde(default)]
+    is_switch: bool,
+    #[serde(default)]
+    is_item_configurable: bool,
 }
 impl Definition {
     fn ordinary(&self) -> bool {
@@ -60,6 +72,20 @@ impl Definition {
 pub(crate) struct Deployed {
     pub(crate) net_id: u32,
     pub(crate) def_id: u16,
+}
+
+/// Read-only capture evidence for production focus/hold integration checks.
+#[derive(Resource, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InteractionDiagnostics {
+    gate: String,
+    camera: Option<[f32; 3]>,
+    direction: Option<[f32; 3]>,
+    hit: Option<String>,
+    ray_distance: Option<f32>,
+    offered: Option<u32>,
+    selected: Option<u32>,
+    progress: f32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -103,6 +129,7 @@ struct Replicas {
 pub(crate) struct DeployablePlugin;
 impl Plugin for DeployablePlugin {
     fn build(&self, app: &mut App) {
+        interaction::install(app);
         app.init_resource::<Replicas>().add_systems(
             Update,
             sync.after(WorldServicesReady)
