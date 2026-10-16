@@ -2974,3 +2974,35 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - Vulkan: the `gpu_status_temperature_deadzone_and_drink_round_trip` fixture passes. It uses production vitals, feedback and deadzone plugins with the HDR scene canvas. Stages 0–4 and 8 inject owner replicas; stages 5–7 use a real host bridge, an accepted Hold, the same `fluid_hand` request simulate makes, and the echoed empty bottle. All nine `bevy/artifacts/bevy-survival-*.png` were opened: all five status icons with a cold 1 °C/34 °F bar; hot 38 °C/100 °F; tame and full grain with the HUD sharp; the bottle line, "drank 1.0 L (+100% water)" and "empty (1.0 L)"; alert plus toast.
 
   In the full-game PEI journey (above), the opened frames show the readout "19 °C / 66 °F", the real deadzone icon and grain at dose 0.58 in the farm-field deadzone, with the HUD text sharp, and the icon clearing on leaving. The snow wetness that drove the body from 19 °C to 11 °C stayed within Comfortable.
+
+### 2026-10-16 — Original store shelves: tier display, look tag and F take-one
+
+- `bevy/src/entities/shelves.rs` + `shelves/layout.rs` port `StoreShelf.ApplyDisplay`/`SyncDisplay`/`PlaceItem`. Each replicated display container's server digest (Cell = y*Width+x) becomes the items' dropped models on its tiers, on the stable cell → slot diff.
+  - Layout: source `Profiles`/`Prof`/`StoodAabb`, icon-pose stand vs lie-flat orientation (`item_poses.json`, `NearestAxis`, `_forceLie`, drinks stand, clothing/magazines/sandwiches lie), oversize scaling and front-biased placement.
+  - Look: the 2.6 m ray, then the 0.16 m sphere, picks an item box (mesh AABB × 1.1). It is offered as an ordinary prompt-less candidate, so it beats the shelf's open and crop harvest. F sends the existing `takeFromStorage` (CommandTakeFromStorage 45).
+  - Name tag: the source Label3D (rarity → 35% white, 64 px, 0.006 m/px, depth-ignoring billboard) shows on focus.
+  - Unchanged: no bridge, wire or protocol change. Core's `ServerTakeFromStorage` validation (StorageReach 4 m, exact cell, add-first) was verified against the source.
+  - Not ported: `SpawnDouble`/`ResolveSide`, because the shipped consume path is single-sided per server container. The focus outline belongs to the separate focus-outlines row. Details are in `bevy/docs/STORE_SHELVES_PORT.md`.
+- Tests:
+  - Native `entities::shelves`: 12 passing, 1 ignored GPU fixture. They include a Godot golden: 25 items dumped from the actual Godot 4.6.2 `UG_SHELFDEMO` by `bevy/tools/shelf_reference.gd` match item for item within 2 mm (basis, origin, tag, hitbox, AABB, tint). The authority journey runs through a real bridge.
+  - Managed `ShelfTests` (real UDP, joined client): reach refusal, stale-cell refusal, and a take that moves exactly one cell into the bag.
+  - 17 surgical negative controls, each failing as intended:
+    - offer not installed;
+    - open_storage candidate;
+    - HUD prompt;
+    - tier mirror;
+    - rot swap;
+    - drink rule;
+    - diagonal-up;
+    - handedness fix;
+    - oversize scale;
+    - front bias;
+    - tag tint;
+    - sphere refinement;
+    - stable diff;
+    - despawn on take;
+    - 1.1 hitbox;
+    - core reach check;
+    - core exact-cell check.
+  - Full suites: 276 managed tests pass. Native: 820 pass and 55 are ignored. Two coupling `main_schedule` tests read the gitignored `bevy/artifacts/bevy-coupling-os-entered.json`, and pass once it is copied into the worktree.
+- Vulkan: Godot oracle vs native renders of the shelfdemo, default and top views, were opened: same items, orientation, placement and scale, with only the lighting different. The focused Carjack tag matches the Godot label's position, size and colour. Renders: `bevy/artifacts/{godot,bevy}-shelfdemo*.png`.

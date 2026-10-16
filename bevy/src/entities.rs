@@ -17,6 +17,7 @@ mod items;
 pub(crate) mod forage;
 mod map_bindings;
 pub(crate) mod npcs;
+pub(crate) mod shelves;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +63,11 @@ pub struct ItemVisual {
     pub tool: Value,
     #[serde(default)]
     pub gravity_multiplier: f32,
+    /// ItemAsset.size_x/size_y: the unrotated grid footprint.
+    #[serde(default)]
+    pub width: u8,
+    #[serde(default)]
+    pub height: u8,
 }
 #[derive(Resource, Default)]
 pub struct ItemCatalog {
@@ -74,6 +80,8 @@ pub struct ItemCatalog {
     pub(crate) npc_crew: Option<crate::vehicle::turrets::crew::Definition>,
     pub(crate) vehicle_lighting: Option<crate::vehicle::lighting::Definition>,
     pub(crate) vehicle_maintenance: Option<crate::vehicle::maintenance::Definition>,
+    /// ContainerSchema.All, indexed by KindId.
+    pub(crate) containers: Vec<shelves::ContainerKind>,
 }
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
@@ -284,6 +292,7 @@ pub struct EntityPlugin;
 impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
         crops::install(app);
+        shelves::install(app);
         app.add_plugins(npcs::NpcPlugin)
             .init_resource::<ItemCatalog>()
             .init_resource::<ServiceManifest>()
@@ -374,6 +383,8 @@ fn load_catalog(
             serde_json::from_value(response["result"]["vehicleMaintenance"].clone()).ok();
         catalog.vehicle_lighting =
             serde_json::from_value(response["result"]["vehicleLighting"].clone()).ok();
+        catalog.containers =
+            serde_json::from_value(response["result"]["containers"].clone()).unwrap_or_default();
         Ok(serde_json::from_value::<Vec<ItemVisual>>(
             response["result"]["items"].clone(),
         )?)
