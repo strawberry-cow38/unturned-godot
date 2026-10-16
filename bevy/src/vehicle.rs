@@ -21,6 +21,7 @@ mod hearing;
 pub(crate) mod lighting;
 mod npc;
 mod remote;
+pub(crate) mod remote_exits;
 mod rope;
 mod render;
 pub(crate) mod seats;
@@ -255,6 +256,12 @@ impl Plugin for VehiclePlugin {
             .add_systems(
                 FixedUpdate,
                 turrets::input::send
+                    .after(VehiclePublish)
+                    .before(crate::player::PublishPlayer),
+            )
+            .add_systems(
+                FixedUpdate,
+                remote_exits::publish
                     .after(VehiclePublish)
                     .before(crate::player::PublishPlayer),
             )
