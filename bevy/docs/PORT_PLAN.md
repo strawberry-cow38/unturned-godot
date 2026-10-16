@@ -134,8 +134,8 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | DONE (`bc01598c`; remote deadzone/tap aim, tank fill, mains switch, Reset Data open) |
 | 9 | Vehicle hand tools: paint, carjack, spare tire, vehicle pour/siphon (cmds 50/55/56, new 99/100; pump fill 29 and generator pour 90 are the power port) | DONE: source timelines, accepted respray render, host-applied carjack, exact-can pour/siphon at v79 (`VEHICLE_HAND_TOOLS_PORT.md`); wheel choice is the authority's lowest flat bit | M | med | agent F (merge with integrator) |
 | 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | DONE (rope checkpoint; remote towing journey with row 16) |
-| 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | queued |
-| 12 | Binoculars, umbrella, fishing | Absent | S-M | low | queued |
+| 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | agent I (in progress) |
+| 12 | Binoculars, umbrella, fishing | Absent | S-M | low | agent I (in progress) |
 | 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | DONE (crops checkpoint, `CROPS_PORT.md`) |
 | 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | DONE (shelves checkpoint, `STORE_SHELVES_PORT.md`; outline glow with the focus-outlines row; back-to-back twin needs server registration) |
 | 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data; joined-client proximity vehicle enter (`RequestEnterNearestPuppet`, 4 m, ranks above crop harvest) | L | high (MP) | queued |
@@ -150,7 +150,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | — | Remaining power utilities | Specialized endpoints, fuel/ramp, consumer lights/audio, readouts | L | med | DONE (`17b9a035`, protocol 78; vehicle pour/siphon with row 9) |
 | — | Fifth-wheel towing | Full-game rocking fixed; remote/MP towing journey, rigid cargo | M | med | integrator |
 | — | Focus outlines (`OutlineOverlay`: items, shelves/containers, notes, puppets, fruit) | Renderer + items/containers DONE (`OUTLINE_PORT.md`); other claimers and the settings toggle remain | M | med | integrator (in progress) |
-| — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | queued |
+| — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | agent J (in progress) |
 
 N/A: the zombie attack loop/death loot and NPC map placements/quest persistence
 are absent from the source itself. FreezeMode, TargetDummy, DamageNumbers,
