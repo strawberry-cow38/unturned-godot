@@ -19,19 +19,16 @@ namespace UnturnedBevy;
 // the session start ticking, so no client ever sees the pre-restore world.
 public sealed partial class BridgeHost
 {
-    /// <summary>WorldSaveDriver.AutosaveSeconds.</summary>
-    public const double DedicatedAutosaveSeconds = 60.0;
     /// <summary>Source DedicatedServer.Replicate: a 10 s heartbeat (500 ticks).</summary>
     const long DedicatedHeartbeatTicks = 500;
 
     bool _dedicated, _serving, _stopped, _netlog;
-    string _savePath, _dedicatedMapRoot;
+    string _dedicatedMapRoot;
     bool _pvp = true;
     int _maxPing;
     byte[] _icon;
     bool _announceDeaths = true;
     DeathMessageOptions _deathMessages;
-    double _sinceSave;
     long _lastHeartbeatTick;
     Vector3 _dedicatedFallbackSpawn;
 
@@ -50,16 +47,7 @@ public sealed partial class BridgeHost
         if (_listenPort == 0) throw new ArgumentException("A dedicated server requires listenPort");
         if (Bool(request, "starterKit")) throw new ArgumentException("starterKit needs a local player; a dedicated server has none");
         if (request.TryGetProperty("finiteDirectory", out _)) throw new ArgumentException("Finite islands are not hosted by the dedicated server yet");
-        _savePath = Text(request, "savePath");
-        if (_savePath.Length == 0) throw new ArgumentException("A dedicated server requires savePath");
-        _savePath = Path.GetFullPath(_savePath);
         _dedicatedMapRoot = Text(request, "mapRoot");
-        // BanStore resolves UG_BANS_FILE / UG_SAVE_DIR itself; its last resort is
-        // Godot's user://, which this process has not got: keep it beside the save.
-        string bans = Text(request, "bansPath");
-        if (bans.Length > 0) BanStore.Path = Path.GetFullPath(bans);
-        else if (BanStore.Path.StartsWith("user://", StringComparison.Ordinal))
-            BanStore.Path = Path.Combine(Path.GetDirectoryName(_savePath)!, "bans.tsv");
 
         // Source DedicatedServer._Ready reads the operator's UG_* environment once
         // at boot. An explicit request value (the native CLI) wins over it.
@@ -97,6 +85,22 @@ public sealed partial class BridgeHost
             ShowLocation = Env("UG_DEATH_LOCATION") == "1",
         };
         _netlog = Bool(request, "netlog") || Env("UG_NETLOG") == "1";
+    }
+
+    /// <summary>After WorldPersistence configured the per-map file: a dedicated host
+    /// must have one, and (having no other entry restore) owes its restore whenever
+    /// the file exists at boot. The ban list defaults beside it.</summary>
+    void ConfigureDedicatedSave(JsonElement request)
+    {
+        if (!_dedicated) return;
+        if (_savePath == null) throw new ArgumentException("A dedicated server requires savePath");
+        if (!request.TryGetProperty("restorePending", out _)) _restorePending = File.Exists(_savePath);
+        // BanStore resolves UG_BANS_FILE / UG_SAVE_DIR itself; its last resort is
+        // Godot's user://, which this process has not got: keep it beside the save.
+        string bans = Text(request, "bansPath");
+        if (bans.Length > 0) BanStore.Path = Path.GetFullPath(bans);
+        else if (BanStore.Path.StartsWith("user://", StringComparison.Ordinal))
+            BanStore.Path = Path.Combine(Path.GetDirectoryName(_savePath)!, "bans.tsv");
     }
 
     /// <summary>Source DedicatedServer._Ready, after the shared host services
@@ -139,9 +143,7 @@ public sealed partial class BridgeHost
         // world save so `wipe` never unbans anyone (BanStore.cs, linked verbatim).
         BanStore.Load(_server.Transactions.Moderation);
         _server.Transactions.BansChanged = () => BanStore.Save(_server.Transactions.Moderation);
-        _server.Transactions.SaveNowHandler = DedicatedSaveReport;
-        _server.Transactions.WipeSaveHandler = DedicatedWipe;
-        _sinceSave = 0;
+        // `save`/`wipe` and the autosave are WorldPersistence's, installed by StartSession.
         _lastHeartbeatTick = _server.Session.CurrentTick;
     }
 
@@ -161,9 +163,7 @@ public sealed partial class BridgeHost
         StepWorldServices();
         _appearance.Tick();
         if (_worldChanged) PublishFullSnapshot();
-        // Source order: net.save.autosave, then net.server.replicate LAST.
-        _sinceSave += SimClock.FixedDelta;
-        if (_sinceSave >= DedicatedAutosaveSeconds) { _sinceSave = 0; DedicatedSaveNow(); }
+        TickAutosave();   // source order: net.save.autosave, then net.server.replicate LAST
         _server.TickReplication();
         if (_udpTransport != null) _udpTransport.StatusPlayerCount = _server.Session.Peers.Count;
         if (_server.Session.CurrentTick - _lastHeartbeatTick >= DedicatedHeartbeatTicks)
@@ -181,72 +181,29 @@ public sealed partial class BridgeHost
         if (_serving) return new { serving = true, port = (int)_listenPort, save = (string)null };
         string line = LoadDedicatedSave();
         Log.Print("[SAVE] " + line);
-        _serving = true; _sinceSave = 0; _lastHeartbeatTick = _server.Session.CurrentTick;
+        _serving = true; _lastHeartbeatTick = _server.Session.CurrentTick;
         Log.Print($"[DEDICATED] world up (map {_map}); listening on udp {_listenPort}");
         return new { serving = true, port = (int)_listenPort, save = line };
     }
 
-    /// <summary>WorldSaveDriver.LoadIntoWorld through the existing `load`
-    /// operation. An unreadable or refused save is reported and kept on disk;
-    /// the world starts fresh rather than silently.</summary>
+    /// <summary>WorldSaveDriver.LoadIntoWorld through the shared `load` operation
+    /// (which restores the season start and loot seed first). A refused save is
+    /// reported and kept on disk; the world starts fresh rather than silently.</summary>
     string LoadDedicatedSave()
     {
-        if (!File.Exists(_savePath)) return "no save at " + _savePath + " -- fresh world";
-        string json;
-        try { json = File.ReadAllText(_savePath); }
-        catch (Exception) { return "save at " + _savePath + " could not be read -- fresh world"; }
-        if (!WorldSave.TryParse(json, _map, out var save, out string error))
+        if (!_restorePending) return "no save at " + _savePath + " -- fresh world";
+        try
         {
-            Log.Err($"[save] refusing {_savePath}: {error}. Starting a FRESH world; the file is untouched.");
-            return "save refused (" + error + ") -- fresh world, file kept";
+            var result = JsonSerializer.SerializeToElement(Handle("load", JsonSerializer.SerializeToElement(new { path = _savePath })));
+            return result.GetProperty("message").GetString();
         }
-        // Restored before the world restarts so the environment reads the
-        // saved season, and the loot seed stays the world's established one.
-        WorldTemperature.StartDayOfYear = save.StartDayOfYear;
-        LootSeed.Set(save.LootSeedValue);
-        try { Handle("load", JsonSerializer.SerializeToElement(new { path = _savePath })); }
         catch (Exception e)
         {
             Log.Err($"[save] refusing {_savePath}: {e.Message}. Starting a FRESH world; the file is untouched.");
             if (_server == null) Start();   // load tore the session down before failing
+            _restorePending = false;        // as in the source, the fresh world now autosaves
             return "save refused (" + e.Message + ") -- fresh world, file kept";
         }
-        return $"loaded {_savePath}: day {save.Day}, {save.Players.Count} player(s), "
-             + $"{save.Deployables.Count} deployable(s), {save.WorldItems.Count} dropped item(s)";
-    }
-
-    /// <summary>WorldSaveDriver.SaveNow: never throws into a tick.</summary>
-    bool DedicatedSaveNow()
-    {
-        try
-        {
-            // The first save establishes the world's loot seed (idempotent).
-            LootSeed.EnsureEstablished(() => unchecked((ulong)Random.Shared.NextInt64(long.MinValue, long.MaxValue)));
-            Handle("save", JsonSerializer.SerializeToElement(new { path = _savePath }));
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Err($"[save] write failed: {ex.GetType().Name}: {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>The `save` console verb (WorldSaveDriver.SaveNowReport).</summary>
-    string DedicatedSaveReport()
-        => DedicatedSaveNow() ? $"saved to {_savePath}" : $"save FAILED (see the log) -- {_savePath}";
-
-    /// <summary>The `wipe` console verb (WorldSaveDriver.Wipe). The live world is
-    /// left standing on purpose; as in the source, the next autosave writes it
-    /// again unless the server restarts first.</summary>
-    string DedicatedWipe()
-    {
-        _server.PendingSave = null;
-        _sinceSave = 0;
-        if (!File.Exists(_savePath)) return "no save file to delete; the running world is unchanged";
-        try { File.Delete(_savePath); }
-        catch (Exception) { return "could not delete " + _savePath; }
-        return "save deleted (" + _savePath + "). The running world is UNCHANGED -- restart the server for a fresh one.";
     }
 
     /// <summary>Graceful stop (SIGTERM through the native parent, or the
@@ -254,7 +211,9 @@ public sealed partial class BridgeHost
     object DedicatedStop()
     {
         if (_stopped) return new { saved = false, stopped = true, path = _savePath };
-        bool saved = _serving && DedicatedSaveNow();
+        // Beyond the source (Godot was SIGKILLed after ignoring SIGTERM): the stop
+        // writes the world once more, unless its restore is still owed.
+        bool saved = _serving && !_restorePending && SaveNow();
         _stopped = true;
         if (_serving) Log.Print(saved ? $"[SAVE] shutdown save written to {_savePath}" : $"[SAVE] shutdown save FAILED -- {_savePath}");
         Log.Print("[DEDICATED] shutting down");
@@ -291,7 +250,7 @@ public sealed partial class BridgeHost
         protocol = NetProtocol.Version, awaitingSpawn = false, wireGaps = System.Array.Empty<string>(),
         serving = _serving, savePath = _savePath, allowCheats = _allowCheats,
         bans = _server?.Transactions.Moderation.Count ?? 0,
-        autosaveInSeconds = Math.Max(0, DedicatedAutosaveSeconds - _sinceSave),
+        autosaveInSeconds = Math.Max(0, AutosaveSeconds - _sinceSave),
     };
 
     /// <summary>The host snapshot without an owner: the same world-list rows a
@@ -305,7 +264,7 @@ public sealed partial class BridgeHost
         var interactables = _server.Interactables;
         return new {
             tick, origin = Origin, connected = !_stopped, playerId = 0,
-            network = NetworkState(), players = PlayerReplicas(_server.Players, _server.CombatState, _server.Profiles),
+            network = NetworkState(), persistence = PersistenceState(), players = PlayerReplicas(_server.Players, _server.CombatState, _server.Profiles),
             worldClock = new { day = _environment?.DayAt(_server.Clock, tick), timeOfDay = _server.Clock.TimeOfDayAt(tick), dayLengthSeconds = _server.Clock.DayLengthSeconds },
             weather = _environment?.State(),
             npcHelis = _npcHelis?.Snapshots() ?? [],

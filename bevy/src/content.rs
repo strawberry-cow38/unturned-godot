@@ -407,6 +407,26 @@ impl ContentCache {
         self.materials.insert(key, material.clone());
         material
     }
+    /// Godot `TextureFilter.NearestWithMipmaps` after `Image.GenerateMipmaps`
+    /// (CropNode foliage): nearest texels, the source box mip chain, and
+    /// linear blending between levels (Godot's default mipmap filter).
+    pub fn nearest_mipmapped(&mut self, path: &str, assets: &AssetServer) -> Handle<Image> {
+        let handle: Handle<Image> = assets
+            .load_builder()
+            .with_settings(|settings: &mut ImageLoaderSettings| {
+                settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u: ImageAddressMode::Repeat,
+                    address_mode_v: ImageAddressMode::Repeat,
+                    mag_filter: ImageFilterMode::Nearest,
+                    min_filter: ImageFilterMode::Nearest,
+                    mipmap_filter: ImageFilterMode::Linear,
+                    ..default()
+                });
+            })
+            .load(path.to_owned());
+        self.pending_mipmaps.insert(handle.id());
+        handle
+    }
 }
 
 /// Generate the source's 2×2 RGBA box mip chain. Bevy's PNG loader keeps only

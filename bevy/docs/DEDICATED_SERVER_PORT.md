@@ -54,12 +54,16 @@ restore, then serve.
    session starts ticking and the source lines are printed
    (`[SAVE] ...`, `[DEDICATED] world up ...; listening on udp P`).
 
-The save is the hybrid host's existing file (`UG_BEVY_SAVES`/`UG_SAVE_DIR`, default
-`<settings dir>/saves/<map>.json`), written through the existing `save` operation:
-autosave every 60 s of simulation (`WorldSaveDriver.AutosaveSeconds`), on the
-`save` console verb, and on shutdown. The loot seed is established on first save.
-`wipe` deletes the file and leaves the live world standing; as in the source, the
-next autosave writes it again unless the server restarts first.
+Persistence is the shared host lifecycle (`bevy/bridge/WorldPersistence.cs`,
+`player::persistence`), not a second copy: the source `WorldSaveDriver.PathFor`
+file (`UG_BEVY_SAVES`/`UG_SAVE_DIR`, default `<settings dir>/saves/<map>.json`),
+the 60 s autosave on the simulation clock, the `save`/`wipe` verbs, the loot seed
+established on first save and the season/seed restore on load. The dedicated host
+only changes *when* the restore happens (at admission, `dedicatedServe`, instead
+of the listen host's `entry_restore`), owes it whenever the file exists at boot,
+and adds the shutdown save. `wipe` deletes the file and leaves the live world
+standing; as in the source, the next autosave writes it again unless the server
+restarts first.
 
 Shutdown improves on the source (Godot ignored SIGTERM and was SIGKILLed after
 5 s, losing up to a minute): SIGINT/SIGTERM/SIGHUP become Bevy's graceful AppExit

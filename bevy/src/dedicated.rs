@@ -172,14 +172,13 @@ fn extent_of(points: &[Vec2]) -> Option<(Vec3, f32)> {
     ))
 }
 
-/// Source paths for the dedicated init: the world save the hybrid host
-/// already uses (UG_BEVY_SAVES / UG_SAVE_DIR), BanStore's list beside it
-/// (UG_BANS_FILE wins), the retail map root for Players.dat spawns.
+/// The dedicated additions to the host init (the world save path comes from
+/// the shared WorldSaveDriver path): BanStore's list (UG_BANS_FILE wins) and
+/// the retail map root for Players.dat spawns.
 pub(crate) fn configure_init(options: &Options, request: &mut Value) {
     if !options.network.dedicated() {
         return;
     }
-    request["savePath"] = json!(crate::player::save_path(&options.map));
     request["bansPath"] = json!(bans_path());
     if let Some(root) = &options.unturned {
         request["mapRoot"] = json!(root.join("Maps").join(&options.map));

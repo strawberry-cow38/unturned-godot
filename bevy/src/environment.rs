@@ -616,7 +616,7 @@ fn hand_audio(
             HandEvent::Start(id) => catalog
                 .items
                 .get(id)
-                .filter(|i| i.is_consumable)
+                .filter(|i| crate::use_items::consumes(i))
                 .and_then(|i| i.consume_animation["sound"].as_str())
                 .map(|s| format!("sounds/{s}.wav")),
             HandEvent::Released(id) => {

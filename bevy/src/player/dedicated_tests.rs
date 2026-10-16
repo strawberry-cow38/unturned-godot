@@ -52,7 +52,7 @@ fn state(app: &App) -> &Value {
 fn dedicated_host_has_no_body_opens_after_services_admits_a_client_and_saves_on_exit() {
     let port = free_port();
     let map = format!("DedicatedNative{}", std::process::id());
-    let save = save_path(&map);
+    let save = persistence::save_path(&map);
     let _ = std::fs::remove_file(&save);
     let mut host = dedicated_app(port, &map);
     host.update();
@@ -137,5 +137,5 @@ fn dedicated_host_that_cannot_bind_exits_with_an_error_instead_of_idling() {
         host.should_exit().is_some_and(|exit| exit.is_error()),
         "systemd must see a failed start"
     );
-    assert!(!save_path(&map).exists(), "nothing was served, nothing saved");
+    assert!(!persistence::save_path(&map).exists(), "nothing was served, nothing saved");
 }

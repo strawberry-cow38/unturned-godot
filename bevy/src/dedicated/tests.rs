@@ -62,11 +62,7 @@ fn dedicated_init_carries_the_hybrid_save_bans_and_map_root() {
     .unwrap();
     let mut request = json!({});
     configure_init(&options, &mut request);
-    assert_eq!(
-        request["savePath"],
-        json!(crate::player::save_path("PEI")),
-        "one save path for local, listen and dedicated hosts"
-    );
+    assert!(request.get("savePath").is_none(), "the shared WorldSaveDriver path is set by the session");
     assert!(request["bansPath"].as_str().unwrap().ends_with("bans.tsv"));
     assert_eq!(request["mapRoot"], json!("/srv/Unturned/Maps/PEI"));
     let mut listen = json!({});

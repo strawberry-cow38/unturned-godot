@@ -242,7 +242,7 @@ public sealed class DedicatedServerTests
     public void AutosaveWritesEverySixtySecondsOfSimulation()
     {
         Boot();
-        int ticks = (int)(BridgeHost.DedicatedAutosaveSeconds / SimClock.FixedDelta);
+        int ticks = (int)(BridgeHost.AutosaveSeconds / SimClock.FixedDelta);
         for (int n = 0; n < ticks - 2; n++) Call("tick");
         Assert.That(File.Exists(SavePath), Is.False);
         for (int n = 0; n < 4; n++) Call("tick");

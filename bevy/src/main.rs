@@ -22,6 +22,7 @@ mod recoil;
 mod rig;
 mod settings;
 mod sound;
+mod survival;
 mod footsteps;
 mod ui;
 mod use_items;
@@ -200,6 +201,7 @@ fn add_game_plugins(app: &mut App) {
         bullets::BulletPlugin,
         avatar::AvatarPlugin,
         footsteps::FootstepPlugin,
+        survival::SurvivalPlugin,
     ));
 }
 

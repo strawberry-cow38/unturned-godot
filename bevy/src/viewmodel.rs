@@ -868,7 +868,8 @@ fn animate_viewmodel(
         && !ui.captures_input()
         && occupancy.seat.is_none()
         && !focus.has_candidate()
-        && settings.just_pressed(GameAction::Interact, &keys, &mouse);
+        && settings.just_pressed(GameAction::Interact, &keys, &mouse)
+        && !settings.pressed(GameAction::FreeLook, &keys, &mouse);
     let started_inspect = wants_inspect
         && !reloading
         && !sprinting_now
