@@ -6,7 +6,7 @@ use bevy_rapier3d::prelude::*;
 /// Native query groups differ from Godot's layer numbers. This extra membership
 /// is reserved for a trailer in the source SetTowGhost state; ordinary chassis
 /// never scan the separate sleeper, while players retain the vehicle surface.
-pub(in crate::vehicle) const GHOST_TRAILER: Group = Group::GROUP_16;
+pub(crate) const GHOST_TRAILER: Group = Group::GROUP_16;
 
 #[derive(Component)]
 pub(in crate::vehicle) struct LandingLegs;

@@ -159,6 +159,7 @@ pub struct VehicleCameras<'w, 's> {
         'w,
         's,
         (
+            Entity,
             &'static crate::vehicle::VehicleBody,
             &'static Transform,
             Option<&'static crate::vehicle::turrets::Mounts>,
@@ -190,7 +191,7 @@ impl VehicleCameras<'_, '_> {
         dt: f32,
         paused: bool,
     ) -> Option<Transform> {
-        let vehicle = seat.and_then(|seat| self.vehicles.get(seat.vehicle).ok());
+        let vehicle = seat.and_then(|seat| self.vehicles.get(seat.vehicle).ok()).map(|(_,body,pose,mounts)|(body,pose,mounts));
         self.seated
             .eye(seat, vehicle, view.first_person, yaw, dt, paused)
     }
@@ -239,9 +240,14 @@ impl VehicleCameras<'_, '_> {
         view: &Perspective,
         context: Option<&RapierContext>,
     ) -> Option<Transform> {
-        let (body, pose, _) = self.vehicles.get(seat.vehicle).ok()?;
+        let (_, body, pose, _) = self.vehicles.get(seat.vehicle).ok()?;
         let spec = &crate::vehicle::data::definition(body.type_id)?.spec;
-        let size = self.size(seat.vehicle);
+        let mut size = self.size(seat.vehicle);
+        if body.coupled_trailer() != 0 {
+            if let Some((entity, _, _, _)) = self.vehicles.iter().find(|(_, other, _, _)| other.net_id == body.coupled_trailer()) {
+                size += self.size(entity) * 0.7;
+            }
+        }
         let (target, wanted, up, rotation) = vehicle_pose(*pose, size, spec.plane, spec.heli, view);
         let mut eye = wanted;
         if let Some(context) = context {

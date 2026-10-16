@@ -198,3 +198,19 @@ fn building_trim_keeps_source_bit_six_throw_clearance_without_world_membership()
     assert_eq!(hit(&mut app), None,
         "same physical groups without source-bit6 marker represent vehicle HitMesh/panes");
 }
+
+#[test]
+fn source_tow_ghost_stays_in_throw_clearance_via_prop_bit_six() {
+    let mut app=app();let owner=app.world_mut().spawn_empty().id();
+    let hull=app.world_mut().spawn((Collider::cuboid(0.5,0.5,0.1),Transform::from_xyz(0.,1.,-0.8),
+        CollisionGroups::new(Group::GROUP_4,Group::ALL & !Group::GROUP_2))).id();
+    settle(&mut app);
+    let hit=|app:&mut App| {
+        let mut state=SystemState::<ReadRapierContext>::new(app.world_mut());let read=state.get(app.world()).unwrap();
+        throw_clearance(&read.single().unwrap(),owner,Vec3::Y,Vec3::NEG_Z,1.5)
+    };
+    assert_eq!(hit(&mut app),None,"ordinary stripped chassis lacks source bits0|6");
+    app.world_mut().get_mut::<CollisionGroups>(hull).unwrap().memberships.insert(crate::vehicle::coupling::GHOST_TRAILER);
+    settle(&mut app);
+    assert!((hit(&mut app).unwrap()-0.7).abs()<0.001,"SetTowGhost adds bit6 even to a stripped chassis");
+}

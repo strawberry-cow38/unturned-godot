@@ -303,6 +303,10 @@ fn production_trailer_builder_decomposes_body_without_the_retractable_leg_triang
 }
 
 mod visual;
+mod physics;
+mod contact;
+mod accepted;
+mod coupled_visual;
 
 #[test]
 fn real_async_decomposer_consumes_the_post_partition_source_before_cache_fallback() {

@@ -7,7 +7,7 @@ pub(crate) use audio::spawn_sound as spawn_ranged_audio;
 mod collision;
 pub(crate) use collision::hull_mesh::Hooks as PhysicsHooks;
 mod contacts;
-mod coupling;
+pub(crate) mod coupling;
 mod damage;
 pub mod data;
 mod dynamics;
@@ -98,6 +98,7 @@ pub struct VehicleBody {
     pub burn_seconds: f32,
     pub wreck_salvageable: bool,
     pub driver_player_id: u32,
+    coupling: coupling::state::Accepted,
     pub passengers: Vec<u32>,
     recov_counter: u8,
     pub controls: Controls,
@@ -109,6 +110,8 @@ pub struct VehicleBody {
     wreck: damage::Wreck,
 }
 impl VehicleBody {
+    pub(crate) fn coupled_trailer(&self) -> u32 { self.coupling.trailer }
+
     pub(crate) fn gear_count(&self) -> usize { self.drivetrain.gear_count() }
     /// Original helicopter downwash used only by foliage presentation.
     pub(crate) fn foliage_wash(&self) -> Option<(Vec3, f32, f32)> {
@@ -181,6 +184,7 @@ struct Replica {
     burn_seconds: f32,
     wreck_salvageable: bool,
     driver_player_id: u32,
+    coupled_trailer_net_id: u32,
     passengers: Option<Vec<u32>>,
     recov_counter: u8,
 }
@@ -194,6 +198,7 @@ impl Plugin for VehiclePlugin {
             .add_plugins(lighting::LightingPlugin)
             .add_plugins(glazing::GlazingPlugin)
             .add_plugins(bifold::BiFoldPlugin)
+            .add_plugins(coupling::CouplingPlugin)
             .init_resource::<turrets::Operator>()
             .init_resource::<Vehicles>()
             .init_resource::<collision::Hulls>()
@@ -210,6 +215,7 @@ impl Plugin for VehiclePlugin {
                 (
                     register_spawns,
                     sync_vehicles,
+                    coupling::recovery::apply_adoptions,
                     remote::update,
                     render::animate_wheels,
                     render::animate_steering,
@@ -242,7 +248,7 @@ impl Plugin for VehiclePlugin {
             )
             .add_systems(
                 FixedUpdate,
-                (contacts::detect, step_bodies)
+                (coupling::physics::approach, coupling::physics::clamp, contacts::detect, step_bodies)
                     .chain()
                     .before(PhysicsSet::SyncBackend),
             )
@@ -476,12 +482,7 @@ fn sync_vehicles(
     model: Res<UiModel>,
     config: Res<WorldConfig>,
     mut vehicles: ResMut<Vehicles>,
-    mut query: Query<(
-        &mut VehicleBody,
-        &mut Transform,
-        &mut Velocity,
-        &mut contacts::ContactState,
-    )>,
+    mut query: Query<&mut VehicleBody>,
     mut cache: ResMut<ContentCache>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -507,12 +508,13 @@ fn sync_vehicles(
             false
         }
     });
-    for row in rows {
+    for row in &rows {
+        let link = coupling::state::Accepted::from_rows(row.net_id, &rows);
         let Some(d) = data::definition(row.type_id) else {
             continue;
         };
         if let Some(entity) = vehicles.entities.get(&row.net_id) {
-            if let Ok((mut body, mut transform, mut velocity, mut contact)) = query.get_mut(*entity)
+            if let Ok(mut body) = query.get_mut(*entity)
             {
                 // Owner ignition/light intent is streamed with its physical pose. A stale
                 // replica arriving before the next fixed tick must not cancel that intent.
@@ -541,16 +543,24 @@ fn sync_vehicles(
                 if body.engine_health <= 0. || body.health <= 0. {
                     body.flags &= !1;
                 }
+                let old_owner = coupling::state::driver(&body);
+                let new_owner = if link.cab != 0 { link.driver } else { row.driver_player_id };
+                let changed_link = body.coupling != link;
+                body.coupling = link;
                 body.driver_player_id = row.driver_player_id;
                 body.passengers = row.passengers.clone().unwrap_or_default();
-                // Normal replicas never fight the one host physics body. Only recovery teleports it.
-                if body.recov_counter != row.recov_counter || restored {
-                    *transform = replica_pose(&row);
-                    velocity.linear = Vec3::from_array(row.lin_vel);
-                    velocity.angular = Vec3::from_array(row.ang_vel);
-                    contact.adopt_velocity(&d.spec, velocity.linear);
-                    body.recov_counter = row.recov_counter;
+                // Handoff uses the last accepted pair, with the current+next
+                // Rapier poses reset before either body resumes simulation.
+                // Reliable recoveries are consumed separately, never inferred
+                // from a byte counter that can repeat on a later drive.
+                if changed_link || old_owner != new_owner || restored {
+                    commands.entity(*entity).insert(coupling::recovery::AdoptPose {
+                        pose: replica_pose(row), velocity: Velocity {
+                            linear: Vec3::from_array(row.lin_vel), angular: Vec3::from_array(row.ang_vel),
+                        },
+                    });
                 }
+                body.recov_counter = row.recov_counter;
             }
             continue;
         }
@@ -584,7 +594,8 @@ fn sync_vehicles(
                     burn_seconds: row.burn_seconds,
                     wreck_salvageable: row.wreck_salvageable,
                     driver_player_id: row.driver_player_id,
-                    passengers: row.passengers.unwrap_or_default(),
+                    coupling: link,
+                    passengers: row.passengers.clone().unwrap_or_default(),
                     recov_counter: row.recov_counter,
                     controls: default(),
                     drivetrain: Drivetrain::new(spec),
@@ -905,6 +916,12 @@ fn step_bodies(
         return;
     }
     let context = context.single().ok();
+    // An unattended coupled rig is one residency unit. Freezing only the cab
+    // would leave its unsupported trailer falling outside streamed collision.
+    let outside_region: HashSet<u32> = query.iter().filter_map(|(_,body,pose,_,_,_,_,_,_,_)| {
+        geometry.as_ref().is_some_and(|g| g.loaded_radius > 0.
+            && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius).then_some(body.net_id)
+    }).collect();
     for (
         entity,
         mut body,
@@ -919,8 +936,7 @@ fn step_bodies(
     ) in &mut query
     {
         if network.as_ref().is_some_and(|n| {
-            !crate::network::owns_world(&n.0)
-                && n.0["playerId"].as_u64() != Some(body.driver_player_id as u64)
+            !coupling::state::simulates(&n.0, &body)
         }) {
             remote::advance_aircraft_presentation(&mut body, 0.02);
             *rigid_body = RigidBody::KinematicPositionBased;
@@ -934,12 +950,11 @@ fn step_bodies(
         // A saved/streamed car must not fall through terrain that has intentionally
         // left the collision window. The authority retains its parked pose, and the
         // original single body wakes when its region is physically present again.
-        let outside = body.driver_player_id == 0
+        let outside = coupling::state::driver(&body) == 0
             && !pilots.as_ref().is_some_and(|p| p.managed(body.net_id))
-            && geometry.as_ref().is_some_and(|g| {
-                g.loaded_radius > 0.
-                    && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius
-            });
+            && (outside_region.contains(&body.net_id)
+                || outside_region.contains(&body.coupling.cab)
+                || outside_region.contains(&body.coupling.trailer));
         if outside {
             *rigid_body = RigidBody::Fixed;
             *velocity = Velocity::default();
@@ -973,6 +988,10 @@ fn step_bodies(
                 .step(spec, &mut wheels, pose, &velocity, controls, 0.02);
             *force = f;
             *impulse = i;
+            if body.coupling.trailer != 0 {
+                // Source halves actual EngineForce after drivetrain evaluation.
+                for wheel in &mut wheels.wheels { wheel.engine_force *= 0.5; }
+            }
             tires::apply_physics(
                 spec,
                 body.popped_tire_mask,
@@ -981,7 +1000,7 @@ fn step_bodies(
             );
             // Vehicle._Process applies an all-wheel parking brake while unattended.
             // Driver Space only brakes the rear axle and cannot stand in for this.
-            if body.driver_player_id == 0 && body.flags & 32 == 0 {
+            if body.driver_player_id == 0 && body.coupling.cab == 0 && body.flags & 32 == 0 {
                 for wheel in &mut wheels.wheels {
                     wheel.brake = spec.brake * spec.mass() / 900. * 13.;
                 }
@@ -1107,9 +1126,17 @@ fn publish_bodies(
             // follows current water contact. Send false too after recovery.
             physics_facts.push(json!({"netId":body.net_id,
                 "engineDrowned":body.engine_drowned,"swamped":body.swamp.active}));
-            if let Err(e)=bridge.request("action",json!({"name":"vehicleState","args":{"vehicleNetId":body.net_id,"pos":pose.translation.to_array(),"eulerDegrees":angles,
-                "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),"steerDegrees":body.drivetrain.steering,"throttle":body.controls.throttle,"steer":body.controls.steer,"handbrake":body.controls.handbrake,"flags":body.flags,"recovAck":body.recov_counter}})) {warn!("Vehicle state: {e}");}
-        } else {
+            let mut args = json!({"vehicleNetId":body.net_id,"pos":pose.translation.to_array(),"eulerDegrees":angles,
+                "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),"steerDegrees":body.drivetrain.steering,"throttle":body.controls.throttle,"steer":body.controls.steer,"handbrake":body.controls.handbrake,"flags":body.flags,"recovAck":body.recov_counter});
+            if body.coupling.trailer != 0 {
+                let Some((trailer, pose, velocity)) = query.iter().find(|(t,_,_)| t.net_id == body.coupling.trailer && t.coupling.cab == body.net_id) else { continue; };
+                let (yaw,pitch,roll) = pose.rotation.to_euler(EulerRot::YXZ);
+                args["trailer"] = json!({"netId":trailer.net_id,"pos":pose.translation.to_array(),
+                    "pitchDegrees":pitch.to_degrees(),"yawDegrees":yaw.to_degrees(),"rollDegrees":roll.to_degrees(),
+                    "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array()});
+            }
+            if let Err(e) = bridge.request("action",json!({"name":"vehicleState","args":args})) { warn!("Vehicle state: {e}"); }
+        } else if coupling::state::driver(body) == 0 {
             unattended.push(json!({"netId":body.net_id,"position":pose.translation.to_array(),"eulerDegrees":angles,"linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),
             "steerDegrees":body.drivetrain.steering,"flags":body.flags,"engineDrowned":body.engine_drowned,"swamped":body.swamp.active}));
         }

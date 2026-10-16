@@ -6,6 +6,7 @@ use bevy_rapier3d::parry::shape::{Shape, TypedShape};
 
 pub(super) fn retained(groups: &CollisionGroups) -> bool {
     groups.memberships.contains(Group::GROUP_4)
+        && !groups.memberships.contains(crate::vehicle::coupling::GHOST_TRAILER)
         && groups.filters.contains(Group::GROUP_2 | Group::GROUP_4)
 }
 

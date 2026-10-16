@@ -93,7 +93,7 @@ pub(crate) fn focus(
     cameras: Query<&Transform, With<PlayerCamera>>,
     bodies: Query<(Entity, &VehicleBody, &Transform)>,
     parents: Query<&ChildOf>,
-    players: Query<Entity, With<PlayerBody>>,
+    players: Query<(Entity, &Transform), With<PlayerBody>>,
     context: ReadRapierContext,
     mut focus: ResMut<InteractionFocus>,
 ) {
@@ -110,7 +110,7 @@ pub(crate) fn focus(
     // first and third person (2026-09-04 override of older shoulder comments).
     let from = eye.translation;
     let direction = *eye.forward();
-    let own = players.single().ok();
+    let own = players.single().ok().map(|(entity,_)| entity);
     let exclude_owner = |entity, _: &bevy_rapier3d::rapier::geometry::Collider| {
         !own.is_some_and(|p| entity == p || parents.iter_ancestors(entity).any(|a| a == p))
     };
@@ -182,6 +182,11 @@ pub(crate) fn focus(
     let Some(def) = data::definition(body.type_id) else {
         return;
     };
+    if let Ok((_, player)) = players.single() {
+        if super::coupling::input::offer(&mut focus, body, pose,
+            bodies.iter().map(|(_,body,pose)|(body,pose)), player.translation,
+            distance, from, direction) { return; }
+    }
     let inv = pose.compute_affine().inverse();
     let zone = resolve(
         &def.access,

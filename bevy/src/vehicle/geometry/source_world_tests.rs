@@ -176,6 +176,15 @@ fn actual_native_uploader_station_query_distinguishes_model_and_changed_fallback
         station(app.world().resource::<CoreBridge>()).is_empty(),
         "fallback chassis retains world bit0"
     );
+    app.world_mut().get_mut::<CollisionGroups>(body).unwrap().memberships
+        .insert(crate::vehicle::coupling::GHOST_TRAILER);
+    app.update();
+    assert_eq!(station(app.world().resource::<CoreBridge>()).len(),1,
+        "source SetTowGhost replaces SolidBit with prop bit6; station ray scans only world");
+    app.world_mut().get_mut::<CollisionGroups>(body).unwrap().memberships
+        .remove(crate::vehicle::coupling::GHOST_TRAILER);
+    app.update();
+    assert!(station(app.world().resource::<CoreBridge>()).is_empty(),"leaving approach restores source world obstruction");
     // No pose, artwork, tick or revision changes: completed physics geometry
     // itself must invalidate the uploader's previous stamp.
     app.world_mut()

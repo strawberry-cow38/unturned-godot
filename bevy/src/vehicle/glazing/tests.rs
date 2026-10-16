@@ -271,7 +271,8 @@ fn airborne_plane_ignores_own_player_mesh_and_uses_real_terrain_contact() {
         ready: true,
         ..default()
     });
-    app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"network":{"ownsWorld":true}});
+    app.world_mut().resource_mut::<GameSnapshot>().0 =
+        json!({"playerId":1,"network":{"ownsWorld":true}});
     let body = crate::vehicle::tests::body(&mut app, "otter", Vec3::Y * 10.);
     app.world_mut().entity_mut(body).insert((
         RigidBody::Fixed,

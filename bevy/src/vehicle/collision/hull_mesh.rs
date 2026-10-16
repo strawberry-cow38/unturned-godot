@@ -13,9 +13,13 @@ pub(in crate::vehicle) struct HullMesh(pub Entity);
 #[derive(SystemParam)]
 pub(crate) struct Hooks<'w, 's> {
     hulls: Query<'w, 's, &'static HullMesh>,
+    exceptions: Option<Res<'w, super::super::coupling::physics::Exceptions>>,
 }
 impl BevyPhysicsHooks for Hooks<'_, '_> {
     fn filter_contact_pair(&self, context: PairFilterContextView) -> Option<SolverFlags> {
+        if let (Some(a), Some(b), Some(exceptions)) = (context.rigid_body1(), context.rigid_body2(), self.exceptions.as_ref()) {
+            if exceptions.contains(a,b) { return None; }
+        }
         for (collider, other) in [
             (context.collider1(), context.rigid_body2()),
             (context.collider2(), context.rigid_body1()),

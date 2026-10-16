@@ -44,6 +44,7 @@ pub(crate) fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
                 burn_seconds: 0.,
                 wreck_salvageable: false,
                 driver_player_id: 1,
+                coupling: default(),
                 passengers: vec![],
                 recov_counter: 0,
                 controls: Controls {

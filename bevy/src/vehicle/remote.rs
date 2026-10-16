@@ -65,10 +65,6 @@ pub(super) fn update(
         Option<&mut Puppet>,
     )>,
 ) {
-    if crate::network::owns_world(&snapshot.0) {
-        return;
-    }
-    let local = snapshot.0["playerId"].as_u64().unwrap_or(0) as u32;
     let rows: Vec<Replica> =
         serde_json::from_value(snapshot.0["vehicles"].clone()).unwrap_or_default();
     for (entity, mut body, mut pose, mut velocity, mut controller, puppet) in &mut bodies {
@@ -79,11 +75,13 @@ pub(super) fn update(
             commands.entity(entity).insert(Puppet::default());
             continue;
         };
-        if row.driver_player_id == local && local != 0 {
+        if coupling::state::simulates(&snapshot.0, &body) {
             if puppet.active {
-                *pose = replica_pose(row);
-                velocity.linear = Vec3::from_array(row.lin_vel);
-                velocity.angular = Vec3::from_array(row.ang_vel);
+                commands.entity(entity).insert(coupling::recovery::AdoptPose {
+                    pose:replica_pose(row), velocity:Velocity {
+                        linear:Vec3::from_array(row.lin_vel), angular:Vec3::from_array(row.ang_vel),
+                    },
+                });
                 puppet.active = false;
             }
             continue;

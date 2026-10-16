@@ -319,10 +319,8 @@ pub fn build(
             .insert(super::collision::PendingHull);
     }
     if !shapes.is_empty() {
-        commands.entity(entity).insert((
-            Collider::compound(shapes),
-            ColliderMassProperties::Density(0.0),
-        ));
+        super::coupling::support::install(commands, entity, d, Collider::compound(shapes));
+        commands.entity(entity).insert(ColliderMassProperties::Density(0.0));
     } else {
         commands.entity(entity).remove::<Collider>();
     }

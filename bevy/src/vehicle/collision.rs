@@ -126,10 +126,8 @@ pub fn update(
     }
     for (entity, body, source) in &query {
         if let Some(shape) = hulls.ready.get(&body.type_id) {
-            commands
-                .entity(entity)
-                .insert(shape.clone())
-                .remove::<PendingHull>();
+            super::coupling::support::install(&mut commands, entity, definition(body.type_id).unwrap(), shape.clone());
+            commands.entity(entity).remove::<PendingHull>();
             continue;
         }
         if hulls.pending.contains_key(&body.type_id) {
