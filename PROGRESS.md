@@ -3025,7 +3025,7 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - the "● REC m:ss" label and toast, in Open Sans with a DejaVu fallback for ● and ✓.
 
   The bridge `BugReportOutbox` reuses BugReportCore for the outbox, Bearer upload, 4xx park and launch retry. The launcher is unchanged; the decision is recorded in `bevy/docs/SETTINGS_MENU_PORT.md`.
-- **Tests.** Native: 830 passed, 54 ignored, 2 failed. The two failures are the pre-existing `vehicle::coupling::tests::main_schedule` cases that need the untracked `bevy-coupling-os-entered.json`. Managed: 286 passed. Negative controls each failed and were restored:
+- **Tests** (after merging port/bevy 7c47a6b5). Native: 852 passed, 58 ignored, 2 failed. The two failures are the pre-existing `vehicle::coupling::tests::main_schedule` cases that need the untracked `bevy-coupling-os-entered.json`. Managed: 297 passed. Negative controls each failed and were restored:
   - Rust: camera-add MSAA, keybind persist, bloom row, DisarmReset, zombie rule, overlay font at the 0.5 stretch;
   - C#: finite zombie gate, permanent-4xx park, amplitude verdict.
 - **Visual.** All captures were rendered under Xvfb/lavapipe and opened (`bevy/artifacts/settings-menu/`). Eight Godot 4.6.2 `--menushot` originals match the native dashboard, Play, Survivors, Configuration, map selector, Proc and Advanced screens in layout and type. The remaining differences:
