@@ -53,6 +53,11 @@ public sealed class PowerGraphViewTests
         void Toggle(bool on) => Call(peer, "action", new { name = "toggleDeployable", args = new { netId = gate.NetIdValue, on } });
         Pump();
         var first = Call(peer, "powerView");
+        Assert.That(first.GetProperty("version").GetInt32(), Is.EqualTo(1));
+        Assert.That(first.GetProperty("readOnly").GetBoolean(), Is.True);
+        Assert.That(first.GetProperty("stateHash").GetUInt64(), Is.EqualTo(
+            JsonSerializer.SerializeToElement(peer.State()).GetProperty("powerStateHash").GetUInt64()),
+            "native cache key must describe the accepted client, not host truth");
         Assert.That(first.GetProperty("wires").GetArrayLength(), Is.EqualTo(2));
         Assert.That(Lamp(first).GetProperty("powered").GetBoolean(), Is.True);
         ulong hash = graph.StateHash(); long before = server.Session.CurrentTick;
@@ -63,6 +68,8 @@ public sealed class PowerGraphViewTests
         Assert.That(gate.ToggledOn, Is.True, "request waits for authority");
         Pump();
         Assert.That(gate.ToggledOn, Is.False);
+        Assert.That(Call(peer, "powerView").GetProperty("stateHash").GetUInt64(),
+            Is.Not.EqualTo(first.GetProperty("stateHash").GetUInt64()), "accepted changes invalidate native power view");
         Assert.That(Lamp(Call(peer, "powerView")).GetProperty("powered").GetBoolean(), Is.False,
             "actual remote accepted circuit must go dark through the original solver");
         Toggle(true); Pump();

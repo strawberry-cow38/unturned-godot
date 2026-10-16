@@ -6,6 +6,7 @@ mod interaction;
 mod pickup;
 mod presentation;
 mod switch;
+mod wires;
 #[cfg(test)]
 mod tests;
 
@@ -62,6 +63,8 @@ pub(crate) struct Definition {
     is_switch: bool,
     #[serde(default)]
     is_item_configurable: bool,
+    #[serde(default)]
+    ports: Vec<wires::Port>,
 }
 impl Definition {
     fn ordinary(&self) -> bool {
@@ -131,6 +134,7 @@ pub(crate) struct DeployablePlugin;
 impl Plugin for DeployablePlugin {
     fn build(&self, app: &mut App) {
         interaction::install(app);
+        wires::install(app);
         app.init_resource::<Replicas>()
             .add_systems(
                 Update,

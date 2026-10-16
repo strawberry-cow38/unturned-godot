@@ -9,7 +9,7 @@ fn catalog(bridge: &CoreBridge) -> Vec<Definition> {
     )
     .unwrap()
 }
-fn initialize() -> CoreBridge {
+pub(super) fn initialize() -> CoreBridge {
     let bridge = CoreBridge::launch(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
     bridge
         .request(
@@ -20,7 +20,7 @@ fn initialize() -> CoreBridge {
         .unwrap();
     bridge
 }
-fn tick(bridge: &CoreBridge) -> Value {
+pub(super) fn tick(bridge: &CoreBridge) -> Value {
     let mut state = Value::Null;
     for _ in 0..12 {
         state = bridge.request("tick", json!({})).unwrap()["state"].clone();

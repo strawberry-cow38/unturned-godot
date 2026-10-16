@@ -598,6 +598,7 @@ public sealed partial class BridgeHost : IDisposable
             vehicleMounts = _client.VehicleMounts.All.Select(v => new { vehicleNetId = v.VehicleNetId, headOut = v.HeadOut, gunnerRise = v.GunnerRise,
                 mounts = v.Mounts.Select((m,index) => new { index, yaw = m.Yaw, pitch = m.Pitch, ammo = m.Ammo, cooldownSeconds = m.CooldownSeconds, crewAlive = m.CrewAlive }).ToArray() }).ToArray(),
             animals = _wildlife?.Snapshots(_client) ?? RemoteAnimals(),
+            powerStateHash = _client.Deployables.StateHash(),
             deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, mountUp = e.MountUp, health = e.Health, fuel = e.Fuel, onFire = e.OnFire, burnSeconds = _bodies?.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray(),
             vehicleRecoveries = _vehicleRecovery.Values.Select(e => new { netId=e.NetId, pos=Array(e.Pos), linVel=Array(e.LinVel),
                 yawDegrees=e.YawDegrees, pitchDegrees=e.PitchDegrees, rollDegrees=e.RollDegrees, recovCounter=e.RecovCounter,

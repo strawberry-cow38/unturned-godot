@@ -11,6 +11,7 @@ public sealed partial class BridgeHost
         var graph = _client.Deployables;
         graph.Solve();
         return new {
+            version = 1, readOnly = true, stateHash = graph.StateHash(),
             graphVersion = graph.GraphVersion,
             devices = graph.All.Select(e => new {
                 netId = e.NetIdValue, defId = e.DefId,

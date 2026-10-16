@@ -46,8 +46,44 @@ independent visual review passes; this is not an OS-input or full power-network
 claim. The fixture uses70° main-game field of view and an independent edge
 counter so screenshot callback timing cannot skip its press edge.
 
-Remaining work includes native wire/port tools and geometry, full trigger/data
+Remaining work includes native port geometry and wire/port tools, full trigger/data
 semantics, generator ramp/fuel authority, battery/wind/output-budget inputs,
 consumer lights/audio and complete utility readouts. The old Godot
 `Deployable.NetSetPowered` still adopts `_powered` rather than `_switchOn`;
 that legacy engine adapter is distinct from the corrected Bevy consumer.
+
+
+## Accepted wire geometry
+
+The native consumer now draws the original `DeployableReplicaView` two-endpoint
+wire between represented ordinary device sockets. It uses `Wire.SetPoints`'s
+0.018 m radius, six radial segments, dark `(0.06,0.06,0.07)` material,
+metallic0.2/roughness0.6 and local-Y rotation-before-length scaling. Tiny edges
+below0.0001 m stay hidden. The endpoint uses the original port's body frame,
+outside `MeshEuler`, including original spotlight/generator tuning overrides.
+No collision body is added: source wires are non-interactive.
+
+`powerView` now identifies version1/readOnly and the accepted client state hash;
+the same hash is exposed in normal snapshots. The renderer fetches the view only
+when that accepted hash or the session epoch changes. View failure retires stale
+geometry and invalidates the cache key, so A→failed B→A can refetch correctly.
+Accepted removal, missing endpoint bodies, disconnect and epoch changes retire
+geometry. Sending connect/remove intents does not draw/remove a wire before the
+accepted graph arrives.
+
+This is wire presentation only. Ports/arrows, wire-tool routing and management
+input, specialized fixture endpoint transforms and data networks still need
+native consumers. A graph edge with an unrepresented endpoint is omitted rather
+than attached to an invented position. Tool preview routing points are separate
+from the actual unified game's accepted two-point wire.
+
+Validation: `wire_reference.py` compiles unmodified original `Wire.cs` on real
+Godot and captures10 route/pool cases in `data/wire-source-reference.json`.
+The native comparison guards full scaled bases, including exact near-vertical
+threshold behavior. Frozen `power-wires-v75-first` passes the actual UDP managed
+metadata/authority case and45 bridge JSONL tests. `native-wire-reviewed-final`
+passes12 deployable cases, including accepted-only connect/remove and failed-view
+cache recovery. Its actual UDP Vulkan fixture passes/exit0 and the three opened
+`bevy-wire-accepted-{0,1,2}.png` captures show absent → connected → removed wire.
+The fixture uses existing JSONL intents; it does not exercise native wire-tool
+input. No existing server command/event/snapshot bytes changed in this slice.
