@@ -55,7 +55,8 @@ fn collect(
     snapshot: Res<GameSnapshot>,
     camera: Query<&Transform, With<PlayerCamera>>,
     player: Query<Entity, With<PlayerBody>>,
-    deployed: Query<(&Deployed, &Transform)>,
+    // A Refrigerator is a StorageCrate, not a Deployable: no focus or pickup.
+    deployed: Query<(&Deployed, &Transform), Without<super::storage::Fridge>>,
     parents: Query<&ChildOf>,
     context: ReadRapierContext,
     mut hovered: ResMut<Hovered>,

@@ -96,7 +96,12 @@ pub(crate) fn focus(
     players: Query<(Entity, &Transform), With<PlayerBody>>,
     context: ReadRapierContext,
     mut focus: ResMut<InteractionFocus>,
+    mut looked: Option<ResMut<super::hand_tools::LookedVehicle>>,
 ) {
+    // Source _focusVehicle, also read by the held vehicle tools.
+    if let Some(looked) = looked.as_mut() {
+        looked.0 = None;
+    }
     if ui.captures_input()
         || snapshot.0["player"]["alive"] != true
         || snapshot.0["player"]["vehicleNetId"].as_u64().unwrap_or(0) != 0
@@ -176,6 +181,9 @@ pub(crate) fn focus(
     let Some(entity) = chosen else {
         return;
     };
+    if let Some(looked) = looked.as_mut() {
+        looked.0 = Some(entity);
+    }
     let Ok((_, body, pose)) = bodies.get(entity) else {
         return;
     };

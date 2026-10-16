@@ -32,50 +32,12 @@ pub fn build(
     let s = &d.spec;
     let paint = d.paints[variant as usize];
     let paint_key = format!("vehicle:{}:{variant}", d.key);
-    let body_material = if let Some(m) = cache.materials.get(&paint_key) {
-        m.clone()
-    } else {
-        let texture = s
-            .palette
-            .as_ref()
-            .and_then(|name| std::fs::read(root.join(name)).ok())
-            .and_then(|bytes| {
-                Image::from_buffer(
-                    &bytes,
-                    ImageType::Extension("png"),
-                    CompressedImageFormats::NONE,
-                    true,
-                    ImageSampler::Default,
-                    RenderAssetUsages::default(),
-                )
-                .ok()
-            })
-            .map(|mut image| {
-                if let Some(bytes) = &mut image.data {
-                    for pixel in bytes.chunks_exact_mut(4) {
-                        if pixel[3] < 128 {
-                            for i in 0..3 {
-                                pixel[i] = (paint[i].clamp(0., 1.) * 255.).round() as u8;
-                            }
-                            pixel[3] = 255;
-                        }
-                    }
-                }
-                images.add(image)
-            });
-        let m = materials.add(StandardMaterial {
-            base_color: if texture.is_some() {
-                Color::WHITE
-            } else {
-                Color::srgba(paint[0], paint[1], paint[2], paint[3])
-            },
-            base_color_texture: texture,
-            perceptual_roughness: 0.85,
-            ..default()
-        });
-        cache.materials.insert(paint_key, m.clone());
-        m
-    };
+    let body_material = body_material(d, paint, &paint_key, root, cache, materials, images);
+    // The respray seam (Vehicle._paintMat): every painted child shares this handle.
+    commands.entity(entity).insert(BodyPaint {
+        material: body_material.clone(),
+        rgb: None,
+    });
     let (body_override, lighting) =
         super::lighting::geometry::build(commands, entity, d, root, cache, meshes, materials);
     let door = super::bifold::build(
@@ -326,6 +288,70 @@ pub fn build(
     }
 }
 
+/// Vehicle._paintMat: the one body material every painted mesh was handed,
+/// and the accepted respray it currently shows (None = spawn paint).
+#[derive(Component, Clone, Debug)]
+pub(crate) struct BodyPaint {
+    pub material: Handle<StandardMaterial>,
+    pub rgb: Option<u32>,
+}
+/// `vehicle_paint.gdshader`: `ALBEDO = t.a < 0.5 ? paint_color : t.rgb`, baked
+/// into the sRGB palette once per (vehicle, paint). Without a palette the
+/// source's StandardMaterial3D fallback takes `AlbedoColor = paint`.
+pub(crate) fn body_material(
+    d: &VehicleDefinition,
+    paint: [f32; 4],
+    key: &str,
+    root: &Path,
+    cache: &mut ContentCache,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+) -> Handle<StandardMaterial> {
+    if let Some(m) = cache.materials.get(key) {
+        return m.clone();
+    }
+    let texture = d
+        .spec
+        .palette
+        .as_ref()
+        .and_then(|name| std::fs::read(root.join(name)).ok())
+        .and_then(|bytes| {
+            Image::from_buffer(
+                &bytes,
+                ImageType::Extension("png"),
+                CompressedImageFormats::NONE,
+                true,
+                ImageSampler::Default,
+                RenderAssetUsages::default(),
+            )
+            .ok()
+        })
+        .map(|mut image| {
+            if let Some(bytes) = &mut image.data {
+                for pixel in bytes.chunks_exact_mut(4) {
+                    if pixel[3] < 128 {
+                        for i in 0..3 {
+                            pixel[i] = (paint[i].clamp(0., 1.) * 255.).round() as u8;
+                        }
+                        pixel[3] = 255;
+                    }
+                }
+            }
+            images.add(image)
+        });
+    let m = materials.add(StandardMaterial {
+        base_color: if texture.is_some() {
+            Color::WHITE
+        } else {
+            Color::srgba(paint[0], paint[1], paint[2], paint[3])
+        },
+        base_color_texture: texture,
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    cache.materials.insert(key.to_owned(), m.clone());
+    m
+}
 pub(super) fn spawn_mesh(
     commands: &mut Commands,
     parent: Entity,

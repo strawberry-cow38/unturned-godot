@@ -1,17 +1,20 @@
 //! Source DeployableReplicaView: accepted objects own their only rendered body.
 //! Specialized fluid/storage/fixture bodies are implemented separately, never
 //! approximated by the ordinary Deployable.Spawn mesh.
+mod doors;
 mod engine;
 mod fixture;
 mod geometry;
 mod interaction;
 mod lamps;
 mod pickup;
+mod placement;
 mod ports;
 pub(crate) use ports::{ToolHud, ToolReadouts};
 #[cfg(test)]
 mod power_tests;
 mod presentation;
+mod storage;
 mod switch;
 /// Wire.SetPoints / TowRope segment basis, shared with the vehicle rope.
 pub(crate) use wires::segment::pose as segment_pose;
@@ -34,6 +37,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
+fn no_depth() -> f32 {
+    -1.
+}
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub(crate) struct SourceVector {
     x: f32,
@@ -54,6 +60,27 @@ pub(crate) struct Definition {
     model: Option<String>,
     size: SourceVector,
     offset: f32,
+    /// ItemBarricadeAsset Radius / Range: the placement clearance sphere and aim reach.
+    #[serde(default)]
+    radius: f32,
+    #[serde(default)]
+    range: f32,
+    /// Submersible placement band (-1 = no water requirement).
+    #[serde(default = "no_depth")]
+    water_depth_min: f32,
+    #[serde(default = "no_depth")]
+    water_depth_max: f32,
+    /// `.dat` PlacementAudioClip stem under `sounds/`.
+    #[serde(default)]
+    place_sound: Option<String>,
+    /// A LocalOnly placeable door (DoorDeploy); never a server body.
+    #[serde(default)]
+    door_prop: Option<String>,
+    /// A plain placeable container's grid (the campfire's DeployableCrate).
+    #[serde(default)]
+    storage_w: u8,
+    #[serde(default)]
+    storage_h: u8,
     upright: bool,
     mount: String,
     fixture: String,
@@ -154,6 +181,9 @@ impl Plugin for DeployablePlugin {
         wires::install(app);
         ports::install(app);
         engine::install(app);
+        placement::install(app);
+        storage::install(app);
+        doors::install(app);
         app.init_resource::<Replicas>()
             .add_systems(
                 Update,
@@ -182,6 +212,7 @@ fn sync(
     bridge: Res<CoreBridge>,
     mut model: ResMut<UiModel>,
     mut replicas: ResMut<Replicas>,
+    mut storage_art: ResMut<storage::Art>,
     mut cache: ResMut<ContentCache>,
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -205,7 +236,7 @@ fn sync(
             let Some(def) = catalog
                 .deployables
                 .iter()
-                .find(|d| d.id == def_id && (d.ordinary() || fixture::endpoint(d)))
+                .find(|d| d.id == def_id && (d.ordinary() || fixture::endpoint(d) || d.is_storage))
             else {
                 continue;
             };
@@ -221,6 +252,41 @@ fn sync(
                             commands.entity(old.entity).despawn();
                         }
                         let entity = fixture::spawn(&mut commands, def, id, transform);
+                        replicas.instances.insert(
+                            id,
+                            Instance {
+                                entity,
+                                def_id,
+                                pose,
+                            },
+                        );
+                    }
+                }
+                continue;
+            }
+            if def.is_storage {
+                // DeployableReplicaView's IsStorage branch: a Refrigerator.
+                live.insert(id);
+                match replicas.instances.get_mut(&id) {
+                    Some(instance) if instance.def_id == def_id => {
+                        if instance.pose != pose {
+                            commands.entity(instance.entity).insert(storage::transform(pose));
+                            instance.pose = pose;
+                        }
+                    }
+                    _ => {
+                        if let Some(old) = replicas.instances.remove(&id) {
+                            commands.entity(old.entity).despawn();
+                        }
+                        let entity = storage::spawn(
+                            &mut commands,
+                            def,
+                            id,
+                            pose,
+                            &mut storage_art,
+                            &mut meshes,
+                            &mut materials,
+                        );
                         replicas.instances.insert(
                             id,
                             Instance {
@@ -327,8 +393,12 @@ fn sync(
                 .iter()
                 .find(|d| d.id == instance.def_id)
                 .unwrap();
-            let bounds = replicas.art[&instance.def_id].bounds;
-            let transform = geometry::seat(def, bounds, instance.pose);
+            let (bounds, transform) = if def.is_storage {
+                (storage::bounds(), storage::transform(instance.pose))
+            } else {
+                let bounds = replicas.art[&instance.def_id].bounds;
+                (bounds, geometry::seat(def, bounds, instance.pose))
+            };
             bridge.request(
                 "worldDynamicGeometry",
                 json!({"key":format!("deployable:{id}"),

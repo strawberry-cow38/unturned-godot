@@ -38,6 +38,7 @@ pub(crate) fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
                 engine_health: s.health * 10. * 0.4,
                 engine_drowned: false,
                 popped_tire_mask: 0,
+                paint_rgb: None,
                 glass_mask: 0,
                 broken_glass_mask: 0,
                 on_fire: false,

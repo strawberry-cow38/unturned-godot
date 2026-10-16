@@ -36,7 +36,7 @@ replacement has evidence of parity.
 Measured source: 187 engine-independent C# files / 60,586 lines, 342 gameplay
 files / 146,706 lines, 319 in-engine test files / 62,166 lines, and 194 core test
 files / 45,176 lines. Historical repository summaries are stale. The current
-source protocol is version61; the port is now version78 for Nearby row operations (77), host-owned power inputs (fuel burn, battery charge, turbine wind, side triggers), accepted equipment,
+source protocol is version61; the port is now version79 for vehicle pour/siphon intents (99/100), Nearby row operations (77), host-owned power inputs (fuel burn, battery charge, turbine wind, side triggers), accepted equipment,
 resource contacts, mounted weapons, occupant rise, remote mounted flight
 effects, NPC crew, vehicle electrical/lamp state, glazing/maintenance, full fleet fuel/health ranges, original skill nodes, bus doors, exact owned/viewed inventory and magazine actions, source crafting-station context, accepted respawn facing, fifth-wheel pairing and owner-only Nearby full-item projection with Take/Store, ground split/Empty and ground magazine jobs. Inventory has22 pages including vehicle compartments; AREA whole drags, equipment, wear and drop stay refused as in the source (see NEARBY_PORT.md).
 
@@ -124,15 +124,15 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 
 | # | Feature (source) | Gap | Size | Impact | Owner / status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | No held ghost/snapping/LMB place; cmd 7 test-only | L | high | agent G (in progress) |
-| 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | `ordinary()` excludes storage/fixture/fluid/turbine bodies | M | high | powered fixtures DONE (`17b9a035`); rest agent G |
+| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | Floor/wall/ceiling ghost, reasons, R/LMB/RMB and Command 7 naming the held jar done; Window and Container (storage adapter) mounts refused | L | high | placement checkpoint DONE ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)); window/adapter mounts queued |
+| 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | Refrigerator body/label/socket, OpenNearestCrate and the LocalOnly placeable doors done; fixtures and turbine done by the power agent; fluid bodies remain with row 21 | M | high | DONE except fluid bodies ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)) |
 | 3 | Player structures (`BuildTool`, `StructureManager`) | Absent; source is local-only, no command/save | XL | high | needs authority design |
 | 4 | Survival HUD status icons (`HUD.cs`) | Bleeding/broken/starved/dehydrated/deadzone/temperature rows | S | high | DONE (`bc01598c`) |
 | 5 | Temperature (`PlayerTemperatureSim`, `ThermalField`) | Band never computed/streamed (`TempBand`) | M | med | DONE (`bc01598c`) |
 | 6 | Deadzones (`DeadzoneOverlay`, `GeigerCounter`) | Volumes exist, no overlay/Geiger | S | med | DONE (`bc01598c`; remote deadzone/tap aim, tank fill, mains switch, Reset Data open) |
 | 7 | Save lifecycle (`WorldSaveDriver`) | Manual save/load only; no autosave, entry load or quit save | S | high | DONE (`bc01598c`) |
 | 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | DONE (`bc01598c`; remote deadzone/tap aim, tank fill, mains switch, Reset Data open) |
-| 9 | Vehicle hand tools: paint, carjack, spare tire, pump, pour (cmds 29/50/55/56) | Not sent; `paintRgb` not rendered | M | med | agent F: paint/tire/carjack (cmd 29 with agent B) |
+| 9 | Vehicle hand tools: paint, carjack, spare tire, vehicle pour/siphon (cmds 50/55/56, new 99/100; pump fill 29 and generator pour 90 are the power port) | DONE: source timelines, accepted respray render, host-applied carjack, exact-can pour/siphon at v79 (`VEHICLE_HAND_TOOLS_PORT.md`); wheel choice is the authority's lowest flat bit | M | med | agent F (merge with integrator) |
 | 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | DONE (rope checkpoint; remote towing journey with row 16) |
 | 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | queued |
 | 12 | Binoculars, umbrella, fishing | Absent | S-M | low | queued |

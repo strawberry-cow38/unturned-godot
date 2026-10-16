@@ -43,10 +43,12 @@ public sealed class Catalog
         _clips.Clear();
         if (rig != null && rig.RootElement.TryGetProperty("anims", out var animations))
             foreach (var clip in animations.EnumerateObject()) _clips[clip.Name] = clip.Value.GetProperty("length").GetDouble();
-        string throwableClips = Path.Combine(Root, "throwable_anims.json");
-        if (File.Exists(throwableClips))
+        // Throwable and consumable/tool hand banks (the vehicle tools' Paint_/Tire_/Jack_ clips live in the latter).
+        foreach (string bank in new[] { "throwable_anims.json", "consumable_anims.json" })
         {
-            using var clips = System.Text.Json.JsonDocument.Parse(File.ReadAllText(throwableClips));
+            string bankPath = Path.Combine(Root, bank);
+            if (!File.Exists(bankPath)) continue;
+            using var clips = System.Text.Json.JsonDocument.Parse(File.ReadAllText(bankPath));
             foreach (var clip in clips.RootElement.EnumerateObject()) _clips[clip.Name] = clip.Value.GetProperty("length").GetDouble();
         }
         foreach (var path in Directory.EnumerateFiles(Root, "*.dat"))
@@ -106,7 +108,7 @@ public sealed class Catalog
             hasCondition = Durability.HasCondition(a), rarity = a.rarity.ToString().ToLowerInvariant(),
             handKind = HandRules.KindOf(a).ToString().ToLowerInvariant(), canEquipFromBag = a.slot.CanEquipFromBag(),
             preferredSlot = a.slot.PreferredSlot(), tool = ToolDef.ById(a.id), gravityMultiplier = Umbrellas.For(a.id),
-            throwable = Throwables.Find(a.id),
+            throwable = Throwables.Find(a.id), handTool = HandTool(a),
             consumeAnimation = a.IsConsumable ? new { equip = consumeAnims.Equip, use = consumeAnims.Use, seconds = consumeAnims.UseLen,
                 leftHook = consumeAnims.LeftHook, sound = ConsumableRegistry.Sound(a.id), color = ConsumableRegistry.FlatColor(asset) } : null,
             gunAmmoMax = a.gunAmmoMax, gun = GunDefs.GetValueOrDefault(a.id), melee = MeleeDefs.GetValueOrDefault(a.id),
@@ -120,5 +122,27 @@ public sealed class Catalog
             fuelCapacity = a.fuelCapacity,
             isConsumable = a.IsConsumable, isFluidContainer = a.IsFluidContainer, isDeployable = def != null };
     }).ToArray();
+    /// <summary>Source vehicle hand tools: EquipHeldSpraypaint / EquipHeldTire /
+    /// EquipHeldCarjack viewmodels, and the use timelines of TrySprayVehicle,
+    /// TryFitTire and TryCarjack (useTime = the Use clip, else the fallback).</summary>
+    object HandTool(ItemAsset a)
+    {
+        double Use(string clip, float fallback) => _clips.TryGetValue(clip, out double length) && length > .05 ? length : fallback;
+        return HandRules.KindOf(a) switch
+        {
+            HandRules.HandKind.Paint => new { kind = "paint", equip = "Paint_Equip", use = "Paint_Use",
+                useSeconds = Use("Paint_Use", HandRules.PaintFallbackUseSeconds), applyFraction = HandRules.PaintApplyFraction,
+                mesh = Existing("spraypaint.txt"), texture = (string)null, paintRgb = VehicleHandToolServices.Rgb(a.id) },
+            // EmptyHands takes precedence over ConsumableEquipClip in Viewmodel's
+            // equip selection, so the spare's hold is the generic Melee_Equip.
+            HandRules.HandKind.Tire => new { kind = "tire", equip = "Melee_Equip", use = "Tire_Use",
+                useSeconds = Use("Tire_Use", HandRules.TireFallbackUseSeconds), applyFraction = HandRules.TireFitFraction,
+                mesh = (string)null, texture = (string)null, paintRgb = (uint?)null },
+            HandRules.HandKind.Carjack => new { kind = "carjack", equip = "Jack_Equip", use = "Jack_Use",
+                useSeconds = Use("Jack_Use", HandRules.CarjackFallbackUseSeconds), applyFraction = HandRules.CarjackApplyFraction,
+                mesh = Existing("carjack.txt"), texture = Existing("carjack_albedo.png"), paintRgb = (uint?)null },
+            _ => (object)null,
+        };
+    }
     string Existing(string path) => File.Exists(Path.Combine(Root, path)) ? path : null;
 }

@@ -16,6 +16,7 @@ mod exit;
 mod flight;
 mod geometry;
 pub(crate) mod glazing;
+pub(crate) mod hand_tools;
 mod hearing;
 pub(crate) mod lighting;
 mod npc;
@@ -93,6 +94,8 @@ pub struct VehicleBody {
     pub engine_health: f32,
     pub engine_drowned: bool,
     pub popped_tire_mask: u8,
+    /// Accepted respray (VehicleEntity.PaintRgb); None keeps the spawn paint.
+    pub paint_rgb: Option<u32>,
     pub glass_mask: u32,
     pub broken_glass_mask: u32,
     pub on_fire: bool,
@@ -184,6 +187,7 @@ struct Replica {
     tail_rotor_health: Option<f32>,
     engine_drowned: bool,
     popped_tire_mask: u8,
+    paint_rgb: Option<u32>,
     on_fire: bool,
     burn_seconds: f32,
     wreck_salvageable: bool,
@@ -198,6 +202,7 @@ pub struct VehiclePlugin;
 impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
         rope::install(app);
+        hand_tools::install(app);
         app.init_resource::<Occupancy>()
             .add_plugins(turrets::fx::MountedEffectsPlugin)
             .add_plugins(npc::NpcFlightPlugin)
@@ -586,6 +591,7 @@ fn sync_vehicles(
                 body.engine_health = row.engine_health.unwrap_or(d.spec.health * 10. * 0.4);
                 body.engine_drowned = row.engine_drowned;
                 body.popped_tire_mask = row.popped_tire_mask;
+                body.paint_rgb = row.paint_rgb;
                 body.on_fire = row.on_fire;
                 body.burn_seconds = row.burn_seconds;
                 body.wreck_salvageable = row.wreck_salvageable;
@@ -653,6 +659,7 @@ fn sync_vehicles(
                     engine_health: row.engine_health.unwrap_or(spec.health * 10. * 0.4),
                     engine_drowned: row.engine_drowned,
                     popped_tire_mask: row.popped_tire_mask,
+                    paint_rgb: row.paint_rgb,
                     glass_mask: 0,
                     broken_glass_mask: 0,
                     on_fire: row.on_fire,
