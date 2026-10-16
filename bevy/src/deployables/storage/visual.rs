@@ -191,6 +191,7 @@ fn scene(
 }
 
 fn advance(
+    placer: Res<super::super::placement::Placer>,
     bridge: Res<CoreBridge>,
     mut proof: ResMut<Proof>,
     mut state: ResMut<GameSnapshot>,
@@ -220,7 +221,11 @@ fn advance(
         _ => Transform::from_translation(feet + Vec3::new(-0.6, 1.8, 0.8))
             .looking_at(feet + Vec3::new(-1.1, 0.6, -2.5), Vec3::Y),
     };
-    if stage == "fridge-placed" && !proof.clicked && proof.frame > 6 {
+    if stage == "fridge-placed" && !proof.clicked && proof.frame > 6
+        // Only once the ghost answers the aim (the window may take focus late).
+        && placer.active
+        && placer.aim.valid
+    {
         let window = windows.single().unwrap();
         for state in [ButtonState::Pressed, ButtonState::Released] {
             events.push(WindowEvent::MouseButtonInput(MouseButtonInput {
@@ -284,7 +289,14 @@ fn capture(
         return;
     }
     proof.frame += 1;
-    assert!(proof.frame < 300, "storage fixture stalled at {}", STAGES[proof.stage]);
+    assert!(
+        proof.frame < 300,
+        "storage fixture stalled at {}: offered {:?}, instances {:?}, rows {}",
+        STAGES[proof.stage],
+        diagnostic.offered,
+        replicas.instances.keys().collect::<Vec<_>>(),
+        snapshot.0["deployables"]
+    );
     if proof.pending || proof.frame < 16 {
         return;
     }

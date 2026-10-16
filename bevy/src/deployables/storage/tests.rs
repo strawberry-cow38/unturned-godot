@@ -111,3 +111,20 @@ fn udp_campfire_keeps_its_deployable_focus_and_opens_only_by_the_fallback() {
     u.look(u.feet + Vec3::new(3., 1.6, 3.));
     assert!(candidate(&u, "openStorage", id));
 }
+
+/// DefaultAttachable reads the hit collider's own groups, and a Refrigerator's
+/// collider is its child StaticBody, so a barricade may stand on a fridge.
+#[test]
+fn udp_a_fridge_top_is_a_legal_support_for_the_placement_ghost() {
+    let mut u = launch(&[458]);
+    let at = u.feet - Vec3::Z * 1.8;
+    place(&mut u, 9130, at);
+    frames(&mut u.app, 3);
+    u.hold(458);
+    *u.app.world_mut().get_mut::<Transform>(u.camera).unwrap() =
+        Transform::from_translation(at + Vec3::new(0., 3.2, 1.2)).looking_at(at + Vec3::Y * BODY.y, Vec3::Y);
+    frames(&mut u.app, 2);
+    let aim = u.placer().aim;
+    assert!(aim.valid, "{aim:?}");
+    assert!((aim.point.y - (at.y + BODY.y)).abs() < 0.01, "on the fridge's top: {aim:?}");
+}

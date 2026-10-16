@@ -28,7 +28,8 @@ pub(super) const BODY: Vec3 = Vec3::new(0.7, 1.7, 0.7);
 const RENDER_DISTANCE: f32 = 80.;
 /// `OpenNearestCrate`: within 2.5 m of the player's origin (squared 6.25).
 pub(super) const OPEN_REACH: f32 = 2.5;
-/// Label3D: PixelSize 0.006, FontSize 56, OutlineSize 10, at y 1.95.
+/// Label3D: PixelSize 0.006, FontSize 56, OutlineSize 10 (a 2.5 px stroke:
+/// the stroker scales outline_size by 16 in 26.6 units), at y 1.95.
 const LABEL_PIXEL: f32 = 0.006;
 
 #[derive(Component)]
@@ -105,10 +106,18 @@ pub(super) fn spawn(
             transform(pose),
             Visibility::Inherited,
             RigidBody::Fixed,
-            bounds().collider(),
-            CollisionGroups::new(Group::GROUP_1, Group::ALL),
         ))
         .id();
+    // `_Ready`'s child StaticBody3D: the hit collider is not the device node,
+    // so `DefaultAttachable` (which reads the collider's own groups) lets
+    // barricades build on a fridge.
+    commands.spawn((
+        Name::new("Refrigerator body"),
+        Transform::IDENTITY,
+        bounds().collider(),
+        CollisionGroups::new(Group::GROUP_1, Group::ALL),
+        ChildOf(root),
+    ));
     commands.spawn((
         Mesh3d(body_mesh),
         MeshMaterial3d(body_material),
@@ -168,7 +177,7 @@ pub(super) fn nearest(
 }
 /// The F chain's late fallback, below crop harvest and every look focus: no
 /// prompt (the source shows none), dispatched with the storage UI flag.
-fn open_nearest(
+pub(crate) fn open_nearest(
     ui: Option<Res<UiState>>,
     snapshot: Res<GameSnapshot>,
     catalog: Res<ItemCatalog>,
@@ -228,7 +237,7 @@ fn label(
         if label.built {
             continue;
         }
-        let Some(mut bitmap) = raster.render_fitted(&label.text, 56., f32::MAX, 10., 1.) else {
+        let Some(mut bitmap) = raster.render_fitted(&label.text, 56., f32::MAX, 10. / 4., 1.) else {
             continue;
         };
         bitmap.image.sampler = ImageSampler::linear();

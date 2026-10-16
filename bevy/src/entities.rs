@@ -271,6 +271,13 @@ impl InteractionFocus {
                 .candidate
                 .as_ref()
                 .is_some_and(|c| c.distance <= distance)
+            // A storage candidate (_focusShelf / OpenNearestCrate) ranks below
+            // the fall-through harvest whichever system offers first.
+            || (open_storage
+                && self
+                    .candidate
+                    .as_ref()
+                    .is_some_and(|c| c.distance == f32::INFINITY))
         {
             return;
         }

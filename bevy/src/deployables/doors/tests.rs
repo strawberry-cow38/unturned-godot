@@ -71,6 +71,11 @@ fn udp_placed_door_is_local_only_spent_by_the_host_and_swings_on_f() {
         Update,
         (|mut f: ResMut<InteractionFocus>| *f = default()).before(CollectInteractions),
     );
+    // LookReach is 2.6 m: the leaf's face 3 m out is not focused.
+    *u.app.world_mut().get_mut::<Transform>(u.camera).unwrap() =
+        Transform::from_translation(at + Vec3::new(-1.1, 1.2, 3.25)).looking_at(at + Vec3::new(-1.1, 1.2, 0.), Vec3::Y);
+    frames(&mut u.app, 2);
+    assert!(!u.app.world().resource::<InteractionFocus>().selected(ACTION, id), "beyond LookReach");
     u.look(at + Vec3::Y * 1.2);
     assert!(u.app.world().resource::<InteractionFocus>().selected(ACTION, id));
     u.key(KeyCode::KeyF, "f");

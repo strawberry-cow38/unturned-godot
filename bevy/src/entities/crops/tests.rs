@@ -32,6 +32,15 @@ fn fall_through_sits_below_look_targets_but_above_storage() {
     focus.fall_through("harvestCrop", json!({"netId":5}));
     assert!(focus.selected("harvestCrop", 5), "harvest is tried before _focusShelf/OpenNearestCrate");
     assert_eq!(focus.candidate.as_ref().unwrap().label, "Open Shelf", "the shelf prompt still shows");
+    // The hidden OpenNearestCrate offer loses to harvest in either order.
+    let mut focus = InteractionFocus::default();
+    focus.fall_through("harvestCrop", json!({"netId":5}));
+    focus.offer_hidden(f32::MAX, "openStorage", json!({"netId":9}), true);
+    assert!(focus.selected("harvestCrop", 5), "a later storage offer cannot displace harvest");
+    let mut focus = InteractionFocus::default();
+    focus.offer_hidden(f32::MAX, "openStorage", json!({"netId":9}), true);
+    focus.fall_through("harvestCrop", json!({"netId":5}));
+    assert!(focus.selected("harvestCrop", 5));
     let mut focus = InteractionFocus::default();
     focus.offer(1., "Sit", "sitSeat", json!({"netId":9}), false);
     focus.fall_through("harvestCrop", json!({"netId":5}));
@@ -41,7 +50,7 @@ fn fall_through_sits_below_look_targets_but_above_storage() {
 fn rig() -> App {
     let bridge = CoreBridge::launch(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
     let config = WorldConfig::default();
-    bridge.request("init", json!({"contentRoot":config.content_root,"name":"crops","spawn":[0,0,0]})).unwrap();
+    bridge.request("init", json!({"contentRoot":config.content_root,"name":"crops","spawn":[0,0,0],"allowCheats":true})).unwrap();
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin { file_path: config.content_root.to_string_lossy().into(), ..default() }))
         .init_asset::<Mesh>()
@@ -173,3 +182,53 @@ fn installed_harvest_runs_after_the_look_targets_it_ranks_against() {
 }
 
 mod visual;
+
+/// A grown crop within 3 m outranks the placed fridge's hidden OpenNearestCrate
+/// (source F chain: RequestHarvestNearestCrop before OpenNearestCrate), with
+/// the production storage system run before or after the harvest offer.
+fn crop_beside_fridge(storage_first: bool) {
+    let mut app = rig();
+    let deployables: Vec<crate::deployables::Definition> = serde_json::from_value(
+        app.world().resource::<CoreBridge>().request("catalog", json!({})).unwrap()["result"]["deployables"].clone(),
+    )
+    .unwrap();
+    app.insert_resource(crate::entities::ItemCatalog { deployables, ..default() });
+    if storage_first {
+        app.add_systems(Update, crate::deployables::open_nearest.after(sync).before(offer_harvest));
+    } else {
+        app.add_systems(Update, crate::deployables::open_nearest.after(offer_harvest).before(apply_interaction));
+    }
+    tick(&mut app);
+    console(&app, "plant corn grown");
+    console(&app, "give 9130");
+    tick(&mut app);
+    app.world()
+        .resource::<CoreBridge>()
+        .request("action", json!({"name":"placeDeployable","args":{"defId":9130,"pos":[0,0,-1.5],"yawDegrees":0}}))
+        .unwrap();
+    let state = tick(&mut app);
+    let fridge = state["deployables"].as_array().unwrap().iter().find(|r| r["defId"] == 9130).expect("accepted fridge")["netId"]
+        .as_u64()
+        .unwrap() as u32;
+    // The Refrigerator node at its accepted point, as the replica view seats it.
+    app.world_mut().spawn((crate::deployables::Deployed { net_id: fridge, def_id: 9130 }, Transform::from_xyz(0., 0., -1.5)));
+    app.update();
+    let crop = replicas(&mut app).into_iter().find(|r| r.1).expect("a grown crop").clone();
+    app.world_mut().query_filtered::<&mut Transform, With<PlayerBody>>().single_mut(app.world_mut()).unwrap().translation =
+        crop.2 - Vec3::Y * 1.5 + Vec3::Z;
+    app.update();
+    assert!(app.world().resource::<InteractionFocus>().selected("harvestCrop", crop.0), "harvest wins (storage first: {storage_first})");
+    press_f(&mut app);
+    let state = tick(&mut app);
+    assert_eq!(state["storage"]["netId"], 0, "the fridge did not open");
+    app.update();
+    assert!(replicas(&mut app).iter().all(|r| r.0 != crop.0), "the crop was harvested");
+    // With no grown crop in reach, F falls to the fridge.
+    app.update();
+    assert!(app.world().resource::<InteractionFocus>().selected("openStorage", fridge));
+}
+#[test]
+fn grown_crop_outranks_the_hidden_fridge_crate_in_either_system_order() {
+    crop_beside_fridge(true);
+    crop_beside_fridge(false);
+}
