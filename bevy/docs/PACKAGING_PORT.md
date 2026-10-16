@@ -17,13 +17,18 @@ binary only worked on the machine and in the folder that compiled it.
 
 Notes:
 
-- The checkout row is byte-for-byte the old behaviour. `bevy/run.sh`,
+- **The overrides apply to every run, not only packages.** `UG_CONTENT_DIR`,
+  `UG_DATA_DIR` and `UG_PACKAGE_ROOT` left set in a shell also redirect
+  `cargo run`, `bevy/run.sh` and the tests, as `UG_BRIDGE_DLL` always did.
+  Unset them for normal dev work.
+- Without overrides, the checkout row is byte-for-byte the old behaviour. `bevy/run.sh`,
   `bevy/check.sh` and the tests are unchanged. Test code still uses
   `CARGO_MANIFEST_DIR` directly, and `CoreBridge::launch(manifest)` keeps its
   signature as the checkout layout.
 - A package never falls back to the checkout. If its bridge is missing, the
   error names the package path; it does not quietly start the compiling
-  machine's `bin/Debug`.
+  machine's `bin/Debug`. If `UG_BRIDGE_DLL` is set and wrong, the error
+  names that variable instead of suggesting a reinstall.
 - `std::env::current_exe` resolves symlinks, so a link to the binary placed
   elsewhere still finds the package.
 - The settings dir is `Settings::path()`'s folder, `$XDG_CONFIG_HOME` or
@@ -34,15 +39,24 @@ Notes:
 - Retail maps still come from `UG_UNTURNED_DIR`, `--unturned`, or the Steam
   default probe (`cli::detect_retail_install`). The package does not include
   retail data.
-- The bug reporter passes `Layout::project_dir()`: the checkout root in dev,
-  the package root otherwise. BuildStamp therefore reports `unknown` for a
-  package; see Remaining.
+- Bug reports. A checkout run passes `projectDir`, and BuildStamp reads the
+  enclosing `.git` as before. A package sends `buildCommit`, the marker's
+  `commit` in BuildStamp's form (12 hex digits, plus `+dirty` when the tree was
+  dirty), and `BuildStamp.UsePackagedCommit` stops the upward `.git` walk. A
+  package under `bevy/dist`, or inside any other repository, would otherwise
+  report that checkout's HEAD.
 
 Bridge start (`bridge::host_command`): a self-contained publish lists
 `includedFrameworks` in its `runtimeconfig.json` and starts through its
 apphost. Anything else, including the dev `bin/Debug` output (which also has
-an apphost), runs on `dotnet` as before. The `RuntimeCopy` private copy is kept
-for both.
+an apphost), runs on `dotnet` as before.
+
+`RuntimeCopy` (a private temp copy of the bridge directory) exists because the
+checkout's `bin/Debug` is rebuilt in place while games run. A package's own
+bridge is immutable, so `Layout::needs_private_copy` runs it in place. That
+avoids putting the whole .NET runtime into the temp directory on every launch,
+failing on a `noexec` `/tmp`, and leaking the copy after a SIGKILL. A
+`UG_BRIDGE_DLL` pointing outside the package is still copied.
 
 The only `CARGO_MANIFEST_DIR` left in non-test code is the checkout fallback in
 `install.rs`.
@@ -56,21 +70,36 @@ UG_HEAVY=/tmp/claude-1000/ug-bin/heavy.sh bevy/tools/package.sh \
 
 The script runs these steps in order:
 
-1. `dotnet publish -c Release -r <host rid> --self-contained`.
-2. `cargo build --release`.
-3. Stages `bevy/dist/unturned-bevy-<rid>/` and swaps it in only when complete.
-4. Smoke-runs the result with `--headless --map Procedural --ticks 25`, with
-   `UG_BRIDGE_DLL`, `UG_CONTENT_DIR`, `UG_PACKAGE_ROOT` and `DOTNET` cleared.
+1. Refuses an empty `--out`, `/`, `$HOME` or the repository itself. It also
+   refuses an existing `--out` that lacks the package marker, so it never
+   deletes a folder it did not make.
+2. `dotnet publish -c Release -r <host rid> --self-contained`.
+3. `cargo build --release`.
+4. Stages into `<out>.staging`. An `EXIT` trap removes the stage on any
+   failure.
+5. Smoke-runs the STAGE with `--headless --map Procedural --ticks 25`, with
+   `UG_BRIDGE_DLL`, `UG_CONTENT_DIR`, `UG_PACKAGE_ROOT`, `UG_DATA_DIR` and
+   `DOTNET` cleared. With `--no-content`, the smoke uses `UG_CONTENT_DIR` if
+   it is set, and is skipped otherwise.
+6. Swaps the stage in only after the smoke passes.
+
+The marker records the build actually packaged: `commit` is HEAD before the
+build, with `dirty`. `--skip-build` reuses artifacts from an unknown commit,
+so it writes `commit: "unknown"`, `dirty: true`, and keeps HEAD only as
+`sourceHead`. Heavy steps use `${heavy[@]+"${heavy[@]}"}` so an unset
+`UG_HEAVY` also works on bash before 4.4.
 
 The package layout:
 
 ```
 unturned-bevy                  release binary
-unturned-bevy-package.json     marker + {format, commit, dirty, built, rid, bridge, content}
+unturned-bevy-package.json     marker + {format, commit, dirty, sourceHead, built, rid, bridge, content}
 bridge/                        published UnturnedBevy.Bridge (+ .NET runtime when self-contained)
 content/                       git-tracked game/content (ls-files, so editor/island bakes are excluded)
-licenses/                      bevy/licenses/* + CREDITS.md
-README.txt                     how to run, overrides, requirements
+licenses/                      bevy/licenses/*, CREDITS.md, content CREDITS,
+                               THIRD_PARTY_RUST.txt, DOTNET_RUNTIME_{LICENSE,THIRD-PARTY-NOTICES}.TXT
+README.txt                     how to run, overrides, requirements, the retail-content
+                               private-use note
 ```
 
 Measured for linux-x64 at 5707bbba:
@@ -103,6 +132,17 @@ Decisions:
   hosts rather than pretending to cross-compile. A Windows package needs the
   same script run on Windows (or `cargo-xwin`), with the `.exe` apphost name;
   `install.rs` already uses `EXE_EXTENSION`.
+
+Licenses. `cargo about` is not installed here, so
+`bevy/tools/third_party_licenses.py` walks the `cargo metadata` resolve graph
+from the root over normal dependencies for the target triple. It writes each
+crate's name, version, SPDX expression and verbatim LICENSE/COPYING/NOTICE
+texts, deduplicated: 434 crates and 219 distinct texts, about 750 KB. 24 crates
+ship no license file, and only their SPDX expression is listed. The .NET
+runtime's `LICENSE.TXT` and `THIRD-PARTY-NOTICES.TXT` come from the runtime
+pack matching the published `runtimeconfig.json` version; a self-contained
+package fails if they are missing. `content/` is ripped retail data for private
+use, and the README says so.
 
 ## Verification
 
@@ -138,12 +178,6 @@ precise next step, once a Windows `package.sh` run exists:
 ## Remaining
 
 - Windows (and macOS) packages: run the script on those hosts. Untested.
-- Bug-report build stamp for packages. Have the client pass the marker's
-  `commit` to the bridge as `BuildStamp.ConfiguredVersion`. Today a packaged
-  report says `game_commit: unknown`.
-- Each bridge launch copies `bridge/` (about 77 MB self-contained) to a private
-  temp folder. This protects against in-place rebuilds in dev and is harmless
-  but redundant for an immutable package; it could be skipped for
-  `Layout::Package`. The whole masked headless smoke, copy included, took
-  1.1 s, so it is cheap here.
+- The 24 Rust crates without a license file could get canonical SPDX texts
+  appended.
 - The launcher work above, plus release hosting and signing.

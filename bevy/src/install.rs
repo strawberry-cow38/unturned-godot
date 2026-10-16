@@ -10,6 +10,10 @@
 //! 3. the source checkout this binary was compiled from (`cargo run`), whose
 //!    paths are exactly the ones the dev workflow has always used.
 //!
+//! The overrides apply to every run, including `cargo run` and the tests: a
+//! stray `UG_CONTENT_DIR`, `UG_DATA_DIR` or `UG_PACKAGE_ROOT` in the shell also
+//! redirects the checkout (as `UG_BRIDGE_DLL` always did).
+//!
 //! A package never falls back to the checkout: a missing packaged bridge is an
 //! error naming the package path, not a silent launch of whatever the compiling
 //! machine left in `bevy/bridge/bin`.
@@ -128,8 +132,9 @@ impl Layout {
         }
     }
 
-    /// Where BugReportCore's BuildStamp looks for `.git`: the checkout root in
-    /// dev, the package root (no repository, so the stamp is "unknown") otherwise.
+    /// Where BugReportCore's BuildStamp looks for `.git` in a checkout run. A
+    /// package sends its [`Self::package_marker`] commit instead and is never
+    /// searched upward (it may sit inside an unrelated repository).
     pub fn project_dir(&self) -> &Path {
         match self {
             Self::Package(root) => root,
@@ -137,8 +142,36 @@ impl Layout {
         }
     }
 
+    /// The marker recording what was packaged (`commit`, `dirty`), if a package.
+    pub fn package_marker(&self) -> Option<PathBuf> {
+        match self {
+            Self::Package(root) => Some(root.join(PACKAGE_MARKER)),
+            Self::Dev(_) => None,
+        }
+    }
+
+    /// Whether the bridge must run from a private copy. The checkout's build
+    /// output is rebuilt in place while games run, so it is copied (see
+    /// `bridge::runtime`). A package's own bridge is immutable: copying it
+    /// would put the whole .NET runtime in the temp dir on every launch, fail
+    /// on a `noexec` temp mount and leak after a SIGKILL. An override pointing
+    /// outside the package is treated like a checkout build.
+    pub fn needs_private_copy(&self, dll: &Path) -> bool {
+        match self {
+            Self::Package(root) => !dll.starts_with(root),
+            Self::Dev(_) => true,
+        }
+    }
+
     /// What to tell a player whose bridge is missing.
     pub fn bridge_hint(&self) -> &'static str {
+        self.bridge_hint_in(&process_env)
+    }
+
+    fn bridge_hint_in(&self, env: Env) -> &'static str {
+        if env("UG_BRIDGE_DLL").is_some() {
+            return "UG_BRIDGE_DLL names a file that does not exist; fix or unset it.";
+        }
         match self {
             Self::Package(_) => "The package is incomplete; reinstall it or rerun bevy/tools/package.sh.",
             Self::Dev(_) => "Run bevy/run.sh to build it.",
@@ -277,6 +310,30 @@ mod tests {
         let layout = Layout::resolve(&moved, Some(Path::new("/usr/bin/x")), Path::new("/c/bevy"));
         assert_eq!(layout, Layout::Package(root.clone()));
         assert_eq!(layout.content_in(&no_env), root.join("content"));
+    }
+
+    #[test]
+    fn only_a_package_runs_its_own_bridge_in_place() {
+        let (root, exe) = package("in-place");
+        let package = Layout::resolve(&no_env, Some(&exe), Path::new("/checkout/bevy"));
+        assert!(!package.needs_private_copy(&package.bridge_dll_in(&no_env)));
+        // An override outside the package may be a build output being rebuilt.
+        assert!(package.needs_private_copy(Path::new("/checkout/bevy/bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll")));
+        assert!(package.needs_private_copy(&root.with_extension("other").join("UnturnedBevy.Bridge.dll")));
+        let dev = Layout::Dev("/checkout/bevy".into());
+        assert!(dev.needs_private_copy(&dev.bridge_dll_in(&no_env)));
+        assert_eq!(package.package_marker(), Some(root.join(PACKAGE_MARKER)));
+        assert_eq!(dev.package_marker(), None);
+    }
+
+    #[test]
+    fn a_missing_override_bridge_names_the_variable_not_a_reinstall() {
+        let overridden = |key: &str| (key == "UG_BRIDGE_DLL").then(|| OsString::from("/nope.dll"));
+        for layout in [Layout::Package("/pkg".into()), Layout::Dev("/checkout/bevy".into())] {
+            assert!(layout.bridge_hint_in(&overridden).contains("UG_BRIDGE_DLL"));
+            assert!(!layout.bridge_hint_in(&no_env).contains("UG_BRIDGE_DLL"));
+        }
+        assert!(Layout::Package("/pkg".into()).bridge_hint_in(&no_env).contains("reinstall"));
     }
 
     #[test]

@@ -49,7 +49,12 @@ impl CoreBridge {
                 layout.bridge_hint()
             );
         }
-        Self::launch_from_dll(&dll)
+        if layout.needs_private_copy(&dll) {
+            Self::launch_from_dll(&dll)
+        } else {
+            // A package's own bridge is immutable: run it where it is.
+            Self::launch_command(&mut host_command(&dll))
+        }
     }
 
     fn launch_from_dll(dll: &Path) -> Result<Self> {
@@ -287,6 +292,31 @@ mod tests {
         assert!(running_directory.exists());
         drop(bridge);
         assert!(!running_directory.exists());
+    }
+
+    #[test]
+    fn a_package_bridge_runs_in_place_without_a_temp_copy() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = std::env::temp_dir().join(format!(
+            "unturned-bevy-package-bridge-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("bridge")).unwrap();
+        runtime::copy_directory(&manifest.join("bridge/bin/Debug/net8.0"), &root.join("bridge"))
+            .expect("build original core with bevy/run.sh");
+        let layout = Layout::Package(root.clone());
+        let bridge = CoreBridge::launch_installed(&layout).unwrap();
+        assert!(bridge.0.lock().unwrap().runtime_copy.is_none());
+        bridge
+            .request(
+                "init",
+                json!({"contentRoot":manifest.join("../game/content"),
+                    "mapId":"Procedural","spawn":[1025.,40.,12.],"origin":[0.,0.]}),
+            )
+            .unwrap();
+        drop(bridge);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

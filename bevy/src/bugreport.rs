@@ -495,6 +495,10 @@ fn finish(
         "wasTap": finish.session.was_tap, "hitTimeout": finish.session.hit_timeout,
         "upload": r.config.upload, "endpoint": r.config.endpoint, "key": r.config.key,
         "projectDir": crate::install::Layout::current().project_dir(),
+        // A package names the build it recorded; the bridge then never walks up
+        // to an enclosing checkout's .git. Null in a checkout run.
+        "buildCommit": crate::install::Layout::current().package_marker()
+            .map(|marker| packaged_commit(std::fs::read_to_string(marker).ok().as_deref())),
     });
     let reply = bridge.map(|b| b.request("bugReport", request));
     match reply {
@@ -601,9 +605,31 @@ fn overlay(
     }
 }
 
+/// The package marker's build, in BuildStamp's form (12 hex + `+dirty`).
+/// Unreadable, missing or `unknown` (a `--skip-build` package) is "unknown".
+fn packaged_commit(marker: Option<&str>) -> String {
+    let parsed = marker.and_then(|text| serde_json::from_str::<Value>(text).ok());
+    let commit = parsed.as_ref().and_then(|m| m["commit"].as_str()).unwrap_or("");
+    if commit.is_empty() || commit == "unknown" {
+        return "unknown".into();
+    }
+    let dirty = parsed.as_ref().is_some_and(|m| m["dirty"] == true);
+    format!("{}{}", &commit[..commit.len().min(12)], if dirty { "+dirty" } else { "" })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn package_marker_names_the_packaged_build() {
+        let clean = r#"{"format":1,"commit":"5707bbba976035d4acd4542cc5fdbc8c0272fb39","dirty":false}"#;
+        assert_eq!(packaged_commit(Some(clean)), "5707bbba9760");
+        let dirty = r#"{"commit":"5707bbba976035d4acd4542cc5fdbc8c0272fb39","dirty":true}"#;
+        assert_eq!(packaged_commit(Some(dirty)), "5707bbba9760+dirty");
+        assert_eq!(packaged_commit(Some(r#"{"commit":"unknown","dirty":true}"#)), "unknown");
+        assert_eq!(packaged_commit(Some("not json")), "unknown");
+        assert_eq!(packaged_commit(None), "unknown");
+    }
     #[test]
     fn session_matches_report_session_press_tap_timeout_and_reuse() {
         let mut s = ReportSession::default();
