@@ -1143,7 +1143,7 @@ fn simulate(
 
 /// Same foot pivot and roll-before-pitch chain as the physical eyes. Reading
 /// camera Euler angles here would include Alt gaze and lose lean/pitch coupling.
-fn aim_eye(
+pub(crate) fn aim_eye(
     feet: Vec3,
     body: &PlayerBody,
     input: &PlayerInput,

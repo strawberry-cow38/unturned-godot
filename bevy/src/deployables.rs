@@ -7,6 +7,7 @@ mod geometry;
 mod interaction;
 mod lamps;
 mod pickup;
+mod placement;
 mod ports;
 pub(crate) use ports::{ToolHud, ToolReadouts};
 #[cfg(test)]
@@ -34,6 +35,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
+fn no_depth() -> f32 {
+    -1.
+}
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub(crate) struct SourceVector {
     x: f32,
@@ -54,6 +58,22 @@ pub(crate) struct Definition {
     model: Option<String>,
     size: SourceVector,
     offset: f32,
+    /// ItemBarricadeAsset Radius / Range: the placement clearance sphere and aim reach.
+    #[serde(default)]
+    radius: f32,
+    #[serde(default)]
+    range: f32,
+    /// Submersible placement band (-1 = no water requirement).
+    #[serde(default = "no_depth")]
+    water_depth_min: f32,
+    #[serde(default = "no_depth")]
+    water_depth_max: f32,
+    /// `.dat` PlacementAudioClip stem under `sounds/`.
+    #[serde(default)]
+    place_sound: Option<String>,
+    /// A LocalOnly placeable door (DoorDeploy); never a server body.
+    #[serde(default)]
+    door_prop: Option<String>,
     upright: bool,
     mount: String,
     fixture: String,
@@ -154,6 +174,7 @@ impl Plugin for DeployablePlugin {
         wires::install(app);
         ports::install(app);
         engine::install(app);
+        placement::install(app);
         app.init_resource::<Replicas>()
             .add_systems(
                 Update,

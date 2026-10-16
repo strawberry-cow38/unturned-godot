@@ -155,6 +155,35 @@ namespace UnturnedNet.Tests
             Assert.That(h.Server.Deployables.WireCount, Is.EqualTo(wires), "topology untouched");
         }
 
+        /// <summary>TryPlaceDeployable returns on _dead, and a seated LMB never reaches the ghost (the driver's
+        /// is the horn/turret, a passenger's does nothing): the choke point refuses both, item unspent.</summary>
+        [Test]
+        public void dead_or_seated_senders_cannot_place_or_spend()
+        {
+            var h = new TransactionalHarness(9078).Connected("a");
+            var a = h.Clients[0];
+            h.Grant(a.PlayerId, new Item(GEN));
+            h.Server.Inventories.TryGet(a.PlayerId, out var inv);
+
+            h.Server.Transactions.IsSeated = id => id == a.PlayerId;
+            long rejected = h.Server.Commands.Diag.ValidationRejected;
+            a.SendPlaceDeployable(GEN, new Vector3(-2f, 0f, 0f), 0f);
+            h.Step(20);
+            Assert.That(h.Server.Commands.Diag.ValidationRejected, Is.GreaterThan(rejected), "seated sender refused");
+            Assert.That(h.Server.Deployables.Count, Is.EqualTo(0));
+            Assert.That(inv.Inventory.getItemCount(GEN), Is.EqualTo(1), "nothing spent from the seat");
+
+            h.Server.Transactions.IsSeated = _ => false;
+            h.Server.Combat.DamagePlayerExternal(a.PlayerId, 1000f);
+            Assert.That(h.StepUntil(() => !h.Server.CombatState.IsAlive(a.PlayerId)), Is.True, "the placer died");
+            h.Grant(a.PlayerId, new Item(GEN));   // death dropped the bag; the corpse holds one again
+            rejected = h.Server.Commands.Diag.ValidationRejected;
+            a.SendPlaceDeployable(GEN, new Vector3(-2f, 0f, 0f), 0f);
+            h.Step(20);
+            Assert.That(h.Server.Commands.Diag.ValidationRejected, Is.GreaterThan(rejected), "dead sender refused");
+            Assert.That(h.Server.Deployables.Count, Is.EqualTo(0));
+        }
+
         [Test]
         public void out_of_range_placement_rejected()
         {

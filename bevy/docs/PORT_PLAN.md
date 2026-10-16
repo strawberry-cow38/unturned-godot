@@ -124,7 +124,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 
 | # | Feature (source) | Gap | Size | Impact | Owner / status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | No held ghost/snapping/LMB place; cmd 7 test-only | L | high | queued (coordinate with power agent on `deployables.rs`) |
+| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | Floor/wall/ceiling ghost, reasons, R/LMB/RMB and Command 7 naming the held jar done; Window and Container (storage adapter) mounts refused, LocalOnly door body not drawn | L | high | placement checkpoint DONE ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)); window/adapter mounts queued |
 | 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | `ordinary()` excludes storage/fixture/fluid/turbine bodies | M | high | power agent: powered fixtures; rest queued with 1 |
 | 3 | Player structures (`BuildTool`, `StructureManager`) | Absent; source is local-only, no command/save | XL | high | needs authority design |
 | 4 | Survival HUD status icons (`HUD.cs`) | Bleeding/broken/starved/dehydrated/deadzone/temperature rows | S | high | agent C (in progress) |

@@ -3,7 +3,7 @@
 use super::*;
 use crate::{player::PlayerCamera, ui::UiState};
 
-mod art;
+pub(super) mod art;
 #[cfg(test)]
 mod tests;
 mod tool;
