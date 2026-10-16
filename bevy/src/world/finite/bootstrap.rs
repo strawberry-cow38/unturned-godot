@@ -14,12 +14,43 @@ pub(crate) fn prepare(
     let Some(path) = options.island.as_ref().or(options.new_island.as_ref()) else {
         return Ok(());
     };
-    let create = options.new_island.is_some();
-    let environment = options
-        .unturned
-        .as_ref()
-        .map(|p| p.join("Maps/PEI/Environment"));
-    if create
+    let entry = Entry {
+        directory: path.clone(),
+        create: options.new_island.is_some(),
+        name: options.island_name.clone(),
+        seed: options.seed,
+        tiles: options.island_tiles,
+        lakes: options.lakes,
+    };
+    let (map, seed) = open(bridge, &options.content, options.unturned.as_deref(), &entry, config)?;
+    options.map = map;
+    options.seed = seed;
+    Ok(())
+}
+
+/// One finite editor-map entry: `--new-island`/Generate Island (create) or
+/// `--island`/the Proc tab (reopen without regenerating authored files).
+#[derive(Clone, Debug)]
+pub(crate) struct Entry {
+    pub directory: PathBuf,
+    pub create: bool,
+    pub name: String,
+    pub seed: i32,
+    pub tiles: [usize; 2],
+    pub lakes: bool,
+}
+
+/// Generate or reopen through the bridge and point `config` at the result.
+/// Returns the session map key and the descriptor's seed.
+pub(crate) fn open(
+    bridge: &CoreBridge,
+    content: &Path,
+    unturned: Option<&Path>,
+    entry: &Entry,
+    config: &mut WorldConfig,
+) -> anyhow::Result<(String, i32)> {
+    let environment = unturned.map(|p| p.join("Maps/PEI/Environment"));
+    if entry.create
         && !environment
             .as_ref()
             .is_some_and(|p| p.join("Roads.dat").is_file())
@@ -30,10 +61,10 @@ pub(crate) fn prepare(
     }
     let reply = bridge.request(
         "finiteMap",
-        json!({"directory":path,"create":create,
-        "contentRoot":options.content,"environmentRoot":environment,
-        "name":options.island_name,"seed":options.seed,
-        "tilesX":options.island_tiles[0],"tilesZ":options.island_tiles[1]}),
+        json!({"directory":entry.directory,"create":entry.create,
+        "contentRoot":content,"environmentRoot":environment,
+        "name":entry.name,"seed":entry.seed,
+        "tilesX":entry.tiles[0],"tilesZ":entry.tiles[1],"lakes":entry.lakes}),
     )?;
     let root = PathBuf::from(
         reply["result"]["directory"]
@@ -47,16 +78,15 @@ pub(crate) fn prepare(
         );
     }
     persist_chart(&root, finite.descriptor.seed)?;
-    options.map = format!("Island_{}", finite.descriptor.name);
-    options.seed = finite.descriptor.seed;
-    config.map_name = options.map.clone();
+    let map = format!("Island_{}", finite.descriptor.name);
+    config.map_name = map.clone();
     config.map_root = None;
     config.procedural_path = None;
     config.finite_path = Some(root);
     config.finite_spawn = crate::player::vector(&reply["result"]["initialSpawn"]);
     config.finite_population = (!reply["result"]["population"].is_null())
         .then(|| reply["result"]["population"].clone());
-    Ok(())
+    Ok((map, finite.descriptor.seed))
 }
 
 /// Source ProcIslandMap writes once and rebinds on reopen. Preserve an existing

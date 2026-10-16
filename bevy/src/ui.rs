@@ -13,6 +13,8 @@ use serde_json::{Value, json};
 
 #[cfg(test)]
 mod button_input_tests;
+#[cfg(test)]
+mod menu_tests;
 
 mod appearance;
 pub(crate) mod backdrop;
@@ -29,6 +31,10 @@ mod low_health;
 mod map;
 mod network_menu;
 mod navbar;
+pub(crate) mod godot;
+pub(crate) mod main_menu;
+pub(crate) mod options;
+pub(crate) mod singleplayer;
 mod skills;
 mod swoop;
 pub(crate) use map::MapDiagnostics;
@@ -277,8 +283,11 @@ pub struct UiState {
     pub console_input: String,
     pub settings_return: Screen,
     pub capturing: Option<GameAction>,
-    pub binding_page: usize,
     pub settings_message: String,
+    pub settings_tone: options::Tone,
+    pub settings_tab: options::Tab,
+    pub settings_layout: options::Layout,
+    pub menu: main_menu::MenuState,
 }
 
 impl Default for UiState {
@@ -296,8 +305,11 @@ impl Default for UiState {
             console_input: String::new(),
             settings_return: Screen::MainMenu,
             capturing: None,
-            binding_page: 0,
             settings_message: String::new(),
+            settings_tone: default(),
+            settings_tab: default(),
+            settings_layout: default(),
+            menu: default(),
         }
     }
 }
@@ -342,6 +354,9 @@ impl UiState {
             _ => Screen::Playing,
         };
         self.capturing = None;
+        if self.screen == Screen::MainMenu {
+            self.menu.page = main_menu::Page::Dashboard;
+        }
     }
 }
 
@@ -349,13 +364,11 @@ impl UiState {
 enum UiButton {
     Network(network_menu::Action),
     Open(Screen),
-    Play,
     Quit,
     Resume,
     Save,
     Load,
     Disconnect,
-    Map(String),
     Page(i32),
     Recipes(i32),
     Select(u8, u8, u8),
@@ -366,15 +379,6 @@ enum UiButton {
     Wear(u8),
     Unwear(u8),
     Craft(u16),
-    Sensitivity(f32),
-    Fov(f32),
-    Volume(f32),
-    Invert,
-    Vsync,
-    SaveSettings,
-    Bind(GameAction),
-    BindingPage(i32),
-    ResetBindings,
     Respawn,
 }
 
@@ -424,6 +428,11 @@ impl Plugin for GameUiPlugin {
             .add_plugins(input_order::InputOrderPlugin)
             .add_plugins(inventory::InventoryPlugin)
             .add_plugins((navbar::NavbarPlugin, skills::SkillsPlugin, crafting::CraftingPlugin))
+            .add_plugins((
+                options::OptionsPlugin,
+                main_menu::MainMenuPlugin,
+                singleplayer::SingleplayerPlugin,
+            ))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(
                 PreUpdate,
@@ -673,13 +682,21 @@ fn keyboard_ui(
     if let Some(action) = state.capturing {
         if keys.just_pressed(KeyCode::Escape) {
             state.capturing = None;
+            state.settings_message = options::HINT_CANCELLED.into();
+            state.settings_tone = options::Tone::Dim;
             characters.clear();
             return;
         }
-        let binding = if keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace)
-        {
-            Some(Binding::Unbound)
-        } else if let Some(key) = keys.get_just_pressed().next() {
+        if keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace) {
+            settings.bindings.insert(action, Binding::Unbound);
+            state.capturing = None;
+            state.settings_message = format!("{} unbound", action.display_name());
+            state.settings_tone = options::Tone::Dim;
+            options::persist(&settings, &mut state);
+            characters.clear();
+            return;
+        }
+        let binding = if let Some(key) = keys.get_just_pressed().next() {
             Some(Binding::Key(format!("{key:?}")))
         } else {
             mouse
@@ -689,16 +706,32 @@ fn keyboard_ui(
         };
         if let Some(binding) = binding {
             if let Some(conflict) = settings.conflict_with(action, &binding) {
+                // Refuse rather than silently steal it.
                 state.settings_message = format!(
-                    "{} is bound to {conflict:?}. Unbind it first.",
-                    binding.label()
+                    "{} is already bound to {} \u{2014} free it first",
+                    binding.source_label(),
+                    conflict.display_name()
                 );
+                state.settings_tone = options::Tone::Bad;
             } else {
-                settings.bindings.insert(action, binding);
-                state.settings_message = "Binding updated. Save settings to keep it.".into();
+                settings.bindings.insert(action, binding.clone());
+                state.settings_message =
+                    format!("{} \u{2192} {}", action.display_name(), binding.source_label());
+                state.settings_tone = options::Tone::Good;
+                options::persist(&settings, &mut state);
             }
             state.capturing = None;
         }
+        characters.clear();
+        return;
+    }
+    if state.screen == Screen::MainMenu && state.menu.sp.seed_focus {
+        singleplayer::typed(&mut state, &mut characters);
+        return;
+    }
+    if state.screen == Screen::MainMenu && keys.just_pressed(KeyCode::Escape) {
+        // MainMenuAdvanced._Input: Esc closes the Advanced overlay only.
+        state.menu.sp.advanced = false;
         characters.clear();
         return;
     }
@@ -857,14 +890,12 @@ fn activate_button(
                 state.network_menu.request = Some(false);
             }
             if *screen == Screen::Settings {
+                // PauseMenu's SettingsScreen (tabs); it keeps its last tab.
                 state.settings_return = state.screen;
+                state.settings_layout = options::Layout::Tabs;
+                state.capturing = None;
             }
             state.screen = *screen;
-        }
-        UiButton::Play => {
-            intents.write(UiIntent::Play {
-                map: state.map.clone(),
-            });
         }
         UiButton::Respawn => {
             intents.write(UiIntent::Action {
@@ -889,7 +920,6 @@ fn activate_button(
             intents.write(UiIntent::Disconnect);
             state.screen = Screen::MainMenu;
         }
-        UiButton::Map(map) => state.map = map.clone(),
         UiButton::Page(delta) => {
             let len = visible_pages(&model).len().max(1);
             state.page = (state.page as i32 + delta).rem_euclid(len as i32) as usize;
@@ -945,35 +975,6 @@ fn activate_button(
                 args: json!({"index":index}),
             });
         }
-        UiButton::Sensitivity(delta) => {
-            settings.mouse_sensitivity += delta;
-            settings.normalize();
-        }
-        UiButton::Fov(delta) => {
-            settings.field_of_view += delta;
-            settings.normalize();
-        }
-        UiButton::Volume(delta) => {
-            settings.master_volume += delta;
-            settings.normalize();
-        }
-        UiButton::Invert => settings.invert_look_y = !settings.invert_look_y,
-        UiButton::Vsync => settings.vsync = !settings.vsync,
-        UiButton::SaveSettings => {
-            state.settings_message = match settings.save() {
-                Ok(()) => "Settings saved".into(),
-                Err(e) => format!("Could not save settings: {e}"),
-            }
-        }
-        UiButton::Bind(action) => state.capturing = Some(*action),
-        UiButton::BindingPage(delta) => {
-            let len = settings.bindings.len().div_ceil(6);
-            state.binding_page =
-                (state.binding_page as i32 + delta).rem_euclid(len as i32) as usize;
-        }
-        UiButton::ResetBindings => {
-            settings.bindings = Settings::default().bindings;
-        }
     }
 }
 
@@ -1011,7 +1012,16 @@ fn rebuild_overlay(
     assets: Res<AssetServer>,
     profile: Res<crate::profile::LocalProfile>,
     mut cache: Local<String>,
+    views: (
+        Query<&Window, With<bevy::window::PrimaryWindow>>,
+        Option<Res<crate::character::nameplate::OriginalFont>>,
+        Option<Res<godot::MenuSymbols>>,
+        Option<Res<crate::graphics::Boot>>,
+        Option<Res<crate::graphics::Applied>>,
+    ),
 ) {
+    let (windows, font, symbols, boot, applied) = views;
+    let stretch = godot::window_stretch(&windows);
     // Do not destroy and rebuild the widgets for every 50 Hz player snapshot.
     let detail = match state.screen {
         Screen::Inventory => format!("{:?}|{:?}|{:?}|{}", model.pages, model.worn, model.storage, catalog.items.len()),
@@ -1021,7 +1031,7 @@ fn rebuild_overlay(
         Screen::Appearance => format!("{profile:?}"),
         _ => String::new(),
     };
-    let signature = format!("{state:?}|{settings:?}|{detail}");
+    let signature = format!("{state:?}|{settings:?}|{detail}|{stretch}|{applied:?}");
     if *cache == signature {
         return;
     }
@@ -1043,6 +1053,33 @@ fn rebuild_overlay(
             | Screen::Crafting
             | Screen::Inventory
     ) {
+        return;
+    }
+    if matches!(state.screen, Screen::MainMenu)
+        || (state.screen == Screen::Settings)
+    {
+        // Ported source canvases: Godot base sizes under the project stretch.
+        let c = godot::ctx(stretch, font.as_deref(), symbols.as_deref());
+        let scrim = state.screen == Screen::Settings && state.settings_return != Screen::MainMenu;
+        commands
+            .spawn((
+                OverlayRoot,
+                Node {
+                    width: percent(100),
+                    height: percent(100),
+                    position_type: PositionType::Absolute,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                GlobalZIndex(20),
+                // PauseMenu's dim (UITheme.Scrim); the main menu draws none.
+                BackgroundColor(if scrim { godot::ui_theme::SCRIM } else { Color::NONE }),
+            ))
+            .with_children(|root| match state.screen {
+                Screen::Settings => options::screen(root, &c, &state, &settings, boot.as_deref(), applied.as_deref()),
+                _ => main_menu::screen(root, &c, &state, &model, &assets),
+            });
         return;
     }
     let dashboard = matches!(state.screen, Screen::Inventory | Screen::Crafting);
@@ -1095,7 +1132,7 @@ fn rebuild_overlay(
                 BorderColor::all(EDGE),
             ))
             .with_children(|panel| match state.screen {
-                Screen::MainMenu => menu_panel(panel, &state, &model, &assets),
+                Screen::MainMenu => {}
                 Screen::Appearance => appearance::panel(panel, &profile, &assets),
                 Screen::DirectConnect | Screen::Servers | Screen::Host => {
                     network_menu::panel(panel, &state)
@@ -1108,7 +1145,7 @@ fn rebuild_overlay(
                 Screen::Dead => death_panel(panel, &model),
                 Screen::Inventory => inventory_panel(panel, &state, &model, &assets, &catalog),
                 Screen::Crafting => crafting_panel(panel, &state, &model),
-                Screen::Settings => settings_panel(panel, &state, &settings),
+                Screen::Settings => {}
                 Screen::Console | Screen::Chat => console_panel(panel, &state, &model),
                 Screen::Playing
                 | Screen::Attachments
@@ -1121,53 +1158,6 @@ fn rebuild_overlay(
                 | Screen::Skills => {}
             });
         });
-}
-
-fn menu_panel(
-    panel: &mut ChildSpawnerCommands,
-    state: &UiState,
-    model: &UiModel,
-    assets: &AssetServer,
-) {
-    panel.spawn(text("UNTURNED", 44.0, TEXT));
-    panel.spawn(text("SURVIVE. BUILD. EXPLORE.", 13.0, DIM));
-    panel.spawn(row()).with_children(|p| {
-        button(p, "Multiplayer", UiButton::Open(Screen::Servers));
-        button(p, "Direct Connect", UiButton::Open(Screen::DirectConnect));
-        button(p, "Host", UiButton::Open(Screen::Host));
-    });
-    panel.spawn(text("World", 16.0, ACCENT));
-    panel.spawn(row()).with_children(|p| {
-        for map in ["PEI", "Washington", "Yukon", "Procedural"] {
-            button(
-                p,
-                if state.map == map {
-                    format!("* {map}")
-                } else {
-                    map.into()
-                },
-                UiButton::Map(map.into()),
-            );
-        }
-    });
-    if state.map != "Procedural" {
-        panel.spawn((
-            ImageNode::new(assets.load(format!("menu/mapicon_{}.png", state.map.to_lowercase()))),
-            Node {
-                width: px(240),
-                height: px(90),
-                flex_shrink: 0.0,
-                ..default()
-            },
-        ));
-    }
-    panel.spawn(text(&model.status, 13.0, DIM));
-    panel.spawn(row()).with_children(|p| {
-        button(p, "Play", UiButton::Play);
-        button(p, "Appearance", UiButton::Open(Screen::Appearance));
-        button(p, "Settings", UiButton::Open(Screen::Settings));
-        button(p, "Quit", UiButton::Quit);
-    });
 }
 
 fn death_panel(panel: &mut ChildSpawnerCommands, model: &UiModel) {
@@ -1461,99 +1451,6 @@ fn crafting_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiM
                 }
             });
     }
-}
-
-fn settings_panel(panel: &mut ChildSpawnerCommands, state: &UiState, settings: &Settings) {
-    panel.spawn(row()).with_children(|p| {
-        p.spawn(text("SETTINGS", 26.0, TEXT));
-        button(p, "Back", UiButton::Resume);
-        button(p, "Save", UiButton::SaveSettings);
-    });
-    panel.spawn(row()).with_children(|p| {
-        p.spawn(text(
-            format!("Look sensitivity  {:.2}", settings.mouse_sensitivity),
-            15.0,
-            TEXT,
-        ));
-        button(p, "-", UiButton::Sensitivity(-0.02));
-        button(p, "+", UiButton::Sensitivity(0.02));
-        button(
-            p,
-            if settings.invert_look_y {
-                "Y: Inverted"
-            } else {
-                "Y: Regular"
-            },
-            UiButton::Invert,
-        );
-    });
-    panel.spawn(row()).with_children(|p| {
-        p.spawn(text(
-            format!("Field of view  {:.0} deg", settings.field_of_view),
-            15.0,
-            TEXT,
-        ));
-        button(p, "-", UiButton::Fov(-5.0));
-        button(p, "+", UiButton::Fov(5.0));
-        button(
-            p,
-            if settings.vsync {
-                "VSync: On"
-            } else {
-                "VSync: Off"
-            },
-            UiButton::Vsync,
-        );
-    });
-    panel.spawn(row()).with_children(|p| {
-        p.spawn(text(
-            format!("Volume  {:.0}%", settings.master_volume * 100.0),
-            15.0,
-            TEXT,
-        ));
-        button(p, "-", UiButton::Volume(-0.1));
-        button(p, "+", UiButton::Volume(0.1));
-    });
-    panel.spawn(row()).with_children(|p| {
-        p.spawn(text("KEY BINDS", 17.0, ACCENT));
-        button(p, "<", UiButton::BindingPage(-1));
-        button(p, ">", UiButton::BindingPage(1));
-        button(p, "Reset", UiButton::ResetBindings);
-    });
-    for (action, binding) in settings
-        .bindings
-        .iter()
-        .skip(state.binding_page * 6)
-        .take(6)
-    {
-        panel.spawn(row()).with_children(|p| {
-            p.spawn((
-                text(format!("{action:?}"), 14.0, TEXT),
-                Node {
-                    width: px(230),
-                    ..default()
-                },
-            ));
-            button(
-                p,
-                if state.capturing == Some(*action) {
-                    "Press a key...".into()
-                } else {
-                    binding.label()
-                },
-                UiButton::Bind(*action),
-            );
-        });
-    }
-    panel.spawn(text(
-        if state.capturing.is_some() {
-            "Press a key or mouse button. Esc cancels; Delete unbinds."
-        } else {
-            &state.settings_message
-        },
-        12.0,
-        DIM,
-    ));
 }
 
 fn console_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiModel) {

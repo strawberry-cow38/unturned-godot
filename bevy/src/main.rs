@@ -1,5 +1,6 @@
 mod avatar;
 mod bridge;
+mod bugreport;
 mod bullets;
 mod character;
 mod cli;
@@ -22,6 +23,7 @@ mod rig;
 mod settings;
 mod sound;
 mod footsteps;
+mod graphics;
 mod ui;
 mod use_items;
 mod vehicle;
@@ -91,6 +93,7 @@ fn main() -> Result<()> {
         .content
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("locating bundled game content: {e}"))?;
+    let boot = graphics::Boot::from(&settings, options.fixed_fps.is_some());
     let mut app = App::new();
     if let Some(fps) = options.fixed_fps {
         let frame = std::time::Duration::from_secs_f64(1. / f64::from(fps));
@@ -99,7 +102,28 @@ fn main() -> Result<()> {
         app.insert_resource(clock);
         app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(frame));
     }
+    let mut defaults = DefaultPlugins
+        .set(AssetPlugin {
+            file_path: asset_path.to_string_lossy().into_owned(),
+            ..default()
+        })
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Unturned · Bevy".into(),
+                resolution: (1280, 720).into(),
+                present_mode,
+                mode: graphics::window_mode(settings.graphics.fullscreen),
+                ..default()
+            }),
+            ..default()
+        })
+        .set(ImagePlugin::default_nearest());
+    if !boot.render_thread {
+        // GraphicsOptions render thread "Single": read once at launch.
+        defaults = defaults.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
+    }
     app.insert_resource(bridge)
+        .insert_resource(boot)
         .insert_resource(profile)
         .insert_resource(config)
         .insert_resource(settings)
@@ -110,23 +134,7 @@ fn main() -> Result<()> {
         })
         .insert_resource(LaunchOptions(options))
         .insert_resource(ClearColor(Color::srgb(0.48, 0.67, 0.81)))
-        .add_plugins(
-            DefaultPlugins
-                .set(AssetPlugin {
-                    file_path: asset_path.to_string_lossy().into_owned(),
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Unturned · Bevy".into(),
-                        resolution: (1280, 720).into(),
-                        present_mode,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(ImagePlugin::default_nearest()),
-        )
+        .add_plugins(defaults)
         .add_plugins((
             RapierPhysicsPlugin::<vehicle::PhysicsHooks>::default().in_fixed_schedule(),
             content::ContentPlugin,
@@ -144,7 +152,7 @@ fn main() -> Result<()> {
             wildlife::WildlifePlugin,
             impact::ImpactPlugin,
         ))
-        .add_plugins(info_billboard::InfoBillboardPlugin)
+        .add_plugins((info_billboard::InfoBillboardPlugin, graphics::GraphicsPlugin, bugreport::BugReportPlugin))
         .add_plugins((
             hdr::HdrPlugin,
             nightvision::NightVisionPlugin,

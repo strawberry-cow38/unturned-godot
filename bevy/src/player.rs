@@ -351,6 +351,8 @@ fn initialize_session(
         request["finiteDirectory"] = json!(path);
     }
     request["useLocalProfile"] = json!(profile.is_some_and(|profile| profile.ready));
+    // MainMenuPlay Zombies row -> WorldBuilder.ZombiesOverride, decided by the host.
+    request["zombies"] = json!(options.0.zombies);
     options.0.network.configure(&mut request);
     match bridge.request("init", request) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
@@ -554,7 +556,8 @@ fn ui_intents(
             UiIntent::Action { name, args } => {
                 if name == "console"
                     && (crate::entities::npcs::is_console_command(args["text"].as_str().unwrap_or(""))
-                        || crate::ui::npc::is_console_command(args["text"].as_str().unwrap_or("")))
+                        || crate::ui::npc::is_console_command(args["text"].as_str().unwrap_or(""))
+                        || crate::bugreport::is_console_command(args["text"].as_str().unwrap_or("")))
                 {
                     continue;
                 }
@@ -633,9 +636,14 @@ fn ui_intents(
     }
 }
 
-fn save_path(map: &str) -> std::path::PathBuf {
-    let base = std::env::var_os("UG_BEVY_SAVES")
-        .or_else(|| std::env::var_os("UG_SAVE_DIR"))
+pub(crate) fn save_path(map: &str) -> std::path::PathBuf {
+    // Tests never touch a real save, even with UG_SAVE_DIR exported.
+    let overridden = if cfg!(test) {
+        None
+    } else {
+        std::env::var_os("UG_BEVY_SAVES").or_else(|| std::env::var_os("UG_SAVE_DIR"))
+    };
+    let base = overridden
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             Settings::path()

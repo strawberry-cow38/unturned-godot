@@ -87,7 +87,17 @@ fn start(
     mut library: ResMut<Library>,
     mut rigs: Query<(Entity, &StartRagdoll, &mut RigPlayback), Without<Ragdoll>>,
     transforms: Query<(&Transform, Option<&ChildOf>)>,
+    settings: Option<Res<crate::settings::Settings>>,
 ) {
+    // RiggedCharacter.RagdollStart: with GraphicsOptions.Ragdolls off the body
+    // just stops where it is; no physical bones are built.
+    if settings.is_some_and(|s| !s.graphics.ragdolls) {
+        for (root, _, mut rig) in &mut rigs {
+            rig.paused = true;
+            commands.entity(root).remove::<StartRagdoll>().insert(Ragdoll { bodies: default() });
+        }
+        return;
+    }
     if !library.loaded {
         library.loaded = true;
         #[derive(Deserialize)]

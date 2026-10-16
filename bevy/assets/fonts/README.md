@@ -36,3 +36,13 @@ chosen by Godot's TextServer for InventoryUI's frozen-food label on this host.
 It uses the same DejaVu source and license above. Reproduce with the same subset
 steps, using `unicodes=[0x2744]`.
 Subset SHA256: `6838457a97277d2cacc857b303f8b17f36bb255eefe05bda9078e708a32262bd`.
+
+`DejaVuSans_MenuSymbols.ttf` preserves U+2699, U+25CE, U+25C4, U+2691, U+2715, U+25B8,
+U+2192 and U+2684 from the same DejaVu Sans source: the main-menu, Advanced and
+key-bind glyphs (generated entries, Back, the Proc flag, close, category arrow,
+rebind arrow and the seed die) that Open Sans lacks and Godot 4.6.2's TextServer
+resolves to DejaVu Sans on this host. Reproduce with the same subset steps using
+those eight code points (fontTools 4.67.0; FFTM is dropped by the subsetter).
+Subset SHA256: `bc568afb64bb98126070653a2ba604423a7c189215c3ce8899cae7f8057d6e2a`.
+The source die emoji U+1F3B2 has no font on this host; the native seed button
+uses U+2684 from the same family instead.

@@ -255,6 +255,9 @@ pub struct ParticleAssets {
     material: Handle<StandardMaterial>,
     unlit: Handle<StandardMaterial>,
     additive: Handle<StandardMaterial>,
+    /// ParticleFx.QualityMul (GraphicsOptions.EffectQuality): count and size
+    /// scale at emitter creation. High is 1, so existing specs are unchanged.
+    pub(crate) quality: f32,
 }
 pub struct ParticlePlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -320,7 +323,16 @@ fn setup(
         material: lit,
         unlit,
         additive,
+        quality: 1.,
     });
+}
+/// ParticleFx.Amount/SizeScale: never fewer than one particle.
+pub(crate) fn scale_quality(mut spec: Spec, quality: f32) -> Spec {
+    if quality != 1. && quality.is_finite() {
+        spec.amount = ((spec.amount as f32 * quality).round() as usize).max(1);
+        spec.size *= quality;
+    }
+    spec
 }
 pub fn spawn(
     commands: &mut Commands,
@@ -331,6 +343,7 @@ pub fn spawn(
     parent: Option<Entity>,
     seed: u64,
 ) -> Entity {
+    let spec = scale_quality(spec, assets.quality);
     let material = spec.material.clone().unwrap_or_else(|| {
         if spec.additive {
             assets.additive.clone()
