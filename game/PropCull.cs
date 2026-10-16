@@ -10,7 +10,10 @@ namespace UnturnedGodot
     /// since round 14 every generated building's furniture and every town prop -- never did, so all of it drew at any distance:
     /// a town's wardrobes, mugs and light switches were in the frame from the far side of the island, and so was everything
     /// on a custom map, which loads its props through the same placer. This gives that path the world loader's own rule, from
-    /// the same table, falling back to the same 320 m for a prop with no row.
+    /// the same table. A prop with NO row -- the port's own decor, 96 of the furniture catalog's 207 (a toothbrush cup, a
+    /// painting, a vent, a wall cabinet) -- is not given the world loader's flat 320 m for a missing row: it gets the layer
+    /// its size puts it in, LodBaker.LayerFor's rule, the one the generated table was baked with (a 0.2 m cup is SMALL,
+    /// 64 m). Measured in a 21-building town, 898 of 1,612 editor-path props have no row.
     ///
     /// The range is stamped on EVERY drawable piece of the prop that has none of its own -- a lamp's glow, a streetlight's lens,
     /// a signal's heads, a cupboard's leaves, a kit's stock -- because VisibilityRange is per instance and is not inherited: a
@@ -26,16 +29,17 @@ namespace UnturnedGodot
         public static readonly bool Disabled = System.Environment.GetEnvironmentVariable("UG_NOPROPCULL") == "1";
         /// <summary>Marks a range PropCull stamped (so the culling probe can lift exactly those and put them back).</summary>
         public static readonly StringName StampMeta = "prop_cull";
-        /// <summary>WorldBuilder's distance for a prop with no LOD row.</summary>
+        /// <summary>WorldBuilder's distance for a prop with no LOD row -- used here only when the prop's size is not known.</summary>
         public const float Fallback = 320f;
 
         static bool _tableTried;
-        /// <summary>Props given a distance from the table (by GUID or generated name), and given the fallback.</summary>
-        public static int FromTable, FellBack;
+        /// <summary>Props given a distance from the table (by GUID or generated name), and by their size for want of a row.</summary>
+        public static int FromTable, BySize;
 
-        /// <summary>Where this prop stops drawing: its retail cull (by GUID), else a generated table's band for its name, else
-        /// the world loader's 320 m. 0 when culling is off.</summary>
-        public static float For(string name, string guid)
+        /// <summary>Where this prop stops drawing: its retail cull (by GUID), else a generated table's band for its name, else the
+        /// layer its size (`size`: the mesh's largest extent, m) puts it in -- or the world loader's 320 m if that is not known.
+        /// 0 when culling is off.</summary>
+        public static float For(string name, string guid, float size = 0f)
         {
             if (Disabled) return 0f;
             EnsureTable();
@@ -46,8 +50,9 @@ namespace UnturnedGodot
                 if (r != null && r.Length > 0) cull = r[r.Length - 1].End;
             }
             if (cull > 0f) { FromTable++; return cull; }
-            FellBack++;
-            return Fallback;
+            if (size <= 0f) return Fallback;
+            BySize++;
+            return LodTable.LayerCull(LodBaker.LayerFor(size));
         }
 
         /// <summary>A retail render layer's distance ("SMALL", "MEDIUM", "LARGE"), for a piece with no prop of its own -- a

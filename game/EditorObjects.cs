@@ -441,7 +441,8 @@ namespace UnturnedGodot
             // culled by distance as the world loader culls it: its retail distance, on every piece it draws (PropCull) -- and a
             // lamp's light goes out with it, over its fade length, rather than lighting a room whose lamp is no longer drawn (a
             // caller that wants its own fade -- a town's 30 m, the stage's none -- sets FadeBegin after this)
-            float cull = PropCull.For(name, (string)root.GetMeta("guid"));
+            var extent = mesh.GetAabb().Size;
+            float cull = PropCull.For(name, (string)root.GetMeta("guid"), Mathf.Max(extent.X, Mathf.Max(extent.Y, extent.Z)));
             PropCull.Apply(root, cull);
             if (cull > 0f && smart?.Lamp != null && smart.Lamp.FadeBegin <= 0f) smart.Lamp.FadeBegin = Mathf.Max(1f, cull - smart.Lamp.FadeLength);
             return root;

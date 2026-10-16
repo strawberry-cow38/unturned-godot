@@ -335,7 +335,7 @@ namespace UnturnedGodot
             void Walk(Node n, System.Action<Node> f) { f(n); foreach (var c in n.GetChildren()) Walk(c, f); }
             Walk(GetTree().Root, n => { if (n is GeometryInstance3D g && g.HasMeta(PropCull.StampMeta)) stamped++; });
             Log.Print($"[cullprobe] drawables carrying PropCull's distance: {stamped}; props given one from the LOD table {PropCull.FromTable}, "
-                    + $"the {PropCull.Fallback:0} m fallback {PropCull.FellBack}");
+                    + $"by their size {PropCull.BySize}");
             if (stamped > 0)
             {
                 var lifted = new List<(GeometryInstance3D G, float R)>();
