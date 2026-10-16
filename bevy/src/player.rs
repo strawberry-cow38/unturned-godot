@@ -1675,6 +1675,20 @@ fn has_headroom(
     );
     !blocked
 }
+/// Shared source bits0|6 predicate. Vehicle hit meshes/glass use other source
+/// layers; fallback chassis, ghost world bodies and authored props remain.
+pub(crate) fn world_or_prop(
+    _: Entity,
+    collider: &bevy_rapier3d::rapier::geometry::Collider,
+) -> bool {
+    let groups = collider.collision_groups();
+    let vehicle = groups.memberships.bits() & Group::GROUP_4.bits() != 0;
+    let fallback = groups.filter.bits() & (Group::GROUP_2 | Group::GROUP_4).bits()
+        == (Group::GROUP_2 | Group::GROUP_4).bits();
+    let ghost = groups.memberships.bits() & crate::vehicle::coupling::GHOST_TRAILER.bits() != 0;
+    let source_prop = groups.memberships.bits() & crate::world::buildings::SOURCE_PROP.bits() != 0;
+    !vehicle || fallback || ghost || source_prop
+}
 fn throw_clearance(
     context: &RapierContext,
     owner: Entity,
@@ -1685,15 +1699,6 @@ fn throw_clearance(
     // ThrowOrigin uses source bits0|6. HitMesh/panes are bits15|5, so neither
     // those nor a stripped driving hull participate; a fallback chassis keeps
     // its original world bit. The grenade's later bounce query is independent.
-    let world_surface = |_, collider: &bevy_rapier3d::rapier::geometry::Collider| {
-        let groups = collider.collision_groups();
-        let vehicle = groups.memberships.bits() & Group::GROUP_4.bits() != 0;
-        let fallback = groups.filter.bits() & (Group::GROUP_2 | Group::GROUP_4).bits()
-            == (Group::GROUP_2 | Group::GROUP_4).bits();
-        let ghost = groups.memberships.bits() & crate::vehicle::coupling::GHOST_TRAILER.bits() != 0;
-        let source_prop = groups.memberships.bits() & crate::world::buildings::SOURCE_PROP.bits() != 0;
-        !vehicle || fallback || ghost || source_prop
-    };
     context
         .cast_ray(
             eye,
@@ -1703,7 +1708,7 @@ fn throw_clearance(
             QueryFilter::default()
                 .exclude_collider(owner)
                 .exclude_sensors()
-                .predicate(&world_surface)
+                .predicate(&world_or_prop)
                 .groups(CollisionGroups::new(
                     Group::ALL,
                     Group::GROUP_1 | Group::GROUP_4,

@@ -46,7 +46,7 @@ independent visual review passes; this is not an OS-input or full power-network
 claim. The fixture uses70° main-game field of view and an independent edge
 counter so screenshot callback timing cannot skip its press edge.
 
-Remaining work includes native port geometry and wire/port tools, full trigger/data
+Remaining work includes data/radio and specialized-fixture ports, full trigger/data
 semantics, generator ramp/fuel authority, battery/wind/output-budget inputs,
 consumer lights/audio and complete utility readouts. The old Godot
 `Deployable.NetSetPowered` still adopts `_powered` rather than `_switchOn`;
@@ -87,3 +87,61 @@ cache recovery. Its actual UDP Vulkan fixture passes/exit0 and the three opened
 `bevy-wire-accepted-{0,1,2}.png` captures show absent → connected → removed wire.
 The fixture uses existing JSONL intents; it does not exercise native wire-tool
 input. No existing server command/event/snapshot bytes changed in this slice.
+
+
+## Native wire tool and source ports
+
+Holding the original wire tool now shows the source `ConnectionPort` cubes on
+every represented ordinary device socket, with in/out arrows while the tool owns
+captured on-foot input. Cube/arrow geometry, the original texture, all
+Focus/Good/Bad material states and the axis billboard are guarded against
+`data/port-source-reference.json`, captured by `tools/port_reference.py` from
+unmodified `ConnectionPort`/`AxisBillboard` on real Godot.
+
+Input follows `WireLmb`/`WireRmb`/`UpdateWireManage`/`UpdateWireLook` on the
+shared ordered binding seam: a 5.5 m port-only ray that ignores ordinary
+occluders; start from either end of a usable unwired port; 6 m node placement
+with the source bits0|6 world/prop predicate (`player::world_or_prop`, shared with
+throw clearance); the 20-node/40 m budget and `-- LIMIT`; RMB undo/cancel while
+routing; and RMB tap (≤0.28 s) / hold (1 s) removal on a wired port. Completion
+follows `CanCompleteWire` (target usable, other device, unwired, compatible
+pair) and orders source→consumer. The client never edits the graph: connect and
+remove are `connectWire`/`removeWire` intents, and sockets, highlights and wires
+reflect only the accepted `powerView`. The HUD label is a separate layer-40
+camera between the dashboard and modal canvases, with the original 26 px font,
+600 px minimum box and 1.5 px outline.
+
+Source-visible behaviours ported deliberately, all found by independent review:
+
+- Cubes are sensors on their own layer with filter = layer (source PortLayer
+  bit8, `CollisionMask = 0`). They take no contacts and the ordinary look ray
+  passes through them; only the port-only ray selects them.
+- `UpdateWireManage` writes `clearing wire... N%`, but `UpdateWireLook` runs
+  later in the same `ProcessTick` and always replaces it with the info line, so
+  a held clear shows the info line plus the RMB hint, not a percentage.
+- The route survives a start port retired at 0 HP or on fire
+  (`KillPowerHardware` only deactivates the cube). It drops only when the start
+  device despawns; the server refuses completion from a retired port.
+- No focus-loss cancel: the source has none, and an unfocused window already
+  makes the tool inactive.
+
+Validation: the 20 deployable tests pass, including three review regressions.
+Each regression fails under a surgical revert: an ALL-filter non-sensor socket,
+the old retire-cancels-route rule, and the percentage readout. Rendering ran
+`deployables::ports::tests::visual::render_source_ports_routing_accepted_connection_and_hold_clear`
+against backend `.local/power-wires-v75-first` under Xvfb/lavapipe, with the
+window focused by xdotool (the tool requires a focused window, as production
+does). It passes, and all six `bevy-wire-tool-{focus,route,target,accepted,clearing,removed}.png`
+were opened.
+
+The first capture showed old labels overprinting. The fixture's SDR world camera
+did not share the HDR label camera's main texture, so the never-cleared label
+target accumulated. Production `HdrPlugin` makes the player camera `Hdr`, and
+the fixture now matches that. The label camera also deactivates when no label is
+shown and recovers if a teardown despawns it. Input is injected ordered edges
+with real local-server acceptance, not an OS journey. A label wider than 600 px
+grows rightward, as the source label does, and is clipped at a 1100 px window.
+
+Remaining: data and radio ports never read live (the server's `CanConnectWire`
+also rejects data pairs), the radio channel suffix is missing, and only ordinary
+deployables get sockets (no wind turbine or powered fixtures).

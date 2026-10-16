@@ -1,7 +1,7 @@
 //! Wire.SetPoints: local +Y cylinder rotation before local length scaling.
 use bevy::prelude::*;
 
-pub(super) fn pose(a: Vec3, b: Vec3) -> Option<Transform> {
+pub(in crate::deployables) fn pose(a: Vec3, b: Vec3) -> Option<Transform> {
     let delta = b - a;
     let length = delta.length();
     if !a.is_finite() || !b.is_finite() || !length.is_finite() || length < 1e-4 {

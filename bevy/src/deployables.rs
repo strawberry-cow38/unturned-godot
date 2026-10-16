@@ -4,6 +4,7 @@
 mod geometry;
 mod interaction;
 mod pickup;
+mod ports;
 mod presentation;
 mod switch;
 mod wires;
@@ -135,6 +136,7 @@ impl Plugin for DeployablePlugin {
     fn build(&self, app: &mut App) {
         interaction::install(app);
         wires::install(app);
+        ports::install(app);
         app.init_resource::<Replicas>()
             .add_systems(
                 Update,

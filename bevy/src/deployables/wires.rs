@@ -3,20 +3,22 @@
 //! its optional mesh correction. Unsupported fixture bodies remain explicit.
 use super::*;
 
-mod segment;
+pub(super) mod segment;
 #[cfg(test)]
 mod tests;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Port {
-    kind: String,
-    pos: SourceVector,
+    pub(super) kind: String,
+    pub(super) pos: SourceVector,
     #[serde(default)]
-    role: String,
+    pub(super) role: String,
+    #[serde(default)]
+    pub(super) watts: f32,
 }
 impl Port {
-    fn position(&self, def_id: u16) -> Vec3 {
+    pub(super) fn position(&self, def_id: u16) -> Vec3 {
         let p = Vec3::from(self.pos);
         match (def_id, self.kind.as_str(), self.role.as_str()) {
             (459, "Consumer", _) => geometry::env_vector("UG_SPC", p),
@@ -30,35 +32,83 @@ impl Port {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Wire {
-    net_id: u32,
-    source_id: u32,
-    source_port: usize,
-    consumer_id: u32,
-    consumer_port: usize,
+pub(super) struct Wire {
+    pub(super) net_id: u32,
+    pub(super) source_id: u32,
+    pub(super) source_port: usize,
+    pub(super) consumer_id: u32,
+    pub(super) consumer_port: usize,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Graph {
+pub(super) struct SolvedPort {
+    pub(super) index: usize,
+    pub(super) live: f32,
+    pub(super) powered: bool,
+    pub(super) draw: f32,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Device {
+    pub(super) net_id: u32,
+    pub(super) ports: Vec<SolvedPort>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Graph {
     version: u32,
     read_only: bool,
     state_hash: u64,
-    wires: Vec<Wire>,
+    pub(super) wires: Vec<Wire>,
+    pub(super) devices: Vec<Device>,
 }
 #[derive(Resource, Default)]
-struct Accepted {
+pub(super) struct Accepted {
     epoch: u64,
     hash: Option<u64>,
-    graph: Option<Graph>,
+    pub(super) graph: Option<Graph>,
     error: Option<String>,
 }
 #[derive(Component)]
 struct WireSegment(u32);
 #[derive(Resource, Default)]
-struct Visuals {
+pub(super) struct Visuals {
     epoch: u64,
     instances: HashMap<u32, Entity>,
     art: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
+    bad: Option<Handle<StandardMaterial>>,
+}
+impl Visuals {
+    pub(super) fn handles(
+        &mut self,
+        valid: bool,
+        meshes: &mut Assets<Mesh>,
+        materials: &mut Assets<StandardMaterial>,
+    ) -> (Handle<Mesh>, Handle<StandardMaterial>) {
+        let (mesh, material) = self.art.get_or_insert_with(|| {
+            (
+                meshes.add(Cylinder::new(0.018, 1.).mesh().resolution(6)),
+                materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.06, 0.06, 0.07),
+                    metallic: 0.2,
+                    perceptual_roughness: 0.6,
+                    ..default()
+                }),
+            )
+        });
+        if valid {
+            return (mesh.clone(), material.clone());
+        }
+        let material = self.bad.get_or_insert_with(|| {
+            materials.add(StandardMaterial {
+                base_color: Color::srgb(0.90, 0.20, 0.15),
+                metallic: 0.2,
+                perceptual_roughness: 0.6,
+                ..default()
+            })
+        });
+        (mesh.clone(), material.clone())
+    }
 }
 
 pub(super) fn install(app: &mut App) {
@@ -67,7 +117,7 @@ pub(super) fn install(app: &mut App) {
         .add_systems(Update, (refresh, draw).chain().after(super::sync));
 }
 
-fn refresh(
+pub(super) fn refresh(
     bridge: Res<CoreBridge>,
     snapshot: Res<GameSnapshot>,
     epoch: Res<WorldSessionEpoch>,
@@ -167,20 +217,7 @@ fn draw(
                 .entity(*entity)
                 .insert((pose.unwrap_or_default(), visibility));
         } else {
-            let (mesh, material) = visuals
-                .art
-                .get_or_insert_with(|| {
-                    (
-                        meshes.add(Cylinder::new(0.018, 1.).mesh().resolution(6)),
-                        materials.add(StandardMaterial {
-                            base_color: Color::srgb(0.06, 0.06, 0.07),
-                            metallic: 0.2,
-                            perceptual_roughness: 0.6,
-                            ..default()
-                        }),
-                    )
-                })
-                .clone();
+            let (mesh, material) = visuals.handles(true, &mut meshes, &mut materials);
             let entity = commands
                 .spawn((
                     Name::new(format!("Accepted wire #{}", wire.net_id)),

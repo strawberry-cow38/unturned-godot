@@ -15,8 +15,9 @@ pub(super) struct BelowHud;
 struct Routed;
 pub(crate) const HUD_ORDER: isize = 3;
 pub(crate) const DASHBOARD_ORDER: isize = 4;
-pub(crate) const MODAL_ORDER: isize = 5;
-pub(crate) const CONSOLE_ORDER: isize = 6;
+pub(crate) const TOOL_ORDER: isize = 5;
+pub(crate) const MODAL_ORDER: isize = 6;
+pub(crate) const CONSOLE_ORDER: isize = 7;
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CanvasRouting;
 pub(super) struct LayersPlugin;
@@ -109,7 +110,8 @@ mod tests {
         assert!(
             2 < HUD_ORDER
                 && HUD_ORDER < DASHBOARD_ORDER
-                && DASHBOARD_ORDER < MODAL_ORDER
+                && DASHBOARD_ORDER < TOOL_ORDER
+                && TOOL_ORDER < MODAL_ORDER
                 && MODAL_ORDER < CONSOLE_ORDER
         );
     }
