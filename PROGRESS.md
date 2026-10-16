@@ -3121,4 +3121,18 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - disabling the marker check failed 2 tests;
   - ignoring `UG_CONTENT_DIR` failed 1;
   - taking the apphost without `includedFrameworks` failed 1.
-- **Not done.** The launcher is unchanged; the precise download-and-run step is in `bevy/docs/PACKAGING_PORT.md`. Windows and macOS packages are untested. A packaged bug report stamps `game_commit: unknown`.
+- **Review fixes** (after merging port/bevy 7ce272f6). Each has a guarding test that fails under revert.
+  - A package's own bridge now runs in place: no per-launch copy of the .NET runtime into `/tmp`, so it also works on a noexec `/tmp` and leaves nothing behind after a SIGKILL. Checkout builds are still copied.
+  - Packaged bug reports carry the marker commit (`buildCommit` → `BuildStamp.UsePackagedCommit`) and never walk up to an enclosing `.git`.
+  - A wrong `UG_BRIDGE_DLL` now names the variable in the error.
+  - `package.sh` now has path guards, smokes the stage before the swap, cleans up on failure through an EXIT trap, handles `--no-content` smoke, records `commit: unknown` for `--skip-build`, and is safe on bash older than 4.4.
+  - The package now includes Rust crate notices (`third_party_licenses.py`, 434 crates), the .NET runtime's LICENSE and THIRD-PARTY-NOTICES, and a README note that the content is retail data for private use.
+- **Review verification.**
+  - Tests: native `install:: bridge:: cli:: bugreport::` passed 26 of 26, BugReportCore 26 of 26, managed BugReportOutbox 6 of 6.
+  - Negative controls, each failing under revert:
+    - always copying the package bridge;
+    - a hint that ignores `UG_BRIDGE_DLL`;
+    - a packaged stamp that walks `.git` (2 failures).
+  - Script guards were exercised for `/`, an empty path, the repo itself, a non-package folder, a forced failure (the stage was removed), and `--no-content` with and without `UG_CONTENT_DIR`.
+  - A fresh package (787 MB, marker commit 820d5671, clean) passed the masked relocated headless smoke with `TMPDIR` pointing at a nonexistent directory. The copy was then deleted.
+- **Not done.** The launcher is unchanged; the precise download-and-run step is in `bevy/docs/PACKAGING_PORT.md`. Windows and macOS packages are untested.
