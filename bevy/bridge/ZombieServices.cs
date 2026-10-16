@@ -21,8 +21,10 @@ public sealed partial class ZombieServices
     long Tick=>_server.Session.CurrentTick;
     static UVector U(Vector3 v)=>new(v.X,v.Y,v.Z);
     static Vector3 G(UVector v)=>new(v.x,v.y,v.z);
-    float SampleGround(float x,float z)=>_geometry.GroundHeight(x-_loadX,z-_loadZ);
-    byte SampleLayer(float x,float z)=>_geometry.DominantLayer(x-_loadX,z-_loadZ);
+    public Func<float,float,float> SourceGround;
+    public Func<float,float,byte> SourceLayer;
+    float SampleGround(float x,float z)=>(SourceGround ?? _geometry.GroundHeight)(x-_loadX,z-_loadZ);
+    byte SampleLayer(float x,float z)=>(SourceLayer ?? _geometry.DominantLayer)(x-_loadX,z-_loadZ);
     public ZombieServices(NetWorldServer server,WorldGeometry geometry,Action<string,object> emit)
     {
         _server=server;_geometry=geometry;_emit=emit;ZombieTables.Reset();

@@ -19,6 +19,7 @@ public sealed class FiniteIslandGeneration
     public IReadOnlyList<(Vector3 Pos, float Yaw)> Players { get; private init; }
     public (List<Vector3> Zombies, List<(Vector3 Pos, byte Table)> Loot,
         List<Vector3> Animals) Spawns { get; private init; }
+    public IReadOnlyList<FiniteIslandVehicle> Vehicles { get; private init; }
 
     public static FiniteIslandGeneration Generate(string contentDirectory,
         string environmentDirectory, int tilesX, int tilesZ, int seed, bool lakes = false)
@@ -42,9 +43,11 @@ public sealed class FiniteIslandGeneration
             FiniteIslandPaths.SpawnCamps(surface, objects);
             FiniteIslandPaths.SpawnLandmarks(surface, objects);
             var spawns = FiniteIslandPaths.GenerateSpawnTables(surface, seed);
+            var vehicles = new List<FiniteIslandVehicle>();
+            FiniteIslandPaths.SpawnVehicles(surface, vehicles, seed);
             return new FiniteIslandGeneration { Layout = layout, Surface = surface,
                 Roads = roads, Objects = objects, Spawned = spawned, Players = players,
-                Spawns = spawns };
+                Spawns = spawns, Vehicles = vehicles };
         }
     }
 }

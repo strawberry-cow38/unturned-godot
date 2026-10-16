@@ -23,7 +23,9 @@ public sealed partial class BridgeHost
         if (_map != "Island_" + files.Info.Name)
             throw new ArgumentException("Finite spawn pool must match the selected source map");
         var spec = JsonSerializer.SerializeToElement(new {
-            finitePlayerSpawns = SpawnRows(FiniteSpawnPool.Load(files.PlayersPath)) });
+            finitePlayerSpawns = SpawnRows(FiniteSpawnPool.Load(files.PlayersPath)),
+            finiteTerrainDirectory = files.Root,
+            finiteLootConditionPath = Path.Combine(files.Root,"spawns",$"editor_{files.Info.Name}_lootcond.txt") });
         if (_originX != 0 || _originZ != 0)
             spec = CoordinateJson.ServiceSpec(spec, new((float)-_originX, 0, (float)-_originZ));
         _serviceSpecs.Add(spec);
@@ -32,6 +34,10 @@ public sealed partial class BridgeHost
     void AdoptFiniteRespawns(JsonElement spec)
     {
         if (_finiteSpawns != null || !spec.TryGetProperty("finitePlayerSpawns", out var rows)) return;
+        // EditorPlayMode loads this map's bias before both field and container
+        // rolls. A missing file deliberately clears a previous map's bias.
+        SDG.Unturned.LootCondition.Load(Text(spec,"finiteLootConditionPath"));
+        AdoptFiniteTerrain(spec);
         // Saved rows are already local. Construct in source coordinates first
         // so the source origin-placeholder guard survives a later rebase/load.
         var origin = new Vector3((float)_originX, 0, (float)_originZ);

@@ -14,12 +14,14 @@ public sealed class RetailLootStreamer
     readonly HashSet<int> _taken = new();
     readonly NetWorldServer _server;
     readonly WorldGeometry _geometry;
+    readonly bool _generated;
     long _nextTick;
     public int PointCount => _points.Length;
     public int LiveCount => _live.Count;
     public string MapRoot { get; }
     public sealed record LivePoint(int Index, ushort ItemId, float X, float Y, float Z);
-    public sealed record SaveData(string MapRoot, int[] Taken, LivePoint[] Live);
+    public sealed record SavedPoint(int Index, ushort ItemId, byte Table, float X, float Y, float Z);
+    public sealed record SaveData(string MapRoot, int[] Taken, LivePoint[] Live, SavedPoint[] GeneratedPoints = null);
     public RetailLootStreamer(string mapRoot, NetWorldServer server, WorldGeometry geometry)
     {
         if (!File.Exists(Path.Combine(mapRoot, "Spawns", "Items.dat")) || !File.Exists(Path.Combine(mapRoot, "Spawns", "Jars.dat")))
@@ -27,6 +29,33 @@ public sealed class RetailLootStreamer
         MapRoot = Path.GetFullPath(mapRoot);
         var source = new RetailLootData(); source.LoadFromPei(MapRoot); _points = source.Points().ToArray();
         _server = server; _geometry = geometry;
+    }
+    public RetailLootStreamer(string mapRoot, IReadOnlyList<(Godot.Vector3 Pos, byte Table)> points,
+        NetWorldServer server, WorldGeometry geometry)
+    {
+        if (!File.Exists(Path.Combine(mapRoot,"Spawns","Items.dat")))
+            throw new FileNotFoundException("Generated loot requires original Spawns/Items.dat tables");
+        MapRoot = Path.GetFullPath(mapRoot);
+        var source = new RetailLootData(); source.LoadGenerated(MapRoot,points);
+        _points = source.Points().ToArray(); _generated = true;
+        _server = server; _geometry = geometry;
+    }
+    RetailLootStreamer(SaveData saved, NetWorldServer server, WorldGeometry geometry)
+    {
+        MapRoot = saved.MapRoot; _generated = true; _server = server; _geometry = geometry;
+        _points = saved.GeneratedPoints.Select(p => (p.Index,p.ItemId,p.Table,p.X,p.Y,p.Z)).ToArray();
+    }
+    public static RetailLootStreamer FromSave(SaveData saved, NetWorldServer server,
+        WorldGeometry geometry, Vector3 origin)
+    {
+        // Generated rows are already in the saved local frame and preserve the
+        // original rolls, including points not yet visited. Never read retail
+        // Jars.dat or rerun the island generator to restore this field.
+        var result = saved.GeneratedPoints != null ? new RetailLootStreamer(saved,server,geometry)
+            : new RetailLootStreamer(saved.MapRoot,server,geometry);
+        if (saved.GeneratedPoints == null) result.TranslateWorld(-origin);
+        result.Restore(saved);
+        return result;
     }
     public void TranslateWorld(Vector3 d)
     {
@@ -39,7 +68,8 @@ public sealed class RetailLootStreamer
         return new(MapRoot, _taken.Order().ToArray(), _live.Select(pair => {
             _server.WorldItems.TryGet(pair.Value, out var e);
             return new LivePoint(pair.Key, e.ItemId, e.Pos.x, e.Pos.y, e.Pos.z);
-        }).ToArray());
+        }).ToArray(), _generated ? _points.Select(p =>
+            new SavedPoint(p.Index,p.ItemId,p.Table,p.X,p.Y,p.Z)).ToArray() : null);
     }
     public void Restore(SaveData saved)
     {

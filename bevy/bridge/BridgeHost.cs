@@ -81,6 +81,7 @@ public sealed partial class BridgeHost : IDisposable
             case "serverProbeCancel": return _serverProbe.Cancel(r.GetProperty("token").GetInt64());
             case "localProfile": return ReadLocalProfile(r);
             case "finiteMap": return ReadFiniteMap(r);
+            case "finitePopulation": RequireSession(); return RegisterFinitePopulation(r);
             case "setLocalFace": return SetLocalFace(r);
             case "profileRules": return ReadProfileRules(r);
             case "profileAvatar": RequireSession(); return ReadProfileAvatar(r);
@@ -214,9 +215,8 @@ public sealed partial class BridgeHost : IDisposable
                 _services.RestorePropDoors(extra?.ObjectDoors); _bodies.Restore(extra?.Bodies); _vehicles.RestoreParts(extra?.VehicleParts);
                 if (extra?.Loot != null)
                 {
-                    _loot = new RetailLootStreamer(extra.Loot.MapRoot, _server, _geometry);
-                    _loot.TranslateWorld(new((float)-_originX, 0, (float)-_originZ));
-                    _loot.Restore(extra.Loot);
+                    _loot = RetailLootStreamer.FromSave(extra.Loot, _server, _geometry,
+                        new((float)_originX, 0, (float)_originZ));
                     _loot.Step(force: true);
                 }
                 for (int n = 0; n < 6; n++) Tick();
@@ -384,6 +384,7 @@ public sealed partial class BridgeHost : IDisposable
         {
             if (spec.TryGetProperty("vehicles", out _)) _vehicles.Register(spec); else _services.Register(spec);
             AdoptFiniteRespawns(spec);
+            AdoptFinitePopulation(spec);
         }
         _server.Transactions.Blueprints = _catalog.Recipes;
         ConfigureInventoryTransactions();
@@ -560,6 +561,7 @@ public sealed partial class BridgeHost : IDisposable
         return new { tick = _network.CurrentTick, origin = Origin, connected = _client.State == NetSessionState.Connected && (!IsRemote || _remoteSpawnAdopted), playerId = _client.PlayerId,
             network = NetworkState(), players = PlayerReplicas(), npc = _npcView.Snapshot(), storage = _storageView.Current,
             worldClock = ClockSnapshot(),
+            finiteVehicles = _finiteVehicles,
             weather = _environment?.State(),
             steady = SteadyState(),
             weapon = IsRemote ? _remoteWeapon.Snapshot() : _weapons.Snapshot(_client.PlayerId),
@@ -651,12 +653,13 @@ public sealed partial class BridgeHost : IDisposable
         if (_server != null) foreach (var player in _server.CombatState.All)
             ServerGestures.TryTakePending(player.OwnerPlayerId, out _);
         _serverProbe.Cancel();
-        _loot = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null;
+        _loot = null; _finiteVehicles = null; _finiteTerrain = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null;
         _udpTransport?.TearDown(); _udpTransport = null;
         _environment = null; _services = null; _vehicles = null; _vehicleLights = null; _vehicleMaintenance = null; _vehicleDoors = null; _vehicleHitches = null; _bodies = null; _weapons = null;
         _cosmetic = null; _warheads = null; _mounted = null; _npcHelis = null; _appearance = null; _wildlife = null; _zombies = null;
         _remoteWeapon = null; _remoteMounted = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
         _mapBindings = null;
+        if (_finiteSpawns != null) SDG.Unturned.LootCondition.Clear();
         _finiteSpawns = null; _respawnLookVersion = 0; _respawnLookYaw = null;
     }
 }

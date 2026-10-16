@@ -59,8 +59,9 @@ Opened artifacts are `bevy-finite-respawn-initial`, `-turned`, `-dead`, `-return
 Pause→Quit with code0. The camera uses normal player input, with no fixed-camera
 override. These are inspected source/authority/render checks, not pixel goldens.
 
-Remaining finite scope includes fresh-only original EditorPlayMode populations,
-custom fixtures/editor tools and sidecars, chart/menu/remote-map negotiation, and
+Fresh-only original EditorPlayMode populations are now verified separately in
+[FINITE_POPULATIONS_PORT.md](FINITE_POPULATIONS_PORT.md). Remaining finite scope
+includes custom fixtures/editor tools and sidecars, chart/menu/remote-map negotiation, and
 separate BuildingGen. Existing wire has no explicit remote respawn-now/force-map
 versus claimed-bed command; this checkpoint preserves the current authoritative
 bed-first request and automatic timer. An empty finite pool still uses the

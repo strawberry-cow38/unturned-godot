@@ -338,7 +338,7 @@ fn load_catalog(
 fn register_world_geometry(
     bridge: Res<CoreBridge>,
     options: Res<crate::LaunchOptions>,
-    config: Res<WorldConfig>,
+    mut config: ResMut<WorldConfig>,
     world: Res<crate::world::WorldState>,
     geometry: Res<WorldGeometry>,
     mut replicas: ResMut<Replicas>,
@@ -448,6 +448,16 @@ fn register_world_geometry(
                 let loot = bridge.request("worldLoot", json!({"mapRoot":path}))?;
                 info!("Registered original loot stream: {}", loot["result"]);
             }
+        }
+        if let Some(population) = &config.finite_population {
+            let map_root = options.0.unturned.as_ref()
+                .map(|root| root.join("Maps/PEI"))
+                .ok_or_else(|| anyhow::anyhow!("Fresh finite populations require original PEI spawn tables"))?;
+            let result = bridge.request("finitePopulation", json!({
+                "mapName":config.map_name,"mapRoot":map_root,"population":population
+            }))?;
+            info!("Original generated populations: {}",result["result"]);
+            config.finite_population = None;
         }
         Ok(())
     })();

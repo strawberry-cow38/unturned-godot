@@ -23,6 +23,12 @@ public sealed class FiniteIslandFilesTests
             File.Copy(Path.Combine(Root(),"tests/UnturnedBevy.Tests/fixtures/pei-road-materials.dat"),Path.Combine(temp,"Roads.dat"));
             var generated=FiniteIslandFiles.Generate(content,temp,destination,"Island 1234",1234,1,1);
             Assert.That(generated.Generated,Is.Not.Null);
+            var population=FiniteIslandPopulation.From(generated.Generated);
+            Assert.That(population.Zombies.Length,Is.EqualTo(generated.Generated.Spawns.Zombies.Count));
+            Assert.That(population.Loot.Length,Is.EqualTo(generated.Generated.Spawns.Loot.Count));
+            Assert.That(population.Animals.Length,Is.EqualTo(generated.Generated.Spawns.Animals.Count));
+            Assert.That(population.Vehicles.Length,Is.EqualTo(generated.Generated.Vehicles.Count));
+            Assert.That(population.Vehicles,Is.Not.Empty);
             Assert.That(File.Exists(Path.Combine(destination,"island_1234_map.rgb")),Is.True);
             Assert.That(File.Exists(Path.Combine(destination,"island_1234_map.png")),Is.False,"the native PNG encoder owns final image persistence");
             generated.Surface.SetHole(3,4,true);
@@ -31,6 +37,7 @@ public sealed class FiniteIslandFilesTests
             var authored=Directory.GetFiles(destination,"*",SearchOption.AllDirectories).ToDictionary(p=>p,File.ReadAllBytes);
             var reopened=FiniteIslandFiles.Open(content,destination);
             Assert.That(reopened.Generated,Is.Null,"source saved-map reopening does not reconstruct generation-only populations");
+            Assert.That(FiniteIslandPopulation.From(reopened.Generated),Is.Null);
             Assert.That(reopened.Surface.IslandTiles,Is.Empty);
             Assert.That(reopened.Surface.Grid,Is.EqualTo(generated.Surface.Grid));
             Assert.That(reopened.Surface.HoleCount,Is.EqualTo(1));

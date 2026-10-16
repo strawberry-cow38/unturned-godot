@@ -13,7 +13,9 @@ The source contains three separate systems:
 The finite path now has a bounded local native CLI entry for original generation
 and saved-editor-map reopening. Retail and endless generation remain separate.
 The authored generator data, terrain/road/prop/scatter rendering and collision
-are linked; editor UI, generated populations and BuildingGen runtime are pending.
+are linked; original fresh-only populations are now covered by
+[FINITE_POPULATIONS_PORT.md](FINITE_POPULATIONS_PORT.md). Editor UI and
+BuildingGen runtime remain pending.
 The original finite sequence is height/POIs, links and snapped gates, monument
 tiles and prefab placement, exact town flattening, routes/junctions, trails/camps,
 landmarks, followed by `ProcIslandSpawn` scene/road conformity, ground painting,
@@ -275,7 +277,7 @@ the reopen capture starts a new owner rather than claiming a Load-world journey.
 
 Source spawn/respawn pool selection is now implemented and verified in
 [FINITE_RESPAWN_PORT.md](FINITE_RESPAWN_PORT.md). Remaining finite scope includes
-generated loot/fauna/zombie/vehicle population, additional custom fixture authority, original
+additional custom fixture authority, original
 editor interactions and custom sidecars, river-water/wet-cell ocean geometry,
 Information chart projection and menu entry, and remote descriptor negotiation.
 Existing generator town/route metadata is intentionally not reconstructed on
@@ -332,5 +334,6 @@ Harvest Raw Viriberries, and accepted F harvest added item272 amount1. Opened
 remain; JSON records dead resource395 and the received inventory reward. Both
 processes exited through Pause→Quit with code0. Root independently opened all
 four images; source/code review also passed. These are authored fixture and
-source resource checks, not a claim that all finite editor interactions or
-fresh-generated populations are complete.
+source resource checks, not a claim that all finite editor interactions are
+complete. Fresh-generated populations are verified separately in
+[FINITE_POPULATIONS_PORT.md](FINITE_POPULATIONS_PORT.md).

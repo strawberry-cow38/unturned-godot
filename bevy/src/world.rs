@@ -50,6 +50,9 @@ pub struct WorldConfig {
     /// EditorPlayMode's uniformly chosen exact regular point, before authority
     /// starts. Unlike a respawn, initial entry does not adopt authored yaw.
     pub finite_spawn: Option<Vec3>,
+    /// Fresh EditorPlayMode lists. Consumed once by authority registration;
+    /// reopening authored files deliberately supplies no generated population.
+    pub finite_population: Option<serde_json::Value>,
     pub foliage: bool,
 }
 impl Default for WorldConfig {
@@ -68,6 +71,7 @@ impl Default for WorldConfig {
             procedural_path: None,
             finite_path: None,
             finite_spawn: None,
+            finite_population: None,
             foliage: true,
         }
     }

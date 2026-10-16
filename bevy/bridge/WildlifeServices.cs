@@ -34,7 +34,7 @@ public sealed partial class WildlifeServices
     }
     static UVector U(Vector3 v) => new(v.X,v.Y,v.Z);
     static Vector3 G(UVector v) => new(v.x,v.y,v.z);
-    byte SampleLayer(float x,float z) => _geometry.DominantLayer(x,z);
+    byte SampleLayer(float x,float z) => (SourceLayer ?? _geometry.DominantLayer)(x,z);
     List<Vector3> GatherAnchors()
     {
         _anchors.Clear(); foreach(var player in _server.Players.All) _anchors.Add(G(player.Pos)); return _anchors;
@@ -42,7 +42,7 @@ public sealed partial class WildlifeServices
     bool Occluded(Vector3 a,Vector3 b) => _geometry.RayDetailed(U(a),U(b),out _);
     float Ground(float x,float z)
     {
-        float sampled=_geometry.GroundHeight(x,z);
+        float sampled=(SourceGround ?? _geometry.GroundHeight)(x,z);
         return _geometry.RayDetailed(new(x,sampled+4,z),new(x,sampled-4,z),out var hit)?hit.Point.y:sampled;
     }
     public object Register(JsonElement r,double originX,double originZ)
@@ -60,12 +60,14 @@ public sealed partial class WildlifeServices
         }
         return new {points=_pts.Count,live=_brains.Count,sourceExists=File.Exists(Path.Combine(mapRoot,"Spawns","Fauna.dat"))};
     }
+    public Func<float,float,float> SourceGround;
+    public Func<float,float,byte> SourceLayer;
     AnimalBrain BuildAnimal(ushort animalId,Vector3 atGround,uint seed)
     {
         if(!Kinds.TryGetValue(animalId,out var def)) return null;
         var a=new AnimalBrain{NetId=_server.Ids.Mint().Value,AnimalId=animalId,Species=AnimalCatalog.SpeciesForAnimalId(animalId),
             BodyH=def.bodyH,Health=def.health,Seed=seed,Home=new(atGround.X,0,atGround.Z),
-            GlobalPosition=new(atGround.X,_geometry.GroundHeight(atGround.X,atGround.Z),atGround.Z),
+            GlobalPosition=new(atGround.X,(SourceGround ?? _geometry.GroundHeight)(atGround.X,atGround.Z),atGround.Z),
             SampleGround=Ground,SampleLayer=SampleLayer,Occluded=Occluded,Anchors=()=>_server.Players.All.Select(p=>G(p.Pos))};
         a.Panic=()=>_emit("animalPanic",new{netId=a.NetId,species=a.Species,rig=AnimalCatalog.Get(a.Species).Rig,position=Array(U(a.GlobalPosition))});
         a.Died=impulse=>{

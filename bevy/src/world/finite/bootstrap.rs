@@ -54,6 +54,8 @@ pub(crate) fn prepare(
     config.procedural_path = None;
     config.finite_path = Some(root);
     config.finite_spawn = crate::player::vector(&reply["result"]["initialSpawn"]);
+    config.finite_population = (!reply["result"]["population"].is_null())
+        .then(|| reply["result"]["population"].clone());
     Ok(())
 }
 

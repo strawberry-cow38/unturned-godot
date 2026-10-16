@@ -18,6 +18,7 @@ public sealed partial class BridgeHost
         files.PrepareRuntime();
         var initial = FiniteSpawnPool.Load(files.PlayersPath).Initial();
         return new { directory=root, descriptor=files.Info, generated=files.Generated!=null,
+            population=FiniteIslandPopulation.From(files.Generated),
             initialSpawn=initial is UnityEngine.Vector3 at ? Array(at) : null,
             chart=new {width=FiniteIslandChart.Res,height=FiniteIslandChart.Res,
                 raw=Path.Combine(root,$"island_{files.Info.Seed}_map.rgb"),

@@ -172,6 +172,10 @@ def main():
                 from extract_island_placement import extract as extract_placement
                 extract_placement(lambda p: (REPO / p).read_text(), folder, match, method)
                 source_files += ['bevy/bridge/FiniteIslandObjects.cs']
+                # Same value sink, original chooser and actual Godot math. The
+                # source side deliberately excludes the native handoff DTO.
+                population = (REPO / 'bevy/bridge/FiniteIslandPopulation.cs').read_text()
+                (folder / 'FiniteIslandVehicle.cs').write_text(population[:population.index('/// <summary>Ephemeral')])
             if args.chart:
                 from extract_island_chart import extract as extract_chart
                 extract_chart(lambda p: (REPO / p).read_text(), folder, match, method)
@@ -222,6 +226,9 @@ def main():
             program = program.replace('        roads.SavePaths', '''        FiniteIslandPaths.SpawnCamps(surface, objects);
         FiniteIslandPaths.SpawnLandmarks(surface, objects);
         var spawns = FiniteIslandPaths.GenerateSpawnTables(surface, seed);
+        var vehicles = new List<FiniteIslandVehicle>();
+        FiniteIslandPaths.SpawnVehicles(surface, vehicles, seed);
+        File.WriteAllText(path + "-vehicles.json", JsonSerializer.Serialize(vehicles, options));
         File.WriteAllText(path + "-placements.json", JsonSerializer.Serialize(new {
             spawned, players, spawns,
             objects = objects.Placements.Select(o => new { o.Name, o.Position, o.Material,

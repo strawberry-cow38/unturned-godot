@@ -35,13 +35,25 @@ def extract(read, out, match, method):
                  'SpawnTownFurniture', 'ScatterTownFurniture', 'PavementPos', 'TownPropOk',
                  'SpawnRoadside', 'ScatterRoadside', 'RoadsideOk',
                  'SpawnCamps', 'SpawnLandmarks', 'ChoosePlayerSpawns', 'Near',
-                 'GenerateSpawnTables', 'SpawnGroundOk'):
+                 'GenerateSpawnTables', 'SpawnGroundOk', 'SpawnVehicles'):
         body = get(name)
         if name == 'Spawn':
             # Diagnostic-only source reports have no influence on generated data.
             for line in ('            ReportPieces(terr);', '            ReportTowns(terr);'):
                 assert body.count(line) == 1
                 body = body.replace(line, '')
+        if name == 'SpawnVehicles':
+            # Every source kind is an exported vehicle definition. Replace only
+            # node construction/parenting with the corresponding value sink;
+            # preserve random draw order, rejection branches and pose writes.
+            for before, after in (
+                ('Node world', 'List<FiniteIslandVehicle> world'),
+                ('Vehicle.BuildByName(kinds[rng.Next(kinds.Length)], rng.Next(4))',
+                 'new FiniteIslandVehicle(kinds[rng.Next(kinds.Length)], rng.Next(4))'),
+                ('world.AddChild(v);', 'world.Add(v);'),
+            ):
+                assert body.count(before) == 1, before
+                body = body.replace(before, after)
         # The original scene has one static Terrain water setting. The data
         # holder carries that same setting per generation, avoiding global state.
         body = body.replace('Terrain.HasWater', 'terr.HasWater').replace('Terrain.SeaLevelY', 'terr.SeaLevelY')

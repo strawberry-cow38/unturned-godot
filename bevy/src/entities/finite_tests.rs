@@ -21,6 +21,124 @@ fn tick(bridge: &CoreBridge) -> Value {
 }
 
 #[test]
+fn native_population_registration_waits_for_authority_then_consumes_once_across_geometry_refresh() {
+    let project = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let temp = Directory(std::env::temp_dir().join(format!(
+            "bevy-finite-population-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+    let tables = temp.0.join("Maps/PEI/Spawns");
+    fs::create_dir_all(&tables).unwrap();
+    let mut bytes = vec![4, 1, 255, 255, 255, 4];
+    bytes.extend(b"Food");
+    bytes.extend([0, 0, 1, 4]);
+    bytes.extend(b"Food");
+    bytes.extend(1_f32.to_le_bytes());
+    bytes.push(1);
+    bytes.extend(13_u16.to_le_bytes());
+    fs::write(tables.join("Items.dat"), bytes).unwrap();
+    let config = WorldConfig {
+        map_name: "Island_Test".into(),
+        map_root: None,
+        finite_population: Some(json!({"zombies":[],"animals":[],"vehicles":[
+            {"kind":"sedan","variant":3,"position":[30.,2.1,20.],"yaw":143.}],
+            "loot":[{"position":[20.,2.,18.],"table":0}]})),
+        ..default()
+    };
+    let bridge = CoreBridge::launch(project).unwrap();
+    bridge
+        .request(
+            "init",
+            json!({"contentRoot":config.content_root,"mapId":config.map_name,"spawn":[20,2,20]}),
+        )
+        .unwrap();
+    let mut options = crate::cli::Options::default();
+    options.unturned = Some(temp.0.clone());
+    let mut model = UiModel::default();
+    model.connected = true;
+    model.network.owns_world = false;
+    let mut geometry = WorldGeometry::default();
+    geometry.revision = 1;
+    geometry.loaded_center = Vec3::new(20., 0., 20.);
+    geometry.loaded_radius = 50.;
+    geometry.terrain.push(crate::world::TerrainPatch {
+        origin: Vec2::ZERO,
+        cells: 1,
+        spacing: 64.,
+        heights: vec![1.; 4],
+        layers: vec![0; 4],
+        normals: vec![[0., 1., 0.]; 4],
+        holes: vec![false],
+        splat: None,
+    });
+    let services = ServiceManifest {
+        map: config.map_name.clone(),
+        holiday: Some(config.holiday.clone()),
+        ..default()
+    };
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .insert_resource(bridge)
+        .insert_resource(crate::LaunchOptions(options))
+        .insert_resource(config)
+        .insert_resource(geometry)
+        .insert_resource(model)
+        .insert_resource(services)
+        .insert_resource(WorldState {
+            ready: true,
+            ..default()
+        })
+        .init_resource::<Replicas>()
+        .add_systems(Update, register_world_geometry);
+    app.update();
+    assert!(
+        app.world()
+            .resource::<WorldConfig>()
+            .finite_population
+            .is_some(),
+        "client cannot consume/publish generated plans"
+    );
+    assert!(tick(app.world().resource::<CoreBridge>())["finiteVehicles"].is_null());
+    app.world_mut().resource_mut::<UiModel>().network.owns_world = true;
+    app.update();
+    assert!(
+        app.world()
+            .resource::<WorldConfig>()
+            .finite_population
+            .is_none()
+    );
+    let state = tick(app.world().resource::<CoreBridge>());
+    assert_eq!(state["worldItems"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        crate::player::vector(&state["finiteVehicles"][0]["position"]).unwrap(),
+        Vec3::new(30., 2.1, 20.)
+    );
+    let item = state["worldItems"][0]["netId"].clone();
+    app.world()
+        .resource::<CoreBridge>()
+        .request("action", json!({"name":"pickupItem","args":{"netId":item}}))
+        .unwrap();
+    assert!(
+        tick(app.world().resource::<CoreBridge>())["worldItems"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    app.world_mut().resource_mut::<WorldGeometry>().revision += 1;
+    app.update();
+    let state = tick(app.world().resource::<CoreBridge>());
+    assert!(
+        state["worldItems"].as_array().unwrap().is_empty(),
+        "stream refresh cannot replenish taken generated loot"
+    );
+    assert_eq!(state["finiteVehicles"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn finite_native_registration_uploads_source_ids_and_hides_accepted_forage_across_stream_refresh() {
     let project = Path::new(env!("CARGO_MANIFEST_DIR"));
     let temp = Directory(std::env::temp_dir().join(

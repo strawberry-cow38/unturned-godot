@@ -326,6 +326,10 @@ fn register_spawns(
     }
     let mut indices = Vec::new();
     let mut requests = Vec::new();
+    for (index, request) in spawns::generated_requests(&snapshot.0, &geometry, &vehicles.registered) {
+        requests.push(request);
+        indices.push(index);
+    }
     for point in &vehicles.points {
         if vehicles.registered.contains(&point.index) {
             continue;
