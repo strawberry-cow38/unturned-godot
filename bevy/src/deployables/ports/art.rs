@@ -5,13 +5,13 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-pub(super) struct Art {
+pub(in crate::deployables) struct Art {
     pub cube: Handle<Mesh>,
     pub quad: Handle<Mesh>,
     pub texture: Handle<Image>,
 }
 impl Art {
-    pub fn load(meshes: &mut Assets<Mesh>, images: &mut Assets<Image>) -> Self {
+    pub(in crate::deployables) fn load(meshes: &mut Assets<Mesh>, images: &mut Assets<Image>) -> Self {
         let mut pixels = Vec::with_capacity(64 * 64 * 4);
         for row in 0i32..64 {
             for col in 0i32..64 {
@@ -117,7 +117,7 @@ pub(super) fn arrow(p: &wires::Port, data_live: bool) -> StandardMaterial {
         ..default()
     }
 }
-pub(super) fn arrow_pose(p: &wires::Port, position: Vec3) -> Transform {
+pub(in crate::deployables) fn arrow_pose(p: &wires::Port, position: Vec3) -> Transform {
     let outward = if position.x.abs() > 1e-3 || position.y.abs() > 1e-3 {
         if position.x.abs() >= position.y.abs() {
             Vec3::X * position.x.signum()
@@ -138,7 +138,7 @@ pub(super) fn arrow_pose(p: &wires::Port, position: Vec3) -> Transform {
 
 /// AxisBillboard.Tick pins local +Y and keeps the previous bearing exactly on
 /// that axis. The caller transforms the camera into this arrow's local frame.
-pub(super) fn face_camera(quad: &mut Transform, camera: Vec3) {
+pub(in crate::deployables) fn face_camera(quad: &mut Transform, camera: Vec3) {
     if camera.x * camera.x + camera.z * camera.z >= 1e-8 {
         quad.rotation = Quat::from_rotation_y(camera.x.atan2(camera.z));
     }

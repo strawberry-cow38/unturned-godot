@@ -326,6 +326,12 @@ namespace UnturnedGodot.Net
             commands.Register<PlaceDeployableCommand>(ReplicationIds.CommandPlaceDeployable, PlaceDeployableCommand.TryRead,
                 OnPlaceDeployable,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        // The client places only alive and on foot: TryPlaceDeployable returns
+                                        // on _dead, and a seated LMB is the horn/turret (driver) or nothing
+                                        // (passenger), so no hand ever reaches the ghost. Without these a corpse
+                                        // or a passenger could still spend and plant through the choke point.
+                                        && _combat.TryGet(sender, out var life) && life.Alive
+                                        && IsSeated?.Invoke(sender) != true
                                         && _deployables.CanPlace(cmd.DefId, cmd.Pos, pos)
                                         && AdapterHasContainer(cmd)                                  // v56: "has to snap or it wont place"
                                         && SenderInventory(sender)?.getItemCount(cmd.DefId) > 0);   // placing spends the held item

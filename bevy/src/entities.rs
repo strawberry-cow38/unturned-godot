@@ -62,6 +62,9 @@ pub struct ItemVisual {
     pub tool: Value,
     #[serde(default)]
     pub gravity_multiplier: f32,
+    /// Source vehicle paint/tire/carjack use timeline (Catalog.HandTool).
+    #[serde(default)]
+    pub hand_tool: Value,
 }
 #[derive(Resource, Default)]
 pub struct ItemCatalog {
@@ -183,8 +186,27 @@ impl InteractionFocus {
             candidate.action == action && candidate.args["netId"].as_u64() == Some(u64::from(id))
         })
     }
+    /// A dispatched candidate with no prompt (the source shows none for it).
+    pub fn offer_hidden(&mut self, distance: f32, action: &str, args: Value, open_storage: bool) {
+        self.offer(distance, "", action, args.clone(), open_storage);
+        if let Some(candidate) = &mut self.candidate {
+            if candidate.action == action && candidate.args == args {
+                candidate.show_binding = false;
+            }
+        }
+    }
+    /// Whether the winning candidate carries the storage-screen flag that the
+    /// crop harvest fall-through yields to.
+    #[cfg(test)]
+    pub(crate) fn opens_storage(&self) -> bool {
+        self.candidate.as_ref().is_some_and(|c| c.open_storage)
+    }
     pub fn has_candidate(&self) -> bool {
         self.candidate.is_some()
+    }
+    /// The winning candidate's replicated identity (source ResolveFocus has one winner).
+    pub fn selected_net_id(&self) -> Option<u64> {
+        self.candidate.as_ref().and_then(|c| c.args["netId"].as_u64())
     }
     /// A source F branch tried after every look target except the shelf and
     /// crate ones (`PlayerController` runs `RequestHarvestNearestCrop` before
