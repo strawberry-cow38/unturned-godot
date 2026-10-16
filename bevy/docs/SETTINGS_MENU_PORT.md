@@ -81,8 +81,8 @@ per-process temp file. `crate::graphics` applies them:
 
 | Row | Native effect |
 | --- | --- |
-| Anti-aliasing | one `Msaa` for every window camera (image targets keep theirs); FXAA / TAA on the world camera; unsupported sample counts fall back and say so |
-| Shadow quality / distance | sun shadows on/off, `DirectionalLightShadowMap` 1024-8192, Hardware2x2/Gaussian filter, cascade max distance |
+| Anti-aliasing | one `Msaa` for every window camera, including cameras spawned later (image targets keep theirs); FXAA on the world camera after the source tonemap pass; TAA (removed with its jitter, mip bias and motion prepass); unsupported sample counts fall back and say so |
+| Shadow quality / distance | sun shadows on/off; Godot's 1024-8192 atlas is split in four PSSM quadrants, so each Bevy cascade gets half the edge (512-4096, same texels and memory); Hardware2x2/Gaussian filter; cascade max distance |
 | Resolution / Fullscreen / V-Sync / Target frame rate | window size, `WindowMode`, present mode, sleep-based frame cap (off under `--fixed-fps`) |
 | UI scale | `UiScale` |
 | Effect quality | particle count and size at emitter creation |
@@ -105,8 +105,11 @@ preference never changes world authority.
 
 Controls keep the source sliders/toggles (look sensitivity, invert Y, heli and
 plane pitch, heli sensitivity); the earlier native FOV and master-volume rows
-remain under a "NATIVE" label. Sliders use `bevy_ui_widgets::Slider`, snap to the
-source steps and commit on release. Key Binds lists every action with
+remain under a "NATIVE" label. Sliders use `bevy_ui_widgets::Slider` and snap to the
+source steps. The readout tracks the drag, but the value applies and saves on
+release (the source applies on every change): the overlay rebuilds on each
+settings change, which would end the drag. Scroll offsets are kept across those
+rebuilds, as Godot's once-built screens do. Key Binds lists every action with
 `Keybinds.DisplayName`/`ContextLabel` and Godot key labels, captures the next
 key or mouse button, refuses conflicts, Delete/Backspace unbinds, Esc cancels and
 Reset restores defaults, with the source hint texts and colours.

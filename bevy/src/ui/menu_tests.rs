@@ -224,8 +224,11 @@ fn generated_entries_validate_the_seed_and_queue_the_cli_equivalent_entry() {
     assert!(intents(&mut app).is_empty());
     assert_eq!(app.world().resource::<UiState>().menu.sp.note.as_deref(), Some("Seed must be a whole number."));
     app.world_mut().resource_mut::<UiState>().menu.sp.seed = "77".into();
+    app.world_mut().insert_resource(crate::world::WorldState { ready: true, ..default() });
     press(&mut app, SpAction::Play);
     assert!(matches!(&intents(&mut app)[..], [UiIntent::Play { map }] if map == "Procedural"));
+    assert!(!app.world().resource::<crate::world::WorldState>().ready,
+        "a new seed under the same Procedural name must rebuild the world");
     assert_eq!(app.world().resource::<crate::LaunchOptions>().0.seed, 77, "--map Procedural --seed 77");
     press(&mut app, SpAction::Select(Entry::Generate));
     press(&mut app, SpAction::Lakes);
@@ -320,4 +323,24 @@ fn seed_field_types_and_menu_open_hook_selects_pages() {
     app.add_systems(Update, |mut s: ResMut<UiState>, mut r: MessageReader<KeyboardInput>| singleplayer::typed(&mut s, &mut r));
     app.update();
     assert_eq!(app.world().resource::<UiState>().menu.sp.seed, "42");
+}
+
+#[test]
+fn scroll_offsets_survive_an_overlay_rebuild() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<super::godot::ScrollMemory>()
+        .add_observer(super::godot::restore_scroll)
+        .add_systems(Update, super::godot::remember_scroll);
+    let first = app.world_mut().spawn((super::godot::ScrollKey("graphics"), ScrollPosition::default())).id();
+    app.update();
+    app.world_mut().get_mut::<ScrollPosition>(first).unwrap().y = 240.;
+    app.update();
+    app.world_mut().despawn(first);
+    let rebuilt = app.world_mut().spawn((super::godot::ScrollKey("graphics"), ScrollPosition::default())).id();
+    app.update();
+    assert_eq!(app.world().get::<ScrollPosition>(rebuilt).unwrap().y, 240., "rows keep their place after a cycle");
+    let other = app.world_mut().spawn((super::godot::ScrollKey("keybinds"), ScrollPosition::default())).id();
+    app.update();
+    assert_eq!(app.world().get::<ScrollPosition>(other).unwrap().y, 0.);
 }

@@ -180,7 +180,7 @@ fn presentation(
 /// A window camera spawned mid-frame adopts the shared sample count at once,
 /// so it never renders one frame at Bevy's default 4x beside the others.
 fn new_window_camera(
-    add: On<Add, Camera>,
+    add: On<Add<Camera>>,
     cameras: Query<&RenderTarget, Without<crate::viewmodel::ViewmodelCamera>>,
     applied: Res<Applied>,
     mut commands: Commands,

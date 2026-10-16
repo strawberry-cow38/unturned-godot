@@ -385,7 +385,7 @@ pub(crate) struct ScrollKey(pub &'static str);
 #[derive(Resource, Default)]
 pub(crate) struct ScrollMemory(pub std::collections::HashMap<&'static str, f32>);
 pub(crate) fn restore_scroll(
-    add: On<Add, ScrollKey>,
+    add: On<Add<ScrollKey>>,
     keys: Query<&ScrollKey>,
     memory: Res<ScrollMemory>,
     mut commands: Commands,

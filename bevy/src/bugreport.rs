@@ -627,6 +627,16 @@ mod tests {
         assert_eq!(Config::parse("", Some("  ")).key, "");
     }
     #[test]
+    fn report_key_is_text_while_a_field_or_rebind_has_focus() {
+        let mut state = UiState::default();
+        assert!(!typing(&state));
+        state.capturing = Some(GameAction::Jump);
+        assert!(typing(&state), "KeybindMenu swallows the next press");
+        state.capturing = None;
+        state.menu.sp.seed_focus = true;
+        assert!(typing(&state));
+    }
+    #[test]
     fn console_report_command_is_recognised_exactly() {
         assert!(is_console_command("report door clips"));
         assert!(is_console_command("REPORT x"));
