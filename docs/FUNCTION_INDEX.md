@@ -86,6 +86,8 @@ Rules of the road:
 | move/swap an item between slots | `PlayerInventory.TryDrag` (`:127`) | — it **is** the validator; MP calls the same one |
 | count / peek / consume / repair by item id | `getItemCount` `:164` / `peekItemQuality` `:182` / `removeItemAmount` `:197` / `restoreQuality` `:219` | rewrite the page scan (these four are the same walk 4×) |
 | solve a power network | `PowerSolver.Solve` (`core/UnturnedSim/PowerSolver.cs:51`) | — engine-free and L0-tested |
+| read accepted native utility topology and solved port values | bridge `powerView` / `BridgeHost.ReadPowerGraph` | local or remote client replicas only; reuses `DeployableReplication.Solve`, never ticks/registers authority; native tool/utility presentation remains separate |
+| show the original accepted power-switch state light | `deployables::switch::{Art,update}` | source root-local cube, UG_SWLP, original on/off colors/emission; only accepted ToggledOn selects the material, never a pending input |
 | solve a fluid network | `FluidSolver.Solve` (`core/UnturnedSim/FluidSolver.cs:51`) | — a line-for-line mirror of the power one |
 | decide if a door may open | `DoorLogic.CanToggle/Toggle` (`core/UnturnedSim/DoorLogic.cs:55`/`:69`) | — SP and MP both route here, keep it that way |
 | decide if a bed may be claimed | `BedClaims.CanClaim/Claim` (`core/UnturnedSim/BedClaims.cs:63`/`:73`) | — replicas use `Adopt` `:122`, which skips validation on purpose |

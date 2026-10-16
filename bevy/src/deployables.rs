@@ -5,6 +5,7 @@ mod geometry;
 mod interaction;
 mod pickup;
 mod presentation;
+mod switch;
 #[cfg(test)]
 mod tests;
 
@@ -130,11 +131,13 @@ pub(crate) struct DeployablePlugin;
 impl Plugin for DeployablePlugin {
     fn build(&self, app: &mut App) {
         interaction::install(app);
-        app.init_resource::<Replicas>().add_systems(
-            Update,
-            sync.after(WorldServicesReady)
-                .before(crate::entities::CollectInteractions),
-        );
+        app.init_resource::<Replicas>()
+            .add_systems(
+                Update,
+                sync.after(WorldServicesReady)
+                    .before(crate::entities::CollectInteractions),
+            )
+            .add_systems(Update, switch::update.after(sync));
     }
 }
 
@@ -208,7 +211,14 @@ fn sync(
                 }
                 commands.entity(instance.entity).despawn();
             }
-            let entity = presentation::spawn(&mut commands, def, art, id, transform);
+            let entity = presentation::spawn(
+                &mut commands,
+                def,
+                art,
+                id,
+                transform,
+                row["toggledOn"] == true,
+            );
             replicas.instances.insert(
                 id,
                 Instance {

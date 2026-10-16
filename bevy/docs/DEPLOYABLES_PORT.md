@@ -30,10 +30,10 @@ separate work. Ordinary bodies now provide source camera focus, basic health/fue
 readouts, hold-F pickup and short generator toggle intents. The foundation does
 not yet complete power ports/networks, battery/load/time readouts, lights,
 fire/wreck presentation, configurable-device panels, placement ghosts, window
-snapping, item pipes, or those specialized bodies. Source switches reach the
-same toggle intent, but the retained authority schema still rejects zero-fuel
-switches and does not mirror their conduction state; that requires the utility
-adapter follow-up before a switch can be called playable.
+snapping, item pipes, or those specialized bodies. The fuel-free source switch
+now accepts the existing toggle and gates solver conduction, with its original
+red/green native state indicator; the foundation and remaining utility scope are
+tracked in [POWER_PORT.md](POWER_PORT.md).
 Retaining the original backend rules does not make those native flows playable.
 
 ## Focus and accepted pickup

@@ -8,6 +8,7 @@ pub(super) struct Art {
     mesh_rotation: Quat,
     pub bounds: Bounds,
     label: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
+    switch_lamp: Option<switch::Art>,
 }
 #[cfg(test)]
 impl Art {
@@ -86,12 +87,14 @@ pub(super) fn load(
             }),
         )
     });
+    let switch_lamp = def.is_switch.then(|| switch::Art::load(meshes, materials));
     Ok(Art {
         mesh,
         material,
         mesh_rotation: rotation,
         bounds,
         label,
+        switch_lamp,
     })
 }
 pub(super) fn spawn(
@@ -100,6 +103,7 @@ pub(super) fn spawn(
     art: &Art,
     id: u32,
     transform: Transform,
+    on: bool,
 ) -> Entity {
     let root = commands
         .spawn((
@@ -137,6 +141,9 @@ pub(super) fn spawn(
             ))),
             ChildOf(mesh),
         ));
+    }
+    if let Some(lamp) = &art.switch_lamp {
+        lamp.spawn(commands, root, id, on);
     }
     root
 }

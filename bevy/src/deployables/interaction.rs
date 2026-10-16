@@ -18,6 +18,8 @@ const ACTION: &str = "ordinaryDeployable";
 const REACH: f32 = 2.6;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod visual;
 
 #[derive(Resource, Default)]
 struct Hovered(Option<(u32, u16, Vec3)>);

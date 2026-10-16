@@ -45,6 +45,7 @@ namespace UnturnedGodot
                     DefId = def.Id,
                     Health = def.Health,
                     FuelCapacity = def.Fuel,
+                    IsSwitch = def.IsSwitch,
                     Range = def.Range,
                     FixtureKind = def.Fixture,   // A3/A2: carry the server-placed world-fixture kind onto the net def table
                     Ports = ports,

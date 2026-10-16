@@ -40,7 +40,10 @@ namespace UnturnedGodot.Net
     {
         public ushort DefId;
         public float Health;
-        public float FuelCapacity;   // 0 = no tank (not a generator; toggle commands are rejected)
+        public float FuelCapacity;   // 0 = no generator tank; IsSwitch permits a fuel-free toggle
+        /// <summary>Source power switch: a fuel-free manual toggle gates conduction.
+        /// Def-table only; the existing ToggledOn bit carries its accepted state.</summary>
+        public bool IsSwitch;
         public float Range;          // placement reach (ItemBarricadeAsset Range) -- the server's range check
         public FixtureKind FixtureKind;   // A3/A2: a server-placed world fixture kind (None = a normal player-placeable deployable). Def-table only, never on the wire.
         public DeployablePortSpec[] Ports = System.Array.Empty<DeployablePortSpec>();
@@ -494,9 +497,9 @@ namespace UnturnedGodot.Net
         public bool CanToggle(uint netId, out DeployableEntity e)
         {
             // The SP gate minus the cosmetic warmup-ramp buffer (client-side feel, not authority):
-            // a fuelled, not-on-fire generator toggles (Deployable.CanTogglePower).
+            // a generator or fuel-free switch toggles (Deployable.CanTogglePower).
             if (!TryGet(netId, out e)) return false;
-            if (!Schema.TryGet(e.DefId, out var def) || def.FuelCapacity <= 0f) return false;
+            if (!Schema.TryGet(e.DefId, out var def) || (def.FuelCapacity <= 0f && !def.IsSwitch)) return false;
             return !e.OnFire;
         }
 
@@ -543,6 +546,7 @@ namespace UnturnedGodot.Net
                 // picked up on its last drop of fuel came back down full. Free fuel for a pickup and a re-place.
                 Health = QuantizeScalar(Mathf.Clamp(health ?? def.Health, 1f, def.Health)),
                 Fuel = QuantizeScalar(Mathf.Min(fuel ?? def.FuelCapacity, def.FuelCapacity)),
+                ToggledOn = def.IsSwitch,   // original Deployable._switchOn defaults ON
                 LastChangedTick = Stamp(tick),
                 ItemConfig = def.HasItemConfig ? new ItemDeviceConfig() : null,   // a fresh mover runs at 32/s, a fresh splitter round-robins
             };
@@ -671,7 +675,8 @@ namespace UnturnedGodot.Net
             foreach (var e in All)
             {
                 if (!Schema.TryGet(e.DefId, out var def)) continue;
-                var dev = new PowerDevice { Producing = e.Producing(def), OnFire = e.OnFire };
+                var dev = new PowerDevice { Producing = e.Producing(def), OnFire = e.OnFire,
+                    Conducting = !def.IsSwitch || e.ToggledOn };
                 for (byte i = 0; i < def.Ports.Length; i++)
                     portMap[(e.NetIdValue, i)] = dev.AddPort((PowerPortKind)def.Ports[i].Kind, def.Ports[i].Watts);
                 devices.Add(dev);

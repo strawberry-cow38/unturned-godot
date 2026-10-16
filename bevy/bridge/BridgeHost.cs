@@ -142,6 +142,7 @@ public sealed partial class BridgeHost : IDisposable
                 fuseSeconds = Throwables.FuseSeconds, useSeconds = _catalog.Clip("", "TU_0") }, deployables = DeployableDef.All, containers = ContainerSchema.All,
                 crops = FarmRegistry.All.Select(d => new { seedId = d.Id, growthSeconds = d.Growth, yieldItemId = d.Grow, name = CropRegistry.TryBySeed(d.Id, out string name) ? name : null }).ToArray() };
             case "attachmentOptions": RequireSession(); return IsRemote ? _remoteWeapon.AttachmentOptions() : _weapons.AttachmentOptions(_client.PlayerId);
+            case "powerView": RequireSession(); return ReadPowerGraph();
             case "npcView": RequireSession(); return ReadNpcView(r);
             case "npcCatalog": RequireSession(); return new { characters = NpcCatalog.Characters.Select(NpcMetadata.Character).ToArray(), dialogues = NpcCatalog.Dialogues, vendors = NpcCatalog.Vendors, quests = NpcCatalog.Quests };
             case "worldVehicles":
