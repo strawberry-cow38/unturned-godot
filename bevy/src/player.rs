@@ -61,6 +61,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<lean::LeanState>()
             .init_resource::<GameSnapshot>()
             .init_resource::<CraftingEye>()
+            .init_resource::<crate::survival::TemperatureProbe>()
             .add_systems(Startup, spawn_player.after(WorldReady))
             .add_systems(
                 Update,
@@ -1042,6 +1043,26 @@ fn simulate(
         allowed && vehicle_seat.is_none(),
     );
     hands.1.write_batch(events);
+    if allowed
+        && vehicle_seat.is_none()
+        && viewmodel.ready
+        && viewmodel.held == input.held_item_id
+    {
+        match crate::survival::fluid_hand(
+            &bridge,
+            &snapshot.0,
+            item,
+            buttons.press,
+            buttons.strong,
+            &mut model.feedback,
+        ) {
+            Ok(Some(id)) => {
+                hands.1.write(crate::use_items::HandEvent::Start(id));
+            }
+            Ok(None) => {}
+            Err(error) => model.notice(error.to_string()),
+        }
+    }
     for use_ in uses {
         use crate::use_items::UseIntent;
         let request = match use_ {
@@ -1155,7 +1176,7 @@ fn simulate(
 
 /// Same foot pivot and roll-before-pitch chain as the physical eyes. Reading
 /// camera Euler angles here would include Alt gaze and lose lean/pitch coupling.
-fn aim_eye(
+pub(crate) fn aim_eye(
     feet: Vec3,
     body: &PlayerBody,
     input: &PlayerInput,
@@ -1195,6 +1216,7 @@ fn seated_weapon_allowed(
 
 fn publish_body(
     bridge: Res<CoreBridge>,
+    probe: Option<Res<crate::survival::TemperatureProbe>>,
     mut ui: ResMut<UiState>,
     time: Res<Time>,
     mut input: ResMut<PlayerInput>,
@@ -1222,8 +1244,9 @@ fn publish_body(
             body.velocity.y = 0.0;
         }
     }
+    let probe = probe.map(|p| *p).unwrap_or_default();
     let request = if model.connected {
-        json!({"input":{"position":transform.translation.to_array(),"velocity":body.velocity.to_array(),"grounded":body.grounded,"yaw":input.yaw,"pitch":input.pitch,"stance":body.stance,"heldItemId":input.held_item_id}})
+        json!({"input":{"position":transform.translation.to_array(),"velocity":body.velocity.to_array(),"grounded":body.grounded,"yaw":input.yaw,"pitch":input.pitch,"stance":body.stance,"heldItemId":input.held_item_id,"temperatureProbe":probe.json(),"lookEnd":probe.look_end.map(|end| end.to_array())}})
     } else {
         json!({})
     };

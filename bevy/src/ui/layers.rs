@@ -20,7 +20,7 @@ pub(crate) const MODAL_ORDER: isize = 6;
 pub(crate) const CONSOLE_ORDER: isize = 7;
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CanvasRouting;
-pub(super) struct LayersPlugin;
+pub(crate) struct LayersPlugin;
 impl Plugin for LayersPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn).add_systems(

@@ -25,9 +25,14 @@ pub(super) fn install(app: &mut App) {
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
         .add_systems(
             Core2d,
-            draw.after(crate::hdr::CompositePass).before(ui_pass),
+            draw.in_set(NightVisionPass)
+                .after(crate::hdr::CompositePass)
+                .before(ui_pass),
         );
 }
+/// Source layer6 tube pass; later scene-canvas passes (deadzone grain, layer8) follow it.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct NightVisionPass;
 #[derive(Resource)]
 struct Pipeline {
     layout: BindGroupLayoutDescriptor,

@@ -123,7 +123,7 @@ public sealed partial class BridgeHost : IDisposable
                 RequireSession();
                 if (r.TryGetProperty("input", out var body))
                 {
-                    ReadSteady(body);
+                    ReadSteady(body); ReadTemperatureProbe(body); ReadLookEnd(body);
                     _position = Vec(body, "position", _position); _velocity = Vec(body, "velocity", _velocity);
                     _grounded = Bool(body, "grounded", _grounded);
                     _yaw = Float(body, "yaw", _yaw); _pitch = Float(body, "pitch", _pitch);
@@ -323,7 +323,7 @@ public sealed partial class BridgeHost : IDisposable
 
     void StartSession(WorldSave save, VehicleLightingServices.Saved[] lights, VehicleMaintenanceServices.Saved[] maintenance, VehicleDoorServices.Saved[] doors, VehicleHitchServices.Saved[] hitches)
     {
-        _scopeSteady.Reset(); _wantsSteady = false; _localProfileSent = false; _ownerReady = false;
+        _scopeSteady.Reset(); _wantsSteady = false; _localProfileSent = false; _ownerReady = false; ResetTemperature();
         _worldChanged = false; _geometry.ClearDynamic();
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _vehicleRecov.Clear(); _vehicleRecovery.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         if (IsRemote) { StartRemote(); return; }
@@ -442,9 +442,10 @@ public sealed partial class BridgeHost : IDisposable
         // Make that target representable before core emits its bounded recovery packet.
         if (_server.CombatState.TryGet(_client.PlayerId, out var life) && !life.Alive
             && life.RespawnAtTick == _server.Session.CurrentTick + 1) PrepareRespawnFrame();
+        if (_ownerReady) TemperatureTick();
         if (_ownerReady && _client.State == NetSessionState.Connected)
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity,
-                (byte)((StanceCode(_movement.Stance) << 1) | (_scopeSteady.Steadying ? MoveInput.ButtonSteady : 0)), _grounded, _recov, _held);
+                (byte)((StanceCode(_movement.Stance) << 1) | (_scopeSteady.Steadying ? MoveInput.ButtonSteady : 0)), _grounded, _recov, _held, TemperatureBand);
         _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step(); _npcHelis.Step(); _mounted.Step(); _cosmetic.Step();
         _warheads.Prune();
         if (_weapons.TakeSelectionChange(_client.PlayerId) is ushort selected) _held = selected;
@@ -477,6 +478,8 @@ public sealed partial class BridgeHost : IDisposable
         if (name == "vehicleMaintenance") return new { queued = _client.SendVehicleMaintenance(VehicleMaintenanceServices.ReadCommand(args)) };
         if (name == "vehicleLighting") return new { queued = _client.SendVehicleLighting(VehicleLightingServices.ReadCommand(args)) };
         if (name == "mountInput") return new { queued = _client.SendMountedInput(MountedWeaponServices.ReadInput(args)) };
+        if (name == "drinkHeldFluid") return DrinkHeldFluid(args);
+        if (name == "fillHeldFluidAtTap") return FillHeldFluidAtTap(args);
         if (IsRemote) return RemoteAction(name, args);
         if (name == "requestGesture") return RequestGesture(args);
         if (name == "console" && PlayerDebugConsole(Text(args, "text"))) return new { queued = true };
@@ -580,13 +583,14 @@ public sealed partial class BridgeHost : IDisposable
                 food = vitals?.Sim.Food ?? 1, water = vitals?.Sim.Water ?? 1, stamina = vitals?.Sim.Stamina ?? 1,
                 infection = vitals?.Sim.Infection ?? 0, oxygen = vitals?.Sim.Oxygen ?? 1,
                 bleeding = vitals?.Bleeding ?? false, broken = vitals?.Broken ?? false, radiation = vitals?.Sim.Radiation ?? 0,
+                temperature = TemperatureState(), inDeadzone = OwnerInDeadzone(), aimedTap = AimedTap(),
                 vehicleNetId = occupied?.NetIdValue ?? 0, vehicleSeat = seat,
                 ammo = IsRemote ? _remoteWeapon.Ammo : _server.Combat.AmmoOf(_client.PlayerId), heldItemId = _held, correctionVersion = _correctionVersion },
             inventory = new { pages = inv?.items.Select(p => new { index = p.page, width = p.width, height = p.height,
                 items = p.items.Select(j => new { id = j.item.id, name = Assets.find(j.item.id)?.itemName ?? $"Item {j.item.id}",
                     x = j.x, y = j.y, rot = j.rot, width = j.size_x, height = j.size_y, amount = j.item.amount,
                     quality = j.item.quality, icon = Assets.find(j.item.id)?.iconPath, gunAmmo = j.item.gunAmmo,
-                    frozen = j.item.frozen, cooked = j.item.cooked, cookStyle = j.item.cookStyle }).ToArray() }).ToArray(),
+                    frozen = j.item.frozen, cooked = j.item.cooked, cookStyle = j.item.cookStyle, fluid = FluidView(j.item) }).ToArray() }).ToArray(),
                 worn = new { hat = inv?.wornHat?.id ?? 0, glasses = inv?.wornGlasses?.id ?? 0, mask = inv?.wornMask?.id ?? 0,
                     shirt = inv?.wornShirt?.id ?? 0, vest = inv?.wornVest?.id ?? 0, backpack = inv?.wornBackpack?.id ?? 0, pants = inv?.wornPants?.id ?? 0 },
                 wornQuality = new { hat = inv?.wornHat?.quality ?? 0, glasses = inv?.wornGlasses?.quality ?? 0, mask = inv?.wornMask?.quality ?? 0,

@@ -51,6 +51,11 @@ fn count(snapshot: &Value, id: u16) -> u32 {
         .map(|(_, i)| i["amount"].as_u64().unwrap_or(1) as u32)
         .sum()
 }
+/// PlayerController.KindOf: a bottle is both consumable and a fluid container,
+/// and it is held as the container (TryDrinkContainer), never eaten.
+pub fn consumes(item: &ItemVisual) -> bool {
+    item.is_consumable && item.hand_kind != "fluid"
+}
 #[derive(Message, Clone, Debug, PartialEq)]
 pub enum HandEvent {
     Start(u16),
@@ -122,7 +127,7 @@ impl HandUse {
         let held = Cell::held(snapshot);
         let selection = snapshot["weapon"]["selectionVersion"].as_u64().unwrap_or(0);
         let kind = item.map_or(0, |i| {
-            if i.is_consumable {
+            if consumes(i) {
                 1
             } else if !i.throwable.is_null() {
                 2
@@ -136,7 +141,7 @@ impl HandUse {
             self.cancel(&mut events);
         }
         if held != self.last {
-            if item.is_some_and(|i| i.is_consumable || !i.throwable.is_null())
+            if item.is_some_and(|i| consumes(i) || !i.throwable.is_null())
                 && self.active.is_none()
             {
                 // Repeated re-equips retain the original fallback, including a gun's exact cell.
@@ -178,7 +183,7 @@ impl HandUse {
         {
             if let (Some(cell), Some(item)) = (held, item) {
                 let throw = !item.throwable.is_null();
-                if throw || (item.is_consumable && buttons.press) {
+                if throw || (consumes(item) && buttons.press) {
                     if !throw
                         && cells(snapshot)
                             .any(|(c, i)| c == cell && i["frozen"].as_u64().unwrap_or(0) > 0)
@@ -290,6 +295,40 @@ mod tests {
             item,
             json!({"useSeconds":1.63,"releaseFraction":0.6,"weakScale":600./1100.}),
         )
+    }
+    #[test]
+    fn held_bottle_is_a_fluid_container_never_eaten_by_the_consume_timeline() {
+        let (s, mut item, m) = fixture(14, false, 1);
+        let mut use_ = HandUse::default();
+        let press = Buttons {
+            press: true,
+            fire: true,
+            ..default()
+        };
+        // An ordinary consumable starts its timeline on the press.
+        let (_, events) = use_.step(0.02, &s, Some(&item), &m, &press, true, true);
+        assert_eq!(events, vec![HandEvent::Start(14)]);
+        // PlayerController.KindOf: IsFluidContainer before IsConsumable.
+        item.hand_kind = "fluid".into();
+        item.is_fluid_container = true;
+        let mut use_ = HandUse::default();
+        for tick in 0..200 {
+            let (intents, events) = use_.step(
+                0.02,
+                &s,
+                Some(&item),
+                &m,
+                &Buttons {
+                    press: tick == 0,
+                    fire: true,
+                    ..default()
+                },
+                true,
+                true,
+            );
+            assert!(intents.is_empty() && events.is_empty(), "tick {tick}: {intents:?} {events:?}");
+        }
+        assert!(!use_.busy());
     }
     #[test]
     fn held_grenade_does_not_cook_and_release_uses_current_aim() {
