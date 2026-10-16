@@ -2883,3 +2883,19 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - Extracted the original `ShowFurniture`/`BuildSwitch`/`BuildOutlet`/runtime decoration paths and `RuntimeDecorGenerators` as plain values. Node order, transforms, stock children, switch/lamp/outlet binding and missing-mesh slots match real Godot oracles: 36 decor cases and 3 furniture cases. Room records are never rewritten.
 - Review fixes: the cloth material keeps source `CullMode.Disabled` (as `DoubleSided`) and the rug texture keeps its nearest filter; a faceless OBJ is treated as missing, as the source does; and the invented lamp/outlet names are gone. The cull-mode regression fails under revert. 14 managed building tests pass.
 - Data-only checkpoint: native furniture rendering, power-device registration and installed room services remain open. See `bevy/docs/BUILDINGS_PORT.md`.
+
+### 2026-10-16 — Original world save lifecycle: autosave, entry restore, carry-over
+
+- Ported `WorldSaveDriver` onto the host bridge. Each map has one sanitized file (`pei.json`). It autosaves every 60 s of simulation time, just before replication, and singleplayer pause freezes the clock. The first save sets the loot seed. Writes go through a temp file and swap, and a failed write is logged, not thrown. A load restores the season start and the loot seed before the world restarts, offline players ride along in every save, and console `save`/`wipe` give the source replies. No protocol change.
+- The native client restores the saved world once the host has registered *this* map, through the same accepted Load as the pause menu, and holds the loading screen meanwhile. Remote clients and the `--vehicle` render harness have no save. An older native `PEI.json` is adopted once. Leaving or quitting writes nothing, as in the source: the newest autosave or explicit save is what reopens.
+- Native-only entry hold: until the restore's load runs, the placeholder world never autosaves or console-saves over the file. Review then found and fixed four more cases: a save during the hold, a menu → Play bypass, a failed setup stuck on the loading screen, and the harness touching real saves. Deviations (the hold, the reconnect source, the listen-host restore window, per-world statics) are in `bevy/docs/SAVE_LIFECYCLE_PORT.md`.
+- Tests: 6 managed `WorldPersistenceTests` cover:
+  - the autosave on the 3000th tick, not the 2999th, with an idempotent seed;
+  - reopen restoring position, bag, dropped item, season and seed, while Dispose writes nothing;
+  - console save/wipe;
+  - a real UDP `Visitor` carried after leaving and dropped by wipe;
+  - a failed write that does not throw;
+  - the entry hold against autosave, the console verb and the op.
+  
+  Native tests add 5 persistence cases. Full suites: 262 managed, 764 native (50 opt-in ignored) and 128 JSONL, all passing. Surgical controls fail as expected: NC1–4 and NC10 (no autosave tick, no static adoption, no carry-over, no console handlers, entry hold ignored) and RNC3 (restore ignores the map).
+- Actual Vulkan PEI journey with OS input (xdotool, isolated `UG_BEVY_SAVES`, `UG_WEATHER=snow`). Session 1: give a thermometer and a bottle, visit the deadzone, move to (530,32,690). Autosaves #1 and #2 fire on the sim clock (`persistence.autosaves`). Then teleport to (560,·,700) and Pause→Quit: exit 0, file byte-identical. Session 2 runs the reviewed frozen build. At frame 60 it shows "World loaded" at (530,32.1,690) with the thermometer, bottle and infection restored, and autosave resumes. All PNG/JSON pairs were opened (`bevy/artifacts/bevy-save-journey-*`). Within the same session, an OS-input inventory-context Hold of the bottle did not register at ~1.5 fps under lavapipe; the menu stayed open and Escape had no effect. The process was then ended with SIGTERM. This is unexplained and logged as a journey gap.

@@ -28,6 +28,7 @@ public sealed partial class BridgeHost : IDisposable
     string _name = "Survivor", _map = "bevy";
     int _correctionVersion;
     bool _ownerReady;
+    Vector3 _listenSpawn;
     readonly List<BridgeEvent> _events = new();
     long _eventSequence;
     readonly WorldGeometry _geometry = new();
@@ -90,6 +91,7 @@ public sealed partial class BridgeHost : IDisposable
             case "init":
                 Dispose(); _geometry.Clear(); _serviceSpecs.Clear(); _originX = _originZ = 0; _originEpoch = 0;
                 ConfigureNetwork(r);
+                ConfigurePersistence(r);
                 _catalog.Load(Text(r, "contentRoot", Path.GetFullPath("game/content")));
                 ConfigureLocalProfile(r); _map = Text(r, "mapId", "bevy");
                 _seed = Int(r, "seed", 1337);
@@ -102,7 +104,7 @@ public sealed partial class BridgeHost : IDisposable
                 }
                 CheckNetworkOrigin(_originX, _originZ);
                 _position = Vec(r, "spawn", new(0, 1, 0));
-                CheckNetworkSpawn(_position);
+                CheckNetworkSpawn(_position); _listenSpawn = _position;
                 _velocity = Vector3.zero; _held = 0; _yaw = Float(r, "yaw"); _pitch = 0; _grounded = true; _correctionVersion++;
                 PrepareFiniteRespawns(r);
                 Start();
@@ -181,19 +183,16 @@ public sealed partial class BridgeHost : IDisposable
                 return Action(Text(r, "name"), r.TryGetProperty("args", out var args) ? args : default);
             case "save":
                 RequireSession();
-                var save = WorldSave.Capture(_server, _map, _environment.DayAt(_server.Clock, _server.Session.CurrentTick),
-                    _server.Clock.TimeOfDayAt(_server.Session.CurrentTick), _server.Clock.DayLengthSeconds, _server.PendingSave);
-                _vehicles.SaveFuel(save);
-                string path = Path.GetFullPath(Text(r, "path"));
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture(), _cosmetic.CaptureWater(), _warheads.Capture(), _worldHoliday, _mounted.Capture(), _npcHelis.Capture(), _vehicleLights.Capture(), _vehicleMaintenance.Capture(), _vehicleDoors.Capture(), _vehicleHitches.Capture()));
-                File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
-                _server.PendingSave = save;
+                string path = WritablePathFor(r);
+                var save = WriteWorldSave(path);
                 return new { path, version = save.Version };
             case "load":
                 RequireSession();
-                string loadJson = File.ReadAllText(Text(r, "path"));
+                string loadPath = SavePathFor(r);
+                // Any load attempt ends the entry hold: a refused save leaves the fresh world
+                // running and autosaving, as WorldSaveDriver.LoadIntoWorld does.
+                _restorePending = false;
+                string loadJson = File.ReadAllText(loadPath);
                 if (!WorldSave.TryParse(loadJson, _map, out var loaded, out var error)) throw new InvalidDataException(error);
                 var extra = JsonNode.Parse(loadJson)?["BevyBridge"]?.Deserialize<BridgeSave>();
                 double loadedX = extra?.OriginX ?? 0, loadedZ = extra?.OriginZ ?? 0;
@@ -204,6 +203,7 @@ public sealed partial class BridgeHost : IDisposable
                 _originX = loadedX; _originZ = loadedZ; _originEpoch++;
                 _serviceSpecs.Clear(); if (extra?.Services != null) _serviceSpecs.AddRange(extra.Services);
                 _worldHoliday = extra?.Holiday ?? _worldHoliday;
+                AdoptSavedWorldStatics(loaded);
                 Dispose(); Start(loaded, extra?.VehicleLights, extra?.VehicleMaintenance, extra?.VehicleDoors, extra?.VehicleHitches);
                 RestoreProjectiles(extra?.Projectiles);
                 _wildlife.Restore(extra?.Wildlife);
@@ -222,7 +222,7 @@ public sealed partial class BridgeHost : IDisposable
                     _loot.Step(force: true);
                 }
                 for (int n = 0; n < 6; n++) Tick();
-                return new { version = loaded.Version };
+                return new { version = loaded.Version, path = loadPath, message = LoadedLine(loadPath, loaded) };
             case "terrain":
                 var terrain = Terrain(Int(r, "seed", 1337));
                 var coord = new RegionCoord(Int(r, "x"), Int(r, "z"));
@@ -330,12 +330,14 @@ public sealed partial class BridgeHost : IDisposable
         _server = new NetWorldServer(ServerTransport(), maxPeers: _maxPeers,
             contentHash: NetContent.Hash, activeHoliday: _worldHoliday, serverName: _serverName, maxPlayers: _maxPeers, gamemode: "Survival");
         _server.Transactions.AllowCheats = _allowCheats;
+        InstallPersistenceHandlers();
         _server.PlayerHost.AcceptSeatedActions = true;
         _server.VehicleHost.RepositionExitedOwner = _server.PlayerHost.RepositionOwner;
         if (_listenPort == 0) WorldRebase.EnableUnboundedStorage(_server);
         _server.Transactions.RepositionOwner = _server.PlayerHost.RepositionOwner;
         _environment = new WorldEnvironment(_server, _seed, save);
-        var initialSpawn = _position;
+        // UDP late joins use the initial map spawn, including after a restore restart.
+        var initialSpawn = _listenSpawn;
         _server.SpawnProvider = _listenPort == 0 ? _ => _position : _ => initialSpawn;
         _geometry.DestructibleAlive = i => i >= _server.Destructibles.Count || _server.Destructibles.IsAlive(i);
         _geometry.ResourceAlive = i => i >= _server.Resources.Count || _server.Resources.IsAlive(i);
@@ -459,6 +461,7 @@ public sealed partial class BridgeHost : IDisposable
         _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
         _appearance.Tick();
         if (_worldChanged) PublishFullSnapshot();
+        TickAutosave();
         _server.TickReplication();
         if (_udpTransport != null) _udpTransport.StatusPlayerCount = _server.Session.Peers.Count;
         if (_client.Players.TryGetByOwner(_client.PlayerId, out var own)) _client.AckCombat(own.LastProcessedCombatSeq);
@@ -563,7 +566,7 @@ public sealed partial class BridgeHost : IDisposable
         var occupied = _client.Vehicles.All.FirstOrDefault(v => v.DriverPlayerId == _client.PlayerId || (v.Passengers?.Contains(_client.PlayerId) ?? false));
         int seat = occupied == null ? -1 : occupied.DriverPlayerId == _client.PlayerId ? 0 : System.Array.IndexOf(occupied.Passengers, _client.PlayerId) + 1;
         return new { tick = _network.CurrentTick, origin = Origin, connected = _client.State == NetSessionState.Connected && (!IsRemote || _remoteSpawnAdopted), playerId = _client.PlayerId,
-            network = NetworkState(), players = PlayerReplicas(), npc = _npcView.Snapshot(), storage = _storageView.Current, nearby = NearbyState(),
+            network = NetworkState(), persistence = PersistenceState(), players = PlayerReplicas(), npc = _npcView.Snapshot(), storage = _storageView.Current, nearby = NearbyState(),
             worldClock = ClockSnapshot(),
             finiteVehicles = _finiteVehicles,
             weather = _environment?.State(),

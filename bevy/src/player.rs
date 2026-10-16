@@ -20,6 +20,8 @@ pub(crate) mod lean;
 pub(crate) mod flinch;
 mod crafting_eye;
 pub(crate) use crafting_eye::CraftingEye;
+mod persistence;
+use persistence::save_path;
 
 #[cfg(test)]
 mod network_tests;
@@ -82,6 +84,10 @@ impl Plugin for PlayerPlugin {
                     .after(crate::vehicle::VehicleUpdate)
                     .after(PlayerUpdate),
             )
+            .add_systems(
+                Update,
+                persistence::entry_restore.after(crate::entities::WorldServicesReady),
+            )
             .add_systems(FixedUpdate, lean::step.before(simulate))
             .add_systems(
                 Update,
@@ -116,6 +122,8 @@ struct Session {
     was_connected: bool,
     reject_retries: u8,
     heights: StanceHeights,
+    /// WorldSaveDriver.LoadIntoWorld is still owed to this host session.
+    restore_pending: bool,
 }
 
 impl Default for Session {
@@ -129,6 +137,7 @@ impl Default for Session {
             was_connected: false,
             reject_retries: 0,
             heights: default(),
+            restore_pending: false,
         }
     }
 }
@@ -352,6 +361,15 @@ fn initialize_session(
     }
     request["useLocalProfile"] = json!(profile.is_some_and(|profile| profile.ready));
     options.0.network.configure(&mut request);
+    // WorldSaveDriver owns one file per map on the host; a remote client has none,
+    // and neither does the native vehicle render harness (source harness entries
+    // never attach the MpLoopback that owns the save).
+    let restore = (options.0.network.owns_world() && options.0.vehicle.is_none())
+        .then(|| persistence::adopt_legacy_save(&options.0.map));
+    if let Some(path) = &restore {
+        request["savePath"] = json!(path);
+        request["restorePending"] = json!(path.is_file());
+    }
     match bridge.request("init", request) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
             model.reset_session();
@@ -385,13 +403,18 @@ fn initialize_session(
             session.was_connected = model.connected;
             session.connecting_elapsed = 0.;
             session.reject_retries = 0;
+            // Source order: the saved world is restored after the map is built
+            // and before the player plays. Hold the loading screen meanwhile.
+            session.restore_pending = restore.is_some_and(|path| path.is_file());
             ui.screen = if model.connected {
-                Screen::Playing
+                persistence::entry_screen(session.restore_pending)
             } else {
                 Screen::Connecting
             };
             if !model.connected {
                 model.status = format!("Connecting - {}", model.network.state);
+            } else if session.restore_pending {
+                model.status = format!("Restoring saved {}", options.0.map);
             }
         }
         Ok(_) => fail(
@@ -516,7 +539,8 @@ fn ui_intents(
                     model.status = format!("Loading {map}");
                     ui.screen = Screen::Connecting;
                 } else if model.connected {
-                    ui.screen = Screen::Playing;
+                    // An owed entry restore keeps the loading screen up.
+                    ui.screen = persistence::entry_screen(session.restore_pending);
                 }
                 continue;
             }
@@ -534,6 +558,7 @@ fn ui_intents(
                 session.initialized = false;
                 session.failed = false;
                 session.was_connected = false;
+                session.restore_pending = false;
                 options.0.play = false;
                 options.0.network_ready = false;
                 options.0.network = crate::network::Target::Local;
@@ -630,25 +655,12 @@ fn ui_intents(
             }
             Err(error) => model.notice(error.to_string()),
         }
+        // The entry restore holds the loading screen until the world it
+        // restores is in place; a refused save starts the fresh world instead.
+        if matches!(intent, UiIntent::Load) && ui.screen == Screen::Connecting && model.connected {
+            ui.screen = Screen::Playing;
+        }
     }
-}
-
-fn save_path(map: &str) -> std::path::PathBuf {
-    let base = std::env::var_os("UG_BEVY_SAVES")
-        .or_else(|| std::env::var_os("UG_SAVE_DIR"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            Settings::path()
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join("saves")
-        });
-    base.join(format!(
-        "{}.json",
-        map.chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-            .collect::<String>()
-    ))
 }
 
 fn read_input(

@@ -212,13 +212,32 @@ impl InteractionFocus {
     }
 }
 #[derive(Resource, Default)]
-struct Replicas {
+pub(crate) struct Replicas {
     entities: HashMap<u32, Entity>,
     last_event: u64,
     map_name: String,
     geometry_map: String,
     geometry_revision: u64,
     session_epoch: u64,
+    setup_failed: bool,
+}
+impl Replicas {
+    /// The host has accepted this map's services, geometry and loot stream.
+    pub(crate) fn geometry_registered(&self, map: &str) -> bool {
+        !map.is_empty() && self.geometry_map == map
+    }
+    /// The last world-authority registration attempt was refused.
+    pub(crate) fn setup_failed(&self) -> bool {
+        self.setup_failed
+    }
+    #[cfg(test)]
+    pub(crate) fn mark_geometry_for_test(&mut self, map: &str) {
+        self.geometry_map = map.into();
+    }
+    #[cfg(test)]
+    pub(crate) fn fail_setup_for_test(&mut self) {
+        self.setup_failed = true;
+    }
 }
 #[derive(Component)]
 pub struct WorldItemReplica {
@@ -465,8 +484,10 @@ fn register_world_geometry(
         Ok(()) => {
             replicas.geometry_map = config.map_name.clone();
             replicas.geometry_revision = geometry.revision;
+            replicas.setup_failed = false;
         }
         Err(error) => {
+            replicas.setup_failed = true;
             error!("World authority setup failed: {error}");
             model.notice(error.to_string());
             model.connected = false;
