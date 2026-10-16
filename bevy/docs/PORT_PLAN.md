@@ -137,7 +137,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | queued |
 | 12 | Binoculars, umbrella, fishing | Absent | S-M | low | queued |
 | 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | DONE (crops checkpoint, `CROPS_PORT.md`) |
-| 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | queued |
+| 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | agent H (in progress) |
 | 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data; joined-client proximity vehicle enter (`RequestEnterNearestPuppet`, 4 m, ranks above crop harvest) | L | high (MP) | queued |
 | 16 | Hybrid dedicated server and moderation | No headless bridge host on 47872; live Godot server is protocol 61 | L | high (MP) | agent D (in progress) |
 | 17 | Infinite/finite world MP | Origin protocol, island descriptor negotiation | L | med | queued |
@@ -149,6 +149,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | — | Nearby AREA operations and selected-item Salvage | Drag/split/equip/drop/Empty/magazine/Salvage | M | high | DONE (`0b3075df`, protocol 77; whole ground drag refused as source) |
 | — | Remaining power utilities | Specialized endpoints, fuel/ramp, consumer lights/audio, readouts | L | med | DONE (`17b9a035`, protocol 78; vehicle pour/siphon with row 9) |
 | — | Fifth-wheel towing | Full-game rocking fixed; remote/MP towing journey, rigid cargo | M | med | integrator |
+| — | Focus outlines (`OutlineOverlay`: items, shelves/containers, notes, puppets, fruit) | No silhouette/rim renderer natively; focus is prompt-only | M | med | queued |
 | — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | queued |
 
 N/A: the zombie attack loop/death loot and NPC map placements/quest persistence
