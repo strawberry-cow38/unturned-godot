@@ -607,8 +607,10 @@ the server's selected spawn.
 `state.network` reports `mode`, `ownsWorld`, `awaitingSpawn`, session `state`,
 `reason`, source `rejectReason`/`rejectText`/`retryable`, protocol and the original
 16-digit hexadecimal `contentHash`. `wireGaps` lists host-only enrichments which
-are absent from this protocol. Unknown weather, absolute day, projectile lifetime,
-precise stuck poses and vehicle part health remain absent rather than fabricated.
+are absent from this protocol; `sourceAbsent` lists those the original client never
+received either. Since protocol 80 a remote's `weather`, `worldClock.day` and vehicle
+part health/fire come from the host (System 21 and the System 9 tail); projectile
+lifetime and precise stuck poses remain absent rather than fabricated.
 Inventory, weapon timers, exact item identity, vitals, entities, events and peer
 appearances come from actual client replicas. Protocol62 equipment requests use
 accepted owner tokens and selection epochs for identical item instances.

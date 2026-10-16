@@ -36,6 +36,7 @@ namespace UnturnedGodot.Net
         public const byte SystemProfiles = 18;      // display name + avatar hash per player (ProfileReplication.cs). Everyone-visible, unlike skills: the point is that other players see it. The avatar BYTES do not ride the snapshot -- only a 64-bit content hash does, and the image goes out once per (peer, hash) as EventAvatarData.
         public const byte SystemOwnerEquipment = 19; // v62: owner-only accepted held instance and weapon clocks
         public const byte SystemVehicleMounts = 20; // v64: accepted source vehicle gun angles/belts/cooldowns
+        public const byte SystemEnvironment = 21;   // v80 (row 15A): host weather type/stage/blend/puddle/snow + seed/base day singleton (EnvironmentReplication.cs). Remote clients rebuild WorldEnvironment.State() from it.
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 
@@ -251,6 +252,7 @@ namespace UnturnedGodot.Net
         public const byte CommandDepositFuel = 90; // v78: pour the exact held fuel container into a generator (TryDepositFuel).
         public const byte CommandPourVehicleFuel = 99; // v79: TryDepositFuel's vehicle branch -- pour the exact held can into a car.
         public const byte CommandSiphonVehicleFuel = 100; // v79: TryExtractFuel's vehicle branch -- siphon a car into the exact held can.
+        public const byte CommandToolUse = 101; // v80 (row 15A): hold/release the held repair tool (blowtorch) -- BodyCombatServices.ToolUse for a remote owner; per-owner tool state on the host.
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
         public const byte CommandNearbyInventory = 86; // v76: bounded source Nearby projection and exact transfer.
         public const byte CommandNearbyOperation = 87; // v77: exact Nearby row split to a cell or emptied (op 0 reserved, refused); result rides Event63.

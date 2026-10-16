@@ -408,7 +408,13 @@ public sealed partial class BridgeHost : IDisposable
         _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
         _movingInput=false;_footNoiseTimer=0;
         _bodies.RepairRate = _weapons.RepairRate;
-        _bodies.RequestSalvage = id => _client.SendSalvageDeployable(id);
+        // The listen owner's salvage rides its own client as before; a remote (or dedicated-host) owner's tool
+        // has no host-side client, so the host dispatches the same command under that owner's identity
+        // through the original validator (CanSalvageWreck still requires this owner's approval).
+        _bodies.RequestSalvage = (owner, id) => {
+            if (_client != null && owner == _client.PlayerId) _client.SendSalvageDeployable(id);
+            else _server.Commands.TryDispatch(NetMessagePak.Pack(ReplicationIds.CommandSalvageDeployable, new SalvageDeployableCommand { NetId = id }.Write), owner);
+        };
         _server.Combat.CanThrow = (owner, id) => _server.Inventories.TryGet(owner, out var bag) && bag.Inventory.getItemCount(id) > 0;
         _server.Combat.ThrowAccepted = (owner, id, netId, tick) => Emit("throwAccepted", new { playerId = owner, itemId = id, netId, tick });
         _server.Transactions.ConsumeApplied = (owner, cmd, id) => Emit("consumeAccepted", new { playerId = owner, itemId = id, page = cmd.Page, x = cmd.X, y = cmd.Y, tick = _server.Session.CurrentTick });
@@ -502,7 +508,7 @@ public sealed partial class BridgeHost : IDisposable
     /// <summary>Host world services, shared by the owner tick and the dedicated tick.</summary>
     void StepWorldServices()
     {
-        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleTows.Step(); StepFarmSpeed(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleTows.Step(); StepFarmSpeed(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server); _bodies.PublishParts();
     }
 
     object Action(string name, JsonElement args)
@@ -631,7 +637,7 @@ public sealed partial class BridgeHost : IDisposable
             network = NetworkState(), persistence = PersistenceState(), players = PlayerReplicas(), npc = _npcView.Snapshot(), storage = _storageView.Current, nearby = NearbyState(),
             worldClock = ClockSnapshot(),
             finiteVehicles = _finiteVehicles,
-            weather = _environment?.State(),
+            weather = _environment?.State() ?? _remoteEnvironment?.State(_client.Clock, _client.Applier.LastAppliedServerTick),
             steady = SteadyState(),
             weapon = IsRemote ? _remoteWeapon.Snapshot() : _weapons.Snapshot(_client.PlayerId),
             player = new { position = Array(_position), velocity = Array(_velocity), yaw = _yaw, pitch = _pitch,
@@ -716,7 +722,7 @@ public sealed partial class BridgeHost : IDisposable
         _udpTransport?.TearDown(); _udpTransport = null;
         _environment = null; _services = null; _vehicles = null; _vehicleLights = null; _vehicleMaintenance = null; _vehicleDoors = null; _vehicleHitches = null; _vehicleTows = null; _bodies = null; _weapons = null;
         _cosmetic = null; _warheads = null; _mounted = null; _npcHelis = null; _appearance = null; _wildlife = null; _zombies = null;
-        _remoteWeapon = null; _remoteMounted = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
+        _remoteWeapon = null; _remoteEnvironment = null; _remoteMounted = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
         _mapBindings = null;
         if (_finiteSpawns != null) SDG.Unturned.LootCondition.Clear();
         _finiteSpawns = null; _respawnLookVersion = 0; _respawnLookYaw = null;

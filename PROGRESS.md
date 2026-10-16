@@ -3154,3 +3154,28 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - Authority held 50 ticks/s.
 - Second review and merges: guarded tick steps (a throw is logged, never fatal), no save after an unrecovered failure, its own `saves/dedicated/` directory, origin refusals that leave the file in place, one-shot sounds ended headless, a branch-guarded deploy script running from its own worktree, and an opt-in SIGTERM process-group test. After merging `port/bevy` b8f90b40: managed 321/321, native 900 pass (the same 2 capture failures), core suites green except 5 UnturnedSim procedural-building tests (their code and data are identical to `port/bevy`; this slice touches neither). A fresh boot rejoined at the exact saved spot after two SIGTERM restarts, with entities flat over 22 min. A package-layout `--dedicated` boot ran from `/tmp`.
 - Remaining: a slow client's first join times out (rejoin works); no remote crash damage on dedicated; claw cut-over. See `bevy/docs/DEDICATED_SERVER_PORT.md`.
+
+### 2026-10-16 — MP wire gaps, part A: host enrichment over the wire (ledger row 15A, protocol 80)
+
+- **New wire ids**, documented in one place in `bevy/docs/MP_WIRE_GAPS_PORT.md`:
+  - Command 101 `ToolUse`;
+  - System 21 `Environment`;
+  - a presence-bit part-health tail on the System 9 vehicle entity.
+  - v79 peers are refused. The fishing branch also claims v80, so the integrator renumbers at merge.
+- **Repair tool for remote players.**
+  - A remote's held blowtorch repairs host vehicles and deployables through Command 101.
+  - Bug fixed: `BodyCombatServices` had one shared `_toolOwner`, so a second repairer took the tool from the first. Tool state is now per owner.
+  - Wreck salvage by a non-listen owner now goes through the original validator under that owner's identity. Before, it was refused on a listen host and hit a null client on dedicated.
+- **Weather and day on remote clients.**
+  - The host publishes seed, base day, type, stage and blend/puddle/snow (u8).
+  - `RemoteEnvironment` rebuilds the host's `State()`. Remote `weather`, `worldClock.day`, `today`/`tomorrow` and the temperature band now match the host's instead of being null or day 0.
+- **Vehicle part health on remote clients.**
+  - Engine, main rotor and tail rotor are sent as u8 fractions, with drowned, fuse and burn tick.
+  - Remote rows now carry part health, `onFire`, `burnSeconds` and `wreckSalvageable`.
+- **`network.sourceAbsent`.** The tokens the source never sent a joined client either were checked against `game/` and moved here. `wireGaps` keeps only the slice B pair.
+- **Zombie finding.** In the source, remotes see no zombies, and the current horde never damages players. The Bevy host streams the horde around remote players too. This is left as a user decision.
+- **Verification.**
+  - Core: 773/773, including 5 new wire tests and three updated goldens.
+  - Managed: 325/325 full run; the RemoteSession suite is 24/24 with the day-wrap assertion.
+  - Each new behaviour has a negative control that fails under revert: Command 101 unregistered, single shared tool, environment publish dropped, part publish dropped, remote day not derived from the clock.
+  - Two-process capture: a managed v80 listen host plus a native UDP client under Xvfb. Host `weather rain` makes the client draw rain (`bevy/artifacts/row15a/client-rain-joined.png`); the `weather clear` control is dry (`client-clear-joined.png`). Both PNGs were opened.

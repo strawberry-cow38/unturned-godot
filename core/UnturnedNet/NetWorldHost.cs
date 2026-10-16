@@ -145,7 +145,7 @@ namespace UnturnedGodot.Net
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources,
                                                                       Vitals, Containers, Animals, Destructibles,
-                                                                      InteractableState, Profiles, Equipment, VehicleMounts });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) last, ascending
+                                                                      InteractableState, Profiles, Equipment, VehicleMounts, Environment });   // v80: Environment(21) appended last   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) last, ascending
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
@@ -703,7 +703,8 @@ namespace UnturnedGodot.Net
             Composer.EnableSyncCheck(intervalTicks,
                 ReplicationIds.SystemPlayers, ReplicationIds.SystemPlayerCombat, ReplicationIds.SystemProjectiles,
                 ReplicationIds.SystemDeployables, ReplicationIds.SystemVehicles, ReplicationIds.SystemWorldClock,
-                ReplicationIds.SystemCrops, ReplicationIds.SystemResources, ReplicationIds.SystemDestructibles);
+                ReplicationIds.SystemCrops, ReplicationIds.SystemResources, ReplicationIds.SystemDestructibles,
+                ReplicationIds.SystemEnvironment);   // v80: the host weather singleton is globally mirrored
         }
 
         /// <summary>Reliable event to every connected peer (the event plane, §2.3).</summary>
@@ -1067,7 +1068,7 @@ namespace UnturnedGodot.Net
                                                                     Skills, Deployables, Inventories, WorldItems,
                                                                     Vehicles, Clock, Crops, Resources,
                                                                     Vitals, Containers, Animals, Destructibles,
-                                                                    InteractableState, Profiles, Equipment, VehicleMounts });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
+                                                                    InteractableState, Profiles, Equipment, VehicleMounts, Environment });   // v80: Environment(21) appended last   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
             RegisterEquipmentEvents();
             RegisterMountedEvents();
             RegisterVehicleLightingEvents();
