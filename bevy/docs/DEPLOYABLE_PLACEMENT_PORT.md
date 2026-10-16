@@ -81,9 +81,8 @@ No wire ids, events or protocol version changed.
   native world does not expose) is always red `Needs a window opening`. The
   Container mount (storage adapter) is always red `Needs a storage container`.
   No catalog def uses Sticky.
-- LocalOnly doors (`DoorProp`): the source spawns its door on the placer's
-  machine only, while the host spends the item and keeps no entity. Natively the
-  spend happens and no local door is drawn yet (see Remaining).
+- Kept: a door ghost stands upside down (BuildMesh uses `StandRotX` 90, while
+  the placed door uses `DoorDeploy`'s 270).
 
 ## Special bodies (`bevy/src/deployables/storage*`)
 
@@ -112,8 +111,32 @@ F chain in `_UnhandledInput`.
   crate is the one `OnPlaceDeployable` registered under the accepted NetId.
 - **Deferred.** Fluid devices (`FluidDeploy`/`FluidContainer` tanks, pumps,
   valves and hose ports) belong to the fluid network row and still draw no body.
-  The placeable doors are LocalOnly in the source (spawned only on the placer's
-  machine, never replicated or saved); see Remaining.
+
+## Placeable doors (`bevy/src/deployables/doors*`)
+
+The 12 wooden/metal doors, gates and hatches are LocalOnly in the source:
+`DeployableNetSchema` keeps no host entity for a `DoorProp` def, so Command 7
+only spends the jar, and `TickDeploy` calls `DoorDeploy.SpawnFor` on the
+placer's own machine on every path. No other player sees the door, it collides
+only for its placer, and it is never saved. The native port keeps that player
+view exactly; it is the one placement result drawn without an accepted
+replica, because the source has none to draw.
+
+- `WoodenLeaves`: the form's hinge row from `wooden_door_anims.txt`, angle
+  clamped to 90 degrees with its sign kept, pivot rebased by the leaf mesh's AABB
+  centre, 0.4667 s, `DoorHandle`; Doubledoor (two hinges, one mesh) refused.
+- `SpawnProp`: host at the frozen point and yaw, leaf stood up 270 degrees about
+  X, the palette material (roughness 1, both faces), and the host raised so the
+  closed leaf's lowest corner sits on the point. No wooden door ships sampled
+  curves, so the swing uses ObjectDoor's smoothstep.
+- ObjectDoor: the leaf's own box (min 0.15 m per axis) on the source bit6 layer
+  (solid to the player and look rays), tracking the swing; never solid
+  mid-swing, and solid at rest only when no player stands in it. F within the
+  4 m door look ray shows `[F] Open door` / `Close door`, toggles locally with
+  the 0.35 s cooldown and plays `DoorHandle` (0.125 linear, 6 m unit).
+- A new world session removes the doors, as unloading the scene does.
+
+Fluid devices remain undrawn (fluid network row 21).
 
 ## Verification
 
@@ -125,6 +148,18 @@ F chain in `_UnhandledInput`.
   `openStorage` and opens the storage screen. Managed actual-UDP: the fridge
   (5 x 4) and the campfire (3 x 2) open by NetId, take an item, close, and the
   host crate keeps it on reopening.
+- Doors: `WoodenLeaves` rebase/clamp/refusal, `SpawnProp` seat and height
+  (doors stand up, hatches lie flat, the authored top is up), and an actual-UDP
+  test placing a door through the native ghost: the host spends the named jar
+  and replicates nothing, the placer's door appears closed and solid, F offers
+  and toggles it, it is non-solid mid-swing and solid open, and a new session
+  removes it. Controls failing their guards: no local spawn, solid mid-swing, an
+  unclamped angle, an unrebased pivot, no lowest-corner seat, and a 90 degree
+  stand-up.
+- Door Vulkan fixture `deployables::doors::visual`. Opened:
+  `bevy-door-ghost.png` (the upside-down blue source ghost),
+  `-closed.png` (the placed Pine door standing closed on the point) and
+  `-open.png` (swung 90 degrees open after F).
 - Storage surgical controls, each failing its guard: the fridge taking the
   ordinary focus, no fallback, the fallback offered above crop harvest (no
   storage flag), a 25 m reach, a stood-up fridge, the fridge routed to the
@@ -156,3 +191,17 @@ F chain in `_UnhandledInput`.
   `-invalid.png` (red ghost on a wall with `Needs flat ground`), `-placed.png`
   (the accepted generator body and the next jar's blue ghost) and `-wall.png`
   (a blue cagelight ghost flush on the wall).
+
+## Remaining
+
+- Window mount (`AimWindow` onto live wall openings and baked markers) and the
+  Container mount (`AimContainer`: storage adapter snapping to container faces,
+  door-face refusal, top mount). Both ghosts are always red natively.
+- Fluid device bodies (`FluidDeploy`, `FluidContainer`) with the fluid network.
+- The held carry model: the viewmodel still shows its existing deployable hold
+  (Deploy_Equip with the catalog mesh), not the source `HoldMesh` /
+  `EmptyHands` split; only `Deploy_Use` was wired for the place gesture.
+- Fridge food preservation is the client-local `Refrigerator.Tick` in the
+  source; the native body does not mark `preserved` items.
+- The remaining frame of OpenNearestCrate: plain map `StorageCrate`s outside the
+  look-based shelves are not in the native world, so only placed crates qualify.

@@ -124,8 +124,8 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 
 | # | Feature (source) | Gap | Size | Impact | Owner / status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | Floor/wall/ceiling ghost, reasons, R/LMB/RMB and Command 7 naming the held jar done; Window and Container (storage adapter) mounts refused, LocalOnly door body not drawn | L | high | placement checkpoint DONE ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)); window/adapter mounts queued |
-| 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | Refrigerator body/label/socket and OpenNearestCrate for fridge and campfire done; fixtures and turbine done by the power agent; fluid bodies (row 21) and LocalOnly doors remain | M | high | storage checkpoint DONE ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)); doors queued |
+| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | Floor/wall/ceiling ghost, reasons, R/LMB/RMB and Command 7 naming the held jar done; Window and Container (storage adapter) mounts refused | L | high | placement checkpoint DONE ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)); window/adapter mounts queued |
+| 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | Refrigerator body/label/socket, OpenNearestCrate and the LocalOnly placeable doors done; fixtures and turbine done by the power agent; fluid bodies remain with row 21 | M | high | DONE except fluid bodies ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)) |
 | 3 | Player structures (`BuildTool`, `StructureManager`) | Absent; source is local-only, no command/save | XL | high | needs authority design |
 | 4 | Survival HUD status icons (`HUD.cs`) | Bleeding/broken/starved/dehydrated/deadzone/temperature rows | S | high | agent C (in progress) |
 | 5 | Temperature (`PlayerTemperatureSim`, `ThermalField`) | Band never computed/streamed (`TempBand`) | M | med | agent C (in progress) |

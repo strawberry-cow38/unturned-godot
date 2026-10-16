@@ -1,6 +1,7 @@
 //! Source DeployableReplicaView: accepted objects own their only rendered body.
 //! Specialized fluid/storage/fixture bodies are implemented separately, never
 //! approximated by the ordinary Deployable.Spawn mesh.
+mod doors;
 mod engine;
 mod fixture;
 mod geometry;
@@ -182,6 +183,7 @@ impl Plugin for DeployablePlugin {
         engine::install(app);
         placement::install(app);
         storage::install(app);
+        doors::install(app);
         app.init_resource::<Replicas>()
             .add_systems(
                 Update,

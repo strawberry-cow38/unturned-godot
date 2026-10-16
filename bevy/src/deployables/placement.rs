@@ -17,7 +17,7 @@ use bevy::{
 };
 use rules::{Aim, Mount, Probe};
 
-mod ghost;
+pub(super) mod ghost;
 mod hint;
 pub(crate) mod rules;
 mod sound;
@@ -351,8 +351,9 @@ pub(super) struct Out<'w> {
     intents: MessageWriter<'w, UiIntent>,
     hands: MessageWriter<'w, HandEvent>,
     sounds: ResMut<'w, sound::Queue>,
+    doors: ResMut<'w, super::doors::LocalDoors>,
 }
-fn act(
+pub(super) fn act(
     events: Option<Res<FrameInput>>,
     settings: Option<Res<Settings>>,
     windows: Query<Entity, With<PrimaryWindow>>,
@@ -424,6 +425,11 @@ fn act(
         out.model.notice(error.to_string());
     }
     placer.sent.push(args);
+    // DoorDeploy.SpawnFor: a DoorProp door is LocalOnly and spawns here on
+    // every path, while the host only spends the jar.
+    if let Some(prop) = &def.door_prop {
+        out.doors.queue.push((prop.clone(), gesture.point, gesture.yaw));
+    }
     if let Some(stem) = &def.place_sound {
         out.sounds.0.push((stem.clone(), gesture.point));
     }
