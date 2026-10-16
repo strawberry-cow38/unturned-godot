@@ -4,6 +4,7 @@ mod runtime;
 
 use anyhow::{Context, Result, anyhow, bail};
 use bevy::prelude::Resource;
+use crate::install::Layout;
 use runtime::RuntimeCopy;
 use serde_json::{Value, json};
 use std::{
@@ -33,14 +34,19 @@ impl CoreBridge {
             process.origin_epoch = epoch;
         }
     }
+    /// The checkout's dev bridge (tests); `UG_BRIDGE_DLL` still overrides.
     pub fn launch(manifest: &Path) -> Result<Self> {
-        let dll = std::env::var_os("UG_BRIDGE_DLL")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| manifest.join("bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll"));
+        Self::launch_installed(&Layout::Dev(manifest.to_path_buf()))
+    }
+
+    /// The bridge of a package or checkout; see [`crate::install`].
+    pub fn launch_installed(layout: &Layout) -> Result<Self> {
+        let dll = layout.bridge_dll();
         if !dll.is_file() {
             bail!(
-                "Game bridge is missing at {}. Run bevy/run.sh to build it.",
-                dll.display()
+                "Game bridge is missing at {}. {}",
+                dll.display(),
+                layout.bridge_hint()
             );
         }
         Self::launch_from_dll(&dll)
@@ -50,7 +56,7 @@ impl CoreBridge {
         // .NET maps assemblies for the process lifetime. Building or promoting
         // the shared output in place must never change those mapped inodes.
         let runtime_copy = RuntimeCopy::from_dll(dll)?;
-        let bridge = Self::launch_command(Command::new(dotnet_path()).arg(runtime_copy.dll()))?;
+        let bridge = Self::launch_command(&mut host_command(runtime_copy.dll()))?;
         bridge.0.lock().unwrap().runtime_copy = Some(runtime_copy);
         Ok(bridge)
     }
@@ -217,6 +223,15 @@ fn read_reply(reader: &mut impl BufRead) -> Result<Value> {
         bail!("game core sent an incomplete response");
     }
     serde_json::from_slice(&bytes).context("decoding game core JSON response")
+}
+
+fn host_command(dll: &Path) -> Command {
+    if let Some(apphost) = crate::install::self_contained_apphost(dll) {
+        return Command::new(apphost);
+    }
+    let mut command = Command::new(dotnet_path());
+    command.arg(dll);
+    command
 }
 
 fn dotnet_path() -> PathBuf {

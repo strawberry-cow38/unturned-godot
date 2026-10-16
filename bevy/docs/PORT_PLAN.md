@@ -150,7 +150,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | — | Remaining power utilities | Specialized endpoints, fuel/ramp, consumer lights/audio, readouts | L | med | DONE (`17b9a035`, protocol 78; vehicle pour/siphon with row 9) |
 | — | Fifth-wheel towing | Full-game rocking fixed; remote/MP towing journey, rigid cargo | M | med | integrator |
 | — | Focus outlines (`OutlineOverlay`: items, shelves/containers, notes, puppets, fruit) | Renderer + items/containers DONE (`OUTLINE_PORT.md`); other claimers and the settings toggle remain | M | med | integrator (in progress) |
-| — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | agent J (in progress) |
+| — | Packaging | Landed: runtime bridge/content/cache resolution (`install.rs`: env overrides, exe-relative package marker, checkout fallback), `bevy/tools/package.sh` (self-contained bridge, bundled content, 787 MB linux-x64), relocation proven with the repo masked. Remaining: Windows/macOS packages, launcher download path, packaged bug-report commit stamp. See [PACKAGING_PORT.md](PACKAGING_PORT.md) | M | high (ship) | agent J (linux DONE) |
 
 N/A: the zombie attack loop/death loot and NPC map placements/quest persistence
 are absent from the source itself. FreezeMode, TargetDummy, DamageNumbers,

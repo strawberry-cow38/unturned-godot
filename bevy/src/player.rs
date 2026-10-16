@@ -498,8 +498,9 @@ fn ui_intents(
                             json!({"seed":options.0.seed,"x":0,"z":0,"lod":0}),
                         ) {
                             Ok(response) => {
-                                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                                    .join(".local/terrain-selected.json");
+                                let path = crate::install::Layout::current()
+                                    .data_dir()
+                                    .join("terrain-selected.json");
                                 let saved = std::fs::create_dir_all(path.parent().unwrap())
                                     .and_then(|_| {
                                         std::fs::write(&path, response["result"].to_string())

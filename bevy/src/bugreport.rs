@@ -494,7 +494,7 @@ fn finish(
         "audioStatus": finish.audio, "typed": finish.typed,
         "wasTap": finish.session.was_tap, "hitTimeout": finish.session.hit_timeout,
         "upload": r.config.upload, "endpoint": r.config.endpoint, "key": r.config.key,
-        "projectDir": Path::new(env!("CARGO_MANIFEST_DIR")).parent(),
+        "projectDir": crate::install::Layout::current().project_dir(),
     });
     let reply = bridge.map(|b| b.request("bugReport", request));
     match reply {

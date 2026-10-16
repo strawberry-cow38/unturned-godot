@@ -3101,3 +3101,24 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - Tests: core `CarjackAuthorityTests`, the managed refusal test (now with a positive ending), native occupancy/focus/viewmodel tests, and the frames `bevy-tool-viewmodel-*` beside `godot-source-carjack-vm-*`.
 
 - **Review fixes:** RMB or a hand switch now cancels a gesture in flight before Command 7 (as `ClearDeployable` zeroes `_placeTimer`); a storage offer can no longer displace the crop harvest fall-through in either system order; `DefaultAttachable` reads only the hit collider, so a fridge (a child StaticBody) is a legal support; the door look ray is the source 2.6 m `LookReach` and settles only at endpoints (players and zombies); the fridge label stroke is 2.5 px. The cancel, ordering, support and reach fixes each have a guarding test that fails under revert; the stroke and the endpoint-only solidify are checked by render and review only.
+
+### 2026-10-16 — Packaging: a relocatable native release (ledger "Packaging")
+
+- **Paths at run time.** `bevy/src/install.rs` replaces the compile-time `CARGO_MANIFEST_DIR` bridge, content and `.local` paths in `main.rs`, `cli.rs`, `world.rs`, `player.rs` and `bugreport.rs`. Resolution order:
+  1. `UG_BRIDGE_DLL`, `UG_CONTENT_DIR` (`--content` still wins) and `UG_DATA_DIR`, then `UG_PACKAGE_ROOT`;
+  2. `unturned-bevy-package.json` beside the executable, which marks a package with `bridge/` and `content/` beside it;
+  3. otherwise the unchanged checkout layout.
+
+  A package never falls back to the checkout. A self-contained bridge (its runtimeconfig lists `includedFrameworks`) starts through its apphost; anything else starts on `dotnet` as before.
+- **Package script.** `bevy/tools/package.sh` does a self-contained `dotnet publish`, then `cargo build --release`. It copies the git-tracked `game/content`, writes a marker, licenses and README, swaps the staged folder in and runs a headless smoke. For linux-x64 at 5707bbba the folder is 787 MB (420 MB as .tar.gz): content 554 MB, bridge 77 MB, binary 157 MB unstripped.
+- **Relocation proof.** The package was copied to `/tmp/claude-1000/pkg-test` and run in a private mount namespace with the checkout under an empty tmpfs. The environment was reset: fresh HOME, PATH `/usr/bin:/bin`, no `dotnet`, only `UG_UNTURNED_DIR` for retail maps.
+  - `--headless` smoke passed.
+  - Removing the marker made the same run fail: "bridge missing at …/bin/Debug", because the checkout was unreachable.
+  - `--play --shot` rendered PEI under Xvfb/lavapipe. Opened: trees, beach, water, buildings and HUD (`bevy/artifacts/packaging/relocated-play-pei.png`).
+  - A two-process `--listen 47990` / `--connect 127.0.0.1` run from the package joined. The client state was Connected to "Package host", and the opened client frame shows the host player with the "Host" nameplate (`relocated-client-joined-host.png`).
+  - The release binary run from `bevy/target/release` (no marker there) still took the checkout bridge: headless smoke passed.
+- **Tests.** Six `install::` unit tests cover exe-relative, overrides, `UG_PACKAGE_ROOT`, checkout fallback, no-fallback-from-package and apphost selection. A scoped release run of `install:: bridge:: cli::` passed 17 of 17. Negative controls ran through a std-only harness and each was restored from `bevy/.local/nc-backup/`:
+  - disabling the marker check failed 2 tests;
+  - ignoring `UG_CONTENT_DIR` failed 1;
+  - taking the apphost without `includedFrameworks` failed 1.
+- **Not done.** The launcher is unchanged; the precise download-and-run step is in `bevy/docs/PACKAGING_PORT.md`. Windows and macOS packages are untested. A packaged bug report stamps `game_commit: unknown`.
