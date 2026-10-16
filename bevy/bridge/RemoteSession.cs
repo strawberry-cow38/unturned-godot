@@ -98,9 +98,10 @@ public sealed partial class BridgeHost
         _remoteWeapon.Step(_held);
         if (_remoteWeapon.TakeSelectionChange() is ushort selected) _held = selected;
         StepSteady();
+        TemperatureTick();
         _client.SendPlayerState(_position, _yaw, _pitch, _velocity,
             (byte)((StanceCode(_movement.Stance) << 1) | (_scopeSteady.Steadying ? MoveInput.ButtonSteady : 0)),
-            _grounded, _recov, _held);
+            _grounded, _recov, _held, TemperatureBand);
     }
 
     object RemoteAction(string name, JsonElement args)

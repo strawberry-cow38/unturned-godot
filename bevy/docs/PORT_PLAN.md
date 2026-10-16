@@ -51,9 +51,9 @@ not make its features playable.
 | 0 | Source audit, branch, reproducible toolchains and original test baseline | In progress |
 | 1 | Engine boot, real mesh/material/map loading, capture harness | In progress |
 | 2 | Core bridge, fixed simulation, single local body, input/camera, server loopback | In progress |
-| 3 | Player stances, water/ladders, vitals, death/respawn, skills, appearance | In progress; remaining parity below |
+| 3 | Player stances, water/ladders, vitals, death/respawn, skills, appearance | In progress; owner temperature band, status icons, deadzone grain/Geiger and held-bottle drink/fill in `SURVIVAL_FEEDBACK_PORT.md`; remaining parity below |
 | 4 | Inventory, equipment, loot, attachments, weapons/ballistics/melee/grenades, viewmodels | In progress; remaining parity below |
-| 5 | World saves, UDP multiplayer, replicas, reconnection, server browser and moderation | In progress; remaining parity below |
+| 5 | World saves, UDP multiplayer, replicas, reconnection, server browser and moderation | In progress; source save lifecycle (60 s autosave, entry restore, carry-over, console save/wipe) in `SAVE_LIFECYCLE_PORT.md`; remaining parity below |
 | 6 | All vehicle types, suspension, seats/storage, tow/hitch, crane/turrets, damage | In progress; original fleet/mount geometry in `TURRET_PORT.md`, accepted mounted authority in `MOUNTED_WEAPONS.md`, local playable tank controls/effects in `MOUNTED_NATIVE_PORT.md`; source NPC native flight in `NPC_NATIVE_PORT.md` and crew presentation/authority in `NPC_CREW_PORT.md` / `NPC_HELICOPTERS.md`; complete fleet, airborne combat and remote journeys remain unfinished |
 | 7 | Deployables, building, power, fluids, appliances, crops, resource interactions | In progress; remaining parity below |
 | 8 | Terrain/foliage/roads, procedural worlds/buildings, streaming, weather/water/audio | In progress; remaining parity below |

@@ -2930,3 +2930,47 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - **Review:** an independent review found the cheats-gate free-item hole, a floating look point on joined clients (the remote bridge has no geometry) and a wrong rule for storage deployables. All are fixed and documented.
 - **Verification:** 6 native and 2 managed UDP tests, with 12 negative controls each failing as intended; full native 792/0 and managed 268/0. The Vulkan showcase matches the Godot 4.6.2 `--croptest=carrot` oracle in geometry, orientation and alpha (`bevy/artifacts/{bevy,godot}-crop-showcase-carrot.png`). See `bevy/docs/CROPS_PORT.md`.
 - **Operational:** two WSL crashes were memory exhaustion from parallel agent builds. Heavy jobs now go through `bevy/.local/bin/heavy.sh` (2 slots, ≥5 GB free, `-j2`).
+
+### 2026-10-16 — Original world save lifecycle: autosave, entry restore, carry-over
+
+- Ported `WorldSaveDriver` onto the host bridge. Each map has one sanitized file (`pei.json`). It autosaves every 60 s of simulation time, just before replication, and singleplayer pause freezes the clock. The first save sets the loot seed. Writes go through a temp file and swap, and a failed write is logged, not thrown. A load restores the season start and the loot seed before the world restarts, offline players ride along in every save, and console `save`/`wipe` give the source replies. No protocol change.
+- The native client restores the saved world once the host has registered *this* map, through the same accepted Load as the pause menu, and holds the loading screen meanwhile. Remote clients and the `--vehicle` render harness have no save. An older native `PEI.json` is adopted once. Leaving or quitting writes nothing, as in the source: the newest autosave or explicit save is what reopens.
+- Native-only entry hold: until the restore's load runs, the placeholder world never autosaves or console-saves over the file. Review then found and fixed four more cases: a save during the hold, a menu → Play bypass, a failed setup stuck on the loading screen, and the harness touching real saves. Deviations (the hold, the reconnect source, the listen-host restore window, per-world statics) are in `bevy/docs/SAVE_LIFECYCLE_PORT.md`.
+- Tests: 6 managed `WorldPersistenceTests` cover:
+  - the autosave on the 3000th tick, not the 2999th, with an idempotent seed;
+  - reopen restoring position, bag, dropped item, season and seed, while Dispose writes nothing;
+  - console save/wipe;
+  - a real UDP `Visitor` carried after leaving and dropped by wipe;
+  - a failed write that does not throw;
+  - the entry hold against autosave, the console verb and the op.
+  
+  Native tests add 5 persistence cases. Full suites: 262 managed, 764 native (50 opt-in ignored) and 128 JSONL, all passing. Surgical controls fail as expected: NC1–4 and NC10 (no autosave tick, no static adoption, no carry-over, no console handlers, entry hold ignored) and RNC3 (restore ignores the map).
+- Actual Vulkan PEI journey with OS input (xdotool, isolated `UG_BEVY_SAVES`, `UG_WEATHER=snow`). Session 1: give a thermometer and a bottle, visit the deadzone, move to (530,32,690). Autosaves #1 and #2 fire on the sim clock (`persistence.autosaves`). Then teleport to (560,·,700) and Pause→Quit: exit 0, file byte-identical. Session 2 runs the reviewed frozen build. At frame 60 it shows "World loaded" at (530,32.1,690) with the thermometer, bottle and infection restored, and autosave resumes. All PNG/JSON pairs were opened (`bevy/artifacts/bevy-save-journey-*`). Within the same session, an OS-input inventory-context Hold of the bottle did not register at ~1.5 fps under lavapipe; the menu stayed open and Escape had no effect. The process was then ended with SIGTERM. This is unexplained and logged as a journey gap.
+
+### 2026-10-16 — Original survival feedback: temperature band, status icons, deadzone, Geiger, bottles
+
+- Body temperature runs where the source runs it: the client shell. The bridge client adapter steps `PlayerTemperatureSim` from:
+  - source ambient, weather and wetness;
+  - exertion;
+  - accepted clothing;
+  - the native client's ShelterProbe and ThermalField probes (lit cooker replicas at 25 °C over 5 m, a world-layer LOS ray, smoothstep, ±40 clamp).
+  
+  It streams the band on the existing v59 `PlayerStateCommand.TempBand`, so the server now actually applies cold and heat drains and Freezing/Boiling damage, instead of always Comfortable. No protocol change.
+- HUD as in `HUD.cs`:
+  - Seventh vitals row: a bipolar temperature bar that fills from the centre, using the source cold/hot colours, neutral trough, centre mark and tween.
+  - Thermometer (9346) readout: `Units.TemperatureReadout` (Both units), outlined.
+  - Status row: five 40 px source boxes above the panel — bleeding, broken, starved, dehydrated, deadzone — each on its own condition. The deadzone box is driven by the host's own DeadzoneSim clock.
+  - Deadzone overlay: deadzone.gdshader in WESL on the scene canvas, after night vision and before layer 9/HUD, driven by the accepted dose.
+  - Geiger: Poisson clicks with the original wavs, curve and voices.
+  - HUD.Alert "Your door is blocked" for `vehicleExitRefused`.
+  - The session toast "No room in inventory" for `pickupDenied`.
+  - XpAwarded is still unshown: the source has no consumer.
+- Held bottles now follow `KindOf`: a fluid container is held as a container and never eaten by the consume timeline. LMB drinks the whole bottle and RMB at a sink or bathtub fills it, through the existing Commands 69/70. The source toasts are computed on a clone of the accepted item, and the bottle, label and water bar change only on the echo. A held-bottle line shows the label plus `[LMB] drink` / `[RMB] fill at the sink|bathtub` (`WaterTap.AimedAt` on the 2.6 m look ray). Tank fill (SP-local in the source, no command), the mains switch and remote tap aim are documented gaps; see `bevy/docs/SURVIVAL_FEEDBACK_PORT.md`.
+- Tests:
+  - 5 managed `SurvivalFeedbackTests`: Freezing reaches the server band and costs HP, Hot as well; rain soaks only under an open sky; thermometer; deadzone status in/out; bottle drink/fill only through accepted commands, including a server reach rejection.
+  - Native: vitals (+3), feedback (3), survival/deadzone/geiger (4) and the fluid hand-use regression.
+  - Full suites: 262 managed, 764 native and 128 JSONL, all passing.
+  - Surgical controls fail as expected: managed NC5–9 (band not streamed, probe not read, deadzone status off, drink not sent, look end not read) and native RNC1/2/4–7 (bottle eaten, starved reading water, grain never hiding, pickupDenied unread, Geiger floor removed, bar not centred).
+- Vulkan: the `gpu_status_temperature_deadzone_and_drink_round_trip` fixture passes. It uses production vitals, feedback and deadzone plugins with the HDR scene canvas. Stages 0–4 and 8 inject owner replicas; stages 5–7 use a real host bridge, an accepted Hold, the same `fluid_hand` request simulate makes, and the echoed empty bottle. All nine `bevy/artifacts/bevy-survival-*.png` were opened: all five status icons with a cold 1 °C/34 °F bar; hot 38 °C/100 °F; tame and full grain with the HUD sharp; the bottle line, "drank 1.0 L (+100% water)" and "empty (1.0 L)"; alert plus toast.
+
+  In the full-game PEI journey (above), the opened frames show the readout "19 °C / 66 °F", the real deadzone icon and grain at dose 0.58 in the farm-field deadzone, with the HUD text sharp, and the icon clearing on leaving. The snow wetness that drove the body from 19 °C to 11 °C stayed within Comfortable.
