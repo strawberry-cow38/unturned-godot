@@ -33,7 +33,17 @@ namespace UnturnedGodot
     /// leak itself is older than this and is not fixed here.
     ///
     /// UG_NOBASEMENTGATE=1 is the control: Build makes no basement node and nothing is ever hidden. ForceShow is the in-process
-    /// one (CullProbe): every gated basement drawn while it is set.</summary>
+    /// one (CullProbe): every gated basement drawn while it is set.
+    ///
+    /// ⭐ AND A FAR BUILDING'S FURNITURE CASTS NO SHADOW. The shadow passes are what culling cannot reach: the sun's cascades
+    /// draw every caster within GraphicsOptions.ShadowDistance (120 m) whether a wall hides it from the camera or not --
+    /// occlusion culling is for the camera's own pass -- and in a town most of those casters are furniture, indoors, under a
+    /// roof that already puts the whole room in shade (measured at street level in a 21-building town: furniture was 1,200 of
+    /// the frame's 2,160 shadow-pass objects). So furniture in a building whose plan is more than ShadowRadius from the camera
+    /// stops casting; it still draws. What that can change on screen is a piece's shadow inside a patch of sun through a
+    /// window of a building 40 m off -- and no lamp's: a town's lamps are out past 40 m (BuildingRuntime.LampFadeBegin +
+    /// LampFadeLength), and a lamp lights only its own room. UG_NOSHADOWGATE=1 is the control (every piece casts as it always
+    /// did); ForceShadows the in-process one.</summary>
     public partial class BuildingCull : Node
     {
         public static readonly bool Disabled = System.Environment.GetEnvironmentVariable("UG_NOBASEMENTGATE") == "1";
@@ -63,6 +73,47 @@ namespace UnturnedGodot
 
         static readonly List<Gate> _gates = new();
         static BuildingCull _hub;
+
+        public static readonly bool NoShadowGate = System.Environment.GetEnvironmentVariable("UG_NOSHADOWGATE") == "1";
+        /// <summary>Every piece casts its shadow regardless (the in-process control).</summary>
+        public static bool ForceShadows;
+        /// <summary>Furniture of a building whose plan is further than this from the camera casts no shadow, metres -- the
+        /// distance a town's lamps are out by.</summary>
+        public const float ShadowRadius = BuildingRuntime.LampFadeBegin + BuildingRuntime.LampFadeLength;
+
+        sealed class Casters
+        {
+            public Node3D Building;
+            public float Wx, Dz;                        // its plan, (0, 0)..(Wx, Dz) in its frame
+            public GeometryInstance3D[] Pieces;
+            public GeometryInstance3D.ShadowCastingSetting[] Cast;   // what each cast as built
+            public bool On = true;
+        }
+        static readonly List<Casters> _casters = new();
+
+        /// <summary>Buildings whose furniture is gated, and how many of them are casting right now.</summary>
+        public static int ShadowCount => _casters.Count;
+        public static int CastingCount { get { int n = 0; foreach (var c in _casters) if (c.On) n++; return n; } }
+
+        /// <summary>Gate the shadows of everything `building` draws but its surfaces (and what hangs off them: doors, glass) --
+        /// its furniture, in its basement too -- on how far the camera is from its plan.</summary>
+        public static void AddFurnitureShadows(Node3D building, BuildingGenResult res)
+        {
+            if (NoShadowGate || building == null || res == null || !building.IsInsideTree()) return;
+            var pieces = new List<GeometryInstance3D>();
+            var cast = new List<GeometryInstance3D.ShadowCastingSetting>();
+            void Walk(Node n)
+            {
+                if (n is WallSurface) return;
+                if (n is GeometryInstance3D g && g.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) { pieces.Add(g); cast.Add(g.CastShadow); }
+                foreach (var c in n.GetChildren()) Walk(c);
+            }
+            Walk(building);
+            if (pieces.Count == 0) return;
+            _casters.Add(new Casters { Building = building, Wx = res.CellsX * BuildingGen.Cell, Dz = res.CellsZ * BuildingGen.Cell,
+                                       Pieces = pieces.ToArray(), Cast = cast.ToArray() });
+            Hub(building).Evaluate();
+        }
 
         static BuildingCull Hub(Node3D building)
         {
@@ -123,8 +174,9 @@ namespace UnturnedGodot
 
         public override void _Process(double delta) => Evaluate();
 
-        /// <summary>Show or hide every gated basement for where the camera is now. Runs every frame (a few hundred point-in-rect
-        /// tests), and at once when a gate is added or ForceShow changes, so nothing is ever a frame late at a threshold.</summary>
+        /// <summary>Show or hide every gated basement, and switch every gated building's furniture shadows, for where the camera
+        /// is now. Runs every frame (a few hundred point-in-rect tests), and at once when a gate is added or a Force flag changes,
+        /// so nothing is ever a frame late at a threshold.</summary>
         public void Evaluate()
         {
             var cam = GetViewport()?.GetCamera3D();
@@ -137,6 +189,24 @@ namespace UnturnedGodot
                 g.Shown = show;
                 g.Node.Visible = show;
             }
+            for (int i = _casters.Count - 1; i >= 0; i--)
+            {
+                var c = _casters[i];
+                if (!IsInstanceValid(c.Building)) { _casters.RemoveAt(i); continue; }
+                bool on = ForceShadows || cam == null || PlanDistance(c, cam.GlobalPosition) <= ShadowRadius;
+                if (on == c.On) continue;
+                c.On = on;
+                for (int k = 0; k < c.Pieces.Length; k++)
+                    if (IsInstanceValid(c.Pieces[k])) c.Pieces[k].CastShadow = on ? c.Cast[k] : GeometryInstance3D.ShadowCastingSetting.Off;
+            }
+        }
+
+        /// <summary>How far the camera is from a building's plan, in plan (0 over it).</summary>
+        static float PlanDistance(Casters c, Vector3 cam)
+        {
+            var l = c.Building.GlobalTransform.AffineInverse() * cam;
+            float dx = Mathf.Max(0f, Mathf.Max(-l.X, l.X - c.Wx)), dz = Mathf.Max(0f, Mathf.Max(-l.Z, l.Z - c.Dz));
+            return Mathf.Sqrt(dx * dx + dz * dz);
         }
 
         /// <summary>Re-evaluate now (after ForceShow changes, or a camera jump that must not be drawn a frame late).</summary>

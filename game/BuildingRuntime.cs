@@ -572,6 +572,7 @@ namespace UnturnedGodot
             var furnished = Furnish(root, Transform3D.Identity, res.Props, System.Linq.Enumerable.Select(res.Rooms, r => r.Electrical), objs, LampFadeBegin, below);
             root.Transform = frame;
             BuildingCull.AddBasement(root, below, res);
+            BuildingCull.AddFurnitureShadows(root, res);
             // ⚠ A water source rides a TopLevel node in a yaw-only frame (SmartProps: a sink's FluidContainer), seated at the
             // position the prop was BUILT at -- here the lattice's, not the world's -- and a TopLevel node does not follow the root
             // being moved. Re-seat them now the building stands where its plot says, or every kitchen sink's water port in town
