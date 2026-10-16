@@ -176,3 +176,25 @@ fn standing_clearance_uses_original_player_mask_including_other_players() {
         "accepted remote player still occupies the standing space"
     );
 }
+
+#[test]
+fn building_trim_keeps_source_bit_six_throw_clearance_without_world_membership() {
+    let mut app = app();
+    let owner = app.world_mut().spawn_empty().id();
+    let trim = app.world_mut().spawn((
+        Collider::cuboid(0.1, 1., 0.1),
+        Transform::from_xyz(0., 1., -0.8),
+        CollisionGroups::new(Group::GROUP_4 | crate::world::buildings::SOURCE_PROP, Group::GROUP_2),
+    )).id();
+    settle(&mut app);
+    let hit = |app: &mut App| {
+        let mut state = SystemState::<ReadRapierContext>::new(app.world_mut());
+        let read = state.get(app.world()).unwrap();
+        throw_clearance(&read.single().unwrap(), owner, Vec3::Y, Vec3::NEG_Z, 1.5)
+    };
+    assert!((hit(&mut app).unwrap() - 0.7).abs() < 1e-5);
+    app.world_mut().entity_mut(trim).insert(CollisionGroups::new(Group::GROUP_4, Group::GROUP_2));
+    settle(&mut app);
+    assert_eq!(hit(&mut app), None,
+        "same physical groups without source-bit6 marker represent vehicle HitMesh/panes");
+}

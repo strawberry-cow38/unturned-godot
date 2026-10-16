@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--godot', type=Path, required=True)
 parser.add_argument('--sim-assembly', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--render-dir', type=Path, help='also capture original full/cutaway surfaces with Vulkan (requires a display)')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 source = (repo / 'game/EditorBuildings.cs').read_text()
@@ -46,6 +47,7 @@ for signature in ['WallSurface SpawnWall(', 'static Aabb SurfaceAabb(',
                   'static bool CrossOnPlan(', 'public static IEnumerable<Vector3> StairTreadOrigins(',
                   'public int FitStairsToStructure(']:
     members.append(method(source, signature))
+members.append(method(source, 'public void HideAbove('))
 for pattern in [r'public static readonly Vector3 StageOrigin[^;]+;', r'public const float GroundClearance[^;]+;',
                 r'public static float StoreyHeight[^;]+;']:
     members.append(re.search(pattern, source).group(0))
@@ -54,6 +56,7 @@ namespace UnturnedGodot { public partial class SourceAssembly : Node3D {
 public int ActiveMaterial; public BuildingKind? DesignatedKind;
 public List<RoomDesignation> Designations=new(); public List<DoorDesignation> DoorMarks=new(); public List<PropDesignation> Furniture=new();
 readonly List<WallSurface> _walls=new(); public readonly List<StaticBody3D> _stairRamps=new();
+readonly List<Node3D> _furnitureNodes=new();
 readonly Dictionary<Rid,WallSurface> _pickToWall=new();
 void RemoveWall(WallSurface w) {_walls.Remove(w);RemoveChild(w);w.Free();}
 public WallPlan[] Plans()=>_walls.Select(PlanOf).ToArray();
@@ -73,6 +76,7 @@ rows = [dict(seed=seed, kind=kind, floors=floors) for seed, kind, floors in [
 runner = r'''using Godot; using System; using System.Linq; using System.Text.Json; using System.Collections.Generic;
 using UnturnedSim; using UnturnedGodot;
 public partial class Oracle : Node {
+SourceAssembly _visual; int _frame; string _renderDir;
 static float[] A(Vector3 p)=>new[]{p.X,p.Y,p.Z};
 public override void _Ready() {
  var output=new List<object>();
@@ -88,8 +92,29 @@ public override void _Ready() {
  }
  System.IO.File.WriteAllText(System.Environment.GetEnvironmentVariable("UG_BUILDING_ORACLE"),
   JsonSerializer.Serialize(output,new JsonSerializerOptions {IncludeFields=true}));
- GD.Print("SOURCE_BUILDING_SCENE_ROWS=",output.Count);GetTree().Quit();
+ GD.Print("SOURCE_BUILDING_SCENE_ROWS=",output.Count);
+ _renderDir=System.Environment.GetEnvironmentVariable("UG_BUILDING_RENDER");
+ if(string.IsNullOrEmpty(_renderDir)) {GetTree().Quit();return;}
+ _visual=new SourceAssembly();AddChild(_visual);
+ _visual.Generate(new BuildingGenSpec {Seed=17,Kind=BuildingKind.Residential,MinFloors=2,MaxFloors=2});
+ var env=new Godot.Environment {BackgroundMode=Godot.Environment.BGMode.Color,BackgroundColor=new Color(.24f,.27f,.30f),
+  AmbientLightSource=Godot.Environment.AmbientSource.Color,AmbientLightColor=Colors.White,AmbientLightEnergy=.5f,
+  TonemapMode=Godot.Environment.ToneMapper.Aces};
+ AddChild(new WorldEnvironment {Environment=env});
+ var ground=new MeshInstance3D {Mesh=new BoxMesh {Size=new Vector3(80,.3f,80)},Position=new Vector3(0,1999.85f,0),
+  MaterialOverride=new StandardMaterial3D {AlbedoColor=new Color(.43f,.46f,.47f),Roughness=1}};AddChild(ground);
+ var sun=new DirectionalLight3D {LightEnergy=1,ShadowEnabled=true,Position=new Vector3(-30,2040,20)};AddChild(sun);sun.LookAt(new Vector3(0,2000,0),Vector3.Up);
+ var cam=new Camera3D {Position=new Vector3(44,2034,44),Fov=60,Current=true};AddChild(cam);cam.LookAt(new Vector3(1.5f,2004,1.5f),Vector3.Up);
+ GetViewport().Msaa3D=Viewport.Msaa.Msaa4X;
 }
+public override void _Process(double delta) {
+ if(_visual==null)return;
+ ++_frame;
+ if(_frame==60)Save("full");
+ if(_frame==80)_visual.HideAbove(3);
+ if(_frame==100) {Save("cutaway");GetTree().Quit();}
+}
+void Save(string stage) {var image=GetViewport().GetTexture().GetImage();image.SavePng(System.IO.Path.Combine(_renderDir,"godot-building-"+stage+".png"));}
 }
 namespace UnturnedGodot {public static class Log {public static void Err(string s)=>GD.PushWarning(s);}}
 '''
@@ -107,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix='building-scene-godot-') as temp:
         '<EnableDynamicLoading>true</EnableDynamicLoading></PropertyGroup><ItemGroup>'
         f'<Reference Include="UnturnedSim"><HintPath>{args.sim_assembly.resolve()}</HintPath></Reference>'
         '</ItemGroup></Project>')
-    (root / 'project.godot').write_text('config_version=5\n[application]\nconfig/name="Building assembly source oracle"\nrun/main_scene="res://main.tscn"\n[dotnet]\nproject/assembly_name="Oracle"\n')
+    (root / 'project.godot').write_text('config_version=5\n[application]\nconfig/name="Building assembly source oracle"\nrun/main_scene="res://main.tscn"\n[display]\nwindow/size/viewport_width=1280\nwindow/size/viewport_height=800\n[dotnet]\nproject/assembly_name="Oracle"\n')
     (root / 'main.tscn').write_text('[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://Oracle.cs" id="1"]\n[node name="Oracle" type="Node"]\nscript=ExtResource("1")\n')
     (root / 'input.json').write_text(json.dumps(rows))
     dotnet = shutil.which('dotnet') or str(Path.home() / '.dotnet/dotnet')
@@ -116,4 +141,12 @@ with tempfile.TemporaryDirectory(prefix='building-scene-godot-') as temp:
     env['UG_BUILDING_ORACLE'] = str(output)
     env['DOTNET_ROOT'] = str(Path.home() / '.dotnet')
     env['PATH'] = env['DOTNET_ROOT'] + os.pathsep + env.get('PATH', '')
-    subprocess.run([str(args.godot.resolve()), '--headless', '--path', str(root)], cwd=root, env=env, check=True, timeout=120)
+    command = [str(args.godot.resolve()), '--path', str(root)]
+    if args.render_dir:
+        render_dir = args.render_dir.resolve()
+        render_dir.mkdir(parents=True, exist_ok=True)
+        env['UG_BUILDING_RENDER'] = str(render_dir)
+        command += ['--rendering-driver', 'vulkan', '--write-movie', str(root / 'movie.avi'), '--fixed-fps', '30']
+    else:
+        command += ['--headless']
+    subprocess.run(command, cwd=root, env=env, check=True, timeout=120)

@@ -1,6 +1,7 @@
 //! Original map/content assembly. Missing retail terrain is reported explicitly.
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
 pub(crate) mod beds;
+pub(crate) mod buildings;
 mod demo_door;
 pub(crate) mod finite;
 mod foliage;

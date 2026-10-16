@@ -2,8 +2,8 @@
 
 The finite island's existing prefab towns and `BuildingGen` are separate source
 paths. This work preserves that distinction. No generated wall replaces a town
-prefab, and no native building renderer or editor manipulation UI is connected
-by the current data checkpoint.
+prefab. A read-only native stage consumer now materializes the original wall
+surfaces and ramps; normal generator/editor entry and manipulation remain pending.
 
 ## Source data boundary
 
@@ -36,8 +36,8 @@ subtracts the stage origin; generation must not silently apply that bake offset.
 explicitly writable. Source saves contain visible stair treads but do not record
 the invisible generated ramps. Reopening into a fresh scene therefore has no
 ramps; this adapter does not invent them. The original load method also does not
-clear pre-existing ramps in an already populated editor instance. File routing,
-native materialization, interactive editor history and bake are later consumers.
+clear pre-existing ramps in an already populated editor instance. Installed-world
+file routing, interactive editor history and bake are later consumers.
 
 Palette caches are scoped to a content root. The additional Godot value methods
 are exact signed modulo, floor, YXZ `Basis.FromEuler` and `Basis.Inverse`; they do
@@ -68,14 +68,57 @@ Two reproducible engine oracles execute original methods with actual Godot
   metadata/save/reopen/empty layout, upper-storey exclusion and the source's
   partial-overlap rejection when cutting a stair hole.
 
-The numerical reference uses Godot's headless mode because it does not claim a
-rendered image. Actual native Vulkan rendering and peer-opened images are still
-required for the runtime presentation slice.
+The numerical reference uses Godot's headless mode. Its optional `--render-dir`
+instead uses Vulkan/movie mode and actual original wall nodes for a visual
+comparison, including the unchanged `EditorBuildings.HideAbove(3)` method.
+
+## Native surface stage
+
+`buildingView` is a read-only pre-session projection of either a source generator
+spec or original `WallSave` text. It returns wall indices, full bases, front/back/
+trim triangles and colors, separate source collision arrays, ramps and original
+room/opening/furniture metadata. It neither registers authority entities nor
+writes files. A managed regression confirms the accepted world snapshot is
+unchanged by reading it.
+
+`world::buildings::replace` validates the whole projection and prebuilds convex
+compounds before retiring the previous stage. It retains the original Y=2000
+coordinates, reverses clockwise triangles once for Bevy, derives flat normals,
+and uses original uniform colors and roughness. Empty/all-holed replacements
+retire old bodies. Original invisible ramp boxes are separate from stair tread
+meshes, and a fresh saved-text reopen does not recreate omitted ramps.
+
+Source wall solids use world bit 0. Trim uses source bit 6, represented by native
+GROUP4 plus the reserved GROUP17 marker and player filter GROUP2. Actual source
+player movement/headroom includes trim, despite an older nearby comment claiming
+otherwise; zombie/world/vehicle wheel queries exclude it. Throw clearance uses
+the marker to retain source bit 6 while excluding ordinary vehicle HitMesh and
+pane geometry. The future authority geometry export must likewise distinguish
+source-world bit 0 from bit 6; this preview does not upload host collision.
+
+Verification on `.local/building-view-tests-final` and
+`.local/native-building-visual-first`:
+
+- Seven managed building tests pass, including the read-only projection.
+- Three native actual-bridge/Rapier tests plus one throw-mask regression pass:
+  a real capsule crosses the original door aperture, trim masks distinguish
+  player/zombie/vehicle queries, invalid replacement retains the stage, an
+  all-hole replacement removes collision, every generated triangle has the
+  converted winding/normal, and real ramp bases/save-reopen match source.
+- Original Godot and native Vulkan full/cutaway captures both exit 0 and were
+  opened. `artifacts/{godot,bevy}-building-{full,cutaway}.png` show the same roof,
+  apertures, partitions and stair treads. Cutaway hides 27 of 74 original walls
+  while retaining stairs; the stage contains two invisible ramps. The isolated
+  native lighting has darker ambient/shadow fill, so these are surface geometry
+  comparisons, not a whole-scene lighting parity claim. There are no pixel
+  golden assertions. All eight numerical scene outputs remain unchanged after
+  adding the optional renderer.
 
 ## Remaining runtime work
 
-- Native wall/trim/back materials, exact visible and physics meshes, identity,
-  retirement and save/session/origin lifecycle.
+- Normal generator/editor and map placement entry, authority geometry export,
+  save/session/origin lifecycle for an installed building. The validated stage
+  consumer is currently exercised by its actual bridge/render fixtures.
 - Original opening placement: measured door leaf offsets and action modes,
   glass (including original raw opening dimensions), shards and barricades.
 - Original generated furniture and runtime decoration, room services, stairs

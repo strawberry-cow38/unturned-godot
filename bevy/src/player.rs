@@ -1690,7 +1690,8 @@ fn throw_clearance(
         let vehicle = groups.memberships.bits() & Group::GROUP_4.bits() != 0;
         let fallback = groups.filter.bits() & (Group::GROUP_2 | Group::GROUP_4).bits()
             == (Group::GROUP_2 | Group::GROUP_4).bits();
-        !vehicle || fallback
+        let source_prop = groups.memberships.bits() & crate::world::buildings::SOURCE_PROP.bits() != 0;
+        !vehicle || fallback || source_prop
     };
     context
         .cast_ray(
