@@ -526,6 +526,7 @@ public sealed partial class BridgeHost : IDisposable
         if (name == "extractFuel") return new { queued = _client.SendExtractFuel(checked((uint)Int(args, "netId"))) };
         if (name == "drinkHeldFluid") return DrinkHeldFluid(args);
         if (name == "fillHeldFluidAtTap") return FillHeldFluidAtTap(args);
+        if (name is "vendPay" or "vendDrop") return Vend(name, args);
         if (IsRemote) return RemoteAction(name, args);
         if (name == "requestGesture") return RequestGesture(args);
         if (name == "console" && PlayerDebugConsole(Text(args, "text"))) return new { queued = true };

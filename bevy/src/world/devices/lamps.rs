@@ -402,6 +402,7 @@ pub(crate) fn attach(
         {
             commands.entity(entity).insert((
                 Device(Target::SceneryLamp(index)),
+                DeviceTint(crate::deployables::OUTLINE_COLOR),
                 SceneryLamp {
                     name: def.0,
                     health: def.1,

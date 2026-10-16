@@ -1,5 +1,6 @@
 use super::{lamps::*, notes::*, *};
 mod visual;
+mod appliances;
 use crate::{content::ObjData, world::WorldConfig};
 use bevy::time::TimeUpdateStrategy;
 use std::time::Duration;

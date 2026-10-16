@@ -18,7 +18,10 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 
 pub(crate) mod lamps;
+pub(crate) mod monitor;
 pub(crate) mod notes;
+pub(crate) mod radio;
+pub(crate) mod vending;
 #[cfg(test)]
 mod tests;
 
@@ -37,6 +40,10 @@ pub(crate) struct DeviceState {
     epoch: u64,
     /// `LampLight._on`: the manual switch, ON by default.
     pub(crate) lamp_off: std::collections::HashSet<usize>,
+    /// `RadioDevice._on`: OFF by default.
+    pub(crate) radio_on: std::collections::HashSet<usize>,
+    /// `HeartMonitor._on`: ON by default.
+    pub(crate) monitor_off: std::collections::HashSet<usize>,
 }
 
 /// `DayNightCycle.MainsLive`, throttled to 4 Hz as the source scan is.
@@ -54,13 +61,26 @@ impl Default for Mains {
 pub(crate) struct DevicePlugin;
 impl Plugin for DevicePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DeviceState>()
+        register_ecg(app);
+        app.init_resource::<monitor::Clock>()
+            .init_resource::<DeviceState>()
             .init_resource::<Mains>()
             .init_resource::<notes::Texts>()
             .init_resource::<notes::Reader>()
             .add_systems(
                 Update,
-                (reset_epoch, mains, lamps::attach, notes::attach, lamps::grid, lamps::hum)
+                (
+                    reset_epoch,
+                    mains,
+                    (lamps::attach, notes::attach, vending::attach, radio::attach, monitor::attach),
+                    (
+                        lamps::grid,
+                        lamps::hum,
+                        (vending::shake, vending::tint).chain(),
+                        radio::hiss,
+                        monitor::tick,
+                    ),
+                )
                     .chain()
                     .after(crate::entities::WorldServicesReady)
                     .before(CollectInteractions),
@@ -73,12 +93,33 @@ impl Plugin for DevicePlugin {
             )
             .add_systems(
                 Update,
-                (scenery_info, lamps::press, notes::press, notes::draw)
+                (
+                    scenery_info,
+                    lamps::press,
+                    notes::press,
+                    notes::draw,
+                    vending::press,
+                    vending::prompt,
+                    radio::press,
+                    monitor::press,
+                )
                     .chain()
                     .after(CollectInteractions)
                     .before(crate::entities::ApplyInteractions),
+            )
+            .add_systems(
+                Update,
+                radio::board
+                    .after(radio::press)
+                    .run_if(resource_exists::<bevy::text::TextPipeline>),
             );
     }
+}
+
+/// The patient monitor's screen material (`ecg.gdshader`).
+pub(crate) fn register_ecg(app: &mut App) {
+    bevy::asset::embedded_asset!(app, "devices/ecg.wesl");
+    app.add_plugins(MaterialPlugin::<monitor::EcgMaterial>::default());
 }
 
 fn reset_epoch(epoch: Res<WorldSessionEpoch>, mut state: ResMut<DeviceState>) {
@@ -123,6 +164,12 @@ pub(crate) enum Target {
     SceneryLamp(usize),
     /// A `NoteBody`.
     Note(usize),
+    /// A `VendingMachine` (`Vendor_0`/`Vendor_1`).
+    Vendor(usize),
+    /// A `RadioDevice` (`Radio_0`/`Radio_1`).
+    Radio(usize),
+    /// A `HeartMonitor` (`Science_3`).
+    Monitor(usize),
 }
 impl Target {
     pub(crate) fn action(&self) -> (&'static str, Value) {
@@ -130,12 +177,18 @@ impl Target {
             Self::Lamp(i) => ("toggleLamp", json!({"sourceIndex":i})),
             Self::SceneryLamp(i) => ("sceneryDeployable", json!({"sourceIndex":i})),
             Self::Note(i) => ("readNote", json!({"sourceIndex":i})),
+            Self::Vendor(i) => ("vend", json!({"sourceIndex":i})),
+            Self::Radio(i) => ("toggleRadio", json!({"sourceIndex":i})),
+            Self::Monitor(i) => ("toggleMonitor", json!({"sourceIndex":i})),
         }
     }
 }
 /// The device component the ray resolves through, on the prop entity.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Device(pub Target);
+/// The rim colour a device claims (`SetLookFocused`); white when absent.
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct DeviceTint(pub Color);
 
 #[allow(clippy::too_many_arguments)]
 fn collect_focus(
@@ -146,7 +199,7 @@ fn collect_focus(
     mut focus: ResMut<InteractionFocus>,
     camera: Query<&Transform, With<PlayerCamera>>,
     player: Query<Entity, With<PlayerBody>>,
-    devices: Query<&Device>,
+    devices: Query<(&Device, Option<&DeviceTint>)>,
     parents: Query<&ChildOf>,
     context: ReadRapierContext,
 ) {
@@ -179,25 +232,19 @@ fn collect_focus(
     ) else {
         return;
     };
-    let Some((owner, device)) = std::iter::once(hit)
+    let Some((owner, device, tint)) = std::iter::once(hit)
         .chain(parents.iter_ancestors(hit))
-        .find_map(|e| devices.get(e).ok().map(|d| (e, *d)))
+        .find_map(|e| devices.get(e).ok().map(|(d, t)| (e, *d, t.map_or(Color::WHITE, |t| t.0))))
     else {
         return;
     };
+    // Every source device here focuses silently (the scenery lamp and the
+    // vending machine say what they do on their look-at billboard) and claims
+    // the whole prop's rim: white (LampLight, NoteBody, RadioDevice,
+    // HeartMonitor), Deployable.OutlineColor, or the vending state colour.
     let (action, args) = device.0.action();
-    match device.0 {
-        // LampLight/NoteBody.SetLookFocused: the whole prop, white, no prompt.
-        Target::Lamp(_) | Target::Note(_) => {
-            focus.offer_status(distance, "", action, args.clone());
-            focus.outline(action, &args, owner, Color::WHITE);
-        }
-        Target::SceneryLamp(_) => {
-            // Deployable focus: Deployable.OutlineColor and the look-at billboard.
-            focus.offer_status(distance, "", action, args.clone());
-            focus.outline(action, &args, owner, crate::deployables::OUTLINE_COLOR);
-        }
-    }
+    focus.offer_status(distance, "", action, args.clone());
+    focus.outline(action, &args, owner, tint);
 }
 
 /// The look-at billboard of the focused world-scenery lamp, once focus has a

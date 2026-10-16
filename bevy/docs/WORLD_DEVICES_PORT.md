@@ -148,3 +148,89 @@ the source skips them and PEI has no readable notes. Washington places eight.
   points and line pitch; see the height deviation above. Renders:
   `bevy/artifacts/{godot,bevy}-lamp-{light0,lamp1,lamp0}.png`,
   `bevy-lamp-lamp1-outline.png`, `{godot,bevy}-note-military1.png`.
+
+## Checkpoint 2: vending machines, radios and patient monitors
+
+Sources: `game/VendingMachine.cs`, `game/RadioDevice.cs`, `game/HeartMonitor.cs`,
+`game/content/ecg.gdshader`, `game/MpLoopback.cs` (`NetVendPay`/`NetVendDrop`),
+`PlayerController.VendPromptSet`/`CanVend`/`RequestVendPay`/`RequestVendDrop`,
+`WeatherManager.ForecastLine`. PEI places 6 vending machines, 6 radios and 6
+`Science_3` monitors.
+
+### Authority
+
+- **Radio and monitor:** client-local, as in the source. Their feed is
+  `PowerNet.MainsLive || PlugPowered`; the plug is a `ConnectionPort` on a NetId-0
+  fixture that no server wire can reach, so natively the feed is the accepted
+  mains.
+- **Vending:** the machine's state, shake and refusal flash are local. The
+  purchase is the source's listen-host seam: `vendPay` spends one `Currency.StackId`
+  dollar on the server inventory (with `ServerMarkDirty`), and `vendDrop` spawns
+  the can as a replicated world item at the machine's tray when the shake ends.
+  A joined client has no seam in the source (`CanVend` false, "Out of order"); the
+  bridge refuses both actions for a remote session. No wire id was added. The
+  bridge is stricter than the in-process seam: a drop must follow a paid vend
+  and name one of the two drinks (cola 80, soda 465).
+
+### Native
+
+- **Vending** (`world::devices::vending`): `StateFor` order (dispensing, no power,
+  out of order, no funds, ready); the wallet is the owner's own pages' 1056 amount;
+  "can vend" is `owns_world`. The look focus is silent and claims the rim in the
+  state colour, blinking red/white for 0.6 s after a refused press (not while
+  dispensing). The look-at billboard (`VendPromptSet`) shows "Cola Machine"/"Soda
+  Machine" in the livery colour and the state line at `PromptAnchor`. F on a
+  ready machine asks the host to pay; then the 0.45 s decaying shudder off the
+  rest pose, the `inv_heavy_01` clunk, a 1.0 s cooldown, and the can at
+  `DispensePoint` on the tick the shake ends.
+- **Radio** (`radio`): OFF by default, F flips it and clicks (`tv_on`/`tv_off`),
+  the `tv_static` loop plays while on and fed (0.30, unit 1.2, max 6 m). The
+  forecast board ("TODAY  x\nTOMORROW  y" from the accepted weather outlook,
+  "Clear" unless wet) is a depth-tested camera-facing Label3D (pixel 0.0016, font
+  44, outline 10, tint (0.62, 0.90, 1)) at the body centre plus
+  (0, size.y / 2 + 0.22, 0) in the prop's own frame, shown only while on and fed.
+  As in the source, that frame puts it in front of the set rather than above it.
+- **Monitor** (`monitor`, `ecg.wesl`): the screen quad 4 mm in front of the
+  modelled trace with UV (1 - u, v), the ECG shader ported line for line, the
+  off panel in the prop's own (53, 53, 53). ON by default; lit while on and fed.
+  One shared clock drives every monitor; alive units beep (`ecg_beep.ogg`) as the
+  sweep crosses R (phase 0.42), flatlined ones hold `ecg_flat.wav`
+  (-21 dB, unit 7, max 26 m). Each unit is alive with chance 0.7, rolled per client
+  as the source rolls it per world build.
+
+### Deviations and gaps
+
+- The fixtures' power plug cubes (`ConnectionPort`) are not drawn: they are
+  unwireable over the server, and natively there is no local wire graph.
+- Brownout sag, shot-out screens and prop destruction are not ported (as for
+  the lamps). The flatline wav's `smpl` loop region is not honoured: the whole
+  file loops.
+- `ServerMarkDirty` after the spend is kept for parity, but its removal did not
+  fail a test: the bridge's inventory replication echoes the spend regardless.
+
+### Verification
+
+- **Native (`world::devices::tests::appliances`, 7):** the vending state order;
+  the tray and prompt anchor equal the Godot oracle's (`VendingOracle.cs`:
+  anchor (0, 2.8, -0.572), tray (0, 0.30, -1.495)) within 1e-4 m; the forecast
+  line; the monitor quad; a radio that starts off, plays only while switched on
+  and fed and dies with the accepted breakers; a monitor whose ECG shows while on
+  and fed; and a real-bridge journey: broke, the press only flashes and the
+  billboard reads "Insufficient funds -- $1 cola"; with a dollar, F shudders the
+  machine, the server takes exactly one dollar, the machine lands exactly home and
+  the server's cola lies at the tray. Full native suite 898/0.
+- **Managed (`VendingTests`, real UDP):** the host pays exactly one dollar and its
+  can replicates to the joined peer at the tray; no can without a paid vend or for
+  another item; one can per dollar; the joined client is refused both actions and
+  keeps its money. Full managed suite 300/0.
+- **Negative controls:** native: the state order (power vs seam), the radio's
+  default, the monitor's mains gate, the refusal flash, the tray's 0.35 m; managed:
+  the paid-vend guard. Each failed as intended and was restored byte-identical.
+  The `ServerMarkDirty` removal passed (see above).
+- **Visual** (`render_source_proptest_device`, `Main.BuildPropTest`): the alive
+  monitor shows the same trace, amplitude and graticule as the Godot 4.6.2
+  `--proptest=Science_3 UG_LIVE=1` render; the radio board reads "TODAY  Drizzle
+  Rain / TOMORROW  Drizzle Rain" at the same place and size as the Godot day-7
+  render; the vending billboard matches the Godot oracle's text, colour and
+  placement, and the native frame adds the red no-funds rim. Renders:
+  `bevy/artifacts/{godot,bevy}-{monitor-alive,radio-7,vending}.png`.
