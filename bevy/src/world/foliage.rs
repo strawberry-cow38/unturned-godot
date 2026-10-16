@@ -216,15 +216,21 @@ fn update(
     origin: Res<WorldOrigin>,
     field: Res<disturbance::Field>,
     mut materials: ResMut<Assets<FoliageMaterial>>,
+    settings: Option<Res<crate::settings::Settings>>,
 ) {
     let offset = origin.shader_offset();
+    // GraphicsOptions.Wind (WindField.SampleWind returns 0) and
+    // GrassDisplacement (DisturbanceField packs no slots); both client-only.
+    let (wind, displacement) = settings.map_or((true, true), |s| {
+        (s.graphics.wind, s.graphics.grass_displacement)
+    });
     for (_, material) in materials.iter_mut() {
         let motion = &mut material.extension.motion;
-        motion.wind = rain.wind;
+        motion.wind = if wind { rain.wind } else { Vec4::ZERO };
         motion.origin = Vec4::new(
             offset.x,
             offset.y,
-            if field.enabled {
+            if field.enabled && displacement {
                 field.slots.len() as f32
             } else {
                 0.

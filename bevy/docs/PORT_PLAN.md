@@ -134,23 +134,23 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | DONE (`bc01598c`; remote deadzone/tap aim, tank fill, mains switch, Reset Data open) |
 | 9 | Vehicle hand tools: paint, carjack, spare tire, vehicle pour/siphon (cmds 50/55/56, new 99/100; pump fill 29 and generator pour 90 are the power port) | DONE: source timelines, accepted respray render, host-applied carjack, exact-can pour/siphon at v79 (`VEHICLE_HAND_TOOLS_PORT.md`); wheel choice is the authority's lowest flat bit | M | med | agent F (merge with integrator) |
 | 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | DONE (rope checkpoint; remote towing journey with row 16) |
-| 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | queued |
-| 12 | Binoculars, umbrella, fishing | Absent | S-M | low | queued |
+| 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | agent I (in progress) |
+| 12 | Binoculars, umbrella, fishing | Absent | S-M | low | agent I (in progress) |
 | 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | DONE (crops checkpoint, `CROPS_PORT.md`) |
-| 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | agent H (in progress) |
+| 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | DONE (shelves checkpoint, `STORE_SHELVES_PORT.md`; outline glow with the focus-outlines row; back-to-back twin needs server registration) |
 | 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data; joined-client proximity vehicle enter (`RequestEnterNearestPuppet`, 4 m, ranks above crop harvest) | L | high (MP) | queued |
 | 16 | Hybrid dedicated server and moderation | DONE: headless `--dedicated` host, admission restore, autosave/shutdown save, BanStore moderation, sync-check, NetLog, signals, versioned units/deploy script, two-process restart journey ([DEDICATED_SERVER_PORT.md](DEDICATED_SERVER_PORT.md)); remaining: slow-client first-join timeout, remote crash damage on dedicated, claw cut-over | L | high (MP) | agent D (merge with integrator) |
 | 17 | Infinite/finite world MP | Origin protocol, island descriptor negotiation | L | med | queued |
-| 18 | Menus/settings/bug report/launcher | Difficulty/config/island list/arena; limited settings; launcher still Godot | L | med | agent E (in progress) |
+| 18 | Menus/settings/bug report/launcher | Landed: source dashboard/submenus, singleplayer selector (retail, Generate Island, Proc list, Infinite, Zombies rule to the host), full settings rows/tabs/key binds with native effects, hold-to-report outbox/upload. Remaining: barn diorama, Playground world, render scale/distance, sun shafts/fog, SSR, outline, Workshop editor rows, arena (dedicated, row 16), launcher Bevy release path. See [SETTINGS_MENU_PORT.md](SETTINGS_MENU_PORT.md) | L | med | agent E (partial) |
 | 19 | Generated buildings | Preview stage; furniture data only (`61272db6`) | L | med | queued |
-| 20 | World devices (elevator, car lift, crane, train, SAM, flares, magnet, vending, notes, traffic lights, AI drivers) | None native | L | low | queued |
+| 20 | World devices (elevator, car lift, crane, train, SAM, flares, magnet, vending, notes, traffic lights, AI drivers) | None native | L | low | agent K: interactive devices (notes, lamps/switches, TV/radio, vending, monitors, elevator, car lift, traffic lights); trains/crane/SAM/flares/magnet/AI drivers queued |
 | 21 | Fluid networks / item pipes (cmds 64-66) | Not sent; pipe events not bridged | L | low-med | check with power agent |
 | 22 | Map and NPC editor | Absent | XL | low for play | last |
 | — | Nearby AREA operations and selected-item Salvage | Drag/split/equip/drop/Empty/magazine/Salvage | M | high | DONE (`0b3075df`, protocol 77; whole ground drag refused as source) |
 | — | Remaining power utilities | Specialized endpoints, fuel/ramp, consumer lights/audio, readouts | L | med | DONE (`17b9a035`, protocol 78; vehicle pour/siphon with row 9) |
 | — | Fifth-wheel towing | Full-game rocking fixed; remote/MP towing journey, rigid cargo | M | med | integrator |
-| — | Focus outlines (`OutlineOverlay`: items, shelves/containers, notes, puppets, fruit) | No silhouette/rim renderer natively; focus is prompt-only | M | med | queued |
-| — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | queued |
+| — | Focus outlines (`OutlineOverlay`: items, shelves/containers, notes, puppets, fruit) | DONE for items, containers, shelf items, deployables, vehicles (rarity), doors/seats and the Outline toggle (`OUTLINE_PORT.md`); lamps/notes/TVs/radios/vending, skinned NPC bodies, forage fruit and the red tool-can't-act colour remain | M | med | integrator |
+| — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | agent J (in progress) |
 
 N/A: the zombie attack loop/death loot and NPC map placements/quest persistence
 are absent from the source itself. FreezeMode, TargetDummy, DamageNumbers,

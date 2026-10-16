@@ -179,11 +179,14 @@ fn build(
     mut materials: ResMut<Assets<GlassMaterial>>,
     assets: Res<AssetServer>,
     config: Res<WorldConfig>,
+    settings: Option<Res<crate::settings::Settings>>,
 ) {
+    // GraphicsOptions.ScopeSize, read when the optic is next mounted.
+    let size = settings.map_or(720, |s| s.graphics.scope_quality.scope_size());
     for (mount, scope) in &mounts {
         let c = scope.calibration;
         // Preserve linear HDR radiance until the viewmodel's single tonemap.
-        let mut target = Image::new_target_texture(720, 720, TextureFormat::Rgba16Float, None);
+        let mut target = Image::new_target_texture(size, size, TextureFormat::Rgba16Float, None);
         target.sampler = ImageSampler::linear();
         let scene = images.add(target);
         let reticle = scope

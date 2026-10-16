@@ -13,10 +13,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 pub(crate) mod crops;
-mod items;
+pub(crate) mod items;
 pub(crate) mod forage;
 mod map_bindings;
 pub(crate) mod npcs;
+pub(crate) mod shelves;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +66,11 @@ pub struct ItemVisual {
     /// Source vehicle paint/tire/carjack use timeline (Catalog.HandTool).
     #[serde(default)]
     pub hand_tool: Value,
+    /// ItemAsset.size_x/size_y: the unrotated grid footprint.
+    #[serde(default)]
+    pub width: u8,
+    #[serde(default)]
+    pub height: u8,
 }
 #[derive(Resource, Default)]
 pub struct ItemCatalog {
@@ -77,6 +83,8 @@ pub struct ItemCatalog {
     pub(crate) npc_crew: Option<crate::vehicle::turrets::crew::Definition>,
     pub(crate) vehicle_lighting: Option<crate::vehicle::lighting::Definition>,
     pub(crate) vehicle_maintenance: Option<crate::vehicle::maintenance::Definition>,
+    /// ContainerSchema.All, indexed by KindId.
+    pub(crate) containers: Vec<shelves::ContainerKind>,
 }
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
@@ -148,6 +156,7 @@ struct InteractionCandidate {
     open_storage: bool,
     manual: bool,
     show_binding: bool,
+    outline: Option<(Entity, Color)>,
 }
 impl InteractionFocus {
     /// Reserve the closest prompt for a source interaction with its own
@@ -208,6 +217,28 @@ impl InteractionFocus {
     pub fn selected_net_id(&self) -> Option<u64> {
         self.candidate.as_ref().and_then(|c| c.args["netId"].as_u64())
     }
+    /// OutlineOverlay.ShowOutline: the candidate offered as (action, args)
+    /// claims its silhouette and the rim colour, if it is still the winner.
+    pub(crate) fn outline(&mut self, action: &str, args: &Value, target: Entity, color: Color) {
+        if let Some(candidate) = &mut self.candidate
+            && candidate.action == action
+            && candidate.args == *args
+        {
+            candidate.outline = Some((target, color));
+        }
+    }
+    /// The same claim keyed by replicated identity: whichever action the
+    /// winner offered for `net_id` (NetIds are minted from one server space).
+    pub(crate) fn outline_net_id(&mut self, net_id: u32, target: Entity, color: Color) {
+        if let Some(candidate) = &mut self.candidate
+            && candidate.args["netId"].as_u64() == Some(u64::from(net_id))
+        {
+            candidate.outline = Some((target, color));
+        }
+    }
+    pub(crate) fn outlined(&self) -> Option<(Entity, Color)> {
+        self.candidate.as_ref().and_then(|c| c.outline)
+    }
     /// A source F branch tried after every look target except the shelf and
     /// crate ones (`PlayerController` runs `RequestHarvestNearestCrop` before
     /// `_focusShelf`/`OpenNearestCrate`). It has no prompt of its own: a storage
@@ -223,6 +254,7 @@ impl InteractionFocus {
                     open_storage: false,
                     manual: false,
                     show_binding: false,
+                    outline: None,
                 })
             }
             Some(candidate) if candidate.open_storage => {
@@ -248,6 +280,13 @@ impl InteractionFocus {
                 .candidate
                 .as_ref()
                 .is_some_and(|c| c.distance <= distance)
+            // A storage candidate (_focusShelf / OpenNearestCrate) ranks below
+            // the fall-through harvest whichever system offers first.
+            || (open_storage
+                && self
+                    .candidate
+                    .as_ref()
+                    .is_some_and(|c| c.distance == f32::INFINITY))
         {
             return;
         }
@@ -259,6 +298,7 @@ impl InteractionFocus {
             open_storage,
             manual: false,
             show_binding: true,
+            outline: None,
         });
     }
 }
@@ -306,6 +346,7 @@ pub struct EntityPlugin;
 impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
         crops::install(app);
+        shelves::install(app);
         app.add_plugins(npcs::NpcPlugin)
             .init_resource::<ItemCatalog>()
             .init_resource::<ServiceManifest>()
@@ -396,6 +437,8 @@ fn load_catalog(
             serde_json::from_value(response["result"]["vehicleMaintenance"].clone()).ok();
         catalog.vehicle_lighting =
             serde_json::from_value(response["result"]["vehicleLighting"].clone()).ok();
+        catalog.containers =
+            serde_json::from_value(response["result"]["containers"].clone()).unwrap_or_default();
         Ok(serde_json::from_value::<Vec<ItemVisual>>(
             response["result"]["items"].clone(),
         )?)
@@ -779,7 +822,7 @@ fn interact_items(
     ui: Res<UiState>,
     catalog: Res<ItemCatalog>,
     camera: Query<&Transform, With<PlayerCamera>>,
-    items: Query<(&Transform, &WorldItemReplica, &items::Focus)>,
+    items: Query<(Entity, &Transform, &WorldItemReplica, &items::Focus)>,
     mut focus: ResMut<InteractionFocus>,
     context: bevy_rapier3d::prelude::ReadRapierContext,
     player: Query<Entity, With<crate::player::PlayerBody>>,
@@ -813,24 +856,20 @@ fn interact_items(
     forage::offer(&forage, &services, &catalog, origin, direction, wall_distance, &mut focus);
     let nearest = items
         .iter()
-        .filter_map(|(transform, item, shape)| {
+        .filter_map(|(entity, transform, item, shape)| {
             shape
                 .ray(transform, origin, direction, wall_distance)
-                .map(|distance| (distance, item))
+                .map(|distance| (distance, entity, item))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0));
-    if let Some((distance, item)) = nearest {
-        let name = catalog
-            .items
-            .get(&item.item_id)
-            .map_or("Item", |item| item.name.as_str());
-        focus.offer(
-            distance,
-            format!("Pick up {name}"),
-            "pickupItem",
-            json!({"netId":item.net_id}),
-            false,
-        );
+    if let Some((distance, entity, item)) = nearest {
+        let visual = catalog.items.get(&item.item_id);
+        let name = visual.map_or("Item", |item| item.name.as_str());
+        let args = json!({"netId":item.net_id});
+        focus.offer(distance, format!("Pick up {name}"), "pickupItem", args.clone(), false);
+        // WorldItem.SetFocused: the rim takes the item's rarity colour.
+        let rarity = items::rarity_color(visual.map_or("", |v| v.rarity.as_str()));
+        focus.outline("pickupItem", &args, entity, rarity);
     } else {
         let Some((entity, _)) = obstacle else {
             return;
@@ -841,13 +880,16 @@ fn interact_items(
                 .get(&object.source_index)
                 .and_then(|row| row["containerNetId"].as_u64())
             {
+                let args = json!({"netId":id});
                 focus.offer(
                     wall_distance,
                     format!("Open {}", object.asset_name.replace('_', " ")),
                     "openStorage",
-                    json!({"netId":id}),
+                    args.clone(),
                     true,
                 );
+                // StoreShelf.SetShelfFocused: a container is always a plain white rim.
+                focus.outline("openStorage", &args, entity, Color::WHITE);
             }
         }
         if let Ok(resource) = resources.get(entity) {
@@ -926,3 +968,5 @@ fn apply_interaction(
 mod manual_interaction_tests;
 #[cfg(test)]
 mod finite_tests;
+#[cfg(test)]
+mod outline_visual;

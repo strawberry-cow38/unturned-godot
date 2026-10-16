@@ -11,6 +11,10 @@ pub struct Options {
     pub new_island: Option<PathBuf>,
     pub island_name: String,
     pub island_tiles: [usize; 2],
+    /// Generate Island's Lakes box (`--lakes`).
+    pub lakes: bool,
+    /// MainMenuPlay Zombies row; false matches `UG_NOZOMBIES=1` for this session.
+    pub zombies: bool,
     pub network: crate::network::Target,
     pub player_name: String,
     pub network_ready: bool,
@@ -41,6 +45,9 @@ impl Default for Options {
             new_island: None,
             island_name: "Island".into(),
             island_tiles: [3, 3],
+            lakes: false,
+            zombies: !matches!(std::env::var("UG_NOZOMBIES").as_deref(), Ok("1"))
+                && !matches!(std::env::var("UG_DEDICATED_NOZOMBIES").as_deref(), Ok("1")),
             network: crate::network::Target::Local,
             player_name: std::env::var("UG_USERNAME").unwrap_or_else(|_| "Survivor".into()),
             network_ready: false,
@@ -88,6 +95,8 @@ impl Options {
                 "--dedicated" => dedicated = true,
                 "--netlog" => options.netlog = true,
                 "--demo-furniture" => options.demo_furniture = true,
+                "--lakes" => options.lakes = true,
+                "--no-zombies" => options.zombies = false,
                 "--hitch" => {
                     options.hitch = Some(inline.unwrap_or("trailer").to_ascii_lowercase())
                 }
@@ -272,6 +281,8 @@ Usage: bevy/run.sh [options]\n\
   --new-island DIR         Generate original finite editor map in a new directory\n\
   --island DIR             Reopen that map without regenerating authored files\n\
   --island-name NAME --island-tiles 3x3  Finite generation settings\n\
+  --lakes                  Cut inland ponds into a newly generated island\n\
+  --no-zombies             Host without the zombie field (menu Zombies: Off)\n\
   --vehicle jeep          Spawn an original vehicle beside the player for testing\n\
   --hitch[=trailer]        With --vehicle: park that trailer, kingpin under the hitch\n\
   --demo-furniture        Original fallback bed at source map anchor (diagnostic)\n\

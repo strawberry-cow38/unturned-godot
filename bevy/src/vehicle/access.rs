@@ -239,6 +239,9 @@ pub(crate) fn focus(
         // Unimplemented access kinds never silently become a driver door.
         _ => {}
     }
+    // Vehicle.SetLookFocused: the rim takes the vehicle's .dat rarity.
+    let rim = crate::entities::items::rarity_color(&def.spec.rarity.to_ascii_lowercase());
+    focus.outline_net_id(body.net_id, entity, rim);
 }
 
 #[cfg(test)]

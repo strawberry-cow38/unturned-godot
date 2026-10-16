@@ -107,15 +107,19 @@ fn collect(
     diagnostic.gate = "ray stopped on another body".into();
     let owner = std::iter::once(hit)
         .chain(parents.iter_ancestors(hit))
-        .find_map(|e| deployed.get(e).ok());
-    let Some((body, pose)) = owner else { return };
+        .find_map(|e| deployed.get(e).ok().map(|d| (e, d)));
+    let Some((owner, (body, pose))) = owner else { return };
     hovered.0 = Some((body.net_id, body.def_id, pose.translation));
     diagnostic.offered = Some(body.net_id);
     diagnostic.gate = "offered source body".into();
     // The billboard owns the source hint. Reserve generic interaction dispatch
     // without duplicating its binding text in the bottom-center HUD.
     focus.offer_status(distance, "", ACTION, json!({"netId":body.net_id}));
+    // Deployable.SetLookFocused: the neutral vehicle tint (no per-deployable rarity).
+    focus.outline_net_id(body.net_id, owner, OUTLINE_COLOR);
 }
+/// Deployable.OutlineColor.
+const OUTLINE_COLOR: Color = Color::srgb(0.82, 0.83, 0.90);
 
 fn apply(
     hovered: Res<Hovered>,

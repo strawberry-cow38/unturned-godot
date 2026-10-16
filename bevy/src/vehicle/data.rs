@@ -28,6 +28,8 @@ pub struct AccessZone {
 #[serde(rename_all = "PascalCase", default)]
 pub struct VehicleSpec {
     pub name: String,
+    /// .dat Rarity: the look-at outline/label colour (ItemTool.RarityColorUI).
+    pub rarity: String,
     pub body: Option<String>,
     pub wheel: Option<String>,
     pub wheel_tex: Option<String>,

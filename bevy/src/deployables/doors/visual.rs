@@ -171,6 +171,7 @@ fn scene(
 }
 
 fn advance(
+    placer: Res<super::super::placement::Placer>,
     bridge: Res<CoreBridge>,
     mut proof: ResMut<Proof>,
     mut state: ResMut<GameSnapshot>,
@@ -191,9 +192,15 @@ fn advance(
     *camera.single_mut().unwrap() = match stage {
         "ghost" => Transform::from_translation(feet + Vec3::new(0., 1.6, 0.9)).looking_at(spot, Vec3::Y),
         "closed" if !proof.clicked => Transform::from_translation(feet + Vec3::Y * 1.6).looking_at(spot, Vec3::Y),
+        // Within the 2.6 m LookReach to press F, then stand back to frame it.
+        "open" if !proof.toggled => Transform::from_translation(feet + Vec3::new(-0.4, 1.7, -0.5)).looking_at(spot + Vec3::new(-1.1, 1.2, 0.), Vec3::Y),
         _ => Transform::from_translation(feet + Vec3::new(0.6, 1.7, 1.2)).looking_at(spot + Vec3::new(-1.1, 1.2, 0.), Vec3::Y),
     };
-    if stage == "closed" && !proof.clicked && proof.frame > 6 {
+    if stage == "closed" && !proof.clicked && proof.frame > 6
+        // Only once the ghost answers the aim (the window may take focus late).
+        && placer.active
+        && placer.aim.valid
+    {
         for state in [ButtonState::Pressed, ButtonState::Released] {
             events.push(WindowEvent::MouseButtonInput(MouseButtonInput {
                 button: MouseButton::Left,

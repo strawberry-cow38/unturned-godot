@@ -1166,6 +1166,7 @@ namespace UnturnedGodot.Net
         /// business, and shoving a rigid body is the game layer's. Null on a bare host.</summary>
         public Func<ushort, bool> TrySpendTire;        // (sender) -> true if a spare was in the bag and has been taken
         public Action<uint, ushort> ApplyCarjackForce; // (vehicle NetId, sender) -> the impulse, server-side
+        public Func<ushort, bool> OwnsCarjack;          // v79 review: (sender) -> has a carjack (a tool: never spent)
 
         /// <summary>How close you must be to respray a car. Generous like the forage reach and for the same
         /// reason: the server is refusing a forged NetId, not re-deciding what the client may aim at.</summary>
@@ -1215,11 +1216,13 @@ namespace UnturnedGodot.Net
             commands.Register<CarjackCommand>(ReplicationIds.CommandCarjack, CarjackCommand.TryRead,
                 (sender, cmd) =>
                 {
-                    if (ApplyCarjackForce == null) return;
+                    if (ApplyCarjackForce == null || OwnsCarjack == null) return;
+                    if (!_combat.IsAlive(sender)) return;   // v79 review: a dead player cannot crank anything
                     if (!_vehicles.TryGet(new NetId(cmd.VehicleNetId), out var e) || e.Exploded) return;
                     if (e.DriverPlayerId != 0) return;   // retail carjacks an EMPTY vehicle; flipping an occupied one is a weapon
                     if (!_players.TryGetByOwner(sender, out var p)) return;
                     if ((e.Pos - p.Pos).sqrMagnitude > PaintReach * PaintReach) return;
+                    if (!OwnsCarjack(sender)) return;   // v79 review: a forged 56 without the tool launched any empty car
                     ApplyCarjackForce(cmd.VehicleNetId, sender);
                 });
 

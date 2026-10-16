@@ -25,6 +25,14 @@ public sealed partial class BridgeHost : IDisposable
     bool _movingInput;
     float _footNoiseTimer;
     bool _allowCheats = true;
+    /// WorldBuilder.ZombiesDisabled: the menu's Zombies row arrives as init
+    /// `zombies` (ZombiesOverride); without it the source env switches apply.
+    bool _zombiesDisabled;
+    public static bool ZombiesDisabledFor(JsonElement r) =>
+        r.TryGetProperty("zombies", out var z) && z.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? !z.GetBoolean()
+            : Environment.GetEnvironmentVariable("UG_NOZOMBIES") == "1"
+              || Environment.GetEnvironmentVariable("UG_DEDICATED_NOZOMBIES") == "1";
     string _name = "Survivor", _map = "bevy";
     int _correctionVersion;
     bool _ownerReady;
@@ -84,6 +92,9 @@ public sealed partial class BridgeHost : IDisposable
             case "serverProbePoll": return _serverProbe.Poll(r.GetProperty("token").GetInt64());
             case "serverProbeCancel": return _serverProbe.Cancel(r.GetProperty("token").GetInt64());
             case "localProfile": return ReadLocalProfile(r);
+            case "bugReport": return _bugReports.Write(r);
+            case "bugReportRetry": return _bugReports.Retry(r);
+            case "bugReportPoll": return BugReportPoll();
             case "finiteMap": return ReadFiniteMap(r);
             case "buildingView": return ReadBuildingView(r);
             case "finitePopulation": RequireSession(); return RegisterFinitePopulation(r);
@@ -100,6 +111,7 @@ public sealed partial class BridgeHost : IDisposable
                 ConfigureLocalProfile(r); _map = Text(r, "mapId", "bevy");
                 _seed = Int(r, "seed", 1337);
                 _allowCheats = Bool(r, "allowCheats", (_listenPort == 0 || _dedicated) && Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1");
+                _zombiesDisabled = ZombiesDisabledFor(r);
                 if (r.TryGetProperty("origin", out var initialOrigin))
                 {
                     if (initialOrigin.GetArrayLength() != 2) throw new ArgumentException("origin must be [doubleX,doubleZ]");
@@ -141,7 +153,9 @@ public sealed partial class BridgeHost : IDisposable
                 RequireSession();
                 if (_server != null) Dispose(); else { _client.Disconnect(); _remoteMounted?.Clear(); }
                 return new { disconnected = true, ownsWorld = false };
-            case "diagnostics": RequireSession(); return new { host = _server != null, liveBullets = _server?.Combat.LiveBullets, stuckProjectilePoses = _warheads?.LivePoseCount };
+            case "diagnostics": RequireSession(); return new { host = _server != null, liveBullets = _server?.Combat.LiveBullets, stuckProjectilePoses = _warheads?.LivePoseCount,
+                // CommandTakeFromStorage verdicts (ServerTransactionsDiagnostics), host only.
+                shelfTakes = _server == null ? null : new { applied = _server.Transactions.Diag.ShelfTakesApplied, rejected = _server.Transactions.Diag.ShelfTakesRejected } };
             case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), gestures = GestureMetadata(), profileRules = ProfileMetadata(), bulletVisuals = CosmeticBulletServices.Metadata(), mountedWeapons = _catalog.Mounted.GunMetadata(), npcCrew = NpcHeliCrewBody.Metadata(), vehicleLighting = VehicleLightingServices.Metadata(), vehicleMaintenance = VehicleMaintenanceServices.Metadata(), throwMotion = new {
                 speed = HandRules.ThrowSpeed, lift = HandRules.ThrowLift, weakScale = HandRules.WeakThrowScale,
                 releaseFraction = HandRules.ThrowReleaseFraction, cooldown = HandRules.ThrowCooldown,
@@ -278,7 +292,8 @@ public sealed partial class BridgeHost : IDisposable
                 return new { points = _loot.PointCount, live = _loot.LiveCount };
             case "worldWildlife": RequireSession(); return _wildlife.Register(r, _originX, _originZ);
             case "worldCosmeticGeometry": RequireSession(); return _cosmetic.RegisterGeometry(r);
-            case "worldZombies": RequireSession(); return _zombies.Register(r, _originX, _originZ);
+            // A spawn the world never makes cannot be streamed, ticked or replicated.
+            case "worldZombies": RequireSession(); return _zombiesDisabled ? new { disabled = true, chunks = 0, points = 0 } : _zombies.Register(r, _originX, _originZ);
             case "worldZombieState": RequireSession(); return _zombies.Publish(r);
             case "worldZombieNoise": RequireSession(); _zombies.Noise(Vec(r,"position"),Float(r,"radius")); return new{queued=true};
             case "worldSpawns":

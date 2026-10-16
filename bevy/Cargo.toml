@@ -16,6 +16,8 @@ bevy_rapier3d = { version = "=0.37.0", default-features = false, features = ["di
 # Bevy's own (locked) ctrlc with SIGTERM/SIGHUP: `--dedicated` turns systemd's
 # stop into a graceful AppExit that writes the final world save.
 ctrlc = { version = "=3.5.2", features = ["termination"] }
+# BugReporter's microphone; the same cpal Bevy audio already links.
+cpal = { version = "=0.17.3", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Godot LineEdit's primary selection is distinct from the normal clipboard.

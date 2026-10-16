@@ -63,7 +63,12 @@ fn dedicated_init_carries_the_hybrid_save_bans_and_map_root() {
     let mut request = json!({});
     configure_init(&options, &mut request);
     assert!(request.get("savePath").is_none(), "the shared WorldSaveDriver path is set by the session");
-    assert!(request["bansPath"].as_str().unwrap().ends_with("bans.tsv"));
+    let bans = std::path::PathBuf::from(request["bansPath"].as_str().unwrap());
+    assert!(bans.ends_with("bans.tsv"));
+    assert!(
+        bans.starts_with(std::env::temp_dir()) && crate::player::persistence::save_path("PEI").starts_with(std::env::temp_dir()),
+        "tests never touch the real ban list or saves: {bans:?}"
+    );
     assert_eq!(request["mapRoot"], json!("/srv/Unturned/Maps/PEI"));
     let mut listen = json!({});
     configure_init(&Options::parse(["--listen=47002".to_owned()]).unwrap(), &mut listen);

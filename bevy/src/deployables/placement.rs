@@ -58,7 +58,7 @@ pub(crate) struct Placer {
     pub active: bool,
     pub aim: Aim,
     pub gesture: Option<Gesture>,
-    /// The completed place intents, in order, for capture evidence.
+    /// The last eight completed place intents, for capture evidence.
     pub sent: Vec<Value>,
 }
 impl Placer {
@@ -200,7 +200,9 @@ impl Probes<'_, '_> {
             .get(hit)
             .is_ok_and(|g| g.memberships.contains(Group::GROUP_4))
             || self.lineage(hit).any(|e| self.vehicles.contains(e));
-        let attach = !vehicle && !self.lineage(hit).any(|e| self.deployed.contains(e));
+        // DefaultAttachable reads the hit collider's own groups: a deployable
+        // whose collider is its body refuses, a fridge's child StaticBody does not.
+        let attach = !vehicle && !self.deployed.contains(hit);
         Some(Probe {
             point: ray.point,
             normal,
@@ -233,6 +235,8 @@ fn aim(
     // EquipHeldDeployable captures the revert only on the switch INTO a
     // deployable; moving between deployables keeps the original fallback.
     if cell != placer.last {
+        // Any re-equip (EquipHeldDeployable / ClearDeployable) zeroes _placeTimer.
+        placer.gesture = None;
         if held.is_some() && !placer.last_deployable {
             placer.revert = placer.last;
         }
@@ -397,7 +401,9 @@ pub(super) fn act(
                     out.hands.write(HandEvent::Start(held.id));
                 }
             } else if settings.bindings[&GameAction::Aim].matches_window_event(&event.event) {
-                // RMB cancels placement entirely: empty hands.
+                // RMB: Dequip -> ClearDeployable zeroes the place timer at once,
+                // so a gesture in flight never reaches Command 7.
+                placer.gesture = None;
                 out.intents.write(unarmed());
             } else if settings.bindings[&GameAction::Reload].matches_window_event(&event.event) {
                 placer.yaw_offset += 90.;
@@ -425,6 +431,9 @@ pub(super) fn act(
         out.model.notice(error.to_string());
     }
     placer.sent.push(args);
+    if placer.sent.len() > 8 {
+        placer.sent.remove(0);
+    }
     // DoorDeploy.SpawnFor: a DoorProp door is LocalOnly and spawns here on
     // every path, while the host only spends the jar.
     if let Some(prop) = &def.door_prop {

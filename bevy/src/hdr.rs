@@ -70,8 +70,10 @@ struct ViewmodelTarget {
     size: UVec2,
 }
 #[derive(Resource)]
-struct SourceSettings {
+pub(crate) struct SourceSettings {
     enabled: bool,
+    /// GraphicsOptions.Bloom; UG_NOGLOW remains a separate ablation.
+    pub(crate) menu_bloom: bool,
     aces: bool,
     intensity: f32,
     threshold: f32,
@@ -88,6 +90,7 @@ impl Default for SourceSettings {
         };
         Self {
             enabled: std::env::var("UG_NOGLOW").as_deref() != Ok("1"),
+            menu_bloom: true,
             aces: std::env::var("UG_LINEAR").as_deref() != Ok("1"),
             intensity: number("UG_GLOW", 0.8),
             threshold: number("UG_GLOWTHRESH", 0.9),
@@ -96,6 +99,9 @@ impl Default for SourceSettings {
     }
 }
 impl SourceSettings {
+    pub(crate) fn glow_enabled(&self) -> bool {
+        self.enabled && self.menu_bloom
+    }
     fn world(&self, night: bool, military: bool, scope: bool) -> HdrSettings {
         let (intensity, bloom, threshold) = if !night {
             (1., 0.1, 1.)
@@ -106,7 +112,7 @@ impl SourceSettings {
         };
         HdrSettings {
             glow: Vec4::new(
-                if self.enabled {
+                if self.glow_enabled() {
                     self.intensity * intensity
                 } else {
                     0.
@@ -125,7 +131,7 @@ impl SourceSettings {
     }
     fn viewmodel(&self) -> HdrSettings {
         HdrSettings {
-            glow: Vec4::new(if self.enabled { 0.9 } else { 0. }, 0.15, 1.25, 1.),
+            glow: Vec4::new(if self.glow_enabled() { 0.9 } else { 0. }, 0.15, 1.25, 1.),
             tone: Vec4::new(u8::from(self.aces) as f32, 1., 0., 0.),
         }
     }

@@ -131,10 +131,11 @@ namespace UnturnedGodot.Net
         /// fixtures which mint their NetIds off this same server.</summary>
         public IFuelStation FuelStations;
 
-        /// <summary>Seat query for the console teleport (#27): while seated the seat teleport owns the
-        /// entity (ServerVehicles.Step re-asserts it every tick), so a ServerTeleport would silently lose
-        /// the fight -- reject instead. NetWorldServer wires this to VehicleHost.IsDriver (it's built
-        /// after this object); null (bare L0 harnesses without vehicles) = never seated.</summary>
+        /// <summary>Seat query (any seat). The console teleport (#27) rejects a seated sender because the
+        /// seat teleport owns the entity (ServerVehicles.Step re-asserts it every tick), so a ServerTeleport
+        /// would silently lose the fight; deployable placement rejects one because no seated hand reaches
+        /// the ghost. NetWorldServer wires this to VehicleHost.IsSeated (it's built after this object);
+        /// null (bare L0 harnesses without vehicles) = never seated.</summary>
         public Func<ushort, bool> IsSeated;
         /// <summary>Optional host hook for accepted console teleports. A client-driven owner
         /// needs its recovery/freeze event immediately, even when the host drains commands
@@ -264,6 +265,13 @@ namespace UnturnedGodot.Net
         /// one for a single id. False when they have none, which is what makes the handler's ordering matter:
         /// everything else is checked first, and this is the step that cannot be undone.</summary>
         public ushort TireItemId;   // set by the host from the game layer's PlayerController.TireItemId
+
+        /// <summary>v79 review: the carjack is a TOOL (PlayerController.ApplyCarjack: "The jack is NOT
+        /// consumed -- it is a tool, and retail keeps it"), so the shove asks only that the sender really has
+        /// one. Without it a forged CommandCarjack launched any empty car in reach.</summary>
+        public ushort CarjackItemId;   // set by the host from the game layer's PlayerController.CarjackItemId
+        public bool OwnsCarjack(ushort sender)
+            => CarjackItemId != 0 && SenderInventory(sender) is { } inv && inv.getItemCount(CarjackItemId) > 0;
         public bool SpendTire(ushort sender)
         {
             if (TireItemId == 0) return false;

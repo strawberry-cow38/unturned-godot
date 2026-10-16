@@ -62,7 +62,9 @@ public sealed partial class BridgeHost
         // Construct the field before mutating the other services, so missing
         // original table content fails without partially installing the plan.
         var field = new RetailLootStreamer(mapRoot,loot,_server,_geometry);
-        var z = _zombies.Register(JsonSerializer.SerializeToElement(new {mapRoot,points=zombies}),0,0);
+        // EditorPlayMode honours WorldBuilder.ZombiesDisabled for generated points too.
+        object z = _zombiesDisabled ? new { disabled = true, chunks = 0, points = 0 }
+            : _zombies.Register(JsonSerializer.SerializeToElement(new {mapRoot,points=zombies}),0,0);
         var a = _wildlife.Register(JsonSerializer.SerializeToElement(new {mapRoot,points=animals}),0,0);
         var spec = JsonSerializer.SerializeToElement(new {finiteVehicles=vehicles});
         AdoptFinitePopulation(spec); _serviceSpecs.Add(spec); _worldChanged = true;

@@ -16,8 +16,10 @@ struct Routed;
 pub(crate) const HUD_ORDER: isize = 3;
 pub(crate) const DASHBOARD_ORDER: isize = 4;
 pub(crate) const TOOL_ORDER: isize = 5;
-pub(crate) const MODAL_ORDER: isize = 6;
-pub(crate) const CONSOLE_ORDER: isize = 7;
+/// OutlineOverlay's CanvasLayer 50: above the layer-40 tool label.
+pub(crate) const OUTLINE_ORDER: isize = 6;
+pub(crate) const MODAL_ORDER: isize = 7;
+pub(crate) const CONSOLE_ORDER: isize = 8;
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CanvasRouting;
 pub(crate) struct LayersPlugin;
@@ -111,7 +113,8 @@ mod tests {
             2 < HUD_ORDER
                 && HUD_ORDER < DASHBOARD_ORDER
                 && DASHBOARD_ORDER < TOOL_ORDER
-                && TOOL_ORDER < MODAL_ORDER
+                && TOOL_ORDER < OUTLINE_ORDER
+                && OUTLINE_ORDER < MODAL_ORDER
                 && MODAL_ORDER < CONSOLE_ORDER
         );
     }

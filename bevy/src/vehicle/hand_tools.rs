@@ -288,6 +288,16 @@ type TargetQuery<'w, 's> = Query<
         Option<&'static RigidBody>,
     ),
 >;
+/// `_focusVehicle` survives unless something else won the look: a car with
+/// no prompt of its own (a wreck's hood zone) is still the source focus.
+pub(crate) fn focus_allows(focus: Option<&InteractionFocus>, net_id: u32) -> bool {
+    focus.is_none_or(|f| !f.has_candidate() || f.selected_net_id() == Some(u64::from(net_id)))
+}
+/// Vehicle.Carjack's `OccupiedSeats.Count > 0`. Core never shrinks the
+/// passenger array (ServerSetSeat writes 0 on leave), so a vacated seat is 0.
+pub(crate) fn occupied(body: &VehicleBody) -> bool {
+    body.driver_player_id != 0 || body.passengers.iter().any(|p| *p != 0)
+}
 fn target(
     (entity, body, pose, velocity, jack, rigid): (Entity, &VehicleBody, &Transform, Option<&Velocity>, Option<&JackState>, Option<&RigidBody>),
     owns: bool,
@@ -300,7 +310,7 @@ fn target(
         net_id: body.net_id,
         position: pose.translation,
         wreck: body.flags & 32 != 0,
-        occupied: body.driver_player_id != 0 || !body.passengers.is_empty(),
+        occupied: occupied(body),
         popped: body.popped_tire_mask,
         speed_sq: linear.length_squared(),
         jackable: (probe && simulated).then(|| {
@@ -378,7 +388,7 @@ fn input(
         .0
         .filter(|_| active)
         .and_then(|e| bodies.get(e).ok())
-        .filter(|row| focus.as_ref().is_none_or(|f| f.selected_net_id() == Some(u64::from(row.1.net_id))))
+        .filter(|row| focus_allows(focus.as_deref(), row.1.net_id))
         .map(|row| target(row, owns, rapier, jack));
     let find = |id: u32| {
         bodies.iter().find(|r| r.1.net_id == id).map(|row| target(row, owns, rapier, false))
@@ -571,15 +581,24 @@ fn apply_jacks(
             continue;
         };
         // Only the body this process simulates can be shoved; everyone else
-        // sees the launch in the ordinary transform stream.
-        if *rigid != RigidBody::Dynamic
-            || body.flags & 32 != 0
-            || body.driver_player_id != 0
-            || !body.passengers.is_empty()
-            || !jackable(jack.map_or(0., |j| j.slow_for), velocity.linear.y, || {
-                rapier.as_ref().map_or(AGL_OPEN_AIR, |c| probe_agl(c, entity, pose.translation))
-            })
-        {
+        // sees the launch in the ordinary transform stream. Refusals are the
+        // host's (the jacker may be remote), so they are logged as the source
+        // Log.Prints them, not shown.
+        let refusal = if *rigid != RigidBody::Dynamic {
+            Some("not simulated here (outside the loaded collision region or held by another owner)")
+        } else if body.flags & 32 != 0 {
+            Some("that is a wreck")
+        } else if occupied(body) {
+            Some("somebody is in it")
+        } else if !jackable(jack.map_or(0., |j| j.slow_for), velocity.linear.y, || {
+            rapier.as_ref().map_or(AGL_OPEN_AIR, |c| probe_agl(c, entity, pose.translation))
+        }) {
+            Some("it is still in the air -- let it come down")
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            info!("[carjack] host refused #{id}: {reason}");
             continue;
         }
         let Some(d) = super::data::definition(body.type_id) else {

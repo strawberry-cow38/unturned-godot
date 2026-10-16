@@ -358,8 +358,10 @@ namespace UnturnedGodot.Net
             // the content table. One hook rather than each growing a copy of the other's half.
             VehicleHost.TrySpendPaint = (sender, itemId) => Transactions.SpendPaintCan(sender, itemId);
             VehicleHost.TrySpendTire = sender => Transactions.SpendTire(sender);   // v45
+            VehicleHost.OwnsCarjack = sender => Transactions.OwnsCarjack(sender);   // v79 review: the tool must be in the bag
             VehicleStorage = new ServerVehicleStorage(Inventories, Vehicles, Ids);   // v58
             Transactions.VehicleStorage = VehicleStorage;
+            Transactions.CarjackItemId = 277;   // retail Carjack; the game layer's PlayerController.CarjackItemId is the same constant
             Transactions.TireItemId = 1451;   // v45: retail's generic Tire. Core has no item catalogue and should not grow one for a single id; the game layer's PlayerController.TireItemId is the same constant and the pair is asserted by TireWireTests.
             // ApplyCarjackForce stays unset here: shoving a rigid body is the GAME layer's, and a bare host
             // (the wire tests) has no bodies to shove. VehicleNetSync sets it.

@@ -46,7 +46,8 @@ public sealed partial class BridgeHost
     {
         if (!IsRemote || operation is "init" or "disconnect" or "shutdown" or "simulate" or "tick" or "snapshot"
             or "catalog" or "powerView" or "worldSpawns" or "npcCatalog" or "npcView" or "diagnostics" or "action" or "terrain" or "reconnect"
-            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel" or "mapBindings" or "profileAvatar" or "profileRules" or "localProfile" or "setLocalFace" or "attachmentOptions" or "craftingView" or "inventoryView") return;
+            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel" or "mapBindings" or "profileAvatar" or "profileRules" or "localProfile" or "setLocalFace" or "attachmentOptions" or "craftingView" or "inventoryView"
+            or "bugReport" or "bugReportRetry" or "bugReportPoll") return;
         throw new InvalidOperationException($"{operation} requires world authority; this session is a remote client");
     }
 

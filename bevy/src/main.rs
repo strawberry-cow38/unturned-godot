@@ -1,5 +1,6 @@
 mod avatar;
 mod bridge;
+mod bugreport;
 mod bullets;
 mod character;
 mod cli;
@@ -10,6 +11,7 @@ mod entities;
 mod environment;
 mod hdr;
 mod nightvision;
+mod outline;
 mod network;
 mod impact;
 mod info_billboard;
@@ -24,6 +26,7 @@ mod settings;
 mod sound;
 mod survival;
 mod footsteps;
+mod graphics;
 mod ui;
 mod use_items;
 mod vehicle;
@@ -112,6 +115,7 @@ fn main() -> Result<()> {
         .content
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("locating bundled game content: {e}"))?;
+    let boot = graphics::Boot::from(&settings, options.fixed_fps.is_some());
     let mut app = App::new();
     if let Some(fps) = options.fixed_fps {
         let frame = std::time::Duration::from_secs_f64(1. / f64::from(fps));
@@ -120,7 +124,28 @@ fn main() -> Result<()> {
         app.insert_resource(clock);
         app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(frame));
     }
+    let mut defaults = DefaultPlugins
+        .set(AssetPlugin {
+            file_path: asset_path.to_string_lossy().into_owned(),
+            ..default()
+        })
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Unturned · Bevy".into(),
+                resolution: (1280, 720).into(),
+                present_mode,
+                mode: graphics::window_mode(settings.graphics.fullscreen),
+                ..default()
+            }),
+            ..default()
+        })
+        .set(ImagePlugin::default_nearest());
+    if !boot.render_thread {
+        // GraphicsOptions render thread "Single": read once at launch.
+        defaults = defaults.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
+    }
     app.insert_resource(bridge)
+        .insert_resource(boot)
         .insert_resource(profile)
         .insert_resource(config)
         .insert_resource(settings)
@@ -131,31 +156,17 @@ fn main() -> Result<()> {
         })
         .insert_resource(LaunchOptions(options))
         .insert_resource(ClearColor(Color::srgb(0.48, 0.67, 0.81)));
-    let asset_path = asset_path.to_string_lossy().into_owned();
     if dedicated {
         dedicated::install_signal_handler();
         app.insert_resource(dedicated::virtual_clock());
-        app.add_plugins((dedicated::plugins(asset_path), dedicated::runner()));
+        app.add_plugins((
+            dedicated::plugins(asset_path.to_string_lossy().into_owned()),
+            dedicated::runner(),
+        ));
     } else {
-        app.add_plugins(
-            DefaultPlugins
-                .set(AssetPlugin {
-                    file_path: asset_path,
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Unturned · Bevy".into(),
-                        resolution: (1280, 720).into(),
-                        present_mode,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(ImagePlugin::default_nearest()),
-        );
+        app.add_plugins(defaults);
     }
-    add_game_plugins(&mut app);
+    add_game_plugins(&mut app, dedicated);
     if dedicated {
         app.add_plugins(dedicated::DedicatedPlugin);
         // A signal is the normal stop (Bevy's handler exits with 130); only a
@@ -177,7 +188,7 @@ fn main() -> Result<()> {
 
 /// The game and host plugins, shared by the windowed client and the headless
 /// dedicated server (which keeps them for their host-authority systems).
-fn add_game_plugins(app: &mut App) {
+fn add_game_plugins(app: &mut App, dedicated: bool) {
     app.add_plugins((
         RapierPhysicsPlugin::<vehicle::PhysicsHooks>::default().in_fixed_schedule(),
         content::ContentPlugin,
@@ -206,6 +217,17 @@ fn add_game_plugins(app: &mut App) {
         footsteps::FootstepPlugin,
         survival::SurvivalPlugin,
     ));
+    // Screen-only presentation: the window/camera/frame limiter, the bug
+    // reporter (which records the microphone) and the focus outline have
+    // nothing to act on without a window or a local player, and the frame
+    // limiter would throttle the headless authority loop.
+    if !dedicated {
+        app.add_plugins((
+            graphics::GraphicsPlugin,
+            bugreport::BugReportPlugin,
+            outline::OutlinePlugin,
+        ));
+    }
 }
 
 fn capture_frame(

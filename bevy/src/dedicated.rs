@@ -77,6 +77,13 @@ pub fn plugins(asset_path: String) -> PluginGroupBuilder {
             ..default()
         })
         .set(ImagePlugin::default_nearest())
+        .set(bevy::log::LogPlugin {
+            // bevy_render's CameraPlugin registers a ClearColor extraction even
+            // when no render world exists, and logs that as an error once at
+            // boot. Nothing is extracted or rendered here.
+            filter: format!("{},bevy_extract::extract_resource=off", bevy::log::DEFAULT_FILTER),
+            ..default()
+        })
         .disable::<WinitPlugin>()
         .disable::<bevy::gilrs::GilrsPlugin>()
 }
@@ -190,6 +197,14 @@ pub(crate) fn configure_init(options: &Options, request: &mut Value) {
 /// BanStore.ResolvePath with the hybrid user directory standing in for
 /// Godot's `user://`.
 fn bans_path() -> PathBuf {
+    // Tests stay in Settings::path()'s per-process temp directory, like the
+    // saves (persistence::save_dir), even on a box exporting the overrides.
+    #[cfg(test)]
+    return crate::settings::Settings::path()
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("bans.tsv");
+    #[allow(unreachable_code)]
     if let Some(path) = std::env::var_os("UG_BANS_FILE").filter(|p| !p.is_empty()) {
         return path.into();
     }

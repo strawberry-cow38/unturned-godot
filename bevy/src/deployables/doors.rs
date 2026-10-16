@@ -22,8 +22,8 @@ mod tests;
 mod visual;
 
 const ACTION: &str = "placedDoor";
-/// The interactables door look ray (source `_focusObjectDoor`).
-const REACH: f32 = 4.;
+/// `PlayerController.LookReach`: the eye ray that sets `_focusObjectDoor`.
+const REACH: f32 = 2.6;
 /// `ObjectDoor.CooldownSec`.
 const COOLDOWN: f64 = 0.35;
 /// `WoodenLeaves`: the container leaves' 0.4667 s, not retail's 0.6333 s.
@@ -111,6 +111,8 @@ pub(crate) struct PlacedDoor {
     pub swing: f32,
     pub open: bool,
     pub solid: bool,
+    /// `_pendingSolid`: at rest but a body stood in the leaf's volume.
+    pending: bool,
     last_toggle: Option<f64>,
 }
 #[derive(Resource, Default)]
@@ -239,6 +241,7 @@ fn spawn(
             swing: 0.,
             open: false,
             solid: false,
+            pending: true,
             last_toggle: None,
         });
     }
@@ -344,13 +347,16 @@ fn toggle(
     }
 }
 
-/// `_PhysicsProcess`/`ApplySwing`/`TrySolidify`: never solid mid-swing, and
-/// solid at rest only once no player stands in the leaf's volume.
+/// `_PhysicsProcess`/`ApplySwing`/`TrySolidify`: never solid mid-swing; at an
+/// endpoint (or while still pending) solid only once no player or zombie
+/// stands in the leaf's volume. A settled door is not re-queried.
+#[allow(clippy::too_many_arguments)]
 fn animate(
     mut commands: Commands,
     time: Res<Time>,
     context: ReadRapierContext,
     players: Query<Entity, With<PlayerBody>>,
+    zombies: Query<(), With<crate::zombie::ZombieBody>>,
     globals: Query<&GlobalTransform>,
     parents: Query<&ChildOf>,
     mut placed: Query<(Entity, &mut PlacedDoor)>,
@@ -359,6 +365,7 @@ fn animate(
     let context = context.single().ok();
     for (entity, mut door) in &mut placed {
         let target = if door.open { 1. } else { 0. };
+        let old = door.swing;
         let step = time.delta_secs() / door.leaf.duration.max(0.05);
         door.swing = if door.swing < target {
             (door.swing + step).min(target)
@@ -373,7 +380,17 @@ fn animate(
             *c = collider;
         }
         let at_rest = door.swing <= 0.001 || door.swing >= 0.999;
+        if !at_rest {
+            door.pending = false;
+        } else if old == door.swing && !door.pending {
+            continue;
+        }
         let mut solid = at_rest;
+        let body = |hit: Entity| {
+            std::iter::once(hit)
+                .chain(parents.iter_ancestors(hit))
+                .any(|e| players.contains(e) || zombies.contains(e))
+        };
         if at_rest
             && let (Some(context), Ok(parent)) = (&context, parents.get(entity))
             && let Ok(frame) = globals.get(parent.parent())
@@ -385,13 +402,14 @@ fn animate(
                 translation,
                 rotation,
                 &shape,
-                QueryFilter::default().predicate(&|hit, _| players.contains(hit)),
+                QueryFilter::default().predicate(&|hit, _| body(hit)),
                 |_, _| {
                     solid = false;
                     false
                 },
             );
         }
+        door.pending = at_rest && !solid;
         if solid != door.solid {
             if solid {
                 commands.entity(entity).remove::<ColliderDisabled>();
