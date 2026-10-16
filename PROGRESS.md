@@ -3006,3 +3006,10 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - the reference car keeping its spawn paint;
   - the flat tyre gone, then back on;
   - the jacked car in flight, rising from 0.58 m to 1.96 m.
+- Review fixes, each guarded by a test that fails under revert:
+  - Occupancy now counts only non-zero passenger slots. Core `ServerSetSeat` writes 0 on leave, so any car once ridden in had become unjackable.
+  - Command 56 now refuses a dead sender or one without carjack 277 at core's choke point. The jack is never spent, as in the source.
+  - A car with no prompt (a wreck's hood) stays the tool focus.
+  - The first-person tools are unit-tested and rendered. The source `--vm` harness showed `Jack_Equip` loops as the carry hold, and native now honours that loop for hand tools only.
+  - Documented: commands 99/100 are bridge-only, and host carjack refusals are logged.
+  - Tests: core `CarjackAuthorityTests`, the managed refusal test (now with a positive ending), native occupancy/focus/viewmodel tests, and the frames `bevy-tool-viewmodel-*` beside `godot-source-carjack-vm-*`.
