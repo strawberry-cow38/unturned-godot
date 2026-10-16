@@ -126,7 +126,8 @@ public sealed partial class ZombieServices
         {u.Body.GlobalPosition=G(u.Position);u.Body.Velocity=G(u.Velocity);u.Body.Yaw=u.Yaw;if(u.Motion.HasValue)u.Body.Motion=u.Motion;}
         return new{published=updates.Count};
     }
-    public object[] Snapshots(NetWorldClient client)=>client.Zombies.All.Select(e=>{
+    public object[] Snapshots(NetWorldClient client)=>Snapshots(client.Zombies);
+    public object[] Snapshots(ZombieReplication zombies)=>zombies.All.Select(e=>{
         _bodies.TryGetValue(e.NetIdValue,out var b);var outfit=b?.Wardrobe;
         return(object)new{netId=e.NetIdValue,position=Array(e.Pos),yaw=e.YawDegrees,animState=e.AnimState,speciality=e.Speciality,
             hasBody=b!=null,hotBody=b!=null&&!b.Dead,hostPosition=b==null?null:Array(U(b.GlobalPosition)),hostYaw=b?.Yaw,

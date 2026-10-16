@@ -24,6 +24,8 @@ pub(crate) use crafting_eye::CraftingEye;
 #[cfg(test)]
 mod network_tests;
 #[cfg(test)]
+mod dedicated_tests;
+#[cfg(test)]
 mod seated_tests;
 #[cfg(test)]
 mod mounted_tests;
@@ -59,14 +61,16 @@ impl Plugin for PlayerPlugin {
             .init_resource::<lean::LeanState>()
             .init_resource::<GameSnapshot>()
             .init_resource::<CraftingEye>()
-            .add_systems(Startup, spawn_player.after(WorldReady))
+            // A dedicated host has no local body, camera or input: its own
+            // driver ticks the bridge (crate::dedicated); session setup is shared.
+            .add_systems(Startup, spawn_player.after(WorldReady).run_if(crate::dedicated::has_local_player))
             .add_systems(
                 Update,
                 (
                     initialize_session,
                     ui_intents,
                     crate::world::origin::adopt_authority,
-                    read_input,
+                    read_input.run_if(crate::dedicated::has_local_player),
                     physics_configuration,
                 )
                     .chain()
@@ -78,24 +82,27 @@ impl Plugin for PlayerPlugin {
                 Update,
                 (sync_seated_body, camera_follow)
                     .chain()
+                    .run_if(crate::dedicated::has_local_player)
                     .in_set(PlayerCameraUpdate)
                     .after(crate::vehicle::VehicleUpdate)
                     .after(PlayerUpdate),
             )
-            .add_systems(FixedUpdate, lean::step.before(simulate))
+            .add_systems(FixedUpdate, lean::step.before(simulate).run_if(crate::dedicated::has_local_player))
             .add_systems(
                 Update,
-                lean::ease.after(PlayerUpdate).before(PlayerCameraUpdate),
+                lean::ease.after(PlayerUpdate).before(PlayerCameraUpdate).run_if(crate::dedicated::has_local_player),
             )
             .add_systems(
                 FixedUpdate,
                 simulate
+                    .run_if(crate::dedicated::has_local_player)
                     .in_set(SimulatePlayer)
                     .before(PhysicsSet::SyncBackend),
             )
             .add_systems(
                 FixedUpdate,
                 publish_body
+                    .run_if(crate::dedicated::has_local_player)
                     .in_set(PublishPlayer)
                     .after(PhysicsSet::Writeback)
                     .after(crate::vehicle::VehiclePublish),
@@ -107,7 +114,7 @@ impl Plugin for PlayerPlugin {
 pub struct GameSnapshot(pub Value);
 
 #[derive(Resource)]
-struct Session {
+pub(crate) struct Session {
     initialized: bool,
     failed: bool,
     correction_version: u64,
@@ -116,6 +123,13 @@ struct Session {
     was_connected: bool,
     reject_retries: u8,
     heights: StanceHeights,
+}
+
+impl Session {
+    /// The bridge refused or lost `init` (e.g. an occupied UDP port).
+    pub(crate) fn failed(&self) -> bool {
+        self.failed
+    }
 }
 
 impl Default for Session {
@@ -352,6 +366,7 @@ fn initialize_session(
     }
     request["useLocalProfile"] = json!(profile.is_some_and(|profile| profile.ready));
     options.0.network.configure(&mut request);
+    crate::dedicated::configure_init(&options.0, &mut request);
     match bridge.request("init", request) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
             model.reset_session();
@@ -633,7 +648,7 @@ fn ui_intents(
     }
 }
 
-fn save_path(map: &str) -> std::path::PathBuf {
+pub(crate) fn save_path(map: &str) -> std::path::PathBuf {
     let base = std::env::var_os("UG_BEVY_SAVES")
         .or_else(|| std::env::var_os("UG_SAVE_DIR"))
         .map(std::path::PathBuf::from)

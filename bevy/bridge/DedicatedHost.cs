@@ -1,0 +1,328 @@
+using System.Text.Json;
+using SDG.NetTransport;
+using SDG.Unturned;
+using UnturnedGodot;
+using UnturnedGodot.Net;
+using UnityEngine;
+
+namespace UnturnedBevy;
+
+// Hybrid port of game/DedicatedServer.cs (+ WorldSaveDriver timing and the
+// BanStore wiring). The bridge owns the authoritative NetWorldServer over UDP
+// with NO local client: no player slot, no body, no owner snapshot. The
+// headless native host (`unturned-bevy --dedicated`) keeps the parts that need
+// physics -- world collision, vehicle bodies, zombie HOT bodies, NPC flight --
+// and publishes them through the same world* operations a listen host uses.
+//
+// Boot order follows the source: the world is built and registered first, then
+// `dedicatedServe` loads the save (the existing `load` path) and only then does
+// the session start ticking, so no client ever sees the pre-restore world.
+public sealed partial class BridgeHost
+{
+    /// <summary>WorldSaveDriver.AutosaveSeconds.</summary>
+    public const double DedicatedAutosaveSeconds = 60.0;
+    /// <summary>Source DedicatedServer.Replicate: a 10 s heartbeat (500 ticks).</summary>
+    const long DedicatedHeartbeatTicks = 500;
+
+    bool _dedicated, _serving, _stopped, _netlog;
+    string _savePath, _dedicatedMapRoot;
+    bool _pvp = true;
+    int _maxPing;
+    byte[] _icon;
+    bool _announceDeaths = true;
+    DeathMessageOptions _deathMessages;
+    double _sinceSave;
+    long _lastHeartbeatTick;
+    Vector3 _dedicatedFallbackSpawn;
+
+    /// <summary>True while this process hosts a dedicated world; Program.cs then
+    /// leaves SIGTERM/SIGINT to the native parent, which asks for the final save.</summary>
+    public bool DedicatedActive => _dedicated && _server != null && !_stopped;
+
+    static string Env(string key) => Environment.GetEnvironmentVariable(key);
+
+    void ConfigureDedicated(JsonElement request)
+    {
+        _dedicated = Bool(request, "dedicated");
+        _serving = false; _stopped = false;
+        if (!_dedicated) return;
+        if (IsRemote) throw new ArgumentException("dedicated and connectHost are mutually exclusive");
+        if (_listenPort == 0) throw new ArgumentException("A dedicated server requires listenPort");
+        if (Bool(request, "starterKit")) throw new ArgumentException("starterKit needs a local player; a dedicated server has none");
+        if (request.TryGetProperty("finiteDirectory", out _)) throw new ArgumentException("Finite islands are not hosted by the dedicated server yet");
+        _savePath = Text(request, "savePath");
+        if (_savePath.Length == 0) throw new ArgumentException("A dedicated server requires savePath");
+        _savePath = Path.GetFullPath(_savePath);
+        _dedicatedMapRoot = Text(request, "mapRoot");
+        // BanStore resolves UG_BANS_FILE / UG_SAVE_DIR itself; its last resort is
+        // Godot's user://, which this process has not got: keep it beside the save.
+        string bans = Text(request, "bansPath");
+        if (bans.Length > 0) BanStore.Path = Path.GetFullPath(bans);
+        else if (BanStore.Path.StartsWith("user://", StringComparison.Ordinal))
+            BanStore.Path = Path.Combine(Path.GetDirectoryName(_savePath)!, "bans.tsv");
+
+        // Source DedicatedServer._Ready reads the operator's UG_* environment once
+        // at boot. An explicit request value (the native CLI) wins over it.
+        if (!request.TryGetProperty("serverName", out _)) _serverName = Env("UG_NAME") is { Length: > 0 } name ? name : "";
+        if (!request.TryGetProperty("motd", out _)) _motd = Env("UG_MOTD") is { Length: > 0 } motd ? motd : "";
+        if (!request.TryGetProperty("maxPlayers", out _))
+        {
+            // There is no local player to count, so every seat is a remote one.
+            _maxPeers = int.TryParse(Env("UG_MAXPLAYERS"), out int seats) && seats > 0 ? seats : 24;
+            if (_maxPeers > 32) throw new ArgumentException("UG_MAXPLAYERS must be 1..32");
+        }
+        // UG_PVE only changes what the browser advertises: source DedicatedServer
+        // never touches Combat.PvPEnabled outside the arena match gate.
+        _pvp = Env("UG_PVE") != "1";
+        _maxPing = int.TryParse(Env("UG_MAXPING"), out int ping) && ping > 0 ? ping : 0;
+        _icon = null;
+        if (Env("UG_ICON") is { Length: > 0 } icon)
+        {
+            // Read once at boot: a status responder that touches the disk is one a stranger can make touch the disk.
+            try
+            {
+                byte[] png = File.ReadAllBytes(icon);
+                if (png.Length > SDG.NetTransport.Udp.UdpServerTransport.IconMaxBytes)
+                    Log.Err($"[DEDICATED] server icon {icon} is {png.Length} B, over the {SDG.NetTransport.Udp.UdpServerTransport.IconMaxBytes} B limit -- not published");
+                else { _icon = png; Log.Print($"[DEDICATED] server icon published ({png.Length} B)"); }
+            }
+            catch (Exception e) { Log.Err($"[DEDICATED] could not read server icon {icon}: {e.Message}"); }
+        }
+        _announceDeaths = Env("UG_DEATHMSG") != "0";
+        _deathMessages = new DeathMessageOptions
+        {
+            ShowKiller = Env("UG_DEATH_KILLER") == "1",
+            ShowWeapon = Env("UG_DEATH_WEAPON") == "1",
+            ShowDistance = Env("UG_DEATH_DISTANCE") == "1",
+            ShowLocation = Env("UG_DEATH_LOCATION") == "1",
+        };
+        _netlog = Bool(request, "netlog") || Env("UG_NETLOG") == "1";
+    }
+
+    /// <summary>Source DedicatedServer._Ready, after the shared host services
+    /// were installed by StartSession. Runs again after a save load.</summary>
+    void StartDedicated()
+    {
+        // stdout is the JSONL protocol channel; NetLog lands on stderr (journald).
+        NetLog.Sink = s => Log.Print(s);
+        NetLog.ErrorSink = s => Log.Err(s);
+        if (_netlog) NetLog.Enabled = true;
+        _server.AnnounceDeaths = _announceDeaths;
+        _server.DeathMessages = _deathMessages;
+        _server.EnableSyncCheck();   // hardening Part C: 1 Hz StateHash block, clients self-check
+        if (_udpTransport != null)
+        {
+            _udpTransport.StatusPvp = _pvp;
+            _udpTransport.StatusMaxPing = _maxPing;
+            _udpTransport.StatusIcon = _icon;
+            if (!string.IsNullOrEmpty(_dedicatedMapRoot))
+                _udpTransport.StatusMap = Path.GetFileName(_dedicatedMapRoot.TrimEnd('/', '\\'));
+        }
+        _server.Session.PeerConnected += peer => Log.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({_server.Session.Peers.Count} online)");
+        _server.Session.PeerDisconnected += (peer, reason) => Log.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");
+
+        // C2 real spawns: Players.dat points spread by player id at ground + 1.5 m.
+        _dedicatedFallbackSpawn = _position;
+        var spawns = string.IsNullOrEmpty(_dedicatedMapRoot) ? new() : LevelSpawns.PlayerSpawns(_dedicatedMapRoot);
+        if (spawns.Count > 0)
+            _server.SpawnProvider = playerId =>
+            {
+                var pick = spawns[(playerId - 1) % spawns.Count];
+                // A point outside the registered terrain has no ground to stand on;
+                // fall back to the native host's map spawn rather than y=0.
+                return _geometry.TryGroundHeight(pick.x, pick.z, out float ground)
+                    ? new Vector3(pick.x, ground + 1.5f, pick.z) : _dedicatedFallbackSpawn;
+            };
+        else _server.SpawnProvider = _ => _dedicatedFallbackSpawn;
+
+        // Bans load at boot and are rewritten on every change; separate from the
+        // world save so `wipe` never unbans anyone (BanStore.cs, linked verbatim).
+        BanStore.Load(_server.Transactions.Moderation);
+        _server.Transactions.BansChanged = () => BanStore.Save(_server.Transactions.Moderation);
+        _server.Transactions.SaveNowHandler = DedicatedSaveReport;
+        _server.Transactions.WipeSaveHandler = DedicatedWipe;
+        _sinceSave = 0;
+        _lastHeartbeatTick = _server.Session.CurrentTick;
+    }
+
+    void DedicatedConnectionDropped(ITransportConnection connection, string reason, bool isError)
+        => Log.Print($"[DEDICATED] connection dropped ({connection.GetAddressString(true)}): {reason}");
+
+    void TickDedicated()
+    {
+        // Nothing simulates or accepts before the save is restored (source: the
+        // server is constructed after the world build, then loads, then ticks).
+        if (!_serving || _stopped) return;
+        _server.TickSimulation(); _weapons.Step(); _npcHelis.Step(); _mounted.Step(); _cosmetic.Step();
+        _warheads.Prune();
+        // A listen host's own client consumes these per-shot presentation facts
+        // from PlayerFired/PlayerMeleed; with no client they would only grow.
+        _weapons.DiscardPresentationFacts();
+        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+        _appearance.Tick();
+        if (_worldChanged) PublishFullSnapshot();
+        // Source order: net.save.autosave, then net.server.replicate LAST.
+        _sinceSave += SimClock.FixedDelta;
+        if (_sinceSave >= DedicatedAutosaveSeconds) { _sinceSave = 0; DedicatedSaveNow(); }
+        _server.TickReplication();
+        if (_udpTransport != null) _udpTransport.StatusPlayerCount = _server.Session.Peers.Count;
+        if (_server.Session.CurrentTick - _lastHeartbeatTick >= DedicatedHeartbeatTicks)
+        {
+            _lastHeartbeatTick = _server.Session.CurrentTick;
+            Log.Print($"[DEDICATED] tick {_server.Session.CurrentTick} | players {_server.Session.Peers.Count} | snapshots full={_server.Composer.Diag.FullSnapshotsComposed} delta={_server.Composer.Diag.DeltaSnapshotsComposed}");
+        }
+    }
+
+    object DedicatedOperation(string op, JsonElement request)
+    {
+        if (!_dedicated || _server == null) throw new InvalidOperationException($"{op} requires an initialized dedicated server");
+        if (op == "dedicatedStop") return DedicatedStop();
+        if (_stopped) throw new InvalidOperationException("The dedicated server has stopped");
+        if (_serving) return new { serving = true, port = (int)_listenPort, save = (string)null };
+        string line = LoadDedicatedSave();
+        Log.Print("[SAVE] " + line);
+        _serving = true; _sinceSave = 0; _lastHeartbeatTick = _server.Session.CurrentTick;
+        Log.Print($"[DEDICATED] world up (map {_map}); listening on udp {_listenPort}");
+        return new { serving = true, port = (int)_listenPort, save = line };
+    }
+
+    /// <summary>WorldSaveDriver.LoadIntoWorld through the existing `load`
+    /// operation. An unreadable or refused save is reported and kept on disk;
+    /// the world starts fresh rather than silently.</summary>
+    string LoadDedicatedSave()
+    {
+        if (!File.Exists(_savePath)) return "no save at " + _savePath + " -- fresh world";
+        string json;
+        try { json = File.ReadAllText(_savePath); }
+        catch (Exception) { return "save at " + _savePath + " could not be read -- fresh world"; }
+        if (!WorldSave.TryParse(json, _map, out var save, out string error))
+        {
+            Log.Err($"[save] refusing {_savePath}: {error}. Starting a FRESH world; the file is untouched.");
+            return "save refused (" + error + ") -- fresh world, file kept";
+        }
+        // Restored before the world restarts so the environment reads the
+        // saved season, and the loot seed stays the world's established one.
+        WorldTemperature.StartDayOfYear = save.StartDayOfYear;
+        LootSeed.Set(save.LootSeedValue);
+        try { Handle("load", JsonSerializer.SerializeToElement(new { path = _savePath })); }
+        catch (Exception e)
+        {
+            Log.Err($"[save] refusing {_savePath}: {e.Message}. Starting a FRESH world; the file is untouched.");
+            if (_server == null) Start();   // load tore the session down before failing
+            return "save refused (" + e.Message + ") -- fresh world, file kept";
+        }
+        return $"loaded {_savePath}: day {save.Day}, {save.Players.Count} player(s), "
+             + $"{save.Deployables.Count} deployable(s), {save.WorldItems.Count} dropped item(s)";
+    }
+
+    /// <summary>WorldSaveDriver.SaveNow: never throws into a tick.</summary>
+    bool DedicatedSaveNow()
+    {
+        try
+        {
+            // The first save establishes the world's loot seed (idempotent).
+            LootSeed.EnsureEstablished(() => unchecked((ulong)Random.Shared.NextInt64(long.MinValue, long.MaxValue)));
+            Handle("save", JsonSerializer.SerializeToElement(new { path = _savePath }));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Err($"[save] write failed: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>The `save` console verb (WorldSaveDriver.SaveNowReport).</summary>
+    string DedicatedSaveReport()
+        => DedicatedSaveNow() ? $"saved to {_savePath}" : $"save FAILED (see the log) -- {_savePath}";
+
+    /// <summary>The `wipe` console verb (WorldSaveDriver.Wipe). The live world is
+    /// left standing on purpose; as in the source, the next autosave writes it
+    /// again unless the server restarts first.</summary>
+    string DedicatedWipe()
+    {
+        _server.PendingSave = null;
+        _sinceSave = 0;
+        if (!File.Exists(_savePath)) return "no save file to delete; the running world is unchanged";
+        try { File.Delete(_savePath); }
+        catch (Exception) { return "could not delete " + _savePath; }
+        return "save deleted (" + _savePath + "). The running world is UNCHANGED -- restart the server for a fresh one.";
+    }
+
+    /// <summary>Graceful stop (SIGTERM through the native parent, or the
+    /// parent's pipe closing): write the world, then release the socket.</summary>
+    object DedicatedStop()
+    {
+        if (_stopped) return new { saved = false, stopped = true, path = _savePath };
+        bool saved = _serving && DedicatedSaveNow();
+        _stopped = true;
+        if (_serving) Log.Print(saved ? $"[SAVE] shutdown save written to {_savePath}" : $"[SAVE] shutdown save FAILED -- {_savePath}");
+        Log.Print("[DEDICATED] shutting down");
+        Dispose();
+        return new { saved, stopped = true, path = _savePath };
+    }
+
+    /// <summary>Program.cs: the native parent's pipe closed without a stop.</summary>
+    public void EndOfInput()
+    {
+        if (DedicatedActive) DedicatedStop();
+    }
+
+    static readonly string[] DedicatedOperations = [
+        "init", "shutdown", "tick", "snapshot", "catalog", "diagnostics", "npcCatalog", "powerView", "profileRules",
+        "terrain", "worldGeometry", "worldDynamicGeometry", "worldRay", "worldSpawns", "worldSpawn", "worldServices",
+        "mapServices", "worldLoot", "worldVehicles", "worldVehicleState", "worldVehicleDamage", "worldVehicleLighting",
+        "worldVehicleGlazing", "worldNpcHelis", "worldMountedInput", "worldWildlife", "worldZombies", "worldZombieState",
+        "worldZombieNoise", "worldCosmeticGeometry", "save", "load", "disconnect", "dedicatedServe", "dedicatedStop",
+    ];
+
+    void CheckDedicatedOperation(string op)
+    {
+        if (!_dedicated || System.Array.IndexOf(DedicatedOperations, op) >= 0) return;
+        throw new InvalidOperationException($"{op} needs a local player; a dedicated server has none");
+    }
+
+    object DedicatedNetworkState() => new {
+        mode = "dedicated", ownsWorld = _server != null, host = (string)null, port = (int)_listenPort,
+        serverName = _serverName, holiday = _worldHoliday, maxPlayers = _maxPeers,
+        state = _stopped ? "Stopped" : _serving ? "Serving" : "Loading",
+        reason = "", rejectReason = "", rejectText = (string)null, retryable = false, serverProtocol = 0,
+        contentHash = NetContent.Hash.ToString("X16"), peers = _server?.Session.Peers.Count,
+        protocol = NetProtocol.Version, awaitingSpawn = false, wireGaps = System.Array.Empty<string>(),
+        serving = _serving, savePath = _savePath, allowCheats = _allowCheats,
+        bans = _server?.Transactions.Moderation.Count ?? 0,
+        autosaveInSeconds = Math.Max(0, DedicatedAutosaveSeconds - _sinceSave),
+    };
+
+    /// <summary>The host snapshot without an owner: the same world-list rows a
+    /// listen host's client produces, read from the server registries. Owner
+    /// sections (player, inventory, recipes...) are absent and playerId is the
+    /// existing "no local player" 0. Presentation-only lists (dropped items,
+    /// projectiles, cosmetic bullets, crops) are omitted.</summary>
+    object DedicatedState()
+    {
+        long tick = _server.Session.CurrentTick;
+        var interactables = _server.Interactables;
+        return new {
+            tick, origin = Origin, connected = !_stopped, playerId = 0,
+            network = NetworkState(), players = PlayerReplicas(_server.Players, _server.CombatState, _server.Profiles),
+            worldClock = new { day = _environment?.DayAt(_server.Clock, tick), timeOfDay = _server.Clock.TimeOfDayAt(tick), dayLengthSeconds = _server.Clock.DayLengthSeconds },
+            weather = _environment?.State(),
+            npcHelis = _npcHelis?.Snapshots() ?? [],
+            vehicleMounts = VehicleMountRows(_server.VehicleMounts),
+            animals = _wildlife?.Snapshots(_server.Animals),
+            deployables = DeployableRows(_server.Deployables),
+            vehicles = VehicleRows(_server.Vehicles),
+            zombies = _zombies?.Snapshots(_server.Zombies), zombieField = _zombies?.Summary(),
+            interactables = new {
+                doors = interactables.Doors.Select(d => new { netId = d.NetId, open = d.State.IsOpen, locked = d.State.Locked }),
+                objectDoors = interactables.ObjectDoors.Select(d => new { netId = d.Key, open = d.Value, reverse = interactables.IsObjectDoorReversed(d.Key) }),
+                beds = interactables.BedOwners.Select(d => new { netId = d.Key, owner = (ushort)d.Value }),
+                seats = interactables.SeatOccupants.Select(d => new { netId = d.Key, occupant = d.Value }) },
+            resources = new { count = _server.Resources.Count, dead = Enumerable.Range(0, _server.Resources.Count).Where(i => !_server.Resources.IsAlive(i)).ToArray() },
+            destructibles = new { count = _server.Destructibles.Count, dead = Enumerable.Range(0, _server.Destructibles.Count).Where(i => !_server.Destructibles.IsAlive(i)).ToArray() },
+            containers = _server.Containers.All.Select(e => new { netId = e.NetIdValue, kindId = e.KindId, position = Array(e.Pos), yaw = e.YawDegrees, width = e.Width, height = e.Height, display = e.Display, doorsOpen = e.DoorsOpen, cookerOn = e.CookerOn }).ToArray(),
+            events = _events.ToArray(),
+        };
+    }
+}

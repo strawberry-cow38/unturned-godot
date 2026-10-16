@@ -61,6 +61,8 @@ public sealed partial class WeaponServices
         string wireGun=shot.Gun.Length>PlayerFiredEvent.MaxGunNameLength?shot.Gun[..PlayerFiredEvent.MaxGunNameLength]:shot.Gun;
         return wireGun==gun?shot:null;
     }
+    /// <summary>Dedicated host: no local client consumes per-shot facts.</summary>
+    public void DiscardPresentationFacts() { _shots.Clear(); _melees.Clear(); }
     public MeleeFacts TakeMelee(ushort owner,bool strong)
     {
         if(!_melees.TryGetValue(owner,out var queue)||queue.Count==0)return null;

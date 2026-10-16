@@ -1,0 +1,10 @@
+[Unit]
+Description=Restart the hybrid dedicated server after a deploy
+StartLimitIntervalSec=30
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 3
+# Restart = SIGTERM (final save) then a fresh boot that loads it.
+ExecStart=/usr/bin/systemctl --user restart unturned-bevy-server.service

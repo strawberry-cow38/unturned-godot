@@ -29,7 +29,9 @@ public sealed partial class BridgeHost
             throw new ArgumentException("Password authentication is not implemented by the original handshake protocol");
     }
 
-    string[] Capabilities() => IsRemote
+    string[] Capabilities() => _dedicated
+        ? ["dedicated", "udpListen", "save", "autosave", "moderation", "catalog", "worldGeometry", "worldLoot", "worldWildlife", "worldZombies", "worldClock", "weather", "eventAck"]
+        : IsRemote
         ? ["movement", "udpClient", "inventory", "vitals", "combat", "crafting", "catalog", "terrain", "worldClock", "eventAck", "clientReplicas", "mapBindings"]
         : ["movement", "memSession", "udpListen", "inventory", "vitals", "combat", "crafting", "save", "terrain", "catalog", "worldGeometry", "worldLoot", "worldWildlife", "worldZombies", "worldClock", "weather", "eventAck", "rebase"];
 

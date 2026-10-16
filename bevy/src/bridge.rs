@@ -158,8 +158,12 @@ impl BridgeProcess {
                 .or_insert_with(|| json!(self.origin_epoch));
         }
         let result = (|| {
-            serde_json::to_writer(&mut self.stdin, &request)?;
-            self.stdin.write_all(b"\n")?;
+            // One write per request: ChildStdin is unbuffered, and streaming the
+            // serializer into it issued a syscall per JSON token (tens of ms
+            // for a vehicle hit mesh, seconds for a world geometry upload).
+            let mut line = serde_json::to_vec(&request)?;
+            line.push(b'\n');
+            self.stdin.write_all(&line)?;
             self.stdin.flush()?;
             let response = self
                 .replies

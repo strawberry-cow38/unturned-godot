@@ -5683,6 +5683,7 @@ dependencies = [
  "arboard",
  "bevy",
  "bevy_rapier3d",
+ "ctrlc",
  "fastnoise-lite",
  "serde",
  "serde_json",

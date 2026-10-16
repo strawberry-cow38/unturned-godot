@@ -147,6 +147,7 @@ pub fn detect(
     objects: Query<&crate::world::WorldObject>,
     parents: Query<&ChildOf>,
     services: Res<ServiceManifest>,
+    residency: Option<Res<crate::dedicated::Residency>>,
     mut hits: MessageWriter<DamageRequest>,
 ) {
     if snapshot
@@ -159,6 +160,19 @@ pub fn detect(
     let context = context.single().ok();
     for (entity, mut body, mut state, pose, velocity, rigid) in &mut bodies {
         if body.flags & 32 != 0 {
+            continue;
+        }
+        // A dedicated host advances many fixed steps per headless frame while
+        // a remote driver's replica velocity only changes once per frame, so
+        // that frame-sampled step reads as a crash. Only bodies this host
+        // simulates are judged there (remote crash damage: see
+        // DEDICATED_SERVER_PORT.md).
+        if residency.is_some()
+            && snapshot
+                .as_ref()
+                .is_some_and(|s| !coupling::state::simulates(&s.0, &body))
+        {
+            state.adopt_velocity(&data::definition(body.type_id).unwrap().spec, velocity.linear);
             continue;
         }
         let spec = &data::definition(body.type_id).unwrap().spec;

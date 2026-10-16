@@ -22,7 +22,7 @@ mod npc;
 mod remote;
 mod render;
 pub(crate) mod seats;
-mod spawns;
+pub(crate) mod spawns;
 #[cfg(test)]
 pub(crate) mod tests;
 mod tires;
@@ -938,6 +938,7 @@ fn step_bodies(
     pilots: Option<Res<npc::Autopilots>>,
     ui: Option<Res<UiState>>,
     geometry: Option<Res<WorldGeometry>>,
+    residency: Option<Res<crate::dedicated::Residency>>,
     context: ReadRapierContext,
     terrain: Query<(), With<crate::world::WorldTerrain>>,
     mut query: Query<(
@@ -965,8 +966,10 @@ fn step_bodies(
     // OnVehicleContact wakes any non-husk vehicle another vehicle touches.
     let vehicles: HashSet<Entity> = query.iter().map(|(e, ..)| e).collect();
     let outside_region: HashSet<u32> = query.iter().filter_map(|(_,body,pose,_,_,_,_,_,_,_)| {
-        geometry.as_ref().is_some_and(|g| g.loaded_radius > 0.
-            && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius).then_some(body.net_id)
+        (geometry.as_ref().is_some_and(|g| g.loaded_radius > 0.
+            && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius)
+            // A dedicated host's region is every player's surroundings instead.
+            || residency.as_ref().is_some_and(|r| r.outside(pose.translation))).then_some(body.net_id)
     }).collect();
     for (
         entity,
@@ -1200,6 +1203,7 @@ fn publish_bodies(
     model: Res<UiModel>,
     ui: Res<UiState>,
     occupancy: Res<Occupancy>,
+    residency: Option<Res<crate::dedicated::Residency>>,
     query: Query<(&VehicleBody, &Transform, &Velocity)>,
 ) {
     if !model.connected || crate::player::simulation_paused(&ui) {
@@ -1228,7 +1232,10 @@ fn publish_bodies(
                     "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array()});
             }
             if let Err(e) = bridge.request("action",json!({"name":"vehicleState","args":args})) { warn!("Vehicle state: {e}"); }
-        } else if coupling::state::driver(body) == 0 {
+        } else if coupling::state::driver(body) == 0
+            // Parked outside every player's region: frozen, nothing to report.
+            && !residency.as_ref().is_some_and(|r| r.outside(pose.translation))
+        {
             unattended.push(json!({"netId":body.net_id,"position":pose.translation.to_array(),"eulerDegrees":angles,"linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),
             "steerDegrees":body.drivetrain.steering,"flags":body.flags,"engineDrowned":body.engine_drowned,"swamped":body.swamp.active}));
         }

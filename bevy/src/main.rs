@@ -4,6 +4,7 @@ mod bullets;
 mod character;
 mod cli;
 mod content;
+mod dedicated;
 mod deployables;
 mod entities;
 mod environment;
@@ -58,7 +59,13 @@ fn main() -> Result<()> {
     if options.headless {
         return headless_check(&bridge, &options);
     }
-    let profile = profile::LocalProfile::load(&bridge, &mut options);
+    let dedicated = options.network.dedicated();
+    // A dedicated host has no local profile or display settings to load.
+    let profile = if dedicated {
+        profile::LocalProfile::default()
+    } else {
+        profile::LocalProfile::load(&bridge, &mut options)
+    };
     let mut config = world::WorldConfig {
         content_root: options.content.clone(),
         map_name: options.map.clone(),
@@ -78,10 +85,23 @@ fn main() -> Result<()> {
         config.procedural_path = Some(path);
     }
     world::finite::bootstrap::prepare(&bridge, &mut options, &mut config)?;
-    let settings = settings::Settings::load().unwrap_or_else(|error| {
-        eprintln!("Could not load settings: {error}");
+    if dedicated {
+        if !config.map_root.as_ref().is_some_and(|root| root.join("Level.dat").is_file()) {
+            anyhow::bail!(
+                "--dedicated needs the retail {} map (set UG_UNTURNED_DIR or --unturned)",
+                options.map
+            );
+        }
+        dedicated::configure_world(&mut config);
+    }
+    let settings = if dedicated {
         settings::Settings::default()
-    });
+    } else {
+        settings::Settings::load().unwrap_or_else(|error| {
+            eprintln!("Could not load settings: {error}");
+            settings::Settings::default()
+        })
+    };
     let present_mode = if settings.vsync {
         PresentMode::AutoVsync
     } else {
@@ -109,11 +129,17 @@ fn main() -> Result<()> {
             substeps: 1,
         })
         .insert_resource(LaunchOptions(options))
-        .insert_resource(ClearColor(Color::srgb(0.48, 0.67, 0.81)))
-        .add_plugins(
+        .insert_resource(ClearColor(Color::srgb(0.48, 0.67, 0.81)));
+    let asset_path = asset_path.to_string_lossy().into_owned();
+    if dedicated {
+        dedicated::install_signal_handler();
+        app.insert_resource(dedicated::virtual_clock());
+        app.add_plugins((dedicated::plugins(asset_path), dedicated::runner()));
+    } else {
+        app.add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
-                    file_path: asset_path.to_string_lossy().into_owned(),
+                    file_path: asset_path,
                     ..default()
                 })
                 .set(WindowPlugin {
@@ -126,37 +152,55 @@ fn main() -> Result<()> {
                     ..default()
                 })
                 .set(ImagePlugin::default_nearest()),
-        )
-        .add_plugins((
-            RapierPhysicsPlugin::<vehicle::PhysicsHooks>::default().in_fixed_schedule(),
-            content::ContentPlugin,
-            particles::ParticlePlugin,
-            projectiles::ProjectilePlugin,
-            entities::EntityPlugin,
-            deployables::DeployablePlugin,
-            environment::EnvironmentPlugin,
-            world::WorldPlugin,
-            rig::RigPlugin,
-            viewmodel::ViewmodelPlugin,
-            ui::GameUiPlugin,
-            player::PlayerPlugin,
-            vehicle::VehiclePlugin,
-            wildlife::WildlifePlugin,
-            impact::ImpactPlugin,
-        ))
-        .add_plugins(info_billboard::InfoBillboardPlugin)
-        .add_plugins((
-            hdr::HdrPlugin,
-            nightvision::NightVisionPlugin,
-            character::CharacterPlugin,
-            zombie::ZombiePlugin,
-            bullets::BulletPlugin,
-            avatar::AvatarPlugin,
-            footsteps::FootstepPlugin,
-        ))
-        .add_systems(Update, capture_frame.after(entities::ApplyInteractions))
-        .run();
+        );
+    }
+    add_game_plugins(&mut app);
+    if dedicated {
+        app.add_plugins(dedicated::DedicatedPlugin);
+        // A signal is the normal stop (Bevy's handler exits with 130); only a
+        // failed authority exits non-zero, so systemd records a crash.
+        if let AppExit::Error(code) = app.run() {
+            if code.get() != 130 {
+                std::process::exit(i32::from(code.get()));
+            }
+        }
+    } else {
+        app.add_systems(Update, capture_frame.after(entities::ApplyInteractions))
+            .run();
+    }
     Ok(())
+}
+
+/// The game and host plugins, shared by the windowed client and the headless
+/// dedicated server (which keeps them for their host-authority systems).
+fn add_game_plugins(app: &mut App) {
+    app.add_plugins((
+        RapierPhysicsPlugin::<vehicle::PhysicsHooks>::default().in_fixed_schedule(),
+        content::ContentPlugin,
+        particles::ParticlePlugin,
+        projectiles::ProjectilePlugin,
+        entities::EntityPlugin,
+        deployables::DeployablePlugin,
+        environment::EnvironmentPlugin,
+        world::WorldPlugin,
+        rig::RigPlugin,
+        viewmodel::ViewmodelPlugin,
+        ui::GameUiPlugin,
+        player::PlayerPlugin,
+        vehicle::VehiclePlugin,
+        wildlife::WildlifePlugin,
+        impact::ImpactPlugin,
+    ))
+    .add_plugins(info_billboard::InfoBillboardPlugin)
+    .add_plugins((
+        hdr::HdrPlugin,
+        nightvision::NightVisionPlugin,
+        character::CharacterPlugin,
+        zombie::ZombiePlugin,
+        bullets::BulletPlugin,
+        avatar::AvatarPlugin,
+        footsteps::FootstepPlugin,
+    ));
 }
 
 fn capture_frame(

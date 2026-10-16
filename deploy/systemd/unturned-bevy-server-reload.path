@@ -1,0 +1,11 @@
+[Unit]
+Description=Restart the hybrid dedicated server when a new build is deployed
+
+[Path]
+# tools/deploy-bevy-server.sh writes this stamp only after BOTH the native host
+# and the Release bridge have built, so a half-finished deploy never restarts it.
+PathChanged=/home/ec2-user/projects/unturned-godot/bevy/.local/dedicated-server.stamp
+Unit=unturned-bevy-server-reload.service
+
+[Install]
+WantedBy=default.target

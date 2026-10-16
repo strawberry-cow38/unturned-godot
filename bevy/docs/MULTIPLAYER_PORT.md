@@ -319,11 +319,20 @@ leave also caught dirty door leaves publishing after the authority was disposed;
 closed-session guards now retire the upload cache, with an actual bridge teardown
 regression. The corrected guard changes no rendered geometry.
 
+## Dedicated server
+
+`unturned-bevy --dedicated` hosts the world headless with no local player: the
+bridge serves UDP with no client of its own and the windowless native host keeps
+collision and the physics-bodied host systems. Save restore before admission,
+autosave/final save, BanStore moderation through the source console verbs,
+sync-check, NetLog and systemd units are described in
+[DEDICATED_SERVER_PORT.md](DEDICATED_SERVER_PORT.md).
+
 ## Remaining integration
 
 Read-only remote map bindings and their authored door/container/seat interactions
 are adopted natively and have live UDP validation as described above. Remaining
-remote-player presentation, moderation UI, dedicated world boot and the explicit wire gaps above require
+remote-player presentation, a native moderation UI (the console verbs work) and the explicit wire gaps above require
 further port work. A client must never construct another local authority to fill
 them. Infinite-world multiplayer needs a separate origin protocol and is not
 established by these bounded UDP tests. Remote vehicle tow ropes, source light/

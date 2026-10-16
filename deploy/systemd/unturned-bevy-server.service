@@ -1,0 +1,34 @@
+[Unit]
+Description=Unturned hybrid dedicated server (Bevy host + .NET bridge, --dedicated, UDP 47872)
+After=network-online.target
+Wants=network-online.target
+# Same UDP port as the Godot unturned-server.service; only one can run.
+Conflicts=unturned-server.service
+# A broken build that crash-loops gives up after 5 tries in 60 s.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ec2-user/projects/unturned-godot
+Environment=UG_UNTURNED_DIR=/home/ec2-user/unturned
+# World save (<map>.json) and bans.tsv live here, not in the user profile.
+Environment=UG_SAVE_DIR=/home/ec2-user/unturned-bevy-saves
+# The Release bridge; tools/deploy-bevy-server.sh builds it. Each launch runs
+# from a private copy, so a rebuild never touches the running server.
+Environment=UG_BRIDGE_DLL=/home/ec2-user/projects/unturned-godot/bevy/bridge/bin/Release/net8.0/UnturnedBevy.Bridge.dll
+# Optional operator settings read at boot (source DedicatedServer): UG_NAME,
+# UG_MOTD, UG_MAXPLAYERS, UG_PVE, UG_MAXPING, UG_ICON, UG_DEATHMSG,
+# UG_DEATH_KILLER/WEAPON/DISTANCE/LOCATION, UG_PORT, UG_NETLOG=1,
+# UG_DEDICATED_NOCHEATS=1 (console cheats and moderation are ON by default).
+ExecStart=/home/ec2-user/projects/unturned-godot/bevy/target/debug/unturned-bevy --dedicated
+Restart=always
+RestartSec=3
+# SIGTERM reaches both processes: the bridge ignores it while hosting, the
+# native host turns it into a graceful exit that writes the final world save.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+SendSIGKILL=yes
+
+[Install]
+WantedBy=default.target
