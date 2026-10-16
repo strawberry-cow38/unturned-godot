@@ -46,3 +46,30 @@ fn mirrors_every_mesh_under_the_target_on_the_outline_layer_and_follows_focus() 
     app.update();
     assert_eq!(count(&mut app), 0);
 }
+
+#[test]
+fn the_outline_graphics_option_turns_the_whole_pass_off() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::window::WindowPlugin::default()))
+        .init_asset::<Mesh>()
+        .init_asset::<StandardMaterial>()
+        .init_asset::<Image>()
+        .init_asset::<OutlineMaterial>()
+        .init_resource::<Outline>()
+        .init_resource::<crate::settings::Settings>()
+        .add_systems(Update, (mirror, present).chain());
+    let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(Cuboid::default());
+    let target = app.world_mut().spawn((Mesh3d(mesh), Transform::default())).id();
+    app.world_mut().spawn((PlayerCamera, Transform::default(), Projection::default()));
+    app.world_mut().resource_mut::<Outline>().target = Some(target);
+    let active = |app: &mut App| {
+        let mask = app.world().resource::<Outline>().mask.clone().unwrap();
+        app.world().get::<Camera>(mask.camera).unwrap().is_active
+    };
+    app.update();
+    app.update(); // the mask camera spawns through commands on the first frame
+    assert!(active(&mut app), "a claimed silhouette runs the mask pass");
+    app.world_mut().resource_mut::<crate::settings::Settings>().graphics.outline = false;
+    app.update();
+    assert!(!active(&mut app), "Outline off: no mask, no rim");
+}

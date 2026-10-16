@@ -29,7 +29,7 @@ Claimers wired so far:
 ## Deviations and gaps
 
 - **Claimers not yet wired:** deployables (`Deployable.OutlineColor`), vehicles (`_outlineColor`, red when a tool can't act), doors, seats, beds, lamps, notes, TVs, radios, vending machines, NPC/puppet bodies (skinned meshes are not mirrored yet), forage fruit and store-shelf items. They join by calling `focus.outline` beside their `offer`.
-- **No `Outline` graphics setting** natively yet, so the pass is always on. The menus/settings agent will add the toggle.
+- **`GraphicsOptions.Outline`:** the native `settings.graphics.outline` (default on) disables the whole pass, with no mask and no rim; a unit test and a negative control cover it.
 - **No `DrivingSuppress`:** nothing offers focus from a seat natively, so the pass is already idle there.
 
 ## Verification

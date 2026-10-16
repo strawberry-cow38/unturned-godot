@@ -163,6 +163,7 @@ fn present(
     nightvision: Option<Res<crate::nightvision::NightVision>>,
     underwater: Option<Res<crate::world::underwater::UnderwaterState>>,
     time: Res<Time>,
+    settings: Option<Res<crate::settings::Settings>>,
 ) {
     let (Ok(window), Ok((player, projection))) = (windows.single(), player.single()) else {
         return;
@@ -228,7 +229,10 @@ fn present(
         Mask { image, camera, ui, overlay, material }
     });
     let Mask { image, camera, ui, overlay, material } = mask.clone();
-    let on = outline.target.is_some() && !outline.mirrors.is_empty();
+    // GraphicsOptions.Outline (retail OutlineQuality Off) disables the whole pass.
+    let on = outline.target.is_some()
+        && !outline.mirrors.is_empty()
+        && settings.as_ref().is_none_or(|s| s.graphics.outline);
     if let Ok((mut mask, mut mask_projection, parent)) = masks.get_mut(camera) {
         if mask.is_active != on {
             mask.is_active = on;
