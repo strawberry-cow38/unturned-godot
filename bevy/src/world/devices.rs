@@ -17,10 +17,12 @@ use bevy_rapier3d::prelude::*;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
+pub(crate) mod carlift;
 pub(crate) mod lamps;
 pub(crate) mod monitor;
 pub(crate) mod notes;
 pub(crate) mod radio;
+pub(crate) mod traffic;
 pub(crate) mod vending;
 #[cfg(test)]
 mod tests;
@@ -63,6 +65,7 @@ impl Plugin for DevicePlugin {
     fn build(&self, app: &mut App) {
         register_ecg(app);
         app.init_resource::<monitor::Clock>()
+            .init_resource::<traffic::SideRoads>()
             .init_resource::<DeviceState>()
             .init_resource::<Mains>()
             .init_resource::<notes::Texts>()
@@ -72,13 +75,22 @@ impl Plugin for DevicePlugin {
                 (
                     reset_epoch,
                     mains,
-                    (lamps::attach, notes::attach, vending::attach, radio::attach, monitor::attach),
+                    (
+                        lamps::attach,
+                        notes::attach,
+                        vending::attach,
+                        radio::attach,
+                        monitor::attach,
+                        traffic::attach,
+                        carlift::attach,
+                    ),
                     (
                         lamps::grid,
                         lamps::hum,
                         (vending::shake, vending::tint).chain(),
                         radio::hiss,
                         monitor::tick,
+                        traffic::tick,
                     ),
                 )
                     .chain()
@@ -170,6 +182,8 @@ pub(crate) enum Target {
     Radio(usize),
     /// A `HeartMonitor` (`Science_3`).
     Monitor(usize),
+    /// A `CarLift` platform (`Car_Lift_0`).
+    CarLift(usize),
 }
 impl Target {
     pub(crate) fn action(&self) -> (&'static str, Value) {
@@ -180,6 +194,7 @@ impl Target {
             Self::Vendor(i) => ("vend", json!({"sourceIndex":i})),
             Self::Radio(i) => ("toggleRadio", json!({"sourceIndex":i})),
             Self::Monitor(i) => ("toggleMonitor", json!({"sourceIndex":i})),
+            Self::CarLift(i) => ("carLift", json!({"sourceIndex":i})),
         }
     }
 }
@@ -244,7 +259,10 @@ fn collect_focus(
     // HeartMonitor), Deployable.OutlineColor, or the vending state colour.
     let (action, args) = device.0.action();
     focus.offer_status(distance, "", action, args.clone());
-    focus.outline(action, &args, owner, tint);
+    // `_focusCarLift` is a bare assignment in the source: no outline.
+    if !matches!(device.0, Target::CarLift(_)) {
+        focus.outline(action, &args, owner, tint);
+    }
 }
 
 /// The look-at billboard of the focused world-scenery lamp, once focus has a

@@ -234,3 +234,96 @@ Sources: `game/VendingMachine.cs`, `game/RadioDevice.cs`, `game/HeartMonitor.cs`
   render; the vending billboard matches the Godot oracle's text, colour and
   placement, and the native frame adds the red no-funds rim. Renders:
   `bevy/artifacts/{godot,bevy}-{monitor-alive,radio-7,vending}.png`.
+
+## Checkpoint 3: traffic signals and the car lift
+
+Sources: `game/TrafficLight.cs`, `ObjMesh.SplitTrafficLenses`/`SplitTrafficLensesPerHead`,
+`WorldBuilder` (`SideRoadKey`, `traffic_side_roads.txt`, the per-head spawn),
+`DayNightCycle.DriveStreetlights`, `game/CarLift.cs`, `WorldBuilder`'s `CarLift.Spawn`
+call, `PlayerController` (`_focusCarLift`, the F branch, `FluidPickupHudSet`,
+`UpdateFluidPickup`). PEI places 21 signals and 3 car lifts.
+
+### Traffic signals
+
+Not interactive and not replicated: every head's aspect is a pure function of the
+shared world clock, as in the source.
+
+- **Split:** the lens triangles by palette texel (red u[0.50, 0.75) and amber
+  u[0.75, 1.01) on the upper row, green u[0.50, 1.01) on the lower row, all three
+  corners), then per head at the largest gap between lens centroids along mesh Y
+  (one head when no gap exceeds 0.5 m). The prop keeps the body; each lens is a
+  child drawn with the prop's material until it lights.
+- **Clock:** `(day + timeOfDay) x dayLengthSeconds` from the accepted
+  `worldClock`; engine time without one (the source's no-cycle fallback).
+- **Phase:** green 25 s, amber 4 s, all-red 2 s (`PhaseAt`), offset per head by
+  `fract(sin(x 12.9898 + z 78.233 + head 37.719) 43758.5453) x 31 s` of the
+  absolute prop position, so the two heads of a mast and every junction drift
+  apart, identically on every client.
+- **Lit lens:** the source colour (red (1, 0.15, 0.12), amber (1, 0.68, 0.10),
+  green (0.25, 1, 0.35)) with emission 3 x level, unshadowed; one shadowless
+  point light per head, range 3.2, energy 0.6 x level, 0.25 m in front of the
+  head's lens centre along the lenses' own normals, in the lit lens's colour.
+- **Power:** on the accepted mains edge, a dead grid starts the cabinet battery:
+  a smoothstepped 0.5 Hz breathing flash, amber, or red for a flagged side road;
+  after two in-game days a 2.5 s stutter into darkness; power back resumes the
+  cycle and recharges. The shipped `traffic_side_roads.txt` has every row
+  commented out ("not active"), so every PEI signal flashes amber; the key
+  convention (placements.txt coordinates) is still checked against its rows.
+
+### Car lift
+
+- `CarLift.Spawn` runs in every source mode, so the platform
+  (`Car_Lift_0_ramp.obj`, missing from the object rip) is both a native body (its
+  mesh with the prop material, a box of its AABB) and a box in the authority
+  geometry the bridge receives (`world::car_lift_ramp`).
+- The lift moves only with power on its own consumer port, which no server wire
+  can reach (a NetId-0 fixture). So the platform stays at the down position.
+- Looking at the platform focuses it silently, and F does nothing else. The source
+  sets "the lift has no power" on its centre-screen line, but `UpdateFluidPickup`
+  blanks that line in the same frame's process, before it can render, so no
+  message is ported. The source's `_focusCarLift` is a bare assignment with no
+  outline, and the port claims none.
+
+### Elevator, TVs and switches
+
+- **Elevator / `ElevatorButton`:** not placed by any map. It is built only by
+  `Main --elevatortest` and the console `spawnelevator`, so it is deferred (no
+  native console verb or moving-platform rider yet).
+- **TVs and computer screens (`TVDevice`, 34 on PEI):** deferred. The source is
+  a 2,000-line renderer (9 screen programs in `screen.gdshader`, warm-up and
+  collapse, OSD banner, roll, colour cycling, terminal bursts, the DVD blob, the
+  spill cone, LEDs and tone/static audio) and needs its own checkpoint.
+- **`RoomLightSwitch`:** waits for row 19's installed buildings (see above).
+
+### Verification
+
+- **Native (`world::devices::tests::signals`, 7, + 1 GPU fixture):**
+  - the phase order and durations, and the lens map (FlashRed lights red);
+  - per-head offsets;
+  - the real mast splitting into two ordered heads of three lenses;
+  - the shipped side-road file (none active, the 9 commented rows match PEI masts);
+  - the battery: breathing flash, side-road red, the stutter, then dark, then
+    recovery;
+  - the ramp's authority box;
+  - a schedule test where both heads follow the accepted clock (and not frame
+    time), and the look ray on the platform focuses the car lift with no outline.
+
+  Full native suite 905/0.
+- **Negative controls, each failing as intended and restored byte-identical:**
+  - the amber duration (the first version of the test did not pin it, so the
+    control passed; the test now asserts 28.9 s amber and 30.9 s red);
+  - the head index in the offset;
+  - the side-road key's Z sign;
+  - the battery's two days;
+  - the clock source;
+  - the car lift's rim;
+  - the ramp box's centre.
+- **Visual:**
+  - `render_source_traffic_light_demo` reproduces `Main.BuildTrafficLightDemo`
+    with `UG_TL_STATE=green/red`. Beside the Godot 4.6.2 `--trafficlight` render,
+    the lower head is green and the upper red, with the same lenses, housings
+    and glow.
+  - The car-lift proptest beside Godot `--proptest=Car_Lift_0 UG_LIVE=1`: the
+    platform sits in the same place under the frame. Godot also draws the power
+    port cube, which the port does not.
+  - Renders: `bevy/artifacts/{godot,bevy}-{traffic-green-red,carlift}.png`.

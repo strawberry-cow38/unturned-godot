@@ -352,7 +352,7 @@ fn render_source_proptest_device() {
     .add_systems(
         Update,
         (
-            (vending::attach, radio::attach, monitor::attach),
+            (vending::attach, radio::attach, monitor::attach, carlift::attach),
             prop_force,
             ((vending::shake, vending::tint).chain(), monitor::tick),
             prop_claim.in_set(CollectInteractions),

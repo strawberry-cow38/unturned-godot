@@ -1057,6 +1057,16 @@ fn build_world(
             body.source_index = Some(p.source_index);
             geometry.objects.push(body);
         }
+        // CarLift.Spawn runs in EVERY source mode: its platform is a collider the
+        // server's player envelope must agree with (a box of the ramp mesh, down).
+        if p.name == devices::carlift::PROP && p.euler.is_some() {
+            let ramp = config
+                .content_root
+                .join(format!("objects/{}.obj", devices::carlift::RAMP));
+            if let Ok((_, ramp)) = cache.load_mesh(&ramp, &mut meshes) {
+                geometry.objects.push(car_lift_ramp(p.transform, &ramp));
+            }
+        }
         let mut entity = commands.spawn((
             Name::new(p.name.clone()),
             Mesh3d(mesh),
@@ -1706,6 +1716,15 @@ pub fn is_walk_through(name: &str) -> bool {
 }
 /// WorldBuilder's solid ladder box: raw rungs contain centre-line gaps and cannot
 /// serve the source's continuous 0.75m attach/hold ray.
+/// `CarLift.Spawn`'s platform box (the ramp mesh's AABB) at the lift's pose,
+/// as authority collision.
+pub(crate) fn car_lift_ramp(lift: Transform, ramp: &ObjData) -> ObjectCollider {
+    let center = (ramp.min + ramp.max) * 0.5;
+    collider(
+        Arc::new(ladder_box_geometry(ramp)),
+        lift * Transform::from_translation(center),
+    )
+}
 fn ladder_box_geometry(mesh: &ObjData) -> ObjData {
     let h = (mesh.max - mesh.min) * 0.5;
     let mut out = ObjData {
