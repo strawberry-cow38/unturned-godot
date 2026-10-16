@@ -21,6 +21,7 @@ struct Socket {
     body: Entity,
     definition: wires::Port,
     name: String,
+    has_health: bool,
     local: Vec3,
     arrow: Entity,
     quad: Entity,
@@ -83,13 +84,17 @@ fn held(snapshot: &Value, catalog: &ItemCatalog) -> bool {
         .and_then(|cell| catalog.items.get(&cell.id))
         .is_some_and(|item| item.tool["kind"] == "Wire")
 }
-fn dead(snapshot: &Value, id: u32) -> bool {
+/// ConnectionPort.Usable: a burning or destroyed owner retires its ports. A world
+/// fixture has no health (Health 0 by definition) and only burning retires it.
+fn dead(snapshot: &Value, id: u32, has_health: bool) -> bool {
     snapshot["deployables"]
         .as_array()
         .into_iter()
         .flatten()
         .find(|r| r["netId"] == id)
-        .is_none_or(|r| r["onFire"] == true || r["health"].as_f64().unwrap_or(0.) <= 0.)
+        .is_none_or(|r| {
+            r["onFire"] == true || (has_health && r["health"].as_f64().unwrap_or(0.) <= 0.)
+        })
 }
 
 fn sync(
@@ -164,6 +169,7 @@ fn sync(
                 body,
                 definition: p.clone(),
                 name: def.name.clone(),
+                has_health: def.health > 0.,
                 local,
                 arrow,
                 quad,
@@ -209,7 +215,7 @@ fn gather(
             position: body.transform_point(socket.local),
             definition: socket.definition.clone(),
             name: socket.name.clone(),
-            usable: !dead(&snapshot.0, socket.address.device),
+            usable: !dead(&snapshot.0, socket.address.device, socket.has_health),
             wire: None,
             live: 0.,
             powered: false,

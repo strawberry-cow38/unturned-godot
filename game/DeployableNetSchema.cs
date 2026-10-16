@@ -38,7 +38,7 @@ namespace UnturnedGodot
                 bool localOnly = def.DoorProp != null;
                 var ports = new DeployablePortSpec[def.Ports.Length];
                 for (int i = 0; i < def.Ports.Length; i++)
-                    ports[i] = new DeployablePortSpec { Kind = (byte)Kind(def.Ports[i].Kind), Watts = def.Ports[i].Watts };
+                    ports[i] = new DeployablePortSpec { Kind = (byte)Kind(def.Ports[i].Kind), Watts = def.Ports[i].Watts, Role = (byte)def.Ports[i].Role };
                 schema.Register(new DeployableNetDef
                 {
                     LocalOnly = localOnly,
@@ -46,6 +46,8 @@ namespace UnturnedGodot
                     Health = def.Health,
                     FuelCapacity = def.Fuel,
                     IsSwitch = def.IsSwitch,
+                    IsBattery = def.IsBattery, IsWindTurbine = def.IsWindTurbine,   // v78: server power families
+                    EnergyMax = def.EnergyMax, ChargeWatts = def.ChargeWatts,
                     Range = def.Range,
                     FixtureKind = def.Fixture,   // A3/A2: carry the server-placed world-fixture kind onto the net def table
                     Ports = ports,

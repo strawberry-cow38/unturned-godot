@@ -35,8 +35,18 @@ public sealed partial class WorldServices
             if (!s.Open) _server.Interactables.ServerRestoreObjectDoor(s.NetId, false);
         }
     }
-    sealed record Tap(System.Numerics.Matrix4x4 Transform, System.Numerics.Matrix4x4 Inverse, System.Numerics.Vector3 Min, System.Numerics.Vector3 Max)
+    sealed record Tap(System.Numerics.Matrix4x4 Transform, System.Numerics.Matrix4x4 Inverse, System.Numerics.Vector3 Min, System.Numerics.Vector3 Max, string Label = "Sink")
     {
+        /// <summary>WaterTap.Contains: the look point inside the local bounds grown by
+        /// AimSlack / the placement's X scale.</summary>
+        public bool Contains(Vector3 p)
+        {
+            var local = System.Numerics.Vector3.Transform(new System.Numerics.Vector3(p.x, p.y, p.z), Inverse);
+            float scale = MathF.Max(0.01f, new System.Numerics.Vector3(Transform.M11, Transform.M12, Transform.M13).Length());
+            var grow = new System.Numerics.Vector3(WaterTapAimSlack / scale);
+            var lo = Min - grow; var hi = Max + grow;
+            return local.X >= lo.X && local.Y >= lo.Y && local.Z >= lo.Z && local.X <= hi.X && local.Y <= hi.Y && local.Z <= hi.Z;
+        }
         public float Distance(Vector3 p)
         {
             var world = new System.Numerics.Vector3(p.x, p.y, p.z);
@@ -45,6 +55,10 @@ public sealed partial class WorldServices
             return System.Numerics.Vector3.Distance(world, System.Numerics.Vector3.Transform(closest, Transform));
         }
     }
+    /// <summary>WaterTap.AimSlack.</summary>
+    const float WaterTapAimSlack = 0.15f;
+    /// <summary>WaterTap.AimedAt: the sink or bathtub the look point is in, by its display name.</summary>
+    public string AimedTap(Vector3 lookPoint) => _taps.FirstOrDefault(t => t.Contains(lookPoint))?.Label;
     public object MapResult { get; private set; }
     public string MapKey { get; private set; }
     public WorldServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
@@ -120,7 +134,7 @@ public sealed partial class WorldServices
             matrix.Translation = new(p.x, p.y, p.z);
             if (!System.Numerics.Matrix4x4.Invert(matrix, out var inverse)) throw new ArgumentException("Degenerate tap transform");
             var lo = Vec(tap, "min"); var hi = Vec(tap, "max");
-            _taps.Add(new(matrix, inverse, new(lo.x, lo.y, lo.z), new(hi.x, hi.y, hi.z)));
+            _taps.Add(new(matrix, inverse, new(lo.x, lo.y, lo.z), new(hi.x, hi.y, hi.z), Text(tap, "label", "Sink")));
         }
         var entities = new List<object>();
         var fixtureIds = new List<uint>();
@@ -200,6 +214,7 @@ public sealed partial class WorldServices
         long tick = _server.Session.CurrentTick;
         ReleaseInvalidStationaryOccupants(tick);
         StepDoors();
+        _server.Power.Step((float)SimClock.FixedDelta);   // v78 accepted fuel/charge/wind before the movers read power
         _server.ItemMovers.Step((float)SimClock.FixedDelta);
         _containers.Tick(); Harvesting.Step();
         foreach (int i in Regrown(tick)) _server.Transactions.SetResourceAlive(i, true);

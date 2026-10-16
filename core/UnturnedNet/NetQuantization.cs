@@ -68,6 +68,19 @@ namespace UnturnedGodot.Net
             return result;
         }
 
+        /// <summary>QuantizeClampedFloat's unsigned sibling (WriteUnsignedClampedFloat): [0, 2^intBits).</summary>
+        public static float QuantizeUnsignedClampedFloat(float value, int intBits, int fracBits)
+        {
+            var w = Writer();
+            w.Reset();
+            w.WriteUnsignedClampedFloat(value, intBits, fracBits);
+            w.Flush();
+            var r = Reader();
+            r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            r.ReadUnsignedClampedFloat(intBits, fracBits, out float result);
+            return result;
+        }
+
         /// <summary>Same idea as QuantizeClampedFloat, for WriteSignedNormalizedFloat -- what MoveInput's
         /// move axes go through on the wire. The client-side predictor quantizes its OWN input through this
         /// before integrating, so it consumes exactly the bytes the server will read (MP_PLAN §2.5b).</summary>

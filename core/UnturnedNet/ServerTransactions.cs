@@ -574,6 +574,34 @@ namespace UnturnedGodot.Net
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _)
                     && _combat.TryGet(sender, out var life) && life.Alive);
 
+            // v78 TryDepositFuel: the generator half of LMB with a held fuel container. The exact held instance
+            // (address + identity token) pours min(can, free tank) into a live generator in reach; a burning one,
+            // a full tank, an empty can (the source reads a fresh -1 as empty) or a replacement can refuse.
+            commands.Register<DepositFuelCommand>(ReplicationIds.CommandDepositFuel, DepositFuelCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!_deployables.TryGet(cmd.NetId, out var e) || !_deployables.Schema.TryGet(e.DefId, out var def)) return;
+                    var inventory = SenderInventory(sender);
+                    var page = cmd.Address.Page < PlayerInventory.OWNPAGES ? inventory?.items[cmd.Address.Page] : null;   // the held can is always in the own pages
+                    byte index = page?.getIndex(cmd.Address.X, cmd.Address.Y) ?? byte.MaxValue;
+                    var jar = index == byte.MaxValue ? null : page.getItem(index);
+                    if (jar?.item?.id != cmd.Address.Id || jar.x != cmd.Address.X || jar.y != cmd.Address.Y
+                        || jar.GetAsset()?.IsFuelContainer != true || _inventories.ItemIdentityProvider == null
+                        || _inventories.ItemIdentityProvider(jar.item) != cmd.Token) return;
+                    float can = Mathf.Max(0f, jar.item.fuelLevel), space = def.FuelCapacity - e.SimFuel;
+                    if (can <= 0.01f || space <= 0.01f) return;
+                    float poured = Mathf.Min(can, space);
+                    _deployables.ServerSetScalars(e.NetIdValue, e.Health, e.SimFuel + poured, e.OnFire, _tick());
+                    jar.item.fuelLevel = can - poured;
+                    _inventories.ServerMarkDirty(sender);
+                },
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _)
+                    && _combat.TryGet(sender, out var life) && life.Alive
+                    && TryGetSenderPos(sender, out var pos)
+                    && _deployables.TryGet(cmd.NetId, out var e) && !e.OnFire
+                    && _deployables.Schema.TryGet(e.DefId, out var def) && def.IsGenerator
+                    && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
+
             // THE ON/OFF BUTTON. Reach-checked exactly like opening the thing: the client can already only
             // see a cooker it is standing at, and this makes the server agree rather than take its word.
             // SetOn returns false for a NetId that is not a registered cooker, so a forged id for some other

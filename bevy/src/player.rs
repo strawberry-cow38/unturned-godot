@@ -20,6 +20,8 @@ pub(crate) mod lean;
 pub(crate) mod flinch;
 mod crafting_eye;
 pub(crate) use crafting_eye::{CraftingEye, needs_eye};
+mod persistence;
+use persistence::save_path;
 
 #[cfg(test)]
 mod network_tests;
@@ -59,6 +61,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<lean::LeanState>()
             .init_resource::<GameSnapshot>()
             .init_resource::<CraftingEye>()
+            .init_resource::<crate::survival::TemperatureProbe>()
             .add_systems(Startup, spawn_player.after(WorldReady))
             .add_systems(
                 Update,
@@ -81,6 +84,10 @@ impl Plugin for PlayerPlugin {
                     .in_set(PlayerCameraUpdate)
                     .after(crate::vehicle::VehicleUpdate)
                     .after(PlayerUpdate),
+            )
+            .add_systems(
+                Update,
+                persistence::entry_restore.after(crate::entities::WorldServicesReady),
             )
             .add_systems(FixedUpdate, lean::step.before(simulate))
             .add_systems(
@@ -116,6 +123,8 @@ struct Session {
     was_connected: bool,
     reject_retries: u8,
     heights: StanceHeights,
+    /// WorldSaveDriver.LoadIntoWorld is still owed to this host session.
+    restore_pending: bool,
 }
 
 impl Default for Session {
@@ -129,6 +138,7 @@ impl Default for Session {
             was_connected: false,
             reject_retries: 0,
             heights: default(),
+            restore_pending: false,
         }
     }
 }
@@ -352,6 +362,15 @@ fn initialize_session(
     }
     request["useLocalProfile"] = json!(profile.is_some_and(|profile| profile.ready));
     options.0.network.configure(&mut request);
+    // WorldSaveDriver owns one file per map on the host; a remote client has none,
+    // and neither does the native vehicle render harness (source harness entries
+    // never attach the MpLoopback that owns the save).
+    let restore = (options.0.network.owns_world() && options.0.vehicle.is_none())
+        .then(|| persistence::adopt_legacy_save(&options.0.map));
+    if let Some(path) = &restore {
+        request["savePath"] = json!(path);
+        request["restorePending"] = json!(path.is_file());
+    }
     match bridge.request("init", request) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
             model.reset_session();
@@ -385,13 +404,18 @@ fn initialize_session(
             session.was_connected = model.connected;
             session.connecting_elapsed = 0.;
             session.reject_retries = 0;
+            // Source order: the saved world is restored after the map is built
+            // and before the player plays. Hold the loading screen meanwhile.
+            session.restore_pending = restore.is_some_and(|path| path.is_file());
             ui.screen = if model.connected {
-                Screen::Playing
+                persistence::entry_screen(session.restore_pending)
             } else {
                 Screen::Connecting
             };
             if !model.connected {
                 model.status = format!("Connecting - {}", model.network.state);
+            } else if session.restore_pending {
+                model.status = format!("Restoring saved {}", options.0.map);
             }
         }
         Ok(_) => fail(
@@ -516,7 +540,8 @@ fn ui_intents(
                     model.status = format!("Loading {map}");
                     ui.screen = Screen::Connecting;
                 } else if model.connected {
-                    ui.screen = Screen::Playing;
+                    // An owed entry restore keeps the loading screen up.
+                    ui.screen = persistence::entry_screen(session.restore_pending);
                 }
                 continue;
             }
@@ -534,6 +559,7 @@ fn ui_intents(
                 session.initialized = false;
                 session.failed = false;
                 session.was_connected = false;
+                session.restore_pending = false;
                 options.0.play = false;
                 options.0.network_ready = false;
                 options.0.network = crate::network::Target::Local;
@@ -554,7 +580,8 @@ fn ui_intents(
             UiIntent::Action { name, args } => {
                 if name == "console"
                     && (crate::entities::npcs::is_console_command(args["text"].as_str().unwrap_or(""))
-                        || crate::ui::npc::is_console_command(args["text"].as_str().unwrap_or("")))
+                        || crate::ui::npc::is_console_command(args["text"].as_str().unwrap_or(""))
+                        || crate::entities::crops::is_console_command(args["text"].as_str().unwrap_or("")))
                 {
                     continue;
                 }
@@ -630,25 +657,12 @@ fn ui_intents(
             }
             Err(error) => model.notice(error.to_string()),
         }
+        // The entry restore holds the loading screen until the world it
+        // restores is in place; a refused save starts the fresh world instead.
+        if matches!(intent, UiIntent::Load) && ui.screen == Screen::Connecting && model.connected {
+            ui.screen = Screen::Playing;
+        }
     }
-}
-
-fn save_path(map: &str) -> std::path::PathBuf {
-    let base = std::env::var_os("UG_BEVY_SAVES")
-        .or_else(|| std::env::var_os("UG_SAVE_DIR"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            Settings::path()
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join("saves")
-        });
-    base.join(format!(
-        "{}.json",
-        map.chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-            .collect::<String>()
-    ))
 }
 
 fn read_input(
@@ -1030,6 +1044,26 @@ fn simulate(
         allowed && vehicle_seat.is_none(),
     );
     hands.1.write_batch(events);
+    if allowed
+        && vehicle_seat.is_none()
+        && viewmodel.ready
+        && viewmodel.held == input.held_item_id
+    {
+        match crate::survival::fluid_hand(
+            &bridge,
+            &snapshot.0,
+            item,
+            buttons.press,
+            buttons.strong,
+            &mut model.feedback,
+        ) {
+            Ok(Some(id)) => {
+                hands.1.write(crate::use_items::HandEvent::Start(id));
+            }
+            Ok(None) => {}
+            Err(error) => model.notice(error.to_string()),
+        }
+    }
     for use_ in uses {
         use crate::use_items::UseIntent;
         let request = match use_ {
@@ -1143,7 +1177,7 @@ fn simulate(
 
 /// Same foot pivot and roll-before-pitch chain as the physical eyes. Reading
 /// camera Euler angles here would include Alt gaze and lose lean/pitch coupling.
-fn aim_eye(
+pub(crate) fn aim_eye(
     feet: Vec3,
     body: &PlayerBody,
     input: &PlayerInput,
@@ -1183,6 +1217,7 @@ fn seated_weapon_allowed(
 
 fn publish_body(
     bridge: Res<CoreBridge>,
+    probe: Option<Res<crate::survival::TemperatureProbe>>,
     mut ui: ResMut<UiState>,
     time: Res<Time>,
     mut input: ResMut<PlayerInput>,
@@ -1210,8 +1245,9 @@ fn publish_body(
             body.velocity.y = 0.0;
         }
     }
+    let probe = probe.map(|p| *p).unwrap_or_default();
     let request = if model.connected {
-        json!({"input":{"position":transform.translation.to_array(),"velocity":body.velocity.to_array(),"grounded":body.grounded,"yaw":input.yaw,"pitch":input.pitch,"stance":body.stance,"heldItemId":input.held_item_id}})
+        json!({"input":{"position":transform.translation.to_array(),"velocity":body.velocity.to_array(),"grounded":body.grounded,"yaw":input.yaw,"pitch":input.pitch,"stance":body.stance,"heldItemId":input.held_item_id,"temperatureProbe":probe.json(),"lookEnd":probe.look_end.map(|end| end.to_array())}})
     } else {
         json!({})
     };

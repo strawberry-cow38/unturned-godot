@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+pub(crate) mod crops;
 mod items;
 pub(crate) mod forage;
 mod map_bindings;
@@ -40,6 +41,9 @@ pub struct ItemVisual {
     pub is_consumable: bool,
     #[serde(default)]
     pub is_fluid_container: bool,
+    /// ItemAsset.fuelCapacity: above zero, a source fuel container (gas can, jerrycan).
+    #[serde(default)]
+    pub fuel_capacity: f32,
     #[serde(default)]
     pub is_deployable: bool,
     #[serde(default)]
@@ -189,6 +193,31 @@ impl InteractionFocus {
     pub fn selected_net_id(&self) -> Option<u64> {
         self.candidate.as_ref().and_then(|c| c.args["netId"].as_u64())
     }
+    /// A source F branch tried after every look target except the shelf and
+    /// crate ones (`PlayerController` runs `RequestHarvestNearestCrop` before
+    /// `_focusShelf`/`OpenNearestCrate`). It has no prompt of its own: a storage
+    /// candidate keeps its label, but F dispatches this action instead.
+    pub(crate) fn fall_through(&mut self, action: &str, args: Value) {
+        match &mut self.candidate {
+            None => {
+                self.candidate = Some(InteractionCandidate {
+                    distance: f32::INFINITY,
+                    label: String::new(),
+                    action: action.into(),
+                    args,
+                    open_storage: false,
+                    manual: false,
+                    show_binding: false,
+                })
+            }
+            Some(candidate) if candidate.open_storage => {
+                candidate.action = action.into();
+                candidate.args = args;
+                candidate.open_storage = false;
+            }
+            Some(_) => {}
+        }
+    }
 
     pub fn offer(
         &mut self,
@@ -219,13 +248,32 @@ impl InteractionFocus {
     }
 }
 #[derive(Resource, Default)]
-struct Replicas {
+pub(crate) struct Replicas {
     entities: HashMap<u32, Entity>,
     last_event: u64,
     map_name: String,
     geometry_map: String,
     geometry_revision: u64,
     session_epoch: u64,
+    setup_failed: bool,
+}
+impl Replicas {
+    /// The host has accepted this map's services, geometry and loot stream.
+    pub(crate) fn geometry_registered(&self, map: &str) -> bool {
+        !map.is_empty() && self.geometry_map == map
+    }
+    /// The last world-authority registration attempt was refused.
+    pub(crate) fn setup_failed(&self) -> bool {
+        self.setup_failed
+    }
+    #[cfg(test)]
+    pub(crate) fn mark_geometry_for_test(&mut self, map: &str) {
+        self.geometry_map = map.into();
+    }
+    #[cfg(test)]
+    pub(crate) fn fail_setup_for_test(&mut self) {
+        self.setup_failed = true;
+    }
 }
 #[derive(Component)]
 pub struct WorldItemReplica {
@@ -242,6 +290,7 @@ pub struct CoreEvent {
 pub struct EntityPlugin;
 impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
+        crops::install(app);
         app.add_plugins(npcs::NpcPlugin)
             .init_resource::<ItemCatalog>()
             .init_resource::<ServiceManifest>()
@@ -249,6 +298,7 @@ impl Plugin for EntityPlugin {
             .init_resource::<InteractionFocus>()
             .init_resource::<Replicas>()
             .init_resource::<items::Models>()
+
             .add_plugins(items::material::AlphaDepthPlugin)
             .configure_sets(
                 Update,
@@ -264,6 +314,7 @@ impl Plugin for EntityPlugin {
                     sync_static_life,
                     forage::prepare,
                     sync_world_items,
+                    crops::sync,
                     forward_events.in_set(CoreEventsReady),
                 )
                     .chain()
@@ -472,8 +523,10 @@ fn register_world_geometry(
         Ok(()) => {
             replicas.geometry_map = config.map_name.clone();
             replicas.geometry_revision = geometry.revision;
+            replicas.setup_failed = false;
         }
         Err(error) => {
+            replicas.setup_failed = true;
             error!("World authority setup failed: {error}");
             model.notice(error.to_string());
             model.connected = false;
@@ -829,7 +882,11 @@ fn apply_interaction(
     } else {
         candidate.label.clone()
     };
-    if candidate.manual || !settings.just_pressed(GameAction::Interact, &keys, &mouse) {
+    // PlayerController: Interact while ALT-looking interacts with nothing.
+    if candidate.manual
+        || !settings.just_pressed(GameAction::Interact, &keys, &mouse)
+        || settings.pressed(GameAction::FreeLook, &keys, &mouse)
+    {
         return;
     }
     match bridge.request(
