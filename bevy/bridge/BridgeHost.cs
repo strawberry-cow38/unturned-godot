@@ -138,7 +138,9 @@ public sealed partial class BridgeHost : IDisposable
                 RequireSession();
                 if (_server != null) Dispose(); else { _client.Disconnect(); _remoteMounted?.Clear(); }
                 return new { disconnected = true, ownsWorld = false };
-            case "diagnostics": RequireSession(); return new { host = _server != null, liveBullets = _server?.Combat.LiveBullets, stuckProjectilePoses = _warheads?.LivePoseCount };
+            case "diagnostics": RequireSession(); return new { host = _server != null, liveBullets = _server?.Combat.LiveBullets, stuckProjectilePoses = _warheads?.LivePoseCount,
+                // CommandTakeFromStorage verdicts (ServerTransactionsDiagnostics), host only.
+                shelfTakes = _server == null ? null : new { applied = _server.Transactions.Diag.ShelfTakesApplied, rejected = _server.Transactions.Diag.ShelfTakesRejected } };
             case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), gestures = GestureMetadata(), profileRules = ProfileMetadata(), bulletVisuals = CosmeticBulletServices.Metadata(), mountedWeapons = _catalog.Mounted.GunMetadata(), npcCrew = NpcHeliCrewBody.Metadata(), vehicleLighting = VehicleLightingServices.Metadata(), vehicleMaintenance = VehicleMaintenanceServices.Metadata(), throwMotion = new {
                 speed = HandRules.ThrowSpeed, lift = HandRules.ThrowLift, weakScale = HandRules.WeakThrowScale,
                 releaseFraction = HandRules.ThrowReleaseFraction, cooldown = HandRules.ThrowCooldown,

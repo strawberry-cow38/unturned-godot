@@ -3015,3 +3015,51 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - A fullscreen dilate draws the 3.5 px rim at the canvas-50 slot (new `OUTLINE_ORDER`, between the tool label and modal), tinted by night vision and warped underwater.
 - **Claimers so far:** world items (rarity colour) and map containers (white). The others are listed in `bevy/docs/OUTLINE_PORT.md`.
 - **Verification:** unit tests with 3 negative controls; full native suite 832/0. A Vulkan `BuildItemTest`+`UG_FOCUS` fixture shows the rare-blue rim around the AR-15, matching the Godot 4.6.2 oracle (`bevy/artifacts/{bevy,godot}-outline-itemfocus.png`). Found and fixed on the way: mask coverage now read from red, the overlay node is no longer parented to its camera, and the fixture's injected item no longer sits below ground.
+
+### 2026-10-16 — Original store shelves: tier display, look tag and F take-one
+
+- `bevy/src/entities/shelves.rs` + `shelves/layout.rs` port `StoreShelf.ApplyDisplay`/`SyncDisplay`/`PlaceItem`. Each replicated display container's server digest (Cell = y*Width+x) becomes the items' dropped models on its tiers, on the stable cell → slot diff.
+  - Layout: source `Profiles`/`Prof`/`StoodAabb`, icon-pose stand vs lie-flat orientation (`item_poses.json`, `NearestAxis`, `_forceLie`, drinks stand, clothing/magazines/sandwiches lie), oversize scaling and front-biased placement.
+  - Look: the 2.6 m ray, then the 0.16 m sphere, picks an item box (mesh AABB × 1.1). It is offered as an ordinary prompt-less candidate, so it beats the shelf's open and crop harvest. F sends the existing `takeFromStorage` (CommandTakeFromStorage 45).
+  - Name tag: the source Label3D (rarity → 35% white, 64 px, 0.006 m/px, depth-ignoring billboard) shows on focus.
+  - Unchanged: no bridge, wire or protocol change. Core's `ServerTakeFromStorage` validation (StorageReach 4 m, exact cell, add-first) was verified against the source.
+  - Not ported: `SpawnDouble`/`ResolveSide`, because the shipped consume path is single-sided per server container. The focus outline belongs to the separate focus-outlines row. Details are in `bevy/docs/STORE_SHELVES_PORT.md`.
+- Tests:
+  - Native `entities::shelves`: 12 passing, 1 ignored GPU fixture. They include a Godot golden: 25 items dumped from the actual Godot 4.6.2 `UG_SHELFDEMO` by `bevy/tools/shelf_reference.gd` match item for item within 2 mm (basis, origin, tag, hitbox, AABB, tint). The authority journey runs through a real bridge.
+  - Managed `ShelfTests` (real UDP, joined client): reach refusal, stale-cell refusal, and a take that moves exactly one cell into the bag.
+  - 17 surgical negative controls, each failing as intended:
+    - offer not installed;
+    - open_storage candidate;
+    - HUD prompt;
+    - tier mirror;
+    - rot swap;
+    - drink rule;
+    - diagonal-up;
+    - handedness fix;
+    - oversize scale;
+    - front bias;
+    - tag tint;
+    - sphere refinement;
+    - stable diff;
+    - despawn on take;
+    - 1.1 hitbox;
+    - core reach check;
+    - core exact-cell check.
+  - Full suites: 276 managed tests pass. Native: 824 pass and 55 are ignored. Two coupling `main_schedule` tests read the gitignored `bevy/artifacts/bevy-coupling-os-entered.json`, which must be copied into the worktree.
+- Review fixes:
+  - **Arbitration:** `ResolveFocus`/`rayTerminal`. The sphere refines only when the eye ray hit nothing or hit a container object.
+  - **Axis sort:** the .NET three-key `Array.Sort` (unstable SwapIfGreater 0-1, 0-2, 1-2). The Loonie/Toonie Supply now stands on X.
+  - **Repeated cells:** a repeated digest cell keeps the last item.
+  - **Sync cost:** sync runs only on a snapshot or catalogue change, and re-applies a digest only when its signature changes. `stood` is looked up by `&str`, and scratch buffers are reused.
+  - **Offer cost:** offer culls by shelf-root distance, inverts each matrix once, computes the tag only for the winner, and allocates nothing per frame.
+  - **New tests:** slot stability plus the signature gate; the server verdict via the bridge `diagnostics` `shelfTakes` counter and the managed `Diag` counters; a full-bag (add-first) case; and a real-Rapier arbitration test.
+  - **Negative controls:** 8 more, each failing as intended:
+    - refine after any ray claim;
+    - every hit counts as a shelf;
+    - stable sort;
+    - first-wins repeated cell;
+    - signature gate removed;
+    - catalogue re-apply removed;
+    - core remove-before-add;
+    - core reach (now caught by the rejection counter).
+- Vulkan: Godot oracle vs native renders of the shelfdemo, default and top views, were opened: same items, orientation, placement and scale, with only the lighting different. The focused Carjack tag matches the Godot label's position, size and colour. Renders: `bevy/artifacts/{godot,bevy}-shelfdemo*.png`.

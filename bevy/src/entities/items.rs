@@ -113,6 +113,14 @@ pub(super) struct Models {
     aligned_arrows: HashMap<u16, Art>,
 }
 impl Models {
+    /// WorldItem.BuildReplicaVisual's full-model `Mesh.GetAabb()`, after `art`
+    /// loaded it; a missing model is the source .24 m fallback cube.
+    pub fn bounds(&self, id: u16) -> (Vec3, Vec3) {
+        self.models
+            .get(&id)
+            .and_then(|m| m.data.as_ref())
+            .map_or((Vec3::splat(-0.12), Vec3::splat(0.12)), |d| (d.min, d.max))
+    }
     pub fn align_arrow(&mut self, id: u16, art: Art, meshes: &mut Assets<Mesh>) -> Art {
         self.aligned_arrows
             .entry(id)
