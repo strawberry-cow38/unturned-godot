@@ -264,6 +264,13 @@ namespace UnturnedGodot.Net
         /// one for a single id. False when they have none, which is what makes the handler's ordering matter:
         /// everything else is checked first, and this is the step that cannot be undone.</summary>
         public ushort TireItemId;   // set by the host from the game layer's PlayerController.TireItemId
+
+        /// <summary>v79 review: the carjack is a TOOL (PlayerController.ApplyCarjack: "The jack is NOT
+        /// consumed -- it is a tool, and retail keeps it"), so the shove asks only that the sender really has
+        /// one. Without it a forged CommandCarjack launched any empty car in reach.</summary>
+        public ushort CarjackItemId;   // set by the host from the game layer's PlayerController.CarjackItemId
+        public bool OwnsCarjack(ushort sender)
+            => CarjackItemId != 0 && SenderInventory(sender) is { } inv && inv.getItemCount(CarjackItemId) > 0;
         public bool SpendTire(ushort sender)
         {
             if (TireItemId == 0) return false;

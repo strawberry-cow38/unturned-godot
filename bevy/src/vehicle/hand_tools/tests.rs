@@ -122,6 +122,16 @@ fn carjack_refuses_before_the_wind_up_and_lifts_at_75_percent_of_the_crank() {
 }
 
 #[test]
+fn the_aimed_car_stays_the_focus_unless_something_else_won_the_look() {
+    let mut focus = InteractionFocus::default();
+    assert!(focus_allows(Some(&focus), 7), "a wreck's hood offers no prompt but is still _focusVehicle");
+    assert!(focus_allows(None, 7));
+    focus.offer(1., "Enter Sedan", "enterVehicle", json!({"netId":7,"seat":0}), false);
+    assert!(focus_allows(Some(&focus), 7));
+    assert!(!focus_allows(Some(&focus), 8), "a nearer winner clears the other car");
+}
+
+#[test]
 fn jackable_is_a_dwell_then_not_rising_then_near_ground() {
     assert!(jackable(0.5, 9., || unreachable!()), "settled 0.5 s: wedged cars pass");
     assert!(!jackable(0.48, 1.01, || 0.), "on its way up");
@@ -169,6 +179,11 @@ fn the_physics_owner_lifts_an_empty_settled_car_by_retails_dv_and_refuses_the_re
     let (mut app, car) = jack_app();
     app.world_mut().get_mut::<VehicleBody>(car).unwrap().passengers = vec![3];
     assert!(rise(&mut app, car) < 0.5, "Carjack: !isEmpty -> refused");
+    // A rider who left: core keeps the slot and writes 0 (ServerSetSeat).
+    let (mut app, car) = jack_app();
+    app.world_mut().get_mut::<VehicleBody>(car).unwrap().passengers = vec![0, 0];
+    assert!(!occupied(app.world().get::<VehicleBody>(car).unwrap()), "vacated seats are empty");
+    assert!(rise(&mut app, car) > 4.4, "a car once ridden in can still be jacked");
     let (mut app, car) = jack_app();
     app.world_mut().get_mut::<VehicleBody>(car).unwrap().flags |= 32;
     assert!(rise(&mut app, car) < 0.5, "a wreck is never jacked");
@@ -434,12 +449,18 @@ fn held_gas_can_siphons_and_pours_the_aimed_car_only_through_accepted_state() {
     assert_eq!(row(&mut rig)["fuel"], 50000., "registered full");
     assert_eq!(can_fuel(&rig), 0.);
     rmb(&mut rig);
-    assert_eq!(can_fuel(&rig), 0., "the intent alone moves nothing");
+    step(&mut rig, 3);
+    assert_eq!(
+        rig.app.world().get::<VehicleBody>(rig.entity).unwrap().fuel,
+        50000.,
+        "frames after the press, before any authority tick: no optimistic local siphon"
+    );
     assert_eq!(row(&mut rig)["fuel"], 30000., "siphoned min(free can 20000, tank)");
     assert_eq!(can_fuel(&rig), 20000.);
     assert_eq!(rig.app.world().get::<VehicleBody>(rig.entity).unwrap().fuel, 30000., "adopted by the native body");
     rmb(&mut rig);
     assert_eq!(row(&mut rig)["fuel"], 30000., "[fuel] can is full: no request");
+    assert_eq!(can_fuel(&rig), 20000., "after the authority ticks, the refused siphon moved nothing");
     click(&mut rig);
     assert_eq!(row(&mut rig)["fuel"], 50000., "poured back");
     assert_eq!(can_fuel(&rig), 0.);

@@ -24,6 +24,8 @@ mod parts;
 pub(crate) mod scopes;
 mod tools;
 mod weapon_fx;
+#[cfg(test)]
+mod hand_tool_tests;
 const LAYER: usize = 1;
 const ARMS_POSITION: Vec3 = Vec3::new(0., -1.75, 0.12);
 #[derive(Clone, Debug)]
@@ -506,7 +508,14 @@ fn attach_held_mesh(
         return;
     };
     commands.entity(skin.0).insert(RenderLayers::layer(LAYER));
-    playback.looping = false;
+    // EquipHeldCarjack: Jack_Equip carries `loop: true` and the source plays
+    // it looping as the carry hold (rendered in the source --vm harness). Only
+    // the vehicle hand tools honour a clip's own loop flag here.
+    playback.looping = catalog
+        .items
+        .get(&state.held.unwrap_or(0))
+        .is_some_and(|i| !i.hand_tool.is_null())
+        && playback.data.anims.get(&playback.clip).is_some_and(|clip| clip.looping);
     if state.held == Some(0) {
         playback.time = playback
             .data

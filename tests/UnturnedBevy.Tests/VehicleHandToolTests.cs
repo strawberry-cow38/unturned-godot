@@ -155,7 +155,10 @@ public sealed class VehicleHandToolTests
     [Test]
     public void TheCarjackRefusesDrivenWreckedAndDistantVehicles()
     {
-        uint car=Spawn(0),wreck=Spawn(-8);Teleport(30,30);
+        uint car=Spawn(0),wreck=Spawn(-8);Teleport(3,4);
+        Action(_peer,"carjack",new{vehicleNetId=car});Pump();
+        Assert.That(Jacks(_host),Is.Empty,"a forged 56 from a sender without a carjack");
+        Give(Jack);Teleport(30,30);
         Action(_peer,"carjack",new{vehicleNetId=car});Pump();
         Assert.That(Jacks(_host),Is.Empty,"beyond reach");
         Teleport(3,4);Action(_host,"enterVehicle",new{netId=car,seat=0});Pump();
@@ -163,5 +166,8 @@ public sealed class VehicleHandToolTests
         Assert.That(Jacks(_host),Is.Empty,"an occupied car is never launched");
         Wreck(wreck);Teleport(3,-6);Action(_peer,"carjack",new{vehicleNetId=wreck});Pump();
         Assert.That(Jacks(_host),Is.Empty,"a wreck");
+        Action(_host,"exitVehicle",new{});Pump();Teleport(3,4);
+        Action(_peer,"carjack",new{vehicleNetId=car});Pump();
+        Assert.That(Jacks(_host),Has.Length.EqualTo(1),"the same owner, in reach, at the now-empty car");
     }
 }

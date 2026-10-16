@@ -3091,3 +3091,11 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - the Workshop new-map/saved-maps block is a "not native yet" note.
 
   The fx captures show the chromatic fringe with the HUD untouched, shadows off, and TAA+AO at UI scale 1.3. The mouse-driven journey goes Play → Singleplayer → Generate Island → PLAY into the generated island, then Esc → Settings → back. The bug-report journey shows ● REC, "sending…" and "report sent ✓" (X-framebuffer grabs), two POSTs received, an empty outbox, and the console typed report.
+
+- Review fixes, each guarded by a test that fails under revert:
+  - Occupancy now counts only non-zero passenger slots. Core `ServerSetSeat` writes 0 on leave, so any car once ridden in had become unjackable.
+  - Command 56 now refuses a dead sender or one without carjack 277 at core's choke point. The jack is never spent, as in the source.
+  - A car with no prompt (a wreck's hood) stays the tool focus.
+  - The first-person tools are unit-tested and rendered. The source `--vm` harness showed `Jack_Equip` loops as the carry hold, and native now honours that loop for hand tools only.
+  - Documented: commands 99/100 are bridge-only, and host carjack refusals are logged.
+  - Tests: core `CarjackAuthorityTests`, the managed refusal test (now with a positive ending), native occupancy/focus/viewmodel tests, and the frames `bevy-tool-viewmodel-*` beside `godot-source-carjack-vm-*`.
