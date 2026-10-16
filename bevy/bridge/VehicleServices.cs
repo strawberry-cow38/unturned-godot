@@ -81,6 +81,13 @@ public sealed class VehicleServices
         return "hull";
     }
     public float FuelFor(uint id, float fallback) => _fuel.GetValueOrDefault(id, fallback);
+    /// <summary>An accepted can transfer (VehicleFuelServices): the host overlay and the replicated row together.</summary>
+    public void SetFuel(uint id, float fuel)
+    {
+        if (!_server.Vehicles.TryGet(id, out var e)) return;
+        _fuel[id] = fuel;
+        _server.Vehicles.ServerPublishVitals(new(id), fuel, e.Health, e.Battery, e.Exploded, _server.Session.CurrentTick + 1);
+    }
     public void SaveFuel(WorldSave save)
     {
         var vehicles = _server.Vehicles.All.ToArray();
@@ -105,7 +112,6 @@ public sealed class VehicleServices
                 return (exit.clear, exit.pos);
             return (false, Vector3.zero); // a real door must have a current host physics clearance result
         };
-        server.VehicleHost.ApplyCarjackForce = (id, sender) => emit("carjack", new { netId = id, playerId = sender });
     }
     public object Register(JsonElement request)
     {

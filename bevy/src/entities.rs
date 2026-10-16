@@ -58,6 +58,9 @@ pub struct ItemVisual {
     pub tool: Value,
     #[serde(default)]
     pub gravity_multiplier: f32,
+    /// Source vehicle paint/tire/carjack use timeline (Catalog.HandTool).
+    #[serde(default)]
+    pub hand_tool: Value,
 }
 #[derive(Resource, Default)]
 pub struct ItemCatalog {
@@ -181,6 +184,10 @@ impl InteractionFocus {
     }
     pub fn has_candidate(&self) -> bool {
         self.candidate.is_some()
+    }
+    /// The winning candidate's replicated identity (source ResolveFocus has one winner).
+    pub fn selected_net_id(&self) -> Option<u64> {
+        self.candidate.as_ref().and_then(|c| c.args["netId"].as_u64())
     }
 
     pub fn offer(

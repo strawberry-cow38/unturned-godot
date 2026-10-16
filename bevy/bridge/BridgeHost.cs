@@ -360,6 +360,7 @@ public sealed partial class BridgeHost : IDisposable
         _vehicleDoors = new VehicleDoorServices(_server, _catalog, _geometry);
         _vehicleHitches = new VehicleHitchServices(_server, _catalog, _geometry);
         _vehicleTows = new VehicleTowServices(_server, _catalog, () => _client?.PlayerId ?? 0);
+        _ = new VehicleHandToolServices(_server, Emit);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
         _zombies = new ZombieServices(_server, _geometry, Emit);
         _services.DoorNoise = _zombies.Noise;

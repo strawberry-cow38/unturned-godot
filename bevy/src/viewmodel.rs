@@ -379,7 +379,9 @@ fn build_viewmodel(
     } else {
         asset[..1].to_ascii_uppercase() + &asset[1..]
     };
-    let consumable = held_clips(&config.content_root, &asset);
+    // Vehicle hand tools carry their own Equip/Use pair (EquipHeldSpraypaint/Tire/Carjack).
+    let consumable =
+        held_clips(&config.content_root, &asset).or_else(|| item.and_then(hand_tool_clips));
     let requested = if held == 0 {
         "Punch_Left".into()
     } else if let Some(clips) = &consumable {
@@ -461,9 +463,9 @@ fn build_viewmodel(
                 mesh: if gun.is_some() {
                     None
                 } else {
-                    item.and_then(|i| i.mesh.clone())
+                    item.and_then(|i| i.mesh.clone().or_else(|| tool_path(i, "mesh")))
                 },
-                texture: item.and_then(|i| i.texture.clone()),
+                texture: item.and_then(|i| i.texture.clone().or_else(|| tool_path(i, "texture"))),
                 gun,
                 asset,
                 left_hook: item.is_some_and(|i| i.gun["leftHook"].as_bool().unwrap_or(false))
@@ -535,10 +537,20 @@ fn attach_held_mesh(
         .get(&state.held.unwrap_or(0))
         .filter(|i| i.melee["light"].as_bool() == Some(true));
     let cached = cache.material(texture, false, &assets, &mut materials);
+    // EquipHeldSpraypaint: the can is tinted flat by the paint it sprays.
+    let paint_tint = catalog
+        .items
+        .get(&state.held.unwrap_or(0))
+        .and_then(|i| i.hand_tool["paintRgb"].as_u64());
     let material = if let Some(gun) = &pending.gun {
         let mut material = materials.get(&cached).cloned().unwrap_or_default();
         material.base_color = gun.tint;
         material.cull_mode = None;
+        materials.add(material)
+    } else if let Some(rgb) = paint_tint {
+        let mut material = materials.get(&cached).cloned().unwrap_or_default();
+        let [r, g, b, _] = crate::vehicle::hand_tools::paint_colour(rgb as u32);
+        material.base_color = Color::srgb(r, g, b);
         materials.add(material)
     } else if light_item.is_some() {
         let material = materials.get(&cached).cloned().unwrap_or_default();
@@ -608,6 +620,13 @@ fn attach_held_mesh(
             }
         }
     }
+}
+fn hand_tool_clips(item: &crate::entities::ItemVisual) -> Option<(String, String, bool)> {
+    let tool = &item.hand_tool;
+    Some((tool["equip"].as_str()?.into(), tool["use"].as_str()?.into(), false))
+}
+fn tool_path(item: &crate::entities::ItemVisual, key: &str) -> Option<String> {
+    item.hand_tool[key].as_str().map(Into::into)
 }
 fn held_clips(root: &Path, asset: &str) -> Option<(String, String, bool)> {
     for table in ["consumable_anims.tsv", "throwable_anims.tsv"] {
