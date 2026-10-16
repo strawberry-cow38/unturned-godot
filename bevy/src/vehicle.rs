@@ -7,6 +7,7 @@ pub(crate) use audio::spawn_sound as spawn_ranged_audio;
 mod collision;
 pub(crate) use collision::hull_mesh::Hooks as PhysicsHooks;
 mod contacts;
+mod coupling;
 mod damage;
 pub mod data;
 mod dynamics;

@@ -290,6 +290,12 @@ impl Builder<'_, '_, '_> {
     }
 }
 
+pub(in crate::vehicle) struct BodySplit {
+    pub mesh: Handle<Mesh>,
+    pub data: Arc<ObjData>,
+    pub legs: Option<Handle<Mesh>>,
+}
+
 /// Returns the optional main-body replacement and all owned lamp presentation.
 /// The caller renders unconsumed parts and inserts BuiltLighting on the body.
 pub(in crate::vehicle) fn build(
@@ -300,7 +306,7 @@ pub(in crate::vehicle) fn build(
     cache: &mut ContentCache,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-) -> (Option<Handle<Mesh>>, BuiltLighting) {
+) -> (Option<BodySplit>, BuiltLighting) {
     let s = &d.spec;
     let mut b = Builder {
         commands,
@@ -318,37 +324,52 @@ pub(in crate::vehicle) fn build(
         let legs = s.landing_leg_zone_min != s.landing_leg_zone_max;
         let head = !legs && s.headlight_zone_min != s.headlight_zone_max;
         let tail = legs && s.taillight_zone_min != s.taillight_zone_max;
-        if (head || tail)
+        if (legs || head)
             && let Some(name) = &s.body
             && let Some(data) = b.load(name)
         {
-            let zones = if head {
-                math::mirrored_zones(s.headlight_zone_min, s.headlight_zone_max)
+            // Original ParseObjSplit2 assigns legs first, then lenses, with
+            // every corner inside its zone. The two source categories cannot
+            // duplicate a triangle even if an authored box overlaps another.
+            let (rest, leg_mesh) = if legs {
+                let (rest, selected) = data.split_zones(&[(
+                    Vec3::from_array(s.landing_leg_zone_min),
+                    Vec3::from_array(s.landing_leg_zone_max),
+                )]);
+                let mesh = (!selected.positions.is_empty())
+                    .then(|| b.cached(name, "landing-legs", &selected));
+                (rest, mesh)
             } else {
-                math::mirrored_zones(s.taillight_zone_min, s.taillight_zone_max)
+                ((*data).clone(), None)
             };
-            let leg_min = Vec3::from_array(s.landing_leg_zone_min);
-            let leg_max = Vec3::from_array(s.landing_leg_zone_max);
-            let (rest, lenses) = data.split_where(|p| {
-                let in_box = |min: Vec3, max: Vec3| {
-                    p.iter().all(|v| v.cmpge(min).all() && v.cmple(max).all())
-                };
-                (!legs || !in_box(leg_min, leg_max))
-                    && zones.iter().any(|(min, max)| in_box(*min, *max))
-            });
-            body_override = Some(b.cached(name, "body-without-lamps", &rest));
-            b.pair(
-                name,
-                &lenses,
-                if head { Kind::Head } else { Kind::Tail },
-                if head {
-                    Color::srgb(0.94, 0.89, 0.73)
+            let rest = if head || tail {
+                let zones = if head {
+                    math::mirrored_zones(s.headlight_zone_min, s.headlight_zone_max)
                 } else {
-                    Color::srgb(0.42, 0.06, 0.06)
-                },
-                true,
-                false,
-            );
+                    math::mirrored_zones(s.taillight_zone_min, s.taillight_zone_max)
+                };
+                let (rest, lenses) = rest.split_zones(&zones);
+                b.pair(
+                    name,
+                    &lenses,
+                    if head { Kind::Head } else { Kind::Tail },
+                    if head {
+                        Color::srgb(0.94, 0.89, 0.73)
+                    } else {
+                        Color::srgb(0.42, 0.06, 0.06)
+                    },
+                    true,
+                    false,
+                );
+                rest
+            } else {
+                rest
+            };
+            body_override = Some(BodySplit {
+                mesh: b.cached(name, "body-without-lamps-and-legs", &rest),
+                data: Arc::new(rest),
+                legs: leg_mesh,
+            });
         }
     }
     if let Some(parts) = &s.parts {

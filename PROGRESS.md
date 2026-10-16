@@ -2794,3 +2794,9 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 
 - The real PEI pickup journey exposed an integration bug hidden by the isolated panel render: main installs InfoBillboard before CharacterPlugin, and Bevy requests material shaders during plugin construction. Registering the shared embedded shader only in the later character plugin left the panel invisible despite correct focus.
 - Added one idempotent registration seam used before either material plugin. The order-sensitive asset regression passes before and after adding CharacterPlugin, using the actual embedded shader bytes. Rebuilt full-game PEI capture now visibly shows Workbench name, health and hold-F hint; startup has no missing shader error. Original renderer/text behavior is unchanged.
+
+### 2026-10-15 — Original detached trailer legs and separate cab sleeper
+
+- Split the seven source trailer bodies into landing legs, baked lenses and remaining hull in original priority/order. Separate leg visuals retain original attributes/material and stretch about the source pivot. Cab sleeper boxes are independent source bodies with player/ghost-trailer contact and ordinary-chassis exclusion.
+- Feed the post-split body to asynchronous decomposition before the original cache fallback, preventing invisible support geometry from remaining in a future retracted chassis. Existing parked physical supports remain deployed; accepted native relationship/joint/ghost/retraction is the next slice.
+- Verification: five focused tests PASS, including actual Rapier contact/negative control and a real async decomposer witness that distinguishes the split input from the original cache. Four Vulkan whole/legs frames for original semi and dinky trailers were rendered/opened; corrected full-vehicle framing uses visible mesh bounds. Source review PASS. See `bevy/docs/VEHICLE_COUPLING_NATIVE.md`; these are detached geometry claims only.

@@ -1,7 +1,7 @@
 use super::*;
 use bevy::ecs::world::CommandQueue;
 mod visual;
-fn scene(key: &str) -> (World, Entity, Option<Handle<Mesh>>) {
+fn scene(key: &str) -> (World, Entity, Option<BodySplit>) {
     let mut world = World::new();
     let parent = world
         .spawn((Transform::IDENTITY, Visibility::Inherited))
@@ -84,7 +84,11 @@ fn baked_body_zones_preserve_every_triangle_and_source_default_tint() {
         let body = body.unwrap();
         let lights = world.get::<BuiltLighting>(parent).unwrap();
         let meshes = world.resource::<Assets<Mesh>>();
-        let count = meshes.get(&body).unwrap().count_vertices()
+        let count = meshes.get(&body.mesh).unwrap().count_vertices()
+            + body
+                .legs
+                .as_ref()
+                .map_or(0, |legs| meshes.get(legs).unwrap().count_vertices())
             + lights
                 .lenses
                 .iter()

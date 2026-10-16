@@ -35,6 +35,9 @@ pub struct Hulls {
 }
 #[derive(Component)]
 pub struct PendingHull;
+/// Rendered source body after the original landing-leg/lens partition.
+#[derive(Component)]
+pub(super) struct SourceMesh(pub std::sync::Arc<crate::content::ObjData>);
 fn hash_name(key: &str) -> String {
     let mut h = 14695981039346656037u64;
     for c in key.encode_utf16() {
@@ -109,7 +112,7 @@ pub fn update(
     config: Res<WorldConfig>,
     cache: Res<ContentCache>,
     mut hulls: ResMut<Hulls>,
-    query: Query<(Entity, &VehicleBody), With<PendingHull>>,
+    query: Query<(Entity, &VehicleBody, Option<&SourceMesh>), With<PendingHull>>,
 ) {
     let mut completed = Vec::new();
     for (id, task) in &mut hulls.pending {
@@ -121,7 +124,7 @@ pub fn update(
         hulls.pending.remove(&id);
         hulls.ready.insert(id, shape);
     }
-    for (entity, body) in &query {
+    for (entity, body, source) in &query {
         if let Some(shape) = hulls.ready.get(&body.type_id) {
             commands
                 .entity(entity)
@@ -141,7 +144,10 @@ pub fn update(
             commands.entity(entity).remove::<PendingHull>();
             continue;
         };
-        let Some(mesh) = cache.geometry.get(&config.content_root.join(name)) else {
+        let Some(mesh) = source
+            .map(|s| &s.0)
+            .or_else(|| cache.geometry.get(&config.content_root.join(name)))
+        else {
             continue;
         };
         let mesh = mesh.clone();

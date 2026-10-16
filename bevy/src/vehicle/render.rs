@@ -87,7 +87,26 @@ pub fn build(
         meshes,
         body_material.clone(),
     );
-    let body_override = body_override.or_else(|| door.as_ref().map(|(mesh, _)| mesh.clone()));
+    super::coupling::geometry::build(
+        commands,
+        entity,
+        d,
+        body_override.as_ref().and_then(|b| b.legs.clone()),
+        body_material.clone(),
+    );
+    // The ordinary semi trailer decomposes the source body AFTER its legs and
+    // tail lenses were peeled off. Keeping the legs in the chassis would leave
+    // an invisible support even after the separate LandingGear is retracted.
+    if s.kingpin != [0.; 3]
+        && let Some(split) = &body_override
+    {
+        commands
+            .entity(entity)
+            .insert(super::collision::SourceMesh(split.data.clone()));
+    }
+    let body_override = body_override
+        .map(|b| b.mesh)
+        .or_else(|| door.as_ref().map(|(mesh, _)| mesh.clone()));
     let body_names = s.body.iter().chain(s.heli_body_meshes.iter().flatten());
     for name in body_names {
         if s.body.as_ref() == Some(name)
