@@ -179,6 +179,152 @@ public sealed class NearbyInventoryTests
         Assert.That(h.Server.WorldItems.All.Count(),Is.EqualTo(2));
     }
 
+    static NearbyOperationCommand Op(NetWorldClient owner, uint request, Vector3 eye, NearbyOperation op, int row=0,
+        byte page=0, byte x=0, byte y=0, byte rot=0, ushort amount=0, uint crate=0)
+    { var v=owner.Nearby;var r=v.Rows[row];var first=r.Sources[0];return new(){RequestId=request,Operation=op,ScanId=v.ScanId,
+        Revision=v.Revision,WorldId=first.WorldId,Token=first.Token,X=r.Jar.x,Y=r.Jar.y,Eye=eye,CrateId=crate,Page=page,
+        ToX=x,ToY=y,ToRot=rot,Amount=amount}; }
+    [Test]
+    public void OperationWireIsAtomicAndRejectsEveryAmbiguousShape()
+    {
+        var c=new NearbyOperationCommand{RequestId=4,Operation=NearbyOperation.Split,Eye=new(1,2,3),ScanId=1,Revision=2,WorldId=8,
+            Token=9,X=5,Y=5,Amount=3,Page=3,ToX=2,ToY=1,ToRot=1};
+        var bytes=Bytes(c.Write);Assert.That(NearbyOperationCommand.TryRead(Reader(bytes),out var got),Is.True);Assert.That(got,Is.EqualTo(c));
+        for(int n=0;n<bytes.Length;n++){Assert.That(NearbyOperationCommand.TryRead(Reader(bytes[..n]),out got),Is.False);
+            Assert.That(got,Is.EqualTo(default(NearbyOperationCommand)));}
+        var bad=c;bad.Amount=0;Assert.That(bad.IsValid,Is.False,"split always names a positive amount");
+        bad=c;bad.Operation=NearbyOperation.Place;Assert.That(bad.IsValid,Is.False,"place moves the whole row, never a count");
+        bad.Amount=0;Assert.That(bad.IsValid,Is.True);
+        bad=c;bad.Page=PlayerInventory.AREA;Assert.That(bad.IsValid,Is.False,"never a ground destination");
+        bad=c;bad.Page=PlayerInventory.STORAGE;Assert.That(bad.IsValid,Is.False,"owned scope cannot name a container page");
+        bad.CrateId=7;Assert.That(bad.IsValid,Is.True);bad.Page=2;Assert.That(bad.IsValid,Is.False,"container scope cannot name an owned page");
+        bad=c;bad.ToRot=4;Assert.That(bad.IsValid,Is.False);
+        bad=c;bad.X=6;Assert.That(bad.IsValid,Is.False);
+        bad=c;bad.Token=0;Assert.That(bad.IsValid,Is.False);
+        bad=c;bad.Eye=new(float.NaN,0,0);Assert.That(bad.IsValid,Is.False);
+        bad=c;bad.Operation=NearbyOperation.EmptyFuel;Assert.That(bad.IsValid,Is.False,"empty carries no destination or amount");
+        bad.Amount=0;bad.Page=0;bad.ToX=0;bad.ToY=0;bad.ToRot=0;Assert.That(bad.IsValid,Is.True);
+        bad.CrateId=1;Assert.That(bad.IsValid,Is.False);
+        bad=c;bad.Operation=(NearbyOperation)3;Assert.That(bad.IsValid,Is.False);
+    }
+    (TransactionalHarness h,NetWorldClient a,PlayerInventory bag,Vector3 eye) Owner(int seed,params string[] names)
+    {
+        var h=new TransactionalHarness(seed).Connected(names.Length==0?new[]{"owner"}:names);var a=h.Clients[0];
+        var ids=new Dictionary<Item,ulong>();ulong next=0;
+        h.Server.Inventories.ItemIdentityProvider=i=>{if(!ids.TryGetValue(i,out var id))ids[i]=id=++next;return id;};
+        h.Server.NearbyVisible=(_,_)=>true;h.Server.Players.TryGetByOwner(a.PlayerId,out var player);
+        return (h,a,h.Server.Transactions.InventoryForTest(a.PlayerId),player.Pos+new Vector3(0,1,0));
+    }
+    static void Open(TransactionalHarness h,NetWorldClient a,uint request,Vector3 eye)
+    { a.SendNearbyInventory(new(){RequestId=request,Action=NearbyAction.Open,Eye=eye});Assert.That(h.StepUntil(()=>a.Nearby.RequestId==request),Is.True); }
+    // A refused older request's reply can be followed in the same tick by the
+    // ordinary refresh under the newest ID, so observe the correlated event.
+    static NearbyResult Send(TransactionalHarness h,NetWorldClient a,NearbyOperationCommand c)
+    {
+        NearbyResult? seen=null;void Saw(NearbyInventoryEvent e){if(e.RequestId==c.RequestId)seen??=e.Result;}
+        a.NearbyChanged+=Saw;
+        try{Assert.That(a.SendNearbyOperation(c),Is.True);Assert.That(h.StepUntil(()=>seen.HasValue),Is.True);h.Step(2);return seen.Value;}
+        finally{a.NearbyChanged-=Saw;}
+    }
+    [Test]
+    public void PlaceUsesTheDraggedCellRotationAndHolsterRuleAndNeverSwapsWithTheGround()
+    {
+        var (h,a,bag,eye)=Owner(48311);
+        var rifle=new Item(TransactionalFixtures.RifleId,1,61){gunAmmo=9,gunSightId=22};
+        var world=h.Server.WorldItems.ServerSpawn(new NetId(900),rifle,eye,0);
+        bag.items[PlayerInventory.BACKPACK].resize(4,4);bag.items[PlayerInventory.BACKPACK].addItem(0,0,0,new Item(TransactionalFixtures.ScrapId));
+        Open(h,a,1,eye);
+        Assert.That(Send(h,a,Op(a,2,eye,NearbyOperation.Place,page:PlayerInventory.BACKPACK,x:0,y:0,rot:1)),Is.EqualTo(NearbyResult.NoRoom),
+            "an occupied cell is refused; a ground row has nowhere to take a swapped occupant");
+        Assert.That(Send(h,a,Op(a,3,eye,NearbyOperation.Place,page:1)),Is.EqualTo(NearbyResult.NoRoom),
+            "primary-only rifle cannot be holstered in SECONDARY");
+        Assert.That(h.Server.WorldItems.TryGet(world.NetIdValue,out _),Is.True);
+        var place=Op(a,4,eye,NearbyOperation.Place,page:PlayerInventory.BACKPACK,x:2,y:0,rot:1);
+        Assert.That(Send(h,a,place),Is.EqualTo(NearbyResult.Transferred));
+        var jar=bag.items[PlayerInventory.BACKPACK].items.Single(j=>j.item.id==TransactionalFixtures.RifleId);
+        Assert.That((jar.x,jar.y,jar.rot),Is.EqualTo(((byte)2,(byte)0,(byte)1)),"rotated 4x2 occupies 2x4 at the dragged cell");
+        foreach(var f in typeof(Item).GetFields())Assert.That(f.GetValue(jar.item),Is.EqualTo(f.GetValue(rifle)),f.Name);
+        Assert.That(h.Server.WorldItems.TryGet(world.NetIdValue,out _),Is.False);
+        Assert.That(a.Nearby.Rows,Is.Empty);
+        a.SendNearbyOperation(place);h.Step(12);
+        Assert.That(bag.getItemCount(TransactionalFixtures.RifleId),Is.EqualTo(1),"exact replay resends, never re-applies");
+        h.Server.WorldItems.ServerSpawn(new NetId(901),new Item(TransactionalFixtures.RifleId),eye,0);Open(h,a,5,eye);
+        Assert.That(Send(h,a,Op(a,6,eye,NearbyOperation.Place,page:0,x:3,y:2,rot:3)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That(bag.items[0].items.Select(j=>(j.x,j.y,j.rot)),Is.EqualTo(new[]{((byte)0,(byte)0,(byte)0)}),"hand slot is its one cell at rot 0");
+        Assert.That(bag.items[PlayerInventory.AREA].getItemCount(),Is.Zero);
+    }
+    [Test]
+    public void SplitTakesOnlyTheNamedCountFromContributorsInSourceOrderAndMergesAtTheCell()
+    {
+        var (h,a,bag,eye)=Owner(48312);
+        var first=new Item(TransactionalFixtures.Round556Id,23);var second=new Item(TransactionalFixtures.Round556Id,18);
+        h.Server.WorldItems.ServerSpawn(new NetId(900),first,eye,0);h.Server.WorldItems.ServerSpawn(new NetId(901),second,eye,0);
+        var pocket=bag.items[2];pocket.resize(3,1);pocket.addItem(1,0,0,new Item(TransactionalFixtures.Round556Id,25));
+        pocket.addItem(2,0,0,new Item(TransactionalFixtures.BeansId));
+        Open(h,a,1,eye);Assert.That(a.Nearby.Rows[0].Sources.Select(s=>s.Amount),Is.EqualTo(new ushort[]{23,7}));
+        Assert.That(Send(h,a,Op(a,2,eye,NearbyOperation.Split,page:2,amount:30)),Is.EqualTo(NearbyResult.Denied),"whole stack is a move");
+        Assert.That(Send(h,a,Op(a,3,eye,NearbyOperation.Split,page:2,x:2,amount:4)),Is.EqualTo(NearbyResult.NoRoom),"different item at the cell");
+        Assert.That(Send(h,a,Op(a,4,eye,NearbyOperation.Split,page:2,x:0,amount:10)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That(pocket.getItem(0,0).item.amount,Is.EqualTo(10));
+        Assert.That((first.amount,second.amount),Is.EqualTo(((ushort)13,(ushort)18)),"first contributor pays first");
+        Assert.That(a.Nearby.Rows.Select(r=>r.Jar.item.amount),Is.EqualTo(new ushort[]{30,1}),"remaining admitted quota repacks 13+18");
+        Assert.That(Send(h,a,Op(a,5,eye,NearbyOperation.Split,page:2,x:1,amount:12)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That(pocket.getItem(1,0).item.amount,Is.EqualTo(30),"merge stops at the stack size");
+        Assert.That((first.amount,second.amount),Is.EqualTo(((ushort)8,(ushort)18)),"only the accepted five rounds were debited");
+        Assert.That(bag.getItemCount(TransactionalFixtures.Round556Id)+first.amount+second.amount,Is.EqualTo(25+41),"rounds are conserved");
+        Assert.That(Send(h,a,Op(a,6,eye,NearbyOperation.Split,page:2,x:1,amount:1)),Is.EqualTo(NearbyResult.NoRoom),"a full stack has no room");
+    }
+    [Test]
+    public void SplitIntoTheViewedContainerRechecksAccessAndRepaintsTheOtherViewer()
+    {
+        var (h,a,bag,eye)=Owner(48313,"owner","other");var b=h.Clients[1];
+        var raw=new Item(TransactionalFixtures.Round556Id,20);h.Server.WorldItems.ServerSpawn(new NetId(900),raw,eye,0);
+        h.Server.Players.TryGetByOwner(a.PlayerId,out var player);
+        var crate=h.Server.Inventories.ServerRegisterCrate(new NetId(950),2,2,player.Pos);
+        a.SendOpenStorage(950);b.SendOpenStorage(950);h.Step(12);Open(h,a,1,eye);
+        Assert.That(Send(h,a,Op(a,2,eye,NearbyOperation.Split,page:7,x:1,y:1,amount:6,crate:951)),Is.EqualTo(NearbyResult.Denied));
+        crate.Access=(_,_)=>false;
+        Assert.That(Send(h,a,Op(a,3,eye,NearbyOperation.Split,page:7,x:1,y:1,amount:6,crate:950)),Is.EqualTo(NearbyResult.Denied));
+        crate.Access=null;a.SendOpenStorage(950);b.SendOpenStorage(950);h.Step(12);   // revoked access also closed both views
+        Assert.That(Send(h,a,Op(a,4,eye,NearbyOperation.Split,page:7,x:1,y:1,amount:6,crate:950)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That(crate.Storage.getItem(1,1).item.amount,Is.EqualTo(6));Assert.That(raw.amount,Is.EqualTo(14));
+        h.Step(12);Assert.That(b.Inventories.TryGet(b.PlayerId,out var replica),Is.True);
+        Assert.That(replica.Inventory.items[7].getItem(1,1)?.item.amount,Is.EqualTo(6),"the other viewer sees the accepted cell");
+        Assert.That(bag.items.Take(PlayerInventory.OWNPAGES).Sum(p=>p.items.Count),Is.Zero,"nothing landed in the owner's bag");
+    }
+    [Test]
+    public void EmptyFuelZeroesOnlyTheExactLiveWorldCanAndRepaintsEveryNearbyViewer()
+    {
+        var (h,a,_,eye)=Owner(48314,"owner","other");var b=h.Clients[1];
+        var can=new Item(TransactionalFixtures.GasCanId){fuelLevel=73};var other=new Item(TransactionalFixtures.GasCanId){fuelLevel=40};
+        h.Server.WorldItems.ServerSpawn(new NetId(900),can,eye,0);h.Server.WorldItems.ServerSpawn(new NetId(901),other,eye,0);
+        h.Server.WorldItems.ServerSpawn(new NetId(902),new Item(TransactionalFixtures.BeansId),eye,0);
+        Open(h,a,1,eye);Open(h,b,1,eye);uint before=b.Nearby.Revision;
+        Assert.That(Send(h,a,Op(a,2,eye,NearbyOperation.EmptyFuel,row:2)),Is.EqualTo(NearbyResult.Denied),"only a fuel container");
+        Assert.That(Send(h,a,Op(a,3,eye,NearbyOperation.EmptyFuel,row:0)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That((can.fuelLevel,other.fuelLevel),Is.EqualTo((0f,40f)));
+        Assert.That(a.Nearby.Rows[0].Jar.item.fuelLevel,Is.Zero);
+        Assert.That(h.StepUntil(()=>b.Nearby.Revision!=before),Is.True);Assert.That(b.Nearby.Rows[0].Jar.item.fuelLevel,Is.Zero);
+        Assert.That(h.Server.WorldItems.All.Count(),Is.EqualTo(3),"empty never takes the can");
+    }
+    [Test]
+    public void OperationsShareTheTransferLedgerAndEveryLiveRecheck()
+    {
+        var (h,a,bag,eye)=Owner(48315);bool clear=true;h.Server.NearbyVisible=(_,_)=>clear;
+        h.Server.WorldItems.ServerSpawn(new NetId(900),new Item(TransactionalFixtures.Round556Id,12),eye,0);
+        bag.items[2].resize(2,1);Open(h,a,5,eye);
+        Assert.That(Send(h,a,Op(a,4,eye,NearbyOperation.Split,page:2,amount:2)),Is.EqualTo(NearbyResult.Stale),"86 and 87 share one monotonic ledger");
+        clear=false;Assert.That(Send(h,a,Op(a,6,eye,NearbyOperation.Split,page:2,amount:2)),Is.EqualTo(NearbyResult.Denied));clear=true;
+        var far=Op(a,7,eye,NearbyOperation.Split,page:2,amount:2);far.Eye=eye+new Vector3(100,0,0);
+        Assert.That(Send(h,a,far),Is.EqualTo(NearbyResult.InvalidEye));
+        var foreign=Op(a,8,eye,NearbyOperation.Split,page:2,amount:2);foreign.Token++;Assert.That(Send(h,a,foreign),Is.EqualTo(NearbyResult.Stale));
+        var stale=Op(a,9,eye,NearbyOperation.Split,page:2,amount:2);stale.Revision--;Assert.That(Send(h,a,stale),Is.EqualTo(NearbyResult.Stale));
+        h.Server.WorldItems.TryGet(900,out var e);e.ServerItem.quality--;
+        Assert.That(Send(h,a,Op(a,10,eye,NearbyOperation.Split,page:2,amount:2)),Is.EqualTo(NearbyResult.Denied),"changed full item bytes");
+        Open(h,a,11,eye);h.Server.CombatState.TryGet(a.PlayerId,out var life);life.Alive=false;
+        Assert.That(Send(h,a,Op(a,12,eye,NearbyOperation.Split,page:2,amount:2)),Is.EqualTo(NearbyResult.Dead));
+        Assert.That(bag.getItemCount(TransactionalFixtures.Round556Id),Is.Zero);Assert.That(e.ServerItem.amount,Is.EqualTo(12));
+    }
     [Test]
     public void MaximumProjectionFitsReliableBudgetAndMalformedCountsAreAtomic()
     {

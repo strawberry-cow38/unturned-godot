@@ -151,22 +151,65 @@ pub(super) fn nearby_transfer(row: &api::Item, view: &api::View, take: bool) -> 
         ..Default::default()
     }
 }
+/// Command 87 on the exact received row. A destination is an owned page, or a
+/// page of the container whose accepted crate ID the view currently carries.
+pub(super) fn nearby_operation(
+    row: &api::Item,
+    view: &api::View,
+    pages: &[InventoryPage],
+    operation: &str,
+    to: Option<(Cell, u8)>,
+    amount: u16,
+) -> Dispatch {
+    let a = row.address;
+    if a.page != AREA || a.world_id == 0 || a.token == 0 || a.scan_id == 0 || a.revision == 0 {
+        return Dispatch::default();
+    }
+    let (crate_id, page, x, y, rotation) = match to {
+        None => (0, 0, 0, 0, 0),
+        Some((to, rotation)) if to.page < OWN_PAGES => (0, to.page, to.x, to.y, rotation),
+        Some((to, rotation))
+            if container(to.page) && open_storage(pages) && view.open_crate_id != 0 =>
+        {
+            (view.open_crate_id, to.page, to.x, to.y, rotation)
+        }
+        Some(_) => return Dispatch::default(),
+    };
+    Dispatch {
+        commands: vec![action(
+            "nearbyOperation",
+            json!({"operation":operation,"scanId":a.scan_id,"revision":a.revision,
+                "worldId":a.world_id,"token":a.token,"x":a.x,"y":a.y,"amount":amount,
+                "crateId":crate_id,"page":page,"toX":x,"toY":y,"toRot":rotation}),
+        )],
+        ..Default::default()
+    }
+}
 pub(super) fn dispatch(intent: Intent, view: &api::View, pages: &[InventoryPage]) -> Dispatch {
     if nearby_destination(&intent) {
         return Dispatch::default();
     }
     if let Some(from) = nearby_source(&intent) {
+        let Some(row) = view.at(from) else {
+            return Dispatch::default();
+        };
         return match intent {
-            Intent::QuickTransfer(_) | Intent::TakeToOwn(_) => view
-                .at(from)
-                .map(|row| {
-                    nearby_transfer(
-                        row,
-                        view,
-                        matches!(intent, Intent::TakeToOwn(_)) || !open_storage(pages),
-                    )
-                })
-                .unwrap_or_default(),
+            Intent::QuickTransfer(_) | Intent::TakeToOwn(_) => nearby_transfer(
+                row,
+                view,
+                matches!(intent, Intent::TakeToOwn(_)) || !open_storage(pages),
+            ),
+            // A ground drag is a pickup to the released cell; a split carry is
+            // source DoSplitTo. Neither edits AREA or the target before acceptance.
+            Intent::Move { to, rotation, .. } => {
+                nearby_operation(row, view, pages, "Place", Some((to, rotation)), 0)
+            }
+            Intent::Split {
+                amount,
+                to,
+                rotation,
+                ..
+            } => nearby_operation(row, view, pages, "Split", Some((to, rotation)), amount),
             _ => Dispatch::default(),
         };
     }
@@ -195,8 +238,11 @@ pub(super) fn dispatch(intent: Intent, view: &api::View, pages: &[InventoryPage]
     out
 }
 pub(super) fn context_refusal(name: &str, row: &api::Item) -> Option<&'static str> {
-    if (row.address.page == AREA && !matches!(name, "transfer" | "close"))
-        || (name == "emptyFuel" && !row.address.addressable())
+    let a = row.address;
+    let area = a.page == AREA;
+    let received = a.world_id != 0 && a.token != 0 && a.scan_id != 0 && a.revision != 0;
+    if (area && !matches!(name, "transfer" | "close" | "emptyFuel"))
+        || (name == "emptyFuel" && if area { !received } else { !a.addressable() })
         || (name == "salvage" && (row.address.page >= OWN_PAGES || row.address.token == 0))
     {
         Some("Take this item into your inventory first.")
@@ -218,6 +264,7 @@ pub(super) fn context(
         "equip" | "hold" | "dequip" => equip(from, row),
         "transfer" => dispatch(Intent::QuickTransfer(from), view, pages),
         "drop" => dispatch(Intent::Drop(from), view, pages),
+        "emptyFuel" if from.page == AREA => nearby_operation(row, view, pages, "EmptyFuel", None, 0),
         "emptyFuel" if row.address.crate_id != 0 => Dispatch {
             commands: vec![action(
                 "emptyViewedFuel",

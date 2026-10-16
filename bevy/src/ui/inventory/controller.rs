@@ -102,9 +102,18 @@ impl Menu {
         ui: &mut UiState,
         intents: &mut MessageWriter<UiIntent>,
     ) {
+        // Ground rows accept Take/Store, a drag to a cell and a split carry.
+        // Equipment, wear, drop and ground loads stay explicit refusals.
+        let ground = commands::nearby_source(&intent).is_some();
         if commands::nearby_destination(&intent)
-            || (commands::nearby_source(&intent).is_some()
-                && !matches!(intent, Intent::QuickTransfer(_) | Intent::TakeToOwn(_)))
+            || (ground
+                && !matches!(
+                    intent,
+                    Intent::QuickTransfer(_)
+                        | Intent::TakeToOwn(_)
+                        | Intent::LoadOrMove { .. }
+                        | Intent::Split { .. }
+                ))
         {
             self.notice = "Take this item into your inventory first.".into();
             self.dirty();
@@ -132,7 +141,11 @@ impl Menu {
                             .ok()
                             .and_then(|v| v.load);
                         if let Some(load) = load.filter(|l| l.consumed) {
-                            if !load.allowed {
+                            if from.page == AREA {
+                                // Magazine jobs need an exact live ground round
+                                // source; that adapter is not ported yet.
+                                self.notice = "Take this item into your inventory first.".into();
+                            } else if !load.allowed {
                                 self.notice = load.message;
                             } else if let Some(row) = at(&self.pages, to)
                                 .and_then(|item| self.view.at(Cell::item(to.page, item)))

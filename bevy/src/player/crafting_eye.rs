@@ -22,6 +22,15 @@ impl CraftingEye {
     }
 }
 
+/// Bridge actions whose host admission rechecks this completed camera. The
+/// bridge refuses these without an eye, so every sender must be listed here.
+pub(crate) fn needs_eye(action: &str) -> bool {
+    matches!(
+        action,
+        "craft" | "nearbyInventory" | "nearbyOperation" | "nearbyMagazineTransfer"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

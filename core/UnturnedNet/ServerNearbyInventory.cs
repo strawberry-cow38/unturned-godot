@@ -13,7 +13,10 @@ namespace UnturnedGodot.Net
         public Func<WorldItemReplication.WorldItemEntity, Vector3, bool> NearbyVisible;
         sealed class NearbySession
         {
-            public NearbyInventoryCommand LastRequest;
+            // Commands 86 and 87 share one monotonic ledger: exact replay
+            // of either wire request resends its reply and never re-applies.
+            public uint LastRequestId;
+            public byte[] LastRequestBytes;
             public NearbyInventoryEvent Reply, Current;
             public readonly List<(uint Id, ulong Token)> Order = new();
             public readonly Dictionary<uint, int> Quota = new();
@@ -23,8 +26,11 @@ namespace UnturnedGodot.Net
         }
         readonly Dictionary<ushort, NearbySession> _nearby = new();
         void ForgetNearby(ushort owner) => _nearby.Remove(owner);
-        void RegisterNearbyCommands() => Commands.Register<NearbyInventoryCommand>(ReplicationIds.CommandNearbyInventory,
-            NearbyInventoryCommand.TryRead, HandleNearby);
+        void RegisterNearbyCommands()
+        {
+            Commands.Register<NearbyInventoryCommand>(ReplicationIds.CommandNearbyInventory, NearbyInventoryCommand.TryRead, HandleNearby);
+            Commands.Register<NearbyOperationCommand>(ReplicationIds.CommandNearbyOperation, NearbyOperationCommand.TryRead, HandleNearbyOperation);
+        }
         bool NearbyEye(ushort owner, Vector3 eye) => Players.TryGetByOwner(owner, out var p)
             && (CraftingEyeAllowed?.Invoke(owner, eye)
                 ?? (eye - p.Pos).sqrMagnitude <= Combat.DefaultGun.MaxAimOriginOffset * Combat.DefaultGun.MaxAimOriginOffset);
@@ -64,20 +70,24 @@ namespace UnturnedGodot.Net
             next.Tick = unchecked((uint)Session.CurrentTick); next.Result = result;
             session.Picture = bytes; session.Current = next; SendNearby(owner, next);
         }
+        bool NearbyReplay(ushort owner, NearbySession session, uint request, byte[] bytes)
+        {
+            if (session.LastRequestId == 0 || unchecked((int)(request - session.LastRequestId)) > 0) return false;
+            if (bytes.AsSpan().SequenceEqual(session.LastRequestBytes)) SendNearby(owner, session.Reply);
+            else PublishNearby(owner, session, request, NearbyResult.Stale, true);
+            return true;
+        }
+        static void Remember(NearbySession session, uint request, byte[] bytes)
+        { session.LastRequestId = request; session.LastRequestBytes = bytes; session.Reply = session.Current; }
+        static void ForgetScan(NearbySession session) { session.Current.ScanId = 0; session.Order.Clear(); session.Quota.Clear(); }
         void HandleNearby(ushort owner, NearbyInventoryCommand command)
         {
             if (!_nearby.TryGetValue(owner, out var session)) _nearby[owner] = session = new();
-            if (session.LastRequest.RequestId != 0 && unchecked((int)(command.RequestId - session.LastRequest.RequestId)) <= 0)
-            {
-                if (command.Equals(session.LastRequest)) SendNearby(owner, session.Reply);
-                else PublishNearby(owner, session, command.RequestId, NearbyResult.Stale, true);
-                return;
-            }
+            var bytes = NetMessagePak.Pack(ReplicationIds.CommandNearbyInventory, command.Write);
+            if (NearbyReplay(owner, session, command.RequestId, bytes)) return;
             NearbyResult result;
-            if (command.Action == NearbyAction.Close)
-            { session.Current.ScanId = 0; session.Order.Clear(); session.Quota.Clear(); result = NearbyResult.Closed; }
-            else if (!CombatState.IsAlive(owner))
-            { session.Current.ScanId = 0; session.Order.Clear(); session.Quota.Clear(); result = NearbyResult.Dead; }
+            if (command.Action == NearbyAction.Close) { ForgetScan(session); result = NearbyResult.Closed; }
+            else if (!CombatState.IsAlive(owner)) { ForgetScan(session); result = NearbyResult.Dead; }
             else if (!NearbyEye(owner, command.Eye)) result = NearbyResult.InvalidEye;
             else if (NearbyVisible == null || Inventories.ItemIdentityProvider == null || !Inventories.TryGet(owner, out _)) result = NearbyResult.Unavailable;
             else if (command.Action == NearbyAction.Open)
@@ -100,18 +110,30 @@ namespace UnturnedGodot.Net
             }
             else result = TransferNearby(owner, command, session);
             PublishNearby(owner, session, command.RequestId, result, true);
-            session.LastRequest = command; session.Reply = session.Current;
+            Remember(session, command.RequestId, bytes);
+        }
+        /// <summary>The admission every Nearby action shares: the current scan and
+        /// revision, the exact row root and first contributor, then every
+        /// contributor's live ID/token/full bytes and current range/LOS.</summary>
+        NearbyResult AdmitNearbyRow(NearbySession session, uint scan, uint revision, byte x, byte y, uint worldId, ulong token,
+            Vector3 eye, out NearbyPacking.Row row)
+        {
+            row = null;
+            if (session.Current.ScanId == 0 || scan != session.Current.ScanId || revision != session.Current.Revision) return NearbyResult.Stale;
+            var found = session.Current.Rows.FirstOrDefault(r => r.Jar.x == x && r.Jar.y == y);
+            if (found == null || found.Sources[0].WorldId != worldId || found.Sources[0].Token != token) return NearbyResult.Stale;
+            foreach (var part in found.Sources)
+                if (!WorldItems.TryGet(part.WorldId, out var e) || e.ServerItem == null || e.ServerItem.id != part.ItemId
+                    || Inventories.ItemIdentityProvider(e.ServerItem) != part.Token || !NearbyReach(e, eye)
+                    || !session.Expected.TryGetValue(part.WorldId, out var expected)
+                    || !NearbyItemWire.Bytes(e.ServerItem).AsSpan().SequenceEqual(expected)) return NearbyResult.Denied;
+            row = found; return NearbyResult.Ready;
         }
         NearbyResult TransferNearby(ushort owner, NearbyInventoryCommand command, NearbySession session)
         {
-            if (session.Current.ScanId == 0 || command.ScanId != session.Current.ScanId || command.Revision != session.Current.Revision) return NearbyResult.Stale;
-            var row = session.Current.Rows.FirstOrDefault(r => r.Jar.x == command.X && r.Jar.y == command.Y);
-            if (row == null || row.Sources[0].WorldId != command.WorldId || row.Sources[0].Token != command.Token) return NearbyResult.Stale;
-            foreach (var part in row.Sources)
-                if (!WorldItems.TryGet(part.WorldId, out var e) || e.ServerItem == null || e.ServerItem.id != part.ItemId
-                    || Inventories.ItemIdentityProvider(e.ServerItem) != part.Token || !NearbyReach(e, command.Eye)
-                    || !session.Expected.TryGetValue(part.WorldId, out var expected)
-                    || !NearbyItemWire.Bytes(e.ServerItem).AsSpan().SequenceEqual(expected)) return NearbyResult.Denied;
+            var admitted = AdmitNearbyRow(session, command.ScanId, command.Revision, command.X, command.Y,
+                command.WorldId, command.Token, command.Eye, out var row);
+            if (admitted != NearbyResult.Ready) return admitted;
             if (!Players.TryGetByOwner(owner, out var player) || !Inventories.TryGet(owner, out var entry)) return NearbyResult.Denied;
             var destination = command.CrateId == 0 ? null : Inventories.ServerNearbyDestination(owner, command.CrateId, command.Destination, player.Pos);
             if (command.CrateId != 0 && destination == null) return NearbyResult.Denied;
@@ -122,6 +144,13 @@ namespace UnturnedGodot.Net
             // The grid's source operation has decided exactly how much fitted.
             // Debit only those contributions; partial/full-bag overflow remains
             // live in the world, never as a synthetic server AREA jar.
+            DebitNearby(session, row, before, taken);
+            Inventories.ServerMarkDirty(owner);
+            if (command.CrateId != 0) Inventories.ServerRepaintCrateViewers(command.CrateId);
+            return NearbyResult.Transferred;
+        }
+        void DebitNearby(NearbySession session, NearbyPacking.Row row, int before, int taken)
+        {
             foreach (var part in row.Sources)
             {
                 int debit = Math.Min(taken, part.Amount);
@@ -150,6 +179,79 @@ namespace UnturnedGodot.Net
                 }
                 taken -= debit; if (taken == 0) break;
             }
+        }
+        void HandleNearbyOperation(ushort owner, NearbyOperationCommand command)
+        {
+            if (!_nearby.TryGetValue(owner, out var session)) _nearby[owner] = session = new();
+            var bytes = NetMessagePak.Pack(ReplicationIds.CommandNearbyOperation, command.Write);
+            if (NearbyReplay(owner, session, command.RequestId, bytes)) return;
+            NearbyResult result;
+            if (!CombatState.IsAlive(owner)) { ForgetScan(session); result = NearbyResult.Dead; }
+            else if (!NearbyEye(owner, command.Eye)) result = NearbyResult.InvalidEye;
+            else if (NearbyVisible == null || Inventories.ItemIdentityProvider == null || !Inventories.TryGet(owner, out _)) result = NearbyResult.Unavailable;
+            else result = OperateNearby(owner, command, session);
+            PublishNearby(owner, session, command.RequestId, result, true);
+            Remember(session, command.RequestId, bytes);
+        }
+        NearbyResult OperateNearby(ushort owner, NearbyOperationCommand command, NearbySession session)
+        {
+            var admitted = AdmitNearbyRow(session, command.ScanId, command.Revision, command.X, command.Y,
+                command.WorldId, command.Token, command.Eye, out var row);
+            if (admitted != NearbyResult.Ready) return admitted;
+            if (!Players.TryGetByOwner(owner, out var player) || !Inventories.TryGet(owner, out var entry)) return NearbyResult.Denied;
+            if (command.Operation == NearbyOperation.EmptyFuel)
+            {
+                // Source EmptyFuelSelected writes fuelLevel=0 on the selected jar,
+                // which for a ground row is the live world item itself.
+                if (row.Sources.Length != 1 || !WorldItems.TryGet(row.Sources[0].WorldId, out var can)
+                    || can.ServerItem.GetAsset()?.IsFuelContainer != true) return NearbyResult.Denied;
+                can.ServerItem.fuelLevel = 0;
+                return NearbyResult.Transferred;
+            }
+            var grid = command.CrateId == 0 ? entry.Inventory.items[command.Page]
+                : Inventories.ServerNearbyDestination(owner, command.CrateId, command.Page, player.Pos);
+            if (grid == null) return NearbyResult.Denied;
+            var source = row.Jar.item; int before = source.amount, taken;
+            var probe = new ItemJar(source);
+            if (command.Operation == NearbyOperation.Place)
+            {
+                // PlayerInventory.TryDrag's move-onto-empty rule for a different
+                // page: holster rule, rotation-aware empty footprint, hand slots at
+                // their single cell with rot 0. A ground row has nowhere to receive
+                // a swapped occupant, so an occupied target is refused.
+                bool slot = command.Page < PlayerInventory.SLOTS;
+                byte x = slot ? (byte)0 : command.ToX, y = slot ? (byte)0 : command.ToY, rot = slot ? (byte)0 : command.ToRot;
+                if (source.GetAsset()?.slot.CanOccupyPage(command.Page) != true
+                    || !grid.checkSpaceEmpty(x, y, probe.size_x, probe.size_y, rot)) return NearbyResult.NoRoom;
+                grid.addItem(x, y, rot, source.Clone());
+                taken = before;
+            }
+            else
+            {
+                // ServerTransactions.OnSplitItem's named-cell branch against the
+                // projected row: never the whole stack; merge onto the same ID at
+                // that cell up to its stack size, otherwise an empty footprint.
+                if (command.Amount >= before) return NearbyResult.Denied;
+                byte at = grid.getIndex(command.ToX, command.ToY);
+                if (at != byte.MaxValue)
+                {
+                    var into = grid.getItem(at);
+                    if (into?.item == null || into.item.id != source.id) return NearbyResult.NoRoom;
+                    int room = Math.Max(1, Assets.find(into.item.id)?.stackSize ?? 1) - into.item.amount;
+                    if (room <= 0) return NearbyResult.NoRoom;
+                    taken = Math.Min(command.Amount, room);
+                    into.item.amount = (ushort)(into.item.amount + taken);
+                    grid.raiseStateUpdated();
+                }
+                else
+                {
+                    if (!grid.checkSpaceEmpty(command.ToX, command.ToY, probe.size_x, probe.size_y, command.ToRot)) return NearbyResult.NoRoom;
+                    var made = source.Clone(); made.amount = command.Amount;
+                    grid.addItem(command.ToX, command.ToY, command.ToRot, made);
+                    taken = command.Amount;
+                }
+            }
+            DebitNearby(session, row, before, taken);
             Inventories.ServerMarkDirty(owner);
             if (command.CrateId != 0) Inventories.ServerRepaintCrateViewers(command.CrateId);
             return NearbyResult.Transferred;
@@ -159,8 +261,8 @@ namespace UnturnedGodot.Net
             foreach (var pair in _nearby)
             {
                 var session = pair.Value; if (session.Current.ScanId == 0) continue;
-                if (!CombatState.IsAlive(pair.Key)) { session.Current.ScanId = 0; session.Order.Clear(); session.Quota.Clear(); }
-                PublishNearby(pair.Key, session, session.LastRequest.RequestId, NearbyResult.Ready, false);
+                if (!CombatState.IsAlive(pair.Key)) ForgetScan(session);
+                PublishNearby(pair.Key, session, session.LastRequestId, NearbyResult.Ready, false);
             }
         }
     }

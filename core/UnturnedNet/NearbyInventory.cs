@@ -41,6 +41,45 @@ namespace UnturnedGodot.Net
         }
     }
 
+    public enum NearbyOperation : byte { Place, Split, EmptyFuel }
+    /// <summary>Protocol 77 command 87: one exact accepted Nearby row, addressed
+    /// exactly like Transfer, placed whole at a named cell, split N to a named
+    /// cell (source DoSplitTo/OnSplitItem), or emptied (EmptyFuelSelected).
+    /// CrateId zero names an owned page; nonzero only the currently viewed one.</summary>
+    public struct NearbyOperationCommand
+    {
+        public uint RequestId, ScanId, Revision, WorldId, CrateId;
+        public ulong Token;
+        public byte X, Y, Page, ToX, ToY, ToRot;
+        public ushort Amount;
+        public NearbyOperation Operation;
+        public Vector3 Eye;
+        public bool IsValid => RequestId != 0 && Operation <= NearbyOperation.EmptyFuel && MountedWire.Finite(Eye)
+            && ScanId != 0 && Revision != 0 && WorldId != 0 && Token != 0 && X < NearbyPacking.Side && Y < NearbyPacking.Side
+            && (Operation == NearbyOperation.EmptyFuel
+                ? Amount == 0 && CrateId == 0 && Page == 0 && ToX == 0 && ToY == 0 && ToRot == 0
+                : ToRot < 4 && (Operation == NearbyOperation.Split) == (Amount != 0)
+                    && (CrateId == 0 ? Page < PlayerInventory.OWNPAGES : PlayerInventory.IsContainerView(Page)));
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt32(RequestId); w.WriteUInt8((byte)Operation); MountedWire.WriteVector(w, Eye);
+            w.WriteUInt32(ScanId); w.WriteUInt32(Revision); w.WriteUInt32(WorldId); w.WriteUInt64(Token);
+            w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(Amount); w.WriteUInt32(CrateId);
+            w.WriteUInt8(Page); w.WriteUInt8(ToX); w.WriteUInt8(ToY); w.WriteUInt8(ToRot);
+        }
+        public static bool TryRead(NetPakReader r, out NearbyOperationCommand value)
+        {
+            value = default; var next = new NearbyOperationCommand();
+            if (!r.ReadUInt32(out next.RequestId) || !r.ReadUInt8(out byte operation) || !MountedWire.ReadVector(r, out next.Eye)
+                || !r.ReadUInt32(out next.ScanId) || !r.ReadUInt32(out next.Revision) || !r.ReadUInt32(out next.WorldId)
+                || !r.ReadUInt64(out next.Token) || !r.ReadUInt8(out next.X) || !r.ReadUInt8(out next.Y)
+                || !r.ReadUInt16(out next.Amount) || !r.ReadUInt32(out next.CrateId) || !r.ReadUInt8(out next.Page)
+                || !r.ReadUInt8(out next.ToX) || !r.ReadUInt8(out next.ToY) || !r.ReadUInt8(out next.ToRot)) return false;
+            next.Operation = (NearbyOperation)operation; if (!next.IsValid) return false;
+            value = next; return true;
+        }
+    }
+
     /// <summary>Full Item projection, reusing the existing jar codec plus its
     /// explicitly missing/raw fields. System7 bytes remain unchanged. Nullable
     /// strings are bounded before allocation; fresh fuel/fluid sentinels survive.</summary>
@@ -160,5 +199,7 @@ namespace UnturnedGodot.Net
         void ResetNearby() => Nearby = default;
         public bool SendNearbyInventory(NearbyInventoryCommand command) => command.IsValid
             && SendCommand(ReplicationIds.CommandNearbyInventory, command.Write);
+        public bool SendNearbyOperation(NearbyOperationCommand command) => command.IsValid
+            && SendCommand(ReplicationIds.CommandNearbyOperation, command.Write);
     }
 }

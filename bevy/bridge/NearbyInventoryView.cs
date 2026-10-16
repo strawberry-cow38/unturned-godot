@@ -87,6 +87,22 @@ public sealed partial class BridgeHost
             Eye=kind==NearbyAction.Close?default:Vec(args,"eye") };
         return new {queued=_client.SendNearbyInventory(command)};
     }
+    /// <summary>Command 87 shares this monotonic request counter with 86, as
+    /// the host shares its replay ledger; nothing here edits the projection.</summary>
+    object RequestNearbyOperation(JsonElement args)
+    {
+        if(!Enum.TryParse<NearbyOperation>(Text(args,"operation",""),true,out var kind)||!args.TryGetProperty("eye",out _))return new{queued=false};
+        uint U(string key)=>args.TryGetProperty(key,out var v)&&v.TryGetUInt32(out uint n)?n:0;
+        byte B(string key)=>checked((byte)Int(args,key));
+        uint request=U("requestId");
+        if(request==0) {request=++_nearbyRequestId;if(request==0)request=++_nearbyRequestId;}
+        else if(unchecked((int)(request-_nearbyRequestId))>0)_nearbyRequestId=request;
+        var command=new NearbyOperationCommand{Operation=kind,RequestId=request,ScanId=U("scanId"),Revision=U("revision"),
+            WorldId=U("worldId"),Token=args.TryGetProperty("token",out var t)&&t.TryGetUInt64(out ulong n)?n:0,X=B("x"),Y=B("y"),
+            Amount=checked((ushort)Int(args,"amount")),CrateId=U("crateId"),Page=B("page"),ToX=B("toX"),ToY=B("toY"),ToRot=B("toRot"),
+            Eye=Vec(args,"eye")};
+        return new{queued=_client.SendNearbyOperation(command),requestId=request};
+    }
     PlayerInventory NearbyInventory(PlayerInventory inventory)
     {
         if(inventory==null||_client.Nearby.ScanId==0)return inventory;

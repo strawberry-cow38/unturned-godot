@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 pub(crate) mod lean;
 pub(crate) mod flinch;
 mod crafting_eye;
-pub(crate) use crafting_eye::CraftingEye;
+pub(crate) use crafting_eye::{CraftingEye, needs_eye};
 
 #[cfg(test)]
 mod network_tests;
@@ -576,7 +576,7 @@ fn ui_intents(
                     Some(None) => continue,
                     None => {
                         let mut args = args.clone();
-                        if name == "craft" || name == "nearbyInventory" {
+                        if needs_eye(name) {
                             if let Some(eye) = hand_use.4.as_ref()
                                 .and_then(|eye| eye.request(&hand_use.3, &hand_use.1))
                             {

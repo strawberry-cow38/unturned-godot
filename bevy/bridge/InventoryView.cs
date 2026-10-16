@@ -110,7 +110,11 @@ public static class InventoryView
             actions.Add(new("drop", "Drop")); actions.Add(new("close", "Close"));
             if (page.page == PlayerInventory.AREA)
             {
+                // Source Empty edits the selected ground jar itself; command87
+                // applies it to the exact live world item. Hand, wear, drop and
+                // salvage stay off the ground row (see NEARBY_PORT.md).
                 hand = ""; actions.Clear();
+                if (a.IsFuelContainer) actions.Add(new("emptyFuel", "Empty"));
                 actions.Add(new("transfer", inventory.items[PlayerInventory.STORAGE].width > 0 ? "Store" : "Take"));
                 actions.Add(new("close", "Close"));
             }

@@ -16,6 +16,7 @@ public sealed class NearbyInventoryTests
     static readonly JsonSerializerOptions Json = new() {PropertyNamingPolicy=JsonNamingPolicy.CamelCase,IncludeFields=true,
         Converters={new VectorJson(),new ByteArrayJson()}};
     BridgeHost _host,_peer;
+    ushort _port;
     static T Field<T>(BridgeHost h,string name)=>(T)typeof(BridgeHost).GetField(name,BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(h)!;
     NetWorldServer Server=>Field<NetWorldServer>(_host,"_server");
     NetWorldClient Client=>Field<NetWorldClient>(_peer,"_client");
@@ -29,7 +30,7 @@ public sealed class NearbyInventoryTests
     [SetUp] public void Setup()
     {
         using var socket=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp);
-        socket.Bind(new IPEndPoint(IPAddress.Loopback,0));ushort port=(ushort)((IPEndPoint)socket.LocalEndPoint!).Port;socket.Close();
+        socket.Bind(new IPEndPoint(IPAddress.Loopback,0));ushort port=_port=(ushort)((IPEndPoint)socket.LocalEndPoint!).Port;socket.Close();
         _host=new();_peer=new();Call(_host,"init",new{contentRoot=Content(),listenPort=port,allowCheats=true,spawn=new[]{0,0,0}});
         Call(_peer,"init",new{contentRoot=Content(),connectHost="127.0.0.1",connectPort=port});Pump(30);
     }
@@ -122,6 +123,90 @@ public sealed class NearbyInventoryTests
         crate.Access=(_,_)=>false;Send(Request(Address(),5,60000,7));Assert.That(Client.Nearby.Result,Is.EqualTo(NearbyResult.Denied));
         Action(_peer,"closeStorage",new{});Pump();Send(Request(Address(),6,60000,7));Assert.That(Client.Nearby.Result,Is.EqualTo(NearbyResult.Denied));
         Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out _),Is.True);
+    }
+    JsonElement Operation(JsonElement address,uint request,string operation,byte page=0,byte toX=0,byte toY=0,byte toRot=0,
+        ushort amount=0,uint crate=0,Vector3? eye=null)=>JsonSerializer.SerializeToElement(new{requestId=request,operation,
+        scanId=address.GetProperty("scanId").GetUInt32(),revision=address.GetProperty("revision").GetUInt32(),
+        worldId=address.GetProperty("worldId").GetUInt32(),token=address.GetProperty("token").GetUInt64(),
+        x=address.GetProperty("x").GetByte(),y=address.GetProperty("y").GetByte(),amount,crateId=crate,page,toX,toY,toRot,
+        eye=Array(eye??Eye)},Json);
+    NearbyResult Operate(JsonElement request)
+    {
+        uint id=request.GetProperty("requestId").GetUInt32();NearbyResult? seen=null;
+        void Saw(NearbyInventoryEvent e){if(e.RequestId==id)seen??=e.Result;}
+        Client.NearbyChanged+=Saw;
+        try{Assert.That(Action(_peer,"nearbyOperation",request).GetProperty("queued").GetBoolean(),Is.True);Pump();
+            Assert.That(seen.HasValue,Is.True,"correlated owner-only result");return seen.Value;}
+        finally{Client.NearbyChanged-=Saw;}
+    }
+    JsonElement PeerPage(byte page)=>State(_peer).GetProperty("inventory").GetProperty("pages").EnumerateArray()
+        .Single(p=>p.GetProperty("index").GetByte()==page).GetProperty("items").Clone();
+    [Test]
+    public void ActualUdpPlaceUsesReceivedIdentityDraggedCellAndRotationWithoutLocalMutation()
+    {
+        var magazine=new Item(6,17,58){magLoadedRound="5.56x45mm NATO"};var e=Spawn(magazine);Open();var a=Address();
+        var bag=Server.Transactions.InventoryForTest(Client.PlayerId);var pocket=bag.items[2];
+        Assert.That((pocket.width,pocket.height),Is.EqualTo(((byte)5,(byte)3)));
+        pocket.addItem(0,0,0,new Item(13));Pump();a=Address();
+        Assert.That(Operate(Operation(a,2,"Place",page:2,toX:0,toY:0,toRot:1)),Is.EqualTo(NearbyResult.NoRoom),"occupied cell never swaps with ground");
+        var place=Operation(Address(),3,"Place",page:2,toX:4,toY:0,toRot:1);
+        Assert.That(Action(_peer,"nearbyOperation",place).GetProperty("queued").GetBoolean(),Is.True);
+        Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out _),Is.True,"queued intent is not a pickup");
+        Assert.That(PeerPage(2).GetArrayLength(),Is.EqualTo(1),"the dashboard still shows only accepted owner cells");
+        Pump();Assert.That(Client.Nearby.Result,Is.EqualTo(NearbyResult.Transferred));
+        var jar=pocket.getItem(4,0);Assert.That((jar.x,jar.y,jar.rot),Is.EqualTo(((byte)4,(byte)0,(byte)1)));
+        foreach(var field in typeof(Item).GetFields())Assert.That(field.GetValue(jar.item),Is.EqualTo(field.GetValue(magazine)),field.Name);
+        Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out _),Is.False);
+        var drawn=PeerPage(2).EnumerateArray().Single(i=>i.GetProperty("id").GetUInt16()==6);
+        Assert.That((drawn.GetProperty("x").GetByte(),drawn.GetProperty("y").GetByte(),drawn.GetProperty("rot").GetByte()),
+            Is.EqualTo(((byte)4,(byte)0,(byte)1)),"native pages receive the accepted rotated cell");
+        Assert.That(PeerPage(PlayerInventory.AREA).GetArrayLength(),Is.Zero);
+        Action(_peer,"nearbyOperation",place);Pump();
+        Assert.That(bag.items.SelectMany(p=>p.items).Count(j=>j.item.id==6),Is.EqualTo(1),"exact replay cannot duplicate");
+    }
+    [Test]
+    public void ActualUdpSplitOfGroundMoneyLandsInNamedOwnedAndViewedCellsConservingValue()
+    {
+        var raw=new Item(1055,7,76);var e=Spawn(raw);var crate=Server.Inventories.ServerRegisterCrate(new NetId(60000),2,2,Vector3.zero);
+        Action(_peer,"openStorage",new{netId=60000});Action(_host,"openStorage",new{netId=60000});Pump();Open();
+        var a=Address();Assert.That(Client.Nearby.Rows.Select(r=>r.Jar.item.amount),Is.EqualTo(new ushort[]{500,200}));
+        Assert.That(Operate(Operation(a,2,"Split",page:2,toX:1,toY:1,amount:500)),Is.EqualTo(NearbyResult.Denied),"the whole stack is a move");
+        Assert.That(Operate(Operation(Address(),3,"Split",page:2,toX:1,toY:1,amount:75)),Is.EqualTo(NearbyResult.Transferred));
+        var bag=Server.Transactions.InventoryForTest(Client.PlayerId);
+        Assert.That(bag.items[2].getItem(1,1).item.amount,Is.EqualTo(75));Assert.That((raw.id,raw.amount),Is.EqualTo(((ushort)1056,(ushort)625)));
+        Assert.That(Operate(Operation(Address(),4,"Split",page:2,toX:1,toY:1,amount:25)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That(bag.items[2].getItem(1,1).item.amount,Is.EqualTo(100),"same-ID cell merges");
+        Assert.That(Operate(Operation(Address(),5,"Split",page:7,toX:1,toY:0,amount:30,crate:60001)),Is.EqualTo(NearbyResult.Denied));
+        Assert.That(Operate(Operation(Address(),6,"Split",page:7,toX:1,toY:0,amount:30,crate:60000)),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That(crate.Storage.getItem(1,0).item.amount,Is.EqualTo(30));
+        var other=Call(_host,"inventoryView").GetProperty("tiles").GetProperty("cells").EnumerateArray()
+            .Single(c=>c.GetProperty("page").GetByte()==7);
+        Assert.That(other.GetProperty("tile").GetProperty("amount").GetUInt16(),Is.EqualTo(30),"other viewer repainted");
+        Assert.That(raw.amount+bag.getItemCount(Currency.StackId)+crate.Storage.items.Sum(j=>j.item.amount),Is.EqualTo(700));
+        Assert.That(bag.items[PlayerInventory.AREA].getItemCount(),Is.Zero);
+    }
+    [Test]
+    public void ActualUdpEmptyZeroesOnlyTheExactGroundCanAndRefusesOtherRows()
+    {
+        var can=new Item(28){fuelLevel=55};var e=Spawn(can);Spawn(new Item(13));Open();
+        var rows=Call(_peer,"inventoryView").GetProperty("items").EnumerateArray().Where(r=>r.GetProperty("address").GetProperty("page").GetByte()==8).ToArray();
+        Assert.That(rows[0].GetProperty("actions").EnumerateArray().Select(b=>b.GetProperty("action").GetString()),Is.EqualTo(new[]{"emptyFuel","transfer","close"}));
+        Assert.That(rows[1].GetProperty("actions").EnumerateArray().Select(b=>b.GetProperty("action").GetString()),Is.EqualTo(new[]{"transfer","close"}));
+        Assert.That(Operate(Operation(Address(1),2,"EmptyFuel")),Is.EqualTo(NearbyResult.Denied));
+        Wall();Assert.That(Operate(Operation(Address(),3,"EmptyFuel")),Is.EqualTo(NearbyResult.Denied),"transfer-time LOS");
+        Assert.That(can.fuelLevel,Is.EqualTo(55));
+        Wall(sourceWorld:false);   // replaced by small/transparent non-world geometry: clear again
+        Assert.That(Operate(Operation(Address(),4,"EmptyFuel")),Is.EqualTo(NearbyResult.Transferred));
+        Assert.That(can.fuelLevel,Is.Zero);Assert.That(Server.WorldItems.TryGet(e.NetIdValue,out _),Is.True);
+        Assert.That(Client.Nearby.Rows[0].Jar.item.fuelLevel,Is.Zero,"accepted projection repaints");
+    }
+    [Test]
+    public void PublishedProtocol76PeersAreRefusedAtTheHandshake()
+    {
+        var old=new NetClientSession(new SDG.NetTransport.Udp.UdpClientTransport("127.0.0.1",_port),"v76",protocolVersion:76,contentHash:UnturnedGodot.NetContent.Hash);
+        try{old.Connect();for(int i=0;i<100&&old.State!=NetSessionState.Disconnected;i++){old.Tick();Call(_host,"tick");Thread.Sleep(1);}
+            Assert.That(old.RejectReason,Is.EqualTo(NetRejectReason.VersionMismatch));Assert.That(old.RejectServerVersion,Is.EqualTo(NetProtocol.Version));}
+        finally{old.Disconnect();}
     }
     [Test]
     public void NativeVerticalAndInvalidStuckDirectionsKeepFiniteMatchingModelSamples()
