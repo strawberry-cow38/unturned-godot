@@ -48,8 +48,9 @@ pub const RESIDENCY_RADIUS: f32 = 228.;
 /// A dedicated boot that has not opened its session by now has failed.
 const BOOT_LIMIT: Duration = Duration::from_secs(15 * 60);
 
-pub(crate) fn has_local_player(options: Res<crate::LaunchOptions>) -> bool {
-    !options.0.network.dedicated()
+/// Partial apps without launch options (unit fixtures) are not dedicated hosts.
+pub(crate) fn has_local_player(options: Option<Res<crate::LaunchOptions>>) -> bool {
+    !options.is_some_and(|o| o.0.network.dedicated())
 }
 
 /// DefaultPlugins without a window, event loop or GPU device. The render

@@ -558,12 +558,13 @@ fn sync_vehicles(
     mut images: ResMut<Assets<Image>>,
     assets: Res<AssetServer>,
     mut intents: MessageReader<crate::ui::UiIntent>,
-    mut restores: MessageReader<WorldRestored>,
+    // Optional: partial apps (tool and rope fixtures) run sync_vehicles alone.
+    restores: Option<MessageReader<WorldRestored>>,
 ) {
     let loaded = intents
         .read()
         .any(|intent| matches!(intent, crate::ui::UiIntent::Load));
-    let restored = restores.read().count() > 0 || loaded;
+    let restored = restores.is_some_and(|mut r| r.read().count() > 0) || loaded;
     if !model.connected {
         return;
     }
