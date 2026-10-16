@@ -80,6 +80,7 @@ public sealed class DeployablePlacementTests
         var jars = Jars(Generator);
         Place(jars[0], Feet + new Vector3(0, 0, -30)); Pump();
         Assert.That(Rows(_peer), Is.Empty, "beyond Range + slack");
+        Assert.That(Jars(Generator), Has.Length.EqualTo(2), "nothing spent out of range");
         var car = Server.Vehicles.ServerSpawn(Server.Ids.Mint(), 3, 0, Feet + new Vector3(2, 0, 0), Server.Session.CurrentTick);
         Server.Vehicles.ServerSetSeatCount(new NetId(car.NetIdValue), 4);
         Pump();
@@ -87,6 +88,7 @@ public sealed class DeployablePlacementTests
         Assert.That(Server.VehicleHost.IsSeated(PeerId), Is.True, "peer took a passenger seat");
         Place(jars[0], Feet + new Vector3(0, 0, -2.5f)); Pump();
         Assert.That(Rows(_peer), Is.Empty, "a seated hand never reaches the ghost");
+        Assert.That(Jars(Generator), Has.Length.EqualTo(2), "nothing spent from the seat");
         Action(_peer, "exitVehicle", new { }); Pump();
         Assert.That(Server.VehicleHost.IsSeated(PeerId), Is.False);
         Server.Combat.DamagePlayerExternal(PeerId, 1000f); Pump();

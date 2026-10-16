@@ -72,9 +72,16 @@ No wire ids, events or protocol version changed.
   tower is tinted (the source ghost overwrites the tower node's transform, and
   `MaterialOverride` does not reach the nacelle or blades). Lamp ghosts show
   the whole mesh (no lens split), as the source ghost does.
-- Kept: the source ordinary path sends page 255 (the id search). The native
-  intent names the held jar, the address the storage, fluid and door branches
-  already send, so a worn or fuelled jar keeps its condition.
+- Deviation: the source ordinary path sends page 255 (the id search). The
+  native intent names the held jar, the address the storage, fluid and door
+  branches already send, so a worn or fuelled jar keeps its condition and a
+  same-id twin is never spent instead.
+- RMB and any hand switch clear the gesture locally at once, as `Dequip` /
+  `ClearDeployable` zero `_placeTimer`, so a cancelled gesture never sends
+  Command 7 or spawns a local door.
+- `DefaultAttachable` reads only the hit collider's own groups: an ordinary
+  deployable (its collider is its body) refuses, while a fridge (a child
+  StaticBody) is a legal support, as in the source.
 - Deviation: the source never clears the hint when the deployable is put away
   (only `TickDeploy` writes it). Natively the hint follows the ghost.
 - Not ported: the Window mount (`AimWindow` needs live wall openings, which the
@@ -94,9 +101,9 @@ F chain in `_UnhandledInput`.
 - **Refrigerator (9130).** Not a Deployable body: `Refrigerator.Spawn` stands a
   yawed node (no stand-up) on the accepted point with the source 0.7 x 1.7 x 0.7
   steel box, the dark handle at (0.28, 1.0, 0.36), a static box collider (also
-  exported as host geometry) and the always-on `Refrigerator` Label3D at 1.95 m
-  (billboard, no depth test, 56 px at 0.006 m/px, outline 10, tint
-  0.85/0.9/0.95). Meshes and label cut off past 80 m (`RenderDist`). Its 200 W
+  exported as host geometry, on a child body as the source's StaticBody3D) and
+  the always-on `Refrigerator` Label3D at 1.95 m (billboard, no depth test, 56 px
+  at 0.006 m/px, outline_size 10 = a 2.5 px stroke, tint 0.85/0.9/0.95). Meshes and label cut off past 80 m (`RenderDist`). Its 200 W
   consumer socket sits at (0, 0.25, -0.36) in that yawed frame, so the wire tool
   and accepted wires use it. Being a StorageCrate, it takes no look focus, no
   readout and no hold-F pickup (`_focusDeployable` needs a Deployable).
@@ -107,7 +114,8 @@ F chain in `_UnhandledInput`.
   crate (fridge or deployable crate) whose node origin is within 2.5 m of the
   player's origin, through the existing `openStorage` command and storage
   screen. The source shows no prompt for it, so the native candidate is hidden,
-  and it is offered with the storage flag so crop harvest outranks it. The host
+  and it is offered with the storage flag so crop harvest outranks it. A storage
+  offer never displaces the harvest fall-through, whichever system runs first. The host
   crate is the one `OnPlaceDeployable` registered under the accepted NetId.
 - **Deferred.** Fluid devices (`FluidDeploy`/`FluidContainer` tanks, pumps,
   valves and hose ports) belong to the fluid network row and still draw no body.
@@ -131,9 +139,11 @@ replica, because the source has none to draw.
   curves, so the swing uses ObjectDoor's smoothstep.
 - ObjectDoor: the leaf's own box (min 0.15 m per axis) on the source bit6 layer
   (solid to the player and look rays), tracking the swing; never solid
-  mid-swing, and solid at rest only when no player stands in it. F within the
-  4 m door look ray shows `[F] Open door` / `Close door`, toggles locally with
-  the 0.35 s cooldown and plays `DoorHandle` (0.125 linear, 6 m unit).
+  mid-swing, and at an endpoint (or while pending) solid only once no player or
+  zombie stands in it. The 2.6 m `LookReach` eye ray focuses it; F toggles it
+  locally with the 0.35 s cooldown and plays `DoorHandle` (0.125 linear, 6 m
+  unit). The `[F] Open door` / `Close door` prompt is a native addition, shared
+  with the authored map doors: the source only outlines a focused door.
 - A new world session removes the doors, as unloading the scene does.
 
 Fluid devices remain undrawn (fluid network row 21).

@@ -210,6 +210,7 @@ fn look(proof: &Proof, at: Vec3) -> Transform {
     Transform::from_translation(proof.feet + Vec3::Y * 1.6).looking_at(at, Vec3::Y)
 }
 fn advance(
+    placer: Res<Placer>,
     bridge: Res<CoreBridge>,
     mut proof: ResMut<Proof>,
     mut state: ResMut<GameSnapshot>,
@@ -232,7 +233,11 @@ fn advance(
         _ => feet + Vec3::new(WALL_X, 1.6, -2.4),
     };
     *camera.single_mut().unwrap() = look(&proof, at);
-    if STAGES[proof.stage.min(STAGES.len() - 1)] == "placed" && !proof.clicked && proof.frame > 6 {
+    if STAGES[proof.stage.min(STAGES.len() - 1)] == "placed" && !proof.clicked && proof.frame > 6
+        // Only once the ghost answers the aim (the window may take focus late).
+        && placer.active
+        && placer.aim.valid
+    {
         let window = windows.single().unwrap();
         for state in [ButtonState::Pressed, ButtonState::Released] {
             events.push(WindowEvent::MouseButtonInput(MouseButtonInput {

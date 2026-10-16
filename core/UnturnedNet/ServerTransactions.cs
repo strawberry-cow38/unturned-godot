@@ -131,10 +131,11 @@ namespace UnturnedGodot.Net
         /// fixtures which mint their NetIds off this same server.</summary>
         public IFuelStation FuelStations;
 
-        /// <summary>Seat query for the console teleport (#27): while seated the seat teleport owns the
-        /// entity (ServerVehicles.Step re-asserts it every tick), so a ServerTeleport would silently lose
-        /// the fight -- reject instead. NetWorldServer wires this to VehicleHost.IsDriver (it's built
-        /// after this object); null (bare L0 harnesses without vehicles) = never seated.</summary>
+        /// <summary>Seat query (any seat). The console teleport (#27) rejects a seated sender because the
+        /// seat teleport owns the entity (ServerVehicles.Step re-asserts it every tick), so a ServerTeleport
+        /// would silently lose the fight; deployable placement rejects one because no seated hand reaches
+        /// the ghost. NetWorldServer wires this to VehicleHost.IsSeated (it's built after this object);
+        /// null (bare L0 harnesses without vehicles) = never seated.</summary>
         public Func<ushort, bool> IsSeated;
         /// <summary>Optional host hook for accepted console teleports. A client-driven owner
         /// needs its recovery/freeze event immediately, even when the host drains commands

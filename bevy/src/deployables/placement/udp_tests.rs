@@ -373,3 +373,88 @@ fn red_ghost_names_the_source_reason_and_never_sends() {
     );
     assert!(u.placer().sent.is_empty());
 }
+
+/// Two jars of one def: the held one is spent, the other stays where it was,
+/// and the hand moves to it (the source keeps holding the def).
+#[test]
+fn udp_place_spends_the_named_jar_of_two_and_holds_the_other() {
+    let mut u = launch(&[458, 458]);
+    let jars: Vec<Cell> = u.state()["inventory"]["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|p| {
+            let page = p["index"].as_u64().unwrap() as u8;
+            p["items"].as_array().unwrap().iter().filter(|i| i["id"] == 458).map(move |i| Cell {
+                id: 458,
+                page,
+                x: i["x"].as_u64().unwrap() as u8,
+                y: i["y"].as_u64().unwrap() as u8,
+            })
+        })
+        .collect();
+    assert_eq!(jars.len(), 2);
+    // Hold the SECOND jar: an id search would have spent the first.
+    let named = jars[1];
+    u.peer("holdItem", json!({"page":named.page,"x":named.x,"y":named.y}));
+    u.pump(15);
+    assert_eq!(Cell::held(u.state()), Some(named));
+    u.look(u.feet - Vec3::Z * 2.5);
+    u.intents();
+    u.press(MouseButton::Left);
+    frames(&mut u.app, 4);
+    assert_eq!(u.placer().sent.len(), 1);
+    let intents = u.intents();
+    assert!(
+        intents.iter().any(|i| matches!(i, UiIntent::Action { name, args }
+            if name == "holdItem" && args == &json!({"page":jars[0].page,"x":jars[0].x,"y":jars[0].y}))),
+        "still holding the def: the other jar {intents:?}"
+    );
+    u.pump(20);
+    assert_eq!(u.amount(458), 1);
+    assert_eq!(u.cell(458), jars[0], "the named jar was spent, the other untouched");
+}
+
+/// RMB (Dequip) and any hand switch zero `_placeTimer` at once: a gesture in
+/// flight never reaches Command 7.
+#[test]
+fn rmb_or_a_hand_switch_mid_gesture_cancels_before_the_intent() {
+    let mut u = launch(&[458, 458]);
+    let first = u.hold(458);
+    let other = {
+        let state = u.state().clone();
+        state["inventory"]["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|p| {
+                let page = p["index"].as_u64().unwrap() as u8;
+                p["items"].as_array()?.iter().find_map(|i| {
+                    let c = Cell { id: 458, page, x: i["x"].as_u64().unwrap() as u8, y: i["y"].as_u64().unwrap() as u8 };
+                    (i["id"] == 458 && c != first).then_some(c)
+                })
+            })
+            .expect("a second generator jar")
+    };
+    u.look(u.feet - Vec3::Z * 2.5);
+    u.press(MouseButton::Left);
+    frames(&mut u.app, 1);
+    assert!(u.placer().gesture.is_some());
+    u.press(MouseButton::Right);
+    frames(&mut u.app, 1);
+    assert!(u.placer().gesture.is_none(), "RMB clears the gesture locally");
+    frames(&mut u.app, 4);
+    assert!(u.placer().sent.is_empty());
+    u.press(MouseButton::Left);
+    frames(&mut u.app, 1);
+    assert!(u.placer().gesture.is_some());
+    // EquipHeldDeployable on another jar of the SAME def still zeroes the timer.
+    u.peer("holdItem", json!({"page":other.page,"x":other.x,"y":other.y}));
+    u.pump(15);
+    assert_eq!(Cell::held(u.state()), Some(other));
+    assert!(u.placer().gesture.is_none(), "a hand switch clears it");
+    frames(&mut u.app, 4);
+    assert!(u.placer().sent.is_empty());
+    u.pump(10);
+    assert_eq!(u.amount(458), 2, "nothing spent");
+}

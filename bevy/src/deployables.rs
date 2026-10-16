@@ -15,6 +15,9 @@ pub(crate) use ports::{ToolHud, ToolReadouts};
 mod power_tests;
 mod presentation;
 mod storage;
+/// The production OpenNearestCrate offer, for cross-plugin ordering tests.
+#[cfg(test)]
+pub(crate) use storage::open_nearest;
 mod switch;
 /// Wire.SetPoints / TowRope segment basis, shared with the vehicle rope.
 pub(crate) use wires::segment::pose as segment_pose;
