@@ -41,6 +41,110 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Wire value 0 is reserved and refused at parse: a whole drag of
+    /// a ground row is not an operation, because PlayerInventory.TryDrag
+    /// refuses AREA endpoints and the item snaps home.</summary>
+    public enum NearbyOperation : byte { Reserved, Split, EmptyFuel }
+    /// <summary>Protocol 77 command 87: one exact accepted Nearby row, addressed
+    /// exactly like Transfer, split N to a named cell (source
+    /// DoSplitTo/OnSplitItem) or emptied (EmptyFuelSelected).
+    /// CrateId zero names an owned page; nonzero only the currently viewed one.</summary>
+    public struct NearbyOperationCommand
+    {
+        public uint RequestId, ScanId, Revision, WorldId, CrateId;
+        public ulong Token;
+        public byte X, Y, Page, ToX, ToY, ToRot;
+        public ushort Amount;
+        public NearbyOperation Operation;
+        public Vector3 Eye;
+        public bool IsValid => RequestId != 0 && (Operation is NearbyOperation.Split or NearbyOperation.EmptyFuel) && MountedWire.Finite(Eye)
+            && ScanId != 0 && Revision != 0 && WorldId != 0 && Token != 0 && X < NearbyPacking.Side && Y < NearbyPacking.Side
+            && (Operation == NearbyOperation.EmptyFuel
+                ? Amount == 0 && CrateId == 0 && Page == 0 && ToX == 0 && ToY == 0 && ToRot == 0
+                : ToRot < 4 && Amount != 0
+                    && (CrateId == 0 ? Page < PlayerInventory.OWNPAGES : PlayerInventory.IsContainerView(Page)));
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt32(RequestId); w.WriteUInt8((byte)Operation); MountedWire.WriteVector(w, Eye);
+            w.WriteUInt32(ScanId); w.WriteUInt32(Revision); w.WriteUInt32(WorldId); w.WriteUInt64(Token);
+            w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(Amount); w.WriteUInt32(CrateId);
+            w.WriteUInt8(Page); w.WriteUInt8(ToX); w.WriteUInt8(ToY); w.WriteUInt8(ToRot);
+        }
+        public static bool TryRead(NetPakReader r, out NearbyOperationCommand value)
+        {
+            value = default; var next = new NearbyOperationCommand();
+            if (!r.ReadUInt32(out next.RequestId) || !r.ReadUInt8(out byte operation) || !MountedWire.ReadVector(r, out next.Eye)
+                || !r.ReadUInt32(out next.ScanId) || !r.ReadUInt32(out next.Revision) || !r.ReadUInt32(out next.WorldId)
+                || !r.ReadUInt64(out next.Token) || !r.ReadUInt8(out next.X) || !r.ReadUInt8(out next.Y)
+                || !r.ReadUInt16(out next.Amount) || !r.ReadUInt32(out next.CrateId) || !r.ReadUInt8(out next.Page)
+                || !r.ReadUInt8(out next.ToX) || !r.ReadUInt8(out next.ToY) || !r.ReadUInt8(out next.ToRot)) return false;
+            next.Operation = (NearbyOperation)operation; if (!next.IsValid) return false;
+            value = next; return true;
+        }
+    }
+
+    /// <summary>An exact received Nearby row root and its first contributor.</summary>
+    public readonly record struct NearbyRowRef(uint WorldId, ulong Token, byte X, byte Y)
+    {
+        public bool IsValid => WorldId != 0 && Token != 0 && X < NearbyPacking.Side && Y < NearbyPacking.Side;
+        public void Write(NetPakWriter w) { w.WriteUInt32(WorldId); w.WriteUInt64(Token); w.WriteUInt8(X); w.WriteUInt8(Y); }
+        public static bool TryRead(NetPakReader r, out NearbyRowRef value)
+        {
+            value = default;
+            if (!r.ReadUInt32(out uint id) || !r.ReadUInt64(out ulong token) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)) return false;
+            var next = new NearbyRowRef(id, token, x, y); if (!next.IsValid) return false;
+            value = next; return true;
+        }
+    }
+
+    /// <summary>Protocol 77 command 88: one original MagRules round in which the
+    /// magazine, the loose-round stack, or both are exact received Nearby rows
+    /// (source UnloadSelected/TryStartLoad over the ground page). Unload has no
+    /// round scope, only the expected loose-round ID; the result is Event60.
+    /// A ground part is admitted by scan plus first-contributor identity; the
+    /// revision and root are informational (concurrent jobs repaint).</summary>
+    public struct NearbyMagazineTransferCommand
+    {
+        public uint RequestId, ScanId, Revision;
+        public Vector3 Eye;
+        public bool Unloading, MagazineGround, RoundGround;
+        public NearbyRowRef MagazineRow, RoundRow;
+        public ScopedInventoryAddress Magazine, Round;
+        public ushort UnloadRoundId;
+        public bool IsValid => RequestId != 0 && ScanId != 0 && Revision != 0 && MountedWire.Finite(Eye)
+            && (MagazineGround ? MagazineRow.IsValid && Magazine == default : Magazine.IsValid && MagazineRow == default)
+            && (Unloading
+                ? MagazineGround && !RoundGround && RoundRow == default && Round == default && UnloadRoundId != 0
+                : UnloadRoundId == 0 && (MagazineGround || RoundGround)
+                    && (RoundGround ? RoundRow.IsValid && Round == default : Round.IsValid && RoundRow == default));
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt32(RequestId); MountedWire.WriteVector(w, Eye); w.WriteUInt32(ScanId); w.WriteUInt32(Revision);
+            w.WriteBit(Unloading); w.WriteBit(MagazineGround);
+            if (MagazineGround) MagazineRow.Write(w); else Magazine.Write(w);
+            if (Unloading) { w.WriteUInt16(UnloadRoundId); return; }
+            w.WriteBit(RoundGround);
+            if (RoundGround) RoundRow.Write(w); else Round.Write(w);
+        }
+        public static bool TryRead(NetPakReader r, out NearbyMagazineTransferCommand value)
+        {
+            value = default; var next = new NearbyMagazineTransferCommand();
+            if (!r.ReadUInt32(out next.RequestId) || !MountedWire.ReadVector(r, out next.Eye) || !r.ReadUInt32(out next.ScanId)
+                || !r.ReadUInt32(out next.Revision) || !r.ReadBit(out next.Unloading) || !r.ReadBit(out next.MagazineGround)
+                || !(next.MagazineGround ? NearbyRowRef.TryRead(r, out next.MagazineRow) : ScopedInventoryAddress.TryRead(r, out next.Magazine)))
+                return false;
+            if (next.Unloading) { if (!r.ReadUInt16(out next.UnloadRoundId)) return false; }
+            else if (!r.ReadBit(out next.RoundGround)
+                || !(next.RoundGround ? NearbyRowRef.TryRead(r, out next.RoundRow) : ScopedInventoryAddress.TryRead(r, out next.Round)))
+                return false;
+            if (!next.IsValid) return false;
+            value = next; return true;
+        }
+        /// <summary>The token Event60 correlates: the ground row's first
+        /// contributor, or the scoped owner/container instance.</summary>
+        public ulong MagazineToken => MagazineGround ? MagazineRow.Token : Magazine.Token;
+    }
+
     /// <summary>Full Item projection, reusing the existing jar codec plus its
     /// explicitly missing/raw fields. System7 bytes remain unchanged. Nullable
     /// strings are bounded before allocation; fresh fuel/fluid sentinels survive.</summary>
@@ -160,5 +264,9 @@ namespace UnturnedGodot.Net
         void ResetNearby() => Nearby = default;
         public bool SendNearbyInventory(NearbyInventoryCommand command) => command.IsValid
             && SendCommand(ReplicationIds.CommandNearbyInventory, command.Write);
+        public bool SendNearbyOperation(NearbyOperationCommand command) => command.IsValid
+            && SendCommand(ReplicationIds.CommandNearbyOperation, command.Write);
+        public bool SendNearbyMagazineTransfer(NearbyMagazineTransferCommand command) => command.IsValid
+            && SendCommand(ReplicationIds.CommandNearbyMagazineTransfer, command.Write);
     }
 }

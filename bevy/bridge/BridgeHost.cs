@@ -288,6 +288,7 @@ public sealed partial class BridgeHost : IDisposable
                     ushort itemId = checked((ushort)Int(item, "itemId"));
                     if (Assets.find(itemId) == null) throw new ArgumentException($"Unknown item {itemId}");
                     var instance = new Item(itemId, checked((ushort)Int(item, "amount", 1)), checked((byte)Int(item, "quality", 100)));
+                    if (item.TryGetProperty("fuelLevel", out var fuel)) instance.fuelLevel = fuel.GetSingle();   // fixture seam: a filled ground can
                     var entity = _server.WorldItems.ServerSpawn(_server.Ids.Mint(), instance, Vec(item, "position"), _server.Session.CurrentTick);
                     _server.WorldItems.ServerSettle(entity.NetIdValue, entity.Pos, _server.Session.CurrentTick);
                     spawned.Add(new { netId = entity.NetIdValue, itemId });
@@ -469,6 +470,8 @@ public sealed partial class BridgeHost : IDisposable
     object Action(string name, JsonElement args)
     {
         if (name == "nearbyInventory") return RequestNearby(args);
+        if (name == "nearbyOperation") return RequestNearbyOperation(args);
+        if (name == "nearbyMagazineTransfer") return RequestNearbyMagazineTransfer(args);
         if (name == "craftingContext") return RequestCraftingContext(args);
         if (name == "craft" && args.TryGetProperty("eye",out _)) return RequestCraftingContext(args,craft:true);
         if (name == "vehicleHitch") return new { queued = _client.SendVehicleHitch(VehicleHitchServices.ReadCommand(args)) };

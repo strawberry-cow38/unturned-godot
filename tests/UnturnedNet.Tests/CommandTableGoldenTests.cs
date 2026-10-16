@@ -130,6 +130,8 @@ namespace UnturnedNet.Tests
             [83] = "CommandVehicleHitch", // v74 source fifth-wheel intent; paired vehicle state framing
             [84] = "CommandEmptyViewedFuel", // v75 exact currently viewed container instance
             [86] = "CommandNearbyInventory", // v76 exact world-instance owner projection/transfer
+            [87] = "CommandNearbyOperation", // v77 exact Nearby row split/empty (op 0 reserved); Event63 result, 86 ledger
+            [88] = "CommandNearbyMagazineTransfer", // v77 ground magazine/round MagRules step; Event60 result, 81/85 ledger
             [85] = "CommandViewedMagazineTransfer", // v75 shares owner-only completion60 and81 replay ledger
             [82] = "CommandCraftingContext", // v72 physical-eye station context
             [80] = "CommandSalvageItem", // v70 exact owner copy into source craft queue

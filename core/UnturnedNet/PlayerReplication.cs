@@ -250,6 +250,8 @@ namespace UnturnedGodot.Net
         public const byte CommandEmptyFuel = 79; // v70: empty an exact owned fuel-container instance.
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
         public const byte CommandNearbyInventory = 86; // v76: bounded source Nearby projection and exact transfer.
+        public const byte CommandNearbyOperation = 87; // v77: exact Nearby row split to a cell or emptied (op 0 reserved, refused); result rides Event63.
+        public const byte CommandNearbyMagazineTransfer = 88; // v77: one MagRules round with a ground magazine and/or round row; Event60 result, 81/85 ledger.
         public const byte CommandEmptyViewedFuel = 84; // v75: exact authorized container fuel instance.
         public const byte CommandViewedMagazineTransfer = 85; // v75: exact scoped magazine step; owner result60 unchanged.
         public const byte CommandVehicleHitch = 83; // v74: source focused fifth-wheel toggle, independent of rope towing.

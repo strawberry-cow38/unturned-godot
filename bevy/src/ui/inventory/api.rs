@@ -8,6 +8,7 @@ use serde::Deserialize;
 pub(super) struct View {
     pub accepted_tick: u32,
     pub open_crate_id: u32,
+    pub nearby_tick: u32,
     pub items: Vec<Item>,
     pub quick_crafts: Vec<QuickCraft>,
     pub cooker: Option<Cooker>,
@@ -102,6 +103,25 @@ impl Address {
     }
     pub fn cell(self) -> Cell {
         Cell::at(self.page, self.x, self.y)
+    }
+    /// A received Nearby row: exact world ID/token within an accepted scan.
+    pub fn ground(self) -> bool {
+        self.page == AREA
+            && self.world_id != 0
+            && self.token != 0
+            && self.scan_id != 0
+            && self.revision != 0
+    }
+    /// Same live instance across accepted refreshes. A ground row keeps its
+    /// world identity while each repaint advances the Nearby revision.
+    pub fn same_instance(self, other: Self) -> bool {
+        if self.ground() || other.ground() {
+            self.ground()
+                && other.ground()
+                && (self.world_id, self.token, self.id) == (other.world_id, other.token, other.id)
+        } else {
+            self == other
+        }
     }
 }
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]

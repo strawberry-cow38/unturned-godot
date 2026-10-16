@@ -2,6 +2,7 @@
 //! Scripted pointer edges exercise the same controller as the OS input batch.
 mod spin_os;
 mod nearby;
+mod nearby_ops;
 use super::{controller::Menu, model::*, *};
 use crate::{
     bridge::CoreBridge,

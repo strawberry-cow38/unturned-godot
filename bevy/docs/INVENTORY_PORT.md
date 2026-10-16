@@ -185,11 +185,12 @@ accepted storage/freezer/vehicle-compartment view. Exact crate/root/item/token
 identity, current access, shared replay and all-viewer refresh are covered in
 INVENTORY_VIEWED_PORT.md. Commands 79/81 remain owned-only and unchanged.
 
-Nearby still needs the original camera/range/LOS scan, source 6×6 packing and an
-owner-only full-Item projection tied to each live world-item ID. AREA Empty and
-magazine jobs stay disabled. Viewed Salvage also remains disabled: the original
-owned-only adapter can consume another owned copy instead of the selected viewed
-item, so it needs a correct exact-selected queue transaction rather than that bug.
+Nearby has the original camera/range/LOS scan, 6×6 packing and owner-only
+full-Item projection (protocol 76), plus accepted ground Split/Empty and
+timed ground magazine jobs (protocol 77); NEARBY_PORT.md lists each gesture
+against the reference. Ground equipment, wear and drop stay refused as in the
+source. Salvage is offered on owned pages only, exactly as the source's
+OpenSelection does; viewed and ground copies have no Salvage to port.
 Nearby crafting stations are integrated through protocol72's accepted camera
 probe; quick craft receives only host-accepted tags and the host rechecks the
 action. See CRAFTING_PORT.md.
