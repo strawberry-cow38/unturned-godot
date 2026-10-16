@@ -554,3 +554,6 @@ extract_island_mesh(read, out, match, method)
 
 from extract_island_files import extract as extract_island_files
 extract_island_files(read, out, match, method)
+
+from extract_buildings import extract as extract_buildings
+extract_buildings(read, out, match, method)

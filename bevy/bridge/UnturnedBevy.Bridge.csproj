@@ -10,6 +10,9 @@
     <EmbeddedResource Include="../data/vehicles.json" LogicalName="UnturnedBevy.VehicleSpecs.json" />
     <ProjectReference Include="../../core/UnturnedNet/UnturnedNet.csproj" />
     <ProjectReference Include="../../core/BugReportCore/BugReportCore.csproj" />
+    <Compile Include="$(IntermediateOutputPath)Data/BuildingSurface.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/BuildingPalettes.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/BuildingScene.g.cs" />
     <Compile Include="../../game/ToolDef.cs" Link="Source/ToolDef.cs" />
     <Compile Include="../../game/ProcIsland.cs" Link="Source/ProcIsland.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandLayout.g.cs" />
