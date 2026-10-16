@@ -24,7 +24,7 @@ mod sound;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod udp_tests;
+pub(super) mod udp_tests;
 #[cfg(test)]
 mod visual;
 

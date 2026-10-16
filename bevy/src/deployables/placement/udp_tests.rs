@@ -20,14 +20,14 @@ pub(super) struct Collected(pub Vec<UiIntent>);
 fn collect(mut reader: MessageReader<UiIntent>, mut out: ResMut<Collected>) {
     out.0.extend(reader.read().cloned());
 }
-pub(super) struct Udp {
+pub(in crate::deployables) struct Udp {
     pub host: CoreBridge,
     pub app: App,
     pub window: Entity,
     pub camera: Entity,
     pub feet: Vec3,
 }
-pub(super) fn frames(app: &mut App, n: usize) {
+pub(in crate::deployables) fn frames(app: &mut App, n: usize) {
     for _ in 0..n {
         app.update();
         app.world_mut().resource_mut::<FrameInput>().begin();
@@ -140,7 +140,7 @@ impl Udp {
         std::mem::take(&mut self.app.world_mut().resource_mut::<Collected>().0)
     }
 }
-pub(super) fn launch(give: &[u16]) -> Udp {
+pub(in crate::deployables) fn launch(give: &[u16]) -> Udp {
     let port = std::net::UdpSocket::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()

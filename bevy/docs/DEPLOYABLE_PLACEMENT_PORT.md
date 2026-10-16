@@ -85,8 +85,57 @@ No wire ids, events or protocol version changed.
   machine only, while the host spends the item and keeps no entity. Natively the
   spend happens and no local door is drawn yet (see Remaining).
 
+## Special bodies (`bevy/src/deployables/storage*`)
+
+Sources: `DeployableReplicaView.Sync` (IsStorage, fluid and DeployableCrate
+branches), `FridgeDeploy`, `game/inventory/StorageCrate.cs` (`Refrigerator`),
+`game/inventory/DeployableCrate.cs`, `PlayerController.OpenNearestCrate` and the
+F chain in `_UnhandledInput`.
+
+- **Refrigerator (9130).** Not a Deployable body: `Refrigerator.Spawn` stands a
+  yawed node (no stand-up) on the accepted point with the source 0.7 x 1.7 x 0.7
+  steel box, the dark handle at (0.28, 1.0, 0.36), a static box collider (also
+  exported as host geometry) and the always-on `Refrigerator` Label3D at 1.95 m
+  (billboard, no depth test, 56 px at 0.006 m/px, outline 10, tint
+  0.85/0.9/0.95). Meshes and label cut off past 80 m (`RenderDist`). Its 200 W
+  consumer socket sits at (0, 0.25, -0.36) in that yawed frame, so the wire tool
+  and accepted wires use it. Being a StorageCrate, it takes no look focus, no
+  readout and no hold-F pickup (`_focusDeployable` needs a Deployable).
+- **Campfire (362) and other DeployableCrate bodies.** The ordinary body keeps
+  its deployable focus: looking at it shows the source panel and F holds to pick
+  it up, ranked above crop harvest as in the source F chain.
+- **OpenNearestCrate.** With nothing else focused, F opens the nearest placed
+  crate (fridge or deployable crate) whose node origin is within 2.5 m of the
+  player's origin, through the existing `openStorage` command and storage
+  screen. The source shows no prompt for it, so the native candidate is hidden,
+  and it is offered with the storage flag so crop harvest outranks it. The host
+  crate is the one `OnPlaceDeployable` registered under the accepted NetId.
+- **Deferred.** Fluid devices (`FluidDeploy`/`FluidContainer` tanks, pumps,
+  valves and hose ports) belong to the fluid network row and still draw no body.
+  The placeable doors are LocalOnly in the source (spawned only on the placer's
+  machine, never replicated or saved); see Remaining.
+
 ## Verification
 
+- Storage: native proximity rule test; actual-UDP fridge test (Refrigerator body
+  at the yawed point, socket position, no focus or panel, hidden open-storage
+  candidate with the storage flag, none beyond 2.5 m); actual-UDP campfire test
+  (deployable focus when looked at, open-storage fallback when looking away);
+  entities test that a hidden candidate shows no prompt yet dispatches
+  `openStorage` and opens the storage screen. Managed actual-UDP: the fridge
+  (5 x 4) and the campfire (3 x 2) open by NetId, take an item, close, and the
+  host crate keeps it on reopening.
+- Storage surgical controls, each failing its guard: the fridge taking the
+  ordinary focus, no fallback, the fallback offered above crop harvest (no
+  storage flag), a 25 m reach, a stood-up fridge, the fridge routed to the
+  ordinary body, and a hidden candidate that advertises F.
+- Storage Vulkan fixture `deployables::storage::visual` (real local bridge,
+  injected LMB). Opened: `bevy-storage-fridge-ghost.png` (the source ProcBox
+  ghost, blue), `-fridge-placed.png` (steel body, handle and the Refrigerator
+  label; no focus offered, the open-storage fallback recorded),
+  `-campfire.png` (the campfire's own `Hold [F]: pick up` panel) and
+  `-wired.png` (an accepted generator wire into the fridge's rear socket, wire
+  tool held).
 - Native: 3 rule tests (surface gates; reason precedence, yaw and water band;
   ghost == accepted seat for floor, upright, wall and ceiling), and 2
   actual-UDP owner tests running the production systems: a blue ghost on
