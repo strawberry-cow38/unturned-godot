@@ -438,6 +438,12 @@ namespace UnturnedGodot
                 }
                 else root.AddChild(body);
             }
+            // culled by distance as the world loader culls it: its retail distance, on every piece it draws (PropCull) -- and a
+            // lamp's light goes out with it, over its fade length, rather than lighting a room whose lamp is no longer drawn (a
+            // caller that wants its own fade -- a town's 30 m, the stage's none -- sets FadeBegin after this)
+            float cull = PropCull.For(name, (string)root.GetMeta("guid"));
+            PropCull.Apply(root, cull);
+            if (cull > 0f && smart?.Lamp != null && smart.Lamp.FadeBegin <= 0f) smart.Lamp.FadeBegin = Mathf.Max(1f, cull - smart.Lamp.FadeLength);
             return root;
         }
 
@@ -473,6 +479,7 @@ namespace UnturnedGodot
             body.SetMeta(PlayerController.SurfMeta, (int)PropSurfaces.SurfForProp(name));
             body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size }, Position = centre });
             root.AddChild(body);
+            PropCull.Apply(root, PropCull.Layer("SMALL"));   // a kit's stock is tabletop clutter: retail's small-prop distance
             return root;
         }
 

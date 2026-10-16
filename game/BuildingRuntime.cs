@@ -365,6 +365,7 @@ namespace UnturnedGodot
                 if (m.Name == "Light_Switch_0")
                 {
                     var sw = BuildSwitch(parent, at, objs);
+                    PropCull.Apply(sw, PropCull.Layer("SMALL"));
                     electrical.Add(sw);
                     if (sw != null) { f.Switches.Add(sw); f.Nodes.Add(sw); f.Colliders++; }
                     f.SwitchTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
@@ -375,6 +376,7 @@ namespace UnturnedGodot
                     var built = EditorBuildings.RuntimeDecorNode(m);
                     if (built == null) continue;
                     built.Transform = frame * EditorBuildings.RuntimeDecorTransform(m);
+                    PropCull.Apply(built, PropCull.Layer("MEDIUM"));   // a rug or a curtain: furniture-sized, as retail's furniture is
                     if (m.Gen.Kind == RuntimeDecorKind.Rug && RugCollider(built) != null) f.Colliders++;
                     parent.AddChild(built);
                     f.Nodes.Add(built);
@@ -403,6 +405,7 @@ namespace UnturnedGodot
                 else if (outlet)
                 {
                     var src = BuildOutlet(parent, at, node);
+                    PropCull.Apply(src, PropCull.Layer("SMALL"));
                     body?.SetMeta("gridpower", src);   // the plate's own collider focuses the outlet too, not only its look box
                     electrical.Add(src);
                     if (src != null) f.Outlets.Add(src);
