@@ -7,6 +7,7 @@ mod art;
 #[cfg(test)]
 mod tests;
 mod tool;
+pub(crate) use tool::{ToolHud, ToolReadouts};
 
 pub(super) const LAYER: Group = Group::GROUP_18;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]

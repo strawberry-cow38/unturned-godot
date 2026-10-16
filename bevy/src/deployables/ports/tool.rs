@@ -11,6 +11,7 @@ use bevy::{
 };
 
 mod hud;
+pub(crate) use hud::{ToolHud, ToolReadouts};
 #[cfg(test)]
 mod tests;
 pub(super) fn install_hud(app: &mut App) {

@@ -41,6 +41,7 @@ public sealed partial class BridgeHost : IDisposable
     VehicleMaintenanceServices _vehicleMaintenance;
     VehicleDoorServices _vehicleDoors;
     VehicleHitchServices _vehicleHitches;
+    VehicleTowServices _vehicleTows;
     BodyCombatServices _bodies;
     WeaponServices _weapons;
     CosmeticBulletServices _cosmetic;
@@ -357,6 +358,7 @@ public sealed partial class BridgeHost : IDisposable
         _vehicleMaintenance = new VehicleMaintenanceServices(_server, _catalog, _vehicleLights, _geometry); _vehicles.Maintenance = _vehicleMaintenance;
         _vehicleDoors = new VehicleDoorServices(_server, _catalog, _geometry);
         _vehicleHitches = new VehicleHitchServices(_server, _catalog, _geometry);
+        _vehicleTows = new VehicleTowServices(_server, _catalog, () => _client?.PlayerId ?? 0);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
         _zombies = new ZombieServices(_server, _geometry, Emit);
         _services.DoorNoise = _zombies.Noise;
@@ -456,7 +458,7 @@ public sealed partial class BridgeHost : IDisposable
                 if(noise>2)_zombies.Noise(_position,noise);
             }
         }
-        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
+        _loot?.Step(); _services.Step(); _bodies.Step(); _vehicleHitches.Step(); _vehicleTows.Step(); _vehicleLights.Step(); _vehicleMaintenance.Step(); _vehicleDoors.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
         _appearance.Tick();
         if (_worldChanged) PublishFullSnapshot();
         _server.TickReplication();
@@ -613,7 +615,7 @@ public sealed partial class BridgeHost : IDisposable
                 mainRotorHealth = _vehicles?.MainRotorHealth(e.NetIdValue), tailRotorHealth = _vehicles?.TailRotorHealth(e.NetIdValue), engineDrowned = _vehicles?.EngineDrowned(e.NetIdValue), onFire = _bodies?.OnFire(true, e.NetIdValue),
                 burnSeconds = _bodies?.BurnSeconds(true, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(true, e.NetIdValue),
                 driverPlayerId = e.DriverPlayerId, passengers = e.Passengers, seatCount = VehicleSeatCount(e),
-                coupledTrailerNetId = e.CoupledTrailerNetId, towedNetId = e.TowedNetId, towRestLen = e.TowRestLen, paintRgb = e.PaintRgb, poppedTireMask = e.PoppedTireMask,
+                coupledTrailerNetId = e.CoupledTrailerNetId, towedNetId = e.TowedNetId, towRestLen = _vehicleTows?.RestLen(e.NetIdValue, e.TowRestLen) ?? e.TowRestLen, paintRgb = e.PaintRgb, poppedTireMask = e.PoppedTireMask,
                 recovCounter = _vehicleRecov.GetValueOrDefault(e.NetIdValue) }).ToArray(),
             zombies = _zombies?.Snapshots(_client) ?? RemoteZombies(), zombieField = _zombies?.Summary(),
             crops = _client.Crops.All.Select(e => new { netId = e.NetIdValue, seedId = e.SeedId, position = Array(e.Pos), grown = _client.Crops.IsGrown(e, _client.Applier.LastAppliedServerTick), plantedAtTick = e.PlantedAtTick }).ToArray(),
@@ -660,7 +662,7 @@ public sealed partial class BridgeHost : IDisposable
         _serverProbe.Cancel();
         _loot = null; _finiteVehicles = null; _finiteTerrain = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null;
         _udpTransport?.TearDown(); _udpTransport = null;
-        _environment = null; _services = null; _vehicles = null; _vehicleLights = null; _vehicleMaintenance = null; _vehicleDoors = null; _vehicleHitches = null; _bodies = null; _weapons = null;
+        _environment = null; _services = null; _vehicles = null; _vehicleLights = null; _vehicleMaintenance = null; _vehicleDoors = null; _vehicleHitches = null; _vehicleTows = null; _bodies = null; _weapons = null;
         _cosmetic = null; _warheads = null; _mounted = null; _npcHelis = null; _appearance = null; _wildlife = null; _zombies = null;
         _remoteWeapon = null; _remoteMounted = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
         _mapBindings = null;

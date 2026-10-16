@@ -27,6 +27,7 @@ struct Body {
     pose: Transform,
     link: state::Accepted,
     simulate: bool,
+    rope_towed: u32,
 }
 fn bodies(world: &mut World) -> Vec<Body> {
     let snapshot = world.get_resource::<GameSnapshot>().map(|s| s.0.clone());
@@ -39,6 +40,7 @@ fn bodies(world: &mut World) -> Vec<Body> {
             kind: body.type_id,
             pose: *pose,
             link: body.coupling,
+            rope_towed: body.rope.towed,
             simulate: snapshot.as_ref().is_none_or(|s| state::simulates(s, body)),
         })
         .collect();
@@ -164,6 +166,13 @@ pub(in crate::vehicle) fn approach(world: &mut World) {
         if let Some(trailer) = near {
             pairs.insert((cab.entity, trailer.entity));
             ghosts.insert(trailer.entity);
+        }
+    }
+    // Vehicle.AttachTow: "a short rope keeps them close -> don't let the
+    // bumpers bash" -- a mutual exception only; no layer swap or ghosting.
+    for tower in &rows {
+        if let Some(towed) = rows.iter().find(|t| tower.rope_towed != 0 && t.id == tower.rope_towed) {
+            pairs.insert((tower.entity, towed.entity));
         }
     }
     let old_ghosts = world.resource::<Exceptions>().ghosts.clone();

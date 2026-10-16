@@ -24,6 +24,10 @@ impl Park {
     pub fn hold(&mut self) {
         self.held = true;
     }
+    /// `Vehicle.Wake()`: AttachTow/DetachTow and a taut UpdateTow clear it.
+    pub fn wake(&mut self) {
+        self.parked = false;
+    }
     pub fn update(&mut self, driven: bool, cab: u32, rammed: bool) {
         if self.cab != 0 && cab == 0 {
             self.parked = true;

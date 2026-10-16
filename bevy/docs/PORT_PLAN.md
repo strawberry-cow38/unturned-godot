@@ -133,15 +133,15 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 7 | Save lifecycle (`WorldSaveDriver`) | Manual save/load only; no autosave, entry load or quit save | S | high | agent C (in progress) |
 | 8 | Drink / fill at tap (cmds 69/70) | Never sent | S | high | agent C (in progress) |
 | 9 | Vehicle hand tools: paint, carjack, spare tire, pump, pour (cmds 29/50/55/56) | Not sent; `paintRgb` not rendered | M | med | queued |
-| 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | queued |
+| 10 | Tow rope (`TowRope`, cmds 30/31) | Attach/detach, rope render/constraint | M | med | DONE (rope checkpoint; remote towing journey with row 16) |
 | 11 | Restraints (`ArrestSim`, cmds 52/53) | Only Struggle | S | low-med | queued |
 | 12 | Binoculars, umbrella, fishing | Absent | S-M | low | queued |
 | 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | queued |
 | 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | queued |
 | 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data | L | high (MP) | queued |
-| 16 | Hybrid dedicated server and moderation | No headless bridge host on 47872; live Godot server is protocol 61 | L | high (MP) | queued |
+| 16 | Hybrid dedicated server and moderation | No headless bridge host on 47872; live Godot server is protocol 61 | L | high (MP) | agent D (in progress) |
 | 17 | Infinite/finite world MP | Origin protocol, island descriptor negotiation | L | med | queued |
-| 18 | Menus/settings/bug report/launcher | Difficulty/config/island list/arena; limited settings; launcher still Godot | L | med | queued |
+| 18 | Menus/settings/bug report/launcher | Difficulty/config/island list/arena; limited settings; launcher still Godot | L | med | agent E (in progress) |
 | 19 | Generated buildings | Preview stage; furniture data only (`61272db6`) | L | med | queued |
 | 20 | World devices (elevator, car lift, crane, train, SAM, flares, magnet, vending, notes, traffic lights, AI drivers) | None native | L | low | queued |
 | 21 | Fluid networks / item pipes (cmds 64-66) | Not sent; pipe events not bridged | L | low-med | check with power agent |

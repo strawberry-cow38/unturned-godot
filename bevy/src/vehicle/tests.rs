@@ -58,6 +58,8 @@ pub(crate) fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
                 swamp: water::Swamp::new(s),
                 wreck: default(),
                 park: default(),
+                rope: default(),
+                tow_slip: default(),
             },
             Transform::from_translation(at),
             RigidBody::Dynamic,

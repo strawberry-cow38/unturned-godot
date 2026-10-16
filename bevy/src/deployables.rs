@@ -5,9 +5,12 @@ mod geometry;
 mod interaction;
 mod pickup;
 mod ports;
+pub(crate) use ports::{ToolHud, ToolReadouts};
 mod presentation;
 mod switch;
 mod wires;
+/// Wire.SetPoints / TowRope segment basis, shared with the vehicle rope.
+pub(crate) use wires::segment::pose as segment_pose;
 #[cfg(test)]
 mod tests;
 
