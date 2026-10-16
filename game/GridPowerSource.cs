@@ -113,7 +113,6 @@ namespace UnturnedGodot
             g.AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice, not Deployable)
             if (boxMesh != null)   // look-at outline: a duplicate of the box mesh on the overlay layer, hidden until looked at
                 g.AddChild(g._glow = OutlineOverlay.MakeOutline(boxMesh));
-            g.AddChild(g._info = new InfoBillboard { TopLevel = true });
             if (g.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole net (else a placed generator/pump makes it)
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
             PowerNet.MarkDirty();
@@ -139,7 +138,6 @@ namespace UnturnedGodot
             g._ports.Add(port);
             g._output = port;
             g.AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice, not Deployable)
-            g.AddChild(g._info = new InfoBillboard { TopLevel = true });
             g.AddInteractionCollider();
             if (g.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole net
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
@@ -171,6 +169,11 @@ namespace UnturnedGodot
             if (_focused == on) return;
             _focused = on;
             OutlineOverlay.ShowOutline(on, GridColor, _glow);
+            // ⚠ THE BILLBOARD IS BUILT THE FIRST TIME THE SOURCE IS LOOKED AT, not with it. It is a SubViewport of its own
+            // (InfoBillboard: a 320x296 render target and two dozen controls), which is nothing for the map's breaker boxes and
+            // a great deal for a generated town, where every room's outlet is one of these: ~0.4 MB of render target and ~30
+            // nodes an outlet, for a tooltip most of them will never show.
+            if (on && _info == null) AddChild(_info = new InfoBillboard { TopLevel = true });
             _info?.SetActive(on);
         }
 

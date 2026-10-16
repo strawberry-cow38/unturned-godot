@@ -67,8 +67,12 @@ namespace UnturnedGodot
             // before the mesh path -- but a prop PLACED in the editor got a dead mesh, because this table, which
             // exists so the two paths cannot drift, had no container case. Read from ContainerShelf rather than
             // restated, so the two still cannot.
-            if (WorldBuilder.ContainerForMesh(name, out _, out _, out _)) k |= SmartKind.Container;
-            if (hasDoors != null && hasDoors(name)) k |= SmartKind.Doors;
+            bool container = WorldBuilder.ContainerForMesh(name, out _, out _, out _);
+            if (container) k |= SmartKind.Container;
+            // ⚠ A CONTAINER'S LEAVES ARE THE CONTAINER'S (AttachEditor below): a fridge, a wardrobe or a kitchen counter is
+            // somewhere to store things, its door swinging with its inventory, as the world loader has always built one --
+            // not a door that F toggles instead of opening it.
+            if (hasDoors != null && hasDoors(name) && !container) k |= SmartKind.Doors;
             return k;
         }
 
@@ -111,6 +115,7 @@ namespace UnturnedGodot
             if (k.HasFlag(SmartKind.Radio)) parts.Add("radio (F toggles)");
             if (k.HasFlag(SmartKind.Signal)) parts.Add("traffic signal");
             if (k.HasFlag(SmartKind.Doors)) parts.Add("openable (F)");
+            if (k.HasFlag(SmartKind.Container)) parts.Add("storage (F opens)");
             if (k.HasFlag(SmartKind.Water)) parts.Add("water source");
             return string.Join(" · ", parts);
         }
@@ -279,7 +284,12 @@ namespace UnturnedGodot
             }
 
             // OPENABLE LEAVES. One ObjectDoor per doors.txt row, grouped so a wardrobe's two leaves swing together.
-            if (doorCatalog != null && doorCatalog.TryGetValue(name, out var leaves))
+            // ⚠ NOT FOR A CONTAINER: its StoreShelf hangs its own (see CONTAINER below). Hung here, every fridge, wardrobe and
+            // counter was a door and not a container -- TagBody tags the body "objectdoor", PlayerController resolves that
+            // meta before it walks up to the shelf, so F swung the leaf and the inventory never opened -- and each started open,
+            // the door catalogue's default being retail's (doors.txt's last flag; the world path's StoreShelf overrides it shut).
+            bool isContainer = WorldBuilder.ContainerForMesh(name, out _, out _, out _);
+            if (!isContainer && doorCatalog != null && doorCatalog.TryGetValue(name, out var leaves))
             {
                 foreach (var cfg in leaves)
                 {
@@ -365,6 +375,9 @@ namespace UnturnedGodot
                     // ex=270; if that convention ever moves, it moves in all three.
                     a.Container.TopLevel = false;
                     a.Container.Transform = new Transform3D(new Basis(Vector3.Right, Mathf.DegToRad(270f)).Inverse(), Vector3.Zero);
+                    // ...and its leaves are ITS, as on the world path: hung under the shelf, closed, swung by its inventory
+                    // opening and closing (SetDoorsOpen), and a look at a leaf resolves to the shelf (ShelfOf) -- so F opens it
+                    a.Container.OwnDoors = true;
                 }
             }
             return a;

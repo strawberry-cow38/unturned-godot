@@ -290,12 +290,202 @@ namespace UnturnedGodot
 
         /// <summary>What the last Build made.</summary>
         public static int LastWalls, LastProps;
+        /// <summary>...and of that furniture, what the last Build's Furnish made live.</summary>
+        public static Furnished LastFurnished;
+
+        /// <summary>Where a generated TOWN's lamps fade out and stop being drawn, metres from the camera (LampLight.FadeBegin; the
+        /// fade then runs LampFadeLength). A town hangs a light in nearly every room -- seed 7 measured 1,141 (915 ceiling
+        /// lights, the rest floor and desk lamps) across 115 buildings, 283 of them within 100 m of its densest spot -- and Forward+
+        /// sends every light in the view frustum to the cluster builder, walls or no walls, whose budget is 512
+        /// (rendering/limits/cluster_builder/max_clustered_elements): a view over the town would overrun it and the renderer would
+        /// drop lights arbitrarily. With the fade no camera has more than 111 lamps within 40 m. A room's lamp reaches 8 m (LampLight.Range); past 40 m the light it throws on a wall
+        /// through a window is not something anyone sees, while the fixture's own glow (a material, not a light) still is.
+        /// The building STAGE passes 0: one building, a dozen lamps, and its renders look at it from further than this.</summary>
+        public const float LampFadeBegin = 30f, LampFadeLength = 10f;
+
+        /// <summary>What Furnish made live, in the order the building's props came.</summary>
+        public sealed class Furnished
+        {
+            /// <summary>Every piece's node, in prop order but for any that built nothing -- a switch, a curtain, a rug included.</summary>
+            public readonly List<Node3D> Nodes = new();
+            public readonly List<RoomLightSwitch> Switches = new();
+            /// <summary>The ceiling lights in prop order -- RoomElectrical.Lights' ids, a slot kept (null) for one that built nothing.</summary>
+            public readonly List<LampLight> CeilingLights = new();
+            public readonly List<GridPowerSource> Outlets = new();
+            /// <summary>Every light the furniture hangs: the ceiling lights and any floor or desk lamp.</summary>
+            public readonly List<LampLight> Lamps = new();
+            /// <summary>Pieces built with a collider, and the containers among them (SmartProps' StoreShelf: F opens it).</summary>
+            public int Colliders, Containers;
+            /// <summary>Where the time went, in stopwatch ticks: building the pieces (BuildProp), putting them in the tree (their
+            /// devices' _Ready -- a container rolls its loot and hangs its leaves there), the switches, the outlets, the rugs and
+            /// curtains.</summary>
+            public long BuildTicks, ReadyTicks, SwitchTicks, OutletTicks, DecorTicks;
+            public void Add(Furnished o)
+            {
+                if (o == null) return;
+                Nodes.AddRange(o.Nodes); Switches.AddRange(o.Switches); CeilingLights.AddRange(o.CeilingLights);
+                Outlets.AddRange(o.Outlets); Lamps.AddRange(o.Lamps); Colliders += o.Colliders; Containers += o.Containers;
+                BuildTicks += o.BuildTicks; ReadyTicks += o.ReadyTicks; SwitchTicks += o.SwitchTicks; OutletTicks += o.OutletTicks; DecorTicks += o.DecorTicks;
+            }
+            static double Ms(long t) => t * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            public string Timings => $"pieces {Ms(BuildTicks):0} ms, into the tree {Ms(ReadyTicks):0} ms, switches {Ms(SwitchTicks):0} ms, "
+                                   + $"outlets {Ms(OutletTicks):0} ms, rugs and curtains {Ms(DecorTicks):0} ms";
+        }
+
+        /// <summary>⭐ A BUILDING'S FURNITURE, MADE LIVE -- the one path for the editor's building stage AND a generated town
+        /// (strawberry 2026-10-15: "work on placing props/smart storage containers in buildings via the actual editor prop
+        /// placement path, instead of the weird new system they have. they dont have collision rn").
+        ///
+        /// Every piece with art is EditorObjects.BuildProp's -- the node the editor's own placer builds, minus its pick bit and
+        /// its bookkeeping -- so it has the placed prop's trimesh collider on the world layer, its surface, and its SmartProps:
+        /// a wardrobe or a fridge is a container F opens (StoreShelf, found by the collider's ancestry), its leaves swing, a
+        /// television toggles, a lamp is a LampLight. On top of that, the building's own electrical, as the stage has wired it
+        /// since round 12: each room's light switch (RoomLightSwitch, astraclaw's base and rocker) bound through the room's
+        /// record (RoomElectrical) to the ceiling lights it names, and each outlet a mains-fed GridPowerSource.
+        ///
+        /// A runtime piece (PropDesignation.Gen) is built from its inputs as before (EditorBuildings.RuntimeDecorNode). A rug
+        /// gets the collider the placer would give a mesh -- you walk on it -- and a curtain does not: it hangs in a window, and
+        /// a cloth you would walk or climb through is the one thing the world loader leaves without one (IsWalkThrough).
+        ///
+        /// `frame` maps the props' coordinates into `parent`'s: identity for a town building (built in its lattice's frame, then
+        /// moved -- see Build), the stage's for the stage. Lights hung here fade out past `lampFade` metres (0: never).</summary>
+        public static Furnished Furnish(Node3D parent, Transform3D frame, IEnumerable<PropDesignation> props, IEnumerable<RoomElectrical> rooms,
+                                        EditorObjects objs, float lampFade)
+        {
+            var f = new Furnished();
+            if (parent == null || props == null) return f;
+            // the switches and outlets by their place among the electrical props (ElectricalFixture.Id), the ceiling lights by
+            // theirs among the ceiling lights (RoomElectrical.Lights) -- a slot kept for one that built nothing, so the ids hold
+            var electrical = new List<Node3D>();
+            foreach (var m in props)
+            {
+                bool ceiling = LampLight.KindFor(m.Name) == LampLight.Kind.CeilingShade, outlet = m.Name == "Power_Outlet_0";
+                var at = frame * new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (m.Name == "Light_Switch_0")
+                {
+                    var sw = BuildSwitch(parent, at, objs);
+                    electrical.Add(sw);
+                    if (sw != null) { f.Switches.Add(sw); f.Nodes.Add(sw); f.Colliders++; }
+                    f.SwitchTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                    continue;
+                }
+                if (m.Gen != null)
+                {
+                    var built = EditorBuildings.RuntimeDecorNode(m);
+                    if (built == null) continue;
+                    built.Transform = frame * EditorBuildings.RuntimeDecorTransform(m);
+                    if (m.Gen.Kind == RuntimeDecorKind.Rug && RugCollider(built) != null) f.Colliders++;
+                    parent.AddChild(built);
+                    f.Nodes.Add(built);
+                    f.DecorTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                    continue;
+                }
+                Node3D node = null; StaticBody3D body = null; SmartProps.Attached smart = null;
+                if (objs != null) node = objs.BuildProp(m.Name, at.Origin, at.Basis, null, 0u, out body, out smart);
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                f.BuildTicks += t1 - t0;
+                if (node == null)
+                {
+                    if (ceiling) f.CeilingLights.Add(null);
+                    if (outlet) electrical.Add(null);
+                    continue;
+                }
+                node.Name = "Furniture_" + m.Name;
+                if (smart?.Lamp != null) { smart.Lamp.FadeBegin = lampFade; smart.Lamp.FadeLength = LampFadeLength; f.Lamps.Add(smart.Lamp); }
+                parent.AddChild(node);   // BEFORE an outlet's source: GridPowerSource.Attach looks for the tree's PowerManager
+                long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                f.ReadyTicks += t2 - t1;
+                f.Nodes.Add(node);
+                if (body != null) f.Colliders++;
+                if (smart?.Container != null) f.Containers++;
+                if (ceiling) f.CeilingLights.Add(smart?.Lamp);
+                else if (outlet)
+                {
+                    var src = BuildOutlet(parent, at, node);
+                    body?.SetMeta("gridpower", src);   // the plate's own collider focuses the outlet too, not only its look box
+                    electrical.Add(src);
+                    if (src != null) f.Outlets.Add(src);
+                    f.OutletTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t2;
+                }
+            }
+            // each room's switch to its record, and to the ceiling lights the record names: the record holds the state
+            if (rooms != null)
+                foreach (var e in rooms)
+                {
+                    if (e == null) continue;
+                    var sws = new List<(RoomLightSwitch Sw, int Index)>();
+                    for (int i = 0; i < e.Switches.Count; i++)
+                    {
+                        var fx = e.Switches[i];
+                        if (fx.Id >= 0 && fx.Id < electrical.Count && electrical[fx.Id] is RoomLightSwitch sw) sws.Add((sw, i));
+                    }
+                    var lamps = new List<LampLight>();
+                    foreach (int k in e.Lights) if (k >= 0 && k < f.CeilingLights.Count && f.CeilingLights[k] != null) lamps.Add(f.CeilingLights[k]);
+                    var all = new List<RoomLightSwitch>(); foreach (var q in sws) all.Add(q.Sw);
+                    foreach (var (sw, i) in sws) sw.Bind(e, i, lamps, all);
+                }
+            return f;
+        }
+
+        /// <summary>A room's light switch: astraclaw's base and rocker (RoomLightSwitch), placed as the prop is. The two meshes are
+        /// parsed once -- a town has a switch at nearly every room's door.</summary>
+        static RoomLightSwitch BuildSwitch(Node3D parent, Transform3D at, EditorObjects objs)
+        {
+            _switchBase ??= ContentProvider.ParseObj("res://content/objects/Light_Switch_0_Base.obj");
+            _switchRocker ??= ContentProvider.ParseObj("res://content/objects/Light_Switch_0_Rocker.obj");
+            if (_switchBase == null || _switchRocker == null) return null;
+            var sw = RoomLightSwitch.Make(_switchBase, _switchRocker, objs?.PreviewMaterial("Light_Switch_0"));
+            sw.Name = "Furniture_Light_Switch_0";
+            sw.Transform = at;
+            parent.AddChild(sw);
+            return sw;
+        }
+        static Mesh _switchBase, _switchRocker;
+
+        /// <summary>An outlet: a power I/O source of BuildingGen.OutletWatts fed by the mains (GridPowerSource, the breaker box's own
+        /// node at an outlet's rating: wires take power from it while the grid is live, and the solver caps what they draw at its
+        /// watts), a port before each receptacle sharing that one rating, and a small look-at body so the look-ray focuses it as it
+        /// does the breaker box. Beside the plate's own node (`plate`, whose mesh it outlines), not under it.</summary>
+        static GridPowerSource BuildOutlet(Node3D parent, Transform3D at, Node3D plate)
+        {
+            Mesh mesh = null;
+            foreach (var c in plate.GetChildren()) if (c is MeshInstance3D mi) { mesh = mi.Mesh; break; }
+            var src = GridPowerSource.Attach(parent, at.Origin, at.Basis, OutletPort, BuildingGen.OutletWatts, "Outlet", mesh);
+            // and one before the lower receptacle (strawberry: "do both outlet holes have a wire io connection?"), on the same
+            // 1500 W: one budget for the fixture's two ports (GridPowerSource.PowerOutputBudget)
+            src.AddOutputPort(OutletPortLower, "Outlet");
+            src.Transform = at;
+            var body = new StaticBody3D { Name = "OutletLook", CollisionLayer = 1u << 6, CollisionMask = 0, Position = new Vector3(0f, 0.04f, 0f) };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.34f, 0.08f, 0.56f) } });
+            body.SetMeta("gridpower", src);
+            src.AddChild(body);
+            return src;
+        }
+        /// <summary>An outlet's power ports, in its native frame: before each receptacle (the handoff's socket points,
+        /// (0, 0.054, +-0.13)), clear of the plate.</summary>
+        static readonly Vector3 OutletPort = new Vector3(0f, 0.11f, 0.13f), OutletPortLower = new Vector3(0f, 0.11f, -0.13f);
+
+        /// <summary>A rug's collider: its own mesh's trimesh (one per mesh -- the factory caches the mesh, so rugs of one size and
+        /// pattern share it), on the small-prop layer the placer puts a mesh this size on, sounding like cloth (PropSurfaces).</summary>
+        static StaticBody3D RugCollider(MeshInstance3D rug)
+        {
+            if (rug?.Mesh == null) return null;
+            if (!_rugShapes.TryGetValue(rug.Mesh, out var shp)) _rugShapes[rug.Mesh] = shp = rug.Mesh.CreateTrimeshShape();
+            if (shp == null) return null;
+            var body = new StaticBody3D { CollisionLayer = 1u << 6, CollisionMask = 0 };
+            body.SetMeta(PlayerController.SurfMeta, (int)PropSurfaces.SurfForMaterial("Cloth"));
+            body.AddChild(new CollisionShape3D { Shape = shp });
+            rug.AddChild(body);
+            return body;
+        }
+        static readonly Dictionary<Mesh, Shape3D> _rugShapes = new();
 
         /// <summary>⭐ A generated building, built under `parent` and stood in `frame` -- the lattice's (0, 0) corner at floor level,
         /// +X and +Z the plan's. Walls and their openings, stair flights with their ramps and floor holes, the corner solve, and
-        /// the furniture as meshes (a kit doodad with its stock children, a curtain or rug from its inputs). Returns the root.
-        /// ⚠ The furniture is DRAWN, not yet live: no collider, and the switches, outlets and ceiling lights are their meshes
-        /// without the stage's wiring (that is the editor's PowerNet plumbing, next).</summary>
+        /// the furniture made live by Furnish -- the editor placer's own props, colliders, containers and lights, the rooms'
+        /// switches wired to their ceiling lights and the outlets on the mains -- exactly as the building stage makes it.
+        /// Returns the root.</summary>
         /// <param name="party">Sides of the plan another building stands against: its walls there are pulled in half their thickness,
         /// so the two buildings' outer faces meet on the line instead of the two walls being drawn one inside the other.</param>
         public static Node3D Build(BuildingGenResult res, Transform3D frame, Node3D parent, EditorObjects objs, string name = "Building",
@@ -332,38 +522,15 @@ namespace UnturnedGodot
                 if (rise >= EditorBuildings.StoreyHeight - 0.01f) CutStairHole(walls, o, s.Yaw, s.Run, s.Width, rise, Punch);
             }
             SolveCorners(walls);
-            int props = 0;
-            foreach (var m in res.Props)
-            {
-                if (m.Gen != null)
-                {
-                    var built = EditorBuildings.RuntimeDecorNode(m);
-                    if (built == null) continue;
-                    root.AddChild(built);
-                    built.Transform = EditorBuildings.RuntimeDecorTransform(m);
-                    props++;
-                    continue;
-                }
-                var mesh = objs?.PreviewMesh(m.Name);
-                if (mesh == null)
-                {
-                    if (DoodadKitView.Has(m.Name))
-                    {
-                        var holder = new Node3D { Name = "Furniture_" + m.Name, Transform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z)) };
-                        root.AddChild(holder);
-                        DoodadKitView.Attach(holder, m.Name);
-                        props++;
-                    }
-                    continue;
-                }
-                var mi = new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, MaterialOverride = objs.PreviewMaterial(m.Name),
-                                              Transform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z)) };
-                root.AddChild(mi);
-                DoodadKitView.Attach(mi, m.Name);
-                props++;
-            }
+            // the furniture, live: the editor placer's own nodes (Furnish), in the lattice's frame like everything above
+            var furnished = Furnish(root, Transform3D.Identity, res.Props, System.Linq.Enumerable.Select(res.Rooms, r => r.Electrical), objs, LampFadeBegin);
             root.Transform = frame;
-            LastWalls = walls.Count; LastProps = props;
+            // ⚠ A water source rides a TopLevel node in a yaw-only frame (SmartProps: a sink's FluidContainer), seated at the
+            // position the prop was BUILT at -- here the lattice's, not the world's -- and a TopLevel node does not follow the root
+            // being moved. Re-seat them now the building stands where its plot says, or every kitchen sink's water port in town
+            // sits in a heap at the lattice origin's spot in the world.
+            foreach (var n in furnished.Nodes) SmartProps.Resync(n);
+            LastWalls = walls.Count; LastProps = furnished.Nodes.Count; LastFurnished = furnished;
             return root;
         }
     }

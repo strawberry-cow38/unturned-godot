@@ -455,6 +455,7 @@ namespace UnturnedGodot
             if (ShowMassing) return BuildBuildingMassing(parent);
             var clock = System.Diagnostics.Stopwatch.StartNew();
             int made = 0, failed = 0, walls = 0, props = 0, clipped = 0;
+            var live = new BuildingRuntime.Furnished();
             foreach (var b in Buildings)
             {
                 if (b.Result == null) continue;
@@ -463,10 +464,40 @@ namespace UnturnedGodot
                 catch (System.Exception e) { if (failed++ == 0) Log.Err($"[towngrid] building on a {b.Plot.Kind} plot failed to build: {e.Message}\n{e.StackTrace}"); }
                 if (node == null) continue;
                 made++; walls += BuildingRuntime.LastWalls; props += BuildingRuntime.LastProps; clipped += BuildingRuntime.LastClipped;
+                live.Add(BuildingRuntime.LastFurnished);
             }
+            int ceiling = 0; foreach (var l in live.CeilingLights) if (l != null) ceiling++;
             Log.Print($"[towngrid] buildings built: {made} in {clock.ElapsedMilliseconds} ms ({clock.ElapsedMilliseconds / Mathf.Max(1, made)} ms a building), "
-                    + $"{walls} surfaces ({clipped} fitted to a party line), {props} pieces of furniture{(failed > 0 ? $", {failed} FAILED" : "")}");
+                    + $"{walls} surfaces ({clipped} fitted to a party line), {props} pieces of furniture{(failed > 0 ? $", {failed} FAILED" : "")} -- "
+                    + $"{live.Colliders} with a collider, {live.Containers} containers, {live.Lamps.Count} lamps ({ceiling} ceiling lights), "
+                    + $"{live.Switches.Count} light switches, {live.Outlets.Count} outlets; furnishing: {live.Timings}");
+            LogLampDensity(live.Lamps);
             return made;
+        }
+
+        /// <summary>How many of the town's lamps a camera can have in range at once: the most lamps within `r` of any one lamp
+        /// (a camera standing at the densest spot), at the fade-out distance the lamps actually have (BuildingRuntime.LampFadeBegin
+        /// + LampFadeLength) and at 100 m, which is roughly what a view down a street would hold without the fade.</summary>
+        static void LogLampDensity(List<LampLight> lamps)
+        {
+            if (lamps.Count == 0) return;
+            var pos = new List<Vector3>(lamps.Count);
+            foreach (var l in lamps) if (GodotObject.IsInstanceValid(l) && l.IsInsideTree()) pos.Add(l.GlobalPosition);
+            float fade = BuildingRuntime.LampFadeBegin + BuildingRuntime.LampFadeLength;
+            int worstFade = 0, worst100 = 0;
+            foreach (var a in pos)
+            {
+                int nf = 0, n100 = 0;
+                foreach (var b in pos)
+                {
+                    float d2 = a.DistanceSquaredTo(b);
+                    if (d2 <= fade * fade) nf++;
+                    if (d2 <= 100f * 100f) n100++;
+                }
+                worstFade = Mathf.Max(worstFade, nf); worst100 = Mathf.Max(worst100, n100);
+            }
+            Log.Print($"[towngrid] lamps: {pos.Count} lights in the town; at the densest spot {worstFade} within {fade:0} m (drawn: they fade out past that) "
+                    + $"and {worst100} within 100 m -- against Forward+'s 512 clustered elements a view");
         }
 
         /// <summary>Until the runtime builder lands: each generated building as its MASSING -- one translucent box per floor

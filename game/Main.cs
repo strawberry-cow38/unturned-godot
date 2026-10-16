@@ -6850,7 +6850,17 @@ namespace UnturnedGodot
                 BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.53f, 0.67f, 0.86f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.92f, 0.92f, 0.94f), AmbientLightEnergy = 1.15f,
             };
-            AddChild(new WorldEnvironment { Environment = env });
+            // ⚠⚠ THE GRAPHICS OPTIONS NEVER REACHED A CUSTOM MAP (strawberry 2026-10-15, of a generated town: "the buildings dont
+            // have lighting or AO"). Ambient occlusion, bloom, SSR and sun shafts are applied to the WorldEnvironments in the
+            // "world_env" group (GraphicsOptions.ApplyEnvironment, at load and from the settings panel) -- and only WorldBuilder's
+            // environment, PEI's, ever joined it. So on a generated island, a generated town or any map made in the editor, the
+            // Ambient occlusion row did nothing at all, at load or when flipped mid-game: retail's buildings had AO and the
+            // town's could not, while neither carries any baked AO of its own (no vertex colour on a retail building's LOD0, a
+            // 4x2 palette texture). Joined here exactly as WorldBuilder joins it, so the same switch drives both.
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); AddChild(we); }
+            // ...and the point-light shadow budget, which a custom map never had either: the nearest few lamps cast, as on PEI
+            // (LightShadowBudget), instead of every room's lamp lighting the next room through the wall between them.
+            AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f, VisualsEnabled = false };
             AddChild(dayNight);
             var editor = new Editor();
