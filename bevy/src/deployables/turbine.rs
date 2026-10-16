@@ -66,22 +66,27 @@ pub(super) fn load(
 
 impl Art {
     /// Children of the tower, which itself sits at (0, H/2, 0) in the body.
-    pub(super) fn spawn(&self, commands: &mut Commands, tower: Entity, net_id: u32) {
+    /// `hub` names the accepted body whose wind spins it; a placement ghost's
+    /// hub (`None`) stays still, as the source ghost's `_bladeHub` is never set.
+    pub(super) fn spawn(&self, commands: &mut Commands, tower: Entity, hub: Option<u32>) {
         commands.spawn((
             Mesh3d(self.nacelle.clone()),
             MeshMaterial3d(self.gray.clone()),
             Transform::from_xyz(0., HEIGHT * 0.5, 0.05),
             ChildOf(tower),
         ));
+        let net_id = hub;
         let hub = commands
             .spawn((
                 Name::new("BladeHub"),
-                Hub { net_id },
                 Transform::from_xyz(0., HEIGHT * 0.5, 0.28),
                 Visibility::Inherited,
                 ChildOf(tower),
             ))
             .id();
+        if let Some(net_id) = net_id {
+            commands.entity(hub).insert(Hub { net_id });
+        }
         commands.spawn((
             Mesh3d(self.cap.clone()),
             MeshMaterial3d(self.gray.clone()),

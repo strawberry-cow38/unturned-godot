@@ -124,8 +124,8 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 
 | # | Feature (source) | Gap | Size | Impact | Owner / status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | No held ghost/snapping/LMB place; cmd 7 test-only | L | high | agent G (in progress) |
-| 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | `ordinary()` excludes storage/fixture/fluid/turbine bodies | M | high | powered fixtures DONE (`17b9a035`); rest agent G |
+| 1 | Deployable placement (`DeployablePlacer`, `BarricadePlacer`, `PlacementGhost`) | Floor/wall/ceiling ghost, reasons, R/LMB/RMB and Command 7 naming the held jar done; Window and Container (storage adapter) mounts refused | L | high | placement checkpoint DONE ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)); window/adapter mounts queued |
+| 2 | Special deployable bodies (`DoorDeploy`, `FridgeDeploy`, `StorageCrate`) | Refrigerator body/label/socket, OpenNearestCrate and the LocalOnly placeable doors done; fixtures and turbine done by the power agent; fluid bodies remain with row 21 | M | high | DONE except fluid bodies ([DEPLOYABLE_PLACEMENT_PORT.md](DEPLOYABLE_PLACEMENT_PORT.md)) |
 | 3 | Player structures (`BuildTool`, `StructureManager`) | Absent; source is local-only, no command/save | XL | high | needs authority design |
 | 4 | Survival HUD status icons (`HUD.cs`) | Bleeding/broken/starved/dehydrated/deadzone/temperature rows | S | high | DONE (`bc01598c`) |
 | 5 | Temperature (`PlayerTemperatureSim`, `ThermalField`) | Band never computed/streamed (`TempBand`) | M | med | DONE (`bc01598c`) |

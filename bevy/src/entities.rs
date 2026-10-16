@@ -183,6 +183,21 @@ impl InteractionFocus {
             candidate.action == action && candidate.args["netId"].as_u64() == Some(u64::from(id))
         })
     }
+    /// A dispatched candidate with no prompt (the source shows none for it).
+    pub fn offer_hidden(&mut self, distance: f32, action: &str, args: Value, open_storage: bool) {
+        self.offer(distance, "", action, args.clone(), open_storage);
+        if let Some(candidate) = &mut self.candidate {
+            if candidate.action == action && candidate.args == args {
+                candidate.show_binding = false;
+            }
+        }
+    }
+    /// Whether the winning candidate carries the storage-screen flag that the
+    /// crop harvest fall-through yields to.
+    #[cfg(test)]
+    pub(crate) fn opens_storage(&self) -> bool {
+        self.candidate.as_ref().is_some_and(|c| c.open_storage)
+    }
     pub fn has_candidate(&self) -> bool {
         self.candidate.is_some()
     }

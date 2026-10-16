@@ -413,6 +413,7 @@ fn build_viewmodel(
     } else {
         fallback.into()
     };
+    let deploy_use = data.anims.contains_key("Deploy_Use");
     let material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.82, 0.66, 0.52),
         perceptual_roughness: 1.,
@@ -453,9 +454,17 @@ fn build_viewmodel(
             state.tool_active = false;
             state.inspect_time = None;
             state.motion = default();
-            state.use_clip = consumable
-                .as_ref()
-                .map_or_else(String::new, |clips| clips.1.clone());
+            // Viewmodel.PlayDeployUse: a held deployable's place gesture.
+            state.use_clip = consumable.as_ref().map_or_else(
+                || {
+                    if item.is_some_and(|i| i.is_deployable) && deploy_use {
+                        "Deploy_Use".into()
+                    } else {
+                        String::new()
+                    }
+                },
+                |clips| clips.1.clone(),
+            );
             state.aim_hook = gun.as_ref().map_or(Vec3::ZERO, |gun| gun.aim);
             state.pending = Some(PendingHeld {
                 mesh: if gun.is_some() {

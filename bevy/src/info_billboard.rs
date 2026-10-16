@@ -52,8 +52,8 @@ struct Surface {
     content: Option<Content>,
 }
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-struct Face {}
-type PanelMaterial = ExtendedMaterial<StandardMaterial, Face>;
+pub(crate) struct Face {}
+pub(crate) type PanelMaterial = ExtendedMaterial<StandardMaterial, Face>;
 impl MaterialExtension for Face {
     fn vertex_shader() -> ShaderRef {
         // The original avatar nameplate already implements a per-view billboard.
