@@ -84,6 +84,8 @@ pub(crate) struct ShelfItem {
     pub name: String,
     /// The tag's Modulate: the rarity colour lerped 35% toward white.
     pub tint: Color,
+    /// ShelfItemBody.Rarity: the look-at rim colour.
+    pub rim: Color,
     /// The look hitbox: the mesh AABB scaled 1.1, in model space.
     pub center: Vec3,
     pub half: Vec3,
@@ -329,6 +331,7 @@ pub(super) fn sync(
                         item_id: cell.item_id,
                         name: visual.map_or_else(|| "?".into(), |i| i.name.clone()),
                         tint: tag_tint(rarity),
+                        rim: rarity,
                         center: (mesh.0 + mesh.1) * 0.5,
                         half: (mesh.1 - mesh.0) * 0.55,
                         tag: placed.tag,
@@ -481,6 +484,8 @@ pub(super) fn offer(
     };
     let args = json!({"netId":item.net_id,"x":item.x,"y":item.y});
     offer_silent(&mut focus, distance, args.clone());
+    // ShelfItemBody.SetFocused: the item's own silhouette in its rarity.
+    focus.outline(TAKE, &args, child, item.rim);
     focused.0 = Some((args, root.transform_point(item.tag), item.name.clone(), item.tint));
 }
 /// One pass: the ray claim (nearest hit) or else, if `stop` allows it, the

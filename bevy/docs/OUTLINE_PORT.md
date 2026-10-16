@@ -24,11 +24,14 @@ The whole pass is disabled while driving (`DrivingSuppress`) and by `GraphicsOpt
 
 Claimers wired so far:
 - dropped world items, with the rarity colour (`ItemTool.RarityColorUI`);
-- map containers/shelves (`openStorage`), in white.
+- map containers/shelves (`openStorage`), in white;
+- store-shelf items, in their rarity colour (`ShelfItemBody.SetFocused`);
+- deployables, in `Deployable.OutlineColor` (0.82/0.83/0.90);
+- vehicles, in their `.dat` `Rarity` colour, through `InteractionFocus::outline_net_id` (any action the winner offered for that NetId).
 
 ## Deviations and gaps
 
-- **Claimers not yet wired:** deployables (`Deployable.OutlineColor`), vehicles (`_outlineColor`, red when a tool can't act), doors, seats, beds, lamps, notes, TVs, radios, vending machines, NPC/puppet bodies (skinned meshes are not mirrored yet), forage fruit and store-shelf items. They join by calling `focus.outline` beside their `offer`.
+- **Claimers not yet wired:** the vehicle's red "can't act" tool colour, doors, seats, beds, lamps, notes, TVs, radios, vending machines, NPC/puppet bodies (skinned meshes are not mirrored yet) and forage fruit. They join by calling `focus.outline` beside their `offer`.
 - **`GraphicsOptions.Outline`:** the native `settings.graphics.outline` (default on) disables the whole pass, with no mask and no rim; a unit test and a negative control cover it.
 - **No `DrivingSuppress`:** nothing offers focus from a seat natively, so the pass is already idle there.
 
@@ -39,6 +42,7 @@ Claimers wired so far:
   - Every mesh under the target (body and leaf) is mirrored onto layer 19 with an unlit, white, cull-less material, and the mirrors follow the focus and are cleared when it ends.
 - **Negative controls, each failing as intended:** the mirror missing its render layer, descendants not mirrored, and a claim not tied to the winning candidate.
 - **Visual:** the ignored fixture `entities::outline_visual::render_source_item_focus_outline_beside_its_neighbours` (`UG_OUTLINE_SHOT`) reproduces `Main.BuildItemTest` with `UG_FOCUS=1` (items 13, 4, 14). It drives real world-item replicas with bridge catalogue meshes through the production `interact_items` look and claim. The rare-blue rim surrounds the AR-15's full silhouette, outside it only, as in the Godot 4.6.2 oracle. Renders: `bevy/artifacts/{bevy,godot}-outline-itemfocus.png`, plus the mask `bevy-outline-itemfocus-mask.png`.
+- **Full-game journey** (`--play --vehicle roadster`, real xdotool input): walking up to the Roadster (`.dat` RARE) shows the blue rim with "[F] Open trunk" (`bevy/artifacts/bevy-outline-journey-roadster.png`).
 - **Two implementation notes:**
   - The rim samples the mask's red channel: the mask is white on black, so red carries the source's alpha coverage regardless of how the image target stores alpha.
   - The overlay node must not be parented to its UI camera, otherwise Bevy UI never lays it out.
