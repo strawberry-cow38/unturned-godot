@@ -285,6 +285,37 @@ namespace UnturnedGodot
             return true;
         }
 
+        /// <summary>A piece of furniture whose Y is under this stands in the basement (the ground floor's is at 0 and up; the
+        /// basement's, a storey down, hang no higher than under the ground floor's slab).</summary>
+        public const float BasementY = -0.05f;
+
+        /// <summary>Is a planned surface the basement's INSIDES -- gated with its furniture (BuildingCull) -- rather than its shell?
+        /// Inside: the partitions (a basement's thin walls), the floor covers laid over a room's slab, and the footings (every
+        /// part of them under the ground). The shell stays drawn whatever the camera does: the outside walls, whose top shows
+        /// over the ground all round the building; the floor slab, which is what a look in past the threshold meets instead of
+        /// the dug-out hole; and the hatch's well, open to the sky.</summary>
+        static bool InBasement(BuildingGenResult res, WallPlan pl)
+        {
+            if (pl.Y > -0.5f) return false;                                   // the ground floor's slab (Y -0.25) and up
+            bool upright = Mathf.Abs(pl.Pitch) < 1f;
+            var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(pl.Pitch), Mathf.DegToRad(pl.Yaw), 0f));
+            var mid = new Vector3(pl.X, pl.Y, pl.Z) + basis * new Vector3(pl.Length * 0.5f, pl.Height * 0.5f, 0f);
+            if (InWell(res, mid.X, mid.Z)) return false;
+            if (upright)
+            {
+                if (pl.Y + pl.Height + pl.GableRise <= BuildingGen.Grade + 0.01f) return true;      // wholly in the ground: footings
+                return pl.Kind == SurfaceKind.Wall && pl.Thickness < (BuildingGen.Ext + BuildingGen.Inner) * 0.5f;   // a partition
+            }
+            return pl.Kind == SurfaceKind.Floor && pl.Thickness < 0.1f;       // a room's floor cover, not the slab
+        }
+
+        /// <summary>Is a plan point in the hatch's well (its retaining walls' outer faces, and a little)?</summary>
+        static bool InWell(BuildingGenResult res, float x, float z)
+        {
+            var (x0, z0, x1, z1) = res.HatchWell;
+            return x1 > x0 && x >= x0 - 0.5f && x <= x1 + 0.5f && z >= z0 - 0.5f && z <= z1 + 0.5f;
+        }
+
         /// <summary>Surfaces the last Build fitted to a party line.</summary>
         public static int LastClipped;
 
@@ -349,16 +380,23 @@ namespace UnturnedGodot
         ///
         /// `frame` maps the props' coordinates into `parent`'s: identity for a town building (built in its lattice's frame, then
         /// moved -- see Build), the stage's for the stage. Lights hung here fade out past `lampFade` metres (0: never).</summary>
+        /// <param name="below">Where a piece below the ground floor goes (its Y under BasementY), but for a lamp -- the basement's
+        /// gated node (BuildingCull); null puts everything under `parent`.</param>
         public static Furnished Furnish(Node3D parent, Transform3D frame, IEnumerable<PropDesignation> props, IEnumerable<RoomElectrical> rooms,
-                                        EditorObjects objs, float lampFade)
+                                        EditorObjects objs, float lampFade, Node3D below = null)
         {
             var f = new Furnished();
             if (parent == null || props == null) return f;
+            var top = parent;
             // the switches and outlets by their place among the electrical props (ElectricalFixture.Id), the ceiling lights by
             // theirs among the ceiling lights (RoomElectrical.Lights) -- a slot kept for one that built nothing, so the ids hold
             var electrical = new List<Node3D>();
             foreach (var m in props)
             {
+                // (this piece's parent: the basement's is gated -- all but its lamps, whose light is not the basement's alone: with no
+                // shadow a lamp lights through the slab, and hiding them changed the floor above, seen from the street through a
+                // window. A lamp still goes out past LampFadeBegin + LampFadeLength like every lamp in town.)
+                parent = below != null && m.Y < BasementY && LampLight.KindFor(m.Name) == LampLight.Kind.Generic ? below : top;
                 bool ceiling = LampLight.KindFor(m.Name) == LampLight.Kind.CeilingShade, outlet = m.Name == "Power_Outlet_0";
                 var at = frame * new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
                 long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -497,6 +535,9 @@ namespace UnturnedGodot
             if (res == null || parent == null) return null;
             var root = new Node3D { Name = name };
             parent.AddChild(root);                      // at the parent's origin: built there, moved last (see the class summary)
+            // the basement's insides, under one node the camera gates (BuildingCull): drawn only when it could be seen
+            Node3D below = null;
+            if (res.HasBasement && !BuildingCull.Disabled) { below = new Node3D { Name = "Basement" }; root.AddChild(below); }
             int mat = MaterialFor(res.Palette);
             int roofTexel = WallMaterials.Count > 0 ? WallMaterials.At(Mathf.PosMod(mat, WallMaterials.Count)).RoofTexel : -1;
             var walls = new List<WallSurface>();
@@ -507,7 +548,7 @@ namespace UnturnedGodot
             {
                 PartyFit(pl, wx, dz, party, out var o, out float len, out float hgt, out var ops, ref clipped);
                 if (len < 0.02f || hgt < 0.02f) continue;      // clipped away entirely (a porch post standing past the line)
-                NewWall(root, walls, o, pl.Yaw, len, pl.Thickness, mat, ops,
+                NewWall(below != null && InBasement(res, pl) ? below : root, walls, o, pl.Yaw, len, pl.Thickness, mat, ops,
                         hgt, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
                         pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.TexelBack >= 0 ? mat : -1, pl.TexelBack);
             }
@@ -518,16 +559,19 @@ namespace UnturnedGodot
                 float rise = s.Rise > 0f ? s.Rise : EditorBuildings.StoreyHeight;
                 int steps = WallOpenings.StairSteps(rise);
                 int treads = s.Concrete && BuildingGen.FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Concrete : -1;
+                // the stair room's flight down is the basement's; the hatch's, in a well open to the sky, is the outside's
+                var treadParent = below != null && s.Floor == -1 && !InWell(res, s.X, s.Z) ? below : root;
                 foreach (var p in EditorBuildings.StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
-                    NewWall(root, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f, treads);
+                    NewWall(treadParent, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f, treads);
                 StairRamp(root, o, s.Yaw, s.Run, s.Width, rise);
                 // a switchback's half flights: the generator cut their floor's hole itself (it covers the landing too)
                 if (rise >= EditorBuildings.StoreyHeight - 0.01f) CutStairHole(walls, o, s.Yaw, s.Run, s.Width, rise, Punch);
             }
             SolveCorners(walls);
             // the furniture, live: the editor placer's own nodes (Furnish), in the lattice's frame like everything above
-            var furnished = Furnish(root, Transform3D.Identity, res.Props, System.Linq.Enumerable.Select(res.Rooms, r => r.Electrical), objs, LampFadeBegin);
+            var furnished = Furnish(root, Transform3D.Identity, res.Props, System.Linq.Enumerable.Select(res.Rooms, r => r.Electrical), objs, LampFadeBegin, below);
             root.Transform = frame;
+            BuildingCull.AddBasement(root, below, res);
             // ⚠ A water source rides a TopLevel node in a yaw-only frame (SmartProps: a sink's FluidContainer), seated at the
             // position the prop was BUILT at -- here the lattice's, not the world's -- and a TopLevel node does not follow the root
             // being moved. Re-seat them now the building stands where its plot says, or every kitchen sink's water port in town

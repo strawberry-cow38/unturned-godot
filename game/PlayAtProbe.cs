@@ -61,13 +61,20 @@ namespace UnturnedGodot
             return at >= 0 ? s.Substring(0, at) : s;
         }
 
-        /// <summary>A generated building's furniture: everything directly under its root but its surfaces (WallSurface), its
-        /// stairs' invisible ramps (a bare StaticBody3D) and an outlet's power source (beside its plate) -- a piece's mesh, its
-        /// holder, or a switch.</summary>
+        /// <summary>A generated building's furniture: everything directly under its root -- or under its basement's gated node
+        /// (BuildingCull) -- but its surfaces (WallSurface), its stairs' invisible ramps (a bare StaticBody3D) and an outlet's power
+        /// source (beside its plate) -- a piece's mesh, its holder, or a switch.</summary>
         static IEnumerable<Node3D> Furniture(Node3D building)
         {
             foreach (var c in building.GetChildren())
+            {
+                if (c is Node3D bn && c.Name == "Basement" && c.GetType() == typeof(Node3D))
+                {
+                    foreach (var f in Furniture(bn)) yield return f;
+                    continue;
+                }
                 if (c is Node3D n && n is not WallSurface && n is not GridPowerSource && !(n is StaticBody3D && n is not RoomLightSwitch)) yield return n;
+            }
         }
 
         static Node3D BuildingOf(Node n)
