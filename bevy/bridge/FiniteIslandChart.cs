@@ -28,5 +28,5 @@ internal sealed class ChartPixels(int width, int height)
         Bytes[at+1] = Channel(color.G);
         Bytes[at+2] = Channel(color.B);
     }
-    static byte Channel(float value) => (byte)Math.Clamp(value * 255.0, 0.0, 255.0);
+    internal static byte Channel(float value) => (byte)Math.Clamp(value * 255.0, 0.0, 255.0);
 }

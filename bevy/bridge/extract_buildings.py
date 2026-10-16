@@ -195,3 +195,6 @@ def extract(read, out, match, method):
         'using Godot;namespace UnturnedBevy {public sealed partial class BuildingDoorMesh {\n'
         'public static BuildingDoorMesh Load(string globalPath) {\n' + mesh
         + '\n return new BuildingDoorMesh(outV.ToArray(),new Vector3(1,1,1));\n}}}\n')
+
+    from extract_building_furniture import extract as furniture
+    furniture(read, out, match, method)

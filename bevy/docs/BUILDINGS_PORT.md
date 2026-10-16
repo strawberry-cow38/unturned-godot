@@ -123,8 +123,9 @@ Verification on `.local/building-view-tests-final` and
 - Installed opening authority, endpoint occupancy retry, sound, damage, shards,
   static broken-glass remnants and barricades. The fitted stage preview below
   is separate from those runtime services.
-- Original generated furniture and runtime decoration, room services, stairs
-  and source metadata bindings; no client-side shared state or invented damage.
+- Native furniture/decoration rendering and installed room services (switches,
+  lamps, outlets as power devices), stairs and source metadata bindings; no
+  client-side shared state or invented damage. The source values are below.
 - Reachable generator/editor integration, authored files, source bake, editor
   manipulation/history and finite-map menu/remote content handoff.
 
@@ -188,3 +189,38 @@ moving-collider disable flags and `authorityInstalled:false`. As in the surface
 fixture, native isolated shadowed faces/ground have darker ambient fill; these
 images verify opening geometry/motion and the shader path, not full lighting
 parity or installed gameplay interaction.
+
+## Furniture and runtime decoration values
+
+`BuildingFurniture` extracts the original `EditorBuildings.ShowFurniture`,
+`BuildSwitch`, `BuildOutlet`, `RuntimeDecorNode`/`RuntimeDecorTransform` and
+`CurtainTint` byte-for-byte, apart from type renames. It also extracts
+`RoomLightSwitch` constants, `LampLight` constants and `GridLight.InitJitter`.
+Engine sinks become plain values (`BuildingFurnitureNode` and its
+Switch/Lamp/Outlet subtypes); only the `QueueFree` line is removed.
+`BuildingDecor` extracts the original `RuntimeDecorGenerators` with the mesh,
+material and image sinks as values. The original `Material()` line is kept,
+with `CullMode.Disabled` translated to `DoubleSided`, and the rug texture keeps
+its `TextureFilter.Nearest` as `NearestFilter`. `BuildingDoodads` mirrors
+`DoodadKitView.Kids`, including its `rz*ry*rx*native*scale` basis order. An
+OBJ without faces takes the same missing-mesh branch as a missing file, as
+source `ObjMesh.Load` returning null does.
+
+Evidence: `building_decor_reference.py` runs the real generators in Godot and
+compares the raw arrays against engine storage. Its 36 cases cover vertices,
+normals, UVs, colours, cull mode, filter and exact RGBA8 texture hashes.
+`building_furniture_reference.py` runs the real `ShowFurniture`,
+`RoomLightSwitch`, `DoodadKitView`, `InitJitter` and `ObjMesh.Load` across
+three cases. Those cover node order, transforms, stock-child poses,
+switch/lamp/outlet binding, missing-mesh electrical slots and an unchanged
+`WallSave`, which proves the projection never flips, spends or rewrites room
+records. 14 managed building tests pass. A surgical revert of the cull-mode
+translation fails the decor test. Independent review passed it as a data-only
+checkpoint.
+
+Known differences: the switch base and rocker load through `ObjMesh` rather
+than the source `ContentProvider.ParseObj`; only existence matters for these
+values today. The oracle stubs `EditorObjects`, `ContentProvider`,
+`GridPowerSource` and `LampLight` around the real methods. Native rendering, power-device
+registration, lamp ticking and installed authority are not part of this
+checkpoint.
