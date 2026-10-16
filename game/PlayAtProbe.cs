@@ -14,16 +14,20 @@ namespace UnturnedGodot
     ///     and the same over every generated building in the town (the light count is the one that matters).
     /// UG_PLAYAT_CMD runs console lines first (';'-separated: `timeset 22`), and UG_PLAYAT_SHOT=png saves the frame and
     /// quits once it is over. Frames are counted in PHYSICS ticks, because a frame of a whole town under a software
-    /// rasteriser can be seconds long and the player is a physics body.</summary>
+    /// rasteriser can be seconds long and the player is a physics body.
+    /// UG_PLAYAT_RETAIL=prop (House_00): after that shot, place that RETAIL building through the editor's placer on open ground
+    /// beside the town, stand the player in its largest room looking down its longest clear line, and save a second shot
+    /// (png name + "_retail") -- a retail interior and a generated one in the SAME scene, under the same sun and settings.</summary>
     public partial class PlayAtProbe : Node
     {
         PlayerController _player;
         Node _world;
         string _prop; int _nth; float _dist = 2.2f, _pitch = -10f, _rise = 2.5f;
         bool _press;
-        string _shot;
-        int _tick;
-        Node3D _target;
+        string _shot, _retail;
+        int _tick, _retailTick;
+        Node3D _target, _retailNode;
+        Vector3 _retailAt; float _retailYaw;
 
         public static void AttachIfAsked(Node world, PlayerController player)
         {
@@ -39,6 +43,7 @@ namespace UnturnedGodot
             if (a.Length > 4) float.TryParse(a[4], nf, ic, out p._rise);
             p._press = System.Environment.GetEnvironmentVariable("UG_PLAYAT_PRESS") == "1";
             p._shot = System.Environment.GetEnvironmentVariable("UG_PLAYAT_SHOT");
+            p._retail = System.Environment.GetEnvironmentVariable("UG_PLAYAT_RETAIL");
             world.AddChild(p);
         }
 
@@ -56,12 +61,13 @@ namespace UnturnedGodot
             return at >= 0 ? s.Substring(0, at) : s;
         }
 
-        /// <summary>A generated building's furniture: everything directly under its root but its surfaces (WallSurface) and its
-        /// stairs' invisible ramps (a bare StaticBody3D) -- a piece's mesh, its holder, or a switch.</summary>
+        /// <summary>A generated building's furniture: everything directly under its root but its surfaces (WallSurface), its
+        /// stairs' invisible ramps (a bare StaticBody3D) and an outlet's power source (beside its plate) -- a piece's mesh, its
+        /// holder, or a switch.</summary>
         static IEnumerable<Node3D> Furniture(Node3D building)
         {
             foreach (var c in building.GetChildren())
-                if (c is Node3D n && n is not WallSurface && !(n is StaticBody3D && n is not RoomLightSwitch)) yield return n;
+                if (c is Node3D n && n is not WallSurface && n is not GridPowerSource && !(n is StaticBody3D && n is not RoomLightSwitch)) yield return n;
         }
 
         static Node3D BuildingOf(Node n)
@@ -88,11 +94,91 @@ namespace UnturnedGodot
                 Log.Print($"[playat] after F: inventory {(_player.InventoryOpen ? "OPEN" : "closed")}, storage '{_player.OpenStorageLabel ?? "-"}'");
             if (!string.IsNullOrEmpty(_shot) && _tick == (_press ? 175 : 140))
             {
-                var img = GetViewport().GetTexture()?.GetImage();
-                if (img == null) Log.Err("[playat] no image -- run with a rendering driver, not --headless");
-                else { var err = img.SavePng(_shot); Log.Print($"[playat] saved {_shot}: {err}"); }
-                GetTree().Quit();
+                Save(_shot);
+                if (string.IsNullOrEmpty(_retail)) { GetTree().Quit(); return; }
+                PlaceRetail();
+                _retailTick = _tick;
             }
+            if (_retailTick > 0)
+            {
+                if (_tick == _retailTick + 3) FindRetailSpot();
+                if (_tick > _retailTick + 3 && _tick < _retailTick + 14 && _retailAt != Vector3.Zero)
+                {
+                    _player.TeleportTo(_retailAt);
+                    _player.RotationDegrees = new Vector3(0f, _retailYaw, 0f);
+                    _player.DebugSetLookPitch(_pitch);
+                }
+                if (_tick == _retailTick + 110)
+                {
+                    Save(_shot.EndsWith(".png") ? _shot.Substring(0, _shot.Length - 4) + "_retail.png" : _shot + "_retail");
+                    GetTree().Quit();
+                }
+            }
+        }
+
+        void Save(string path)
+        {
+            var img = GetViewport().GetTexture()?.GetImage();
+            if (img == null) { Log.Err("[playat] no image -- run with a rendering driver, not --headless"); return; }
+            var err = img.SavePng(path);
+            Log.Print($"[playat] saved {path}: {err}");
+        }
+
+        /// <summary>The retail building, placed by the editor's own placer on the open ground 40 m past the town's furthest
+        /// building in +X.</summary>
+        void PlaceRetail()
+        {
+            float maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+            foreach (var c in _world.GetChildren())
+                if (c is Node3D b && BaseName(b).StartsWith("Building_"))
+                { var o = b.GlobalPosition; maxX = Mathf.Max(maxX, o.X); minZ = Mathf.Min(minZ, o.Z); maxZ = Mathf.Max(maxZ, o.Z); }
+            if (maxX == float.MinValue) return;
+            var at = new Vector3(maxX + 60f, 0f, (minZ + maxZ) * 0.5f);
+            at.Y = Terrain.Active != null ? Terrain.Active.SampleHeight(at.X, at.Z) : _target.GlobalPosition.Y;
+            _retailNode = (_world as Editor)?.Objects?.Place(_retail, at, EditorObjects.Upright(0f));
+            Log.Print($"[playat] placed retail {_retail} at ({at.X:0.0}, {at.Y:0.0}, {at.Z:0.0}): {(_retailNode != null ? "ok" : "FAILED")}");
+        }
+
+        /// <summary>A spot inside the retail building to look from: over a floor with a ceiling above it, clear of every wall by
+        /// 0.6 m, with the longest free line of sight (up to 12 m) of any such spot on a 1 m grid -- looking down it, at the
+        /// far wall and its corners.</summary>
+        void FindRetailSpot()
+        {
+            if (_retailNode == null) return;
+            var ab = new Aabb();
+            bool first = true;
+            Walk(_retailNode, n => { if (n is MeshInstance3D mi && mi.Mesh != null) { var w = mi.GlobalTransform * mi.GetAabb(); ab = first ? w : ab.Merge(w); first = false; } });
+            var space = _retailNode.GetWorld3D().DirectSpaceState;
+            const uint mask = (1u << 0) | (1u << 6);
+            Godot.Collections.Dictionary Ray(Vector3 a, Vector3 b) => space.IntersectRay(PhysicsRayQueryParameters3D.Create(a, b, mask));
+            float best = 0f; Vector3 bestAt = Vector3.Zero; float bestYaw = 0f;
+            float baseY = _retailNode.GlobalPosition.Y;
+            for (float x = ab.Position.X + 1f; x < ab.End.X - 1f; x += 1f)
+                for (float z = ab.Position.Z + 1f; z < ab.End.Z - 1f; z += 1f)
+                {
+                    var floor = Ray(new Vector3(x, baseY + 2.6f, z), new Vector3(x, baseY - 0.5f, z));
+                    if (floor.Count == 0) continue;
+                    float fy = ((Vector3)floor["position"]).Y;
+                    if (fy < baseY + 0.3f) continue;                                          // the ground outside, not a floor
+                    var ceil = Ray(new Vector3(x, fy + 1.0f, z), new Vector3(x, fy + 4.5f, z));
+                    if (ceil.Count == 0) continue;                                            // open sky: not inside
+                    var eye = new Vector3(x, fy + 1.6f, z);
+                    float minFree = float.MaxValue, maxFree = 0f, maxYaw = 0f;
+                    for (int k = 0; k < 8; k++)
+                    {
+                        float yaw = k * 45f;
+                        var dir = new Vector3(-Mathf.Sin(Mathf.DegToRad(yaw)), 0f, -Mathf.Cos(Mathf.DegToRad(yaw)));   // the player's -Z at that yaw
+                        var h = Ray(eye, eye + dir * 12f);
+                        float d = h.Count > 0 ? ((Vector3)h["position"]).DistanceTo(eye) : 12f;
+                        minFree = Mathf.Min(minFree, d);
+                        if (d > maxFree) { maxFree = d; maxYaw = yaw; }
+                    }
+                    if (minFree < 0.6f || maxFree >= 12f) continue;                           // in a wall, or looking out a door
+                    if (maxFree > best) { best = maxFree; bestAt = new Vector3(x, fy + 0.05f, z); bestYaw = maxYaw; }
+                }
+            _retailAt = bestAt; _retailYaw = bestYaw;
+            Log.Print(bestAt == Vector3.Zero ? "[playat] no spot inside the retail building"
+                      : $"[playat] retail spot ({bestAt.X:0.0}, {bestAt.Y:0.0}, {bestAt.Z:0.0}) looking {best:0.0} m at yaw {bestYaw:0}");
         }
 
         void Begin()
@@ -116,6 +202,10 @@ namespace UnturnedGodot
                 foreach (var line in cmd.Split(';'))
                     if (line.Trim().Length > 0) { Log.Print($"[playat] console: {line.Trim()}"); console?.DebugRun(line.Trim()); }
             Census();
+            foreach (var n in GetTree().Root.FindChildren("*", nameof(WorldEnvironment), true, false))
+                if (n is WorldEnvironment we && we.Environment != null)
+                    Log.Print($"[playat] {we.GetPath()}: SSAO {(we.Environment.SsaoEnabled ? "ON" : "off")}, in world_env {(we.IsInGroup("world_env") ? "yes" : "NO")}, "
+                            + $"ambient {we.Environment.AmbientLightEnergy:0.00}; GraphicsOptions.AmbientOcclusion {GraphicsOptions.AmbientOcclusion}, UG_AO {System.Environment.GetEnvironmentVariable("UG_AO") ?? "-"}");
         }
 
         /// <summary>What the eye's ray meets within reach, on the player's look-ray layers (world, vehicles, props, interactables),
@@ -169,6 +259,22 @@ namespace UnturnedGodot
         {
             var b = BuildingOf(_target);
             Log.Print($"[playat] {b?.Name}: {Count(b)}");
+            // ...and that building piece by piece, beside the shot: what each is, where, and whether it has a collider, is a
+            // container or carries a light
+            if (b != null && !string.IsNullOrEmpty(_shot))
+            {
+                var lines = new List<string>();
+                foreach (var f in Furniture(b))
+                {
+                    string what = f.HasMeta("obj_name") ? (string)f.GetMeta("obj_name") : BaseName(f);
+                    bool body = false, shelf = false, lamp = false;
+                    Walk(f, d => { if (d is CollisionObject3D) body = true; if (d is StoreShelf) shelf = true; if (d is LampLight) lamp = true; });
+                    var o = f.Position;
+                    lines.Add(System.FormattableString.Invariant($"{what,-28} {f.GetType().Name,-16} ({o.X,6:0.00}, {o.Y,5:0.00}, {o.Z,6:0.00})  collider {(body ? "yes" : "NO ")}{(shelf ? "  container" : "")}{(lamp ? "  light" : "")}"));
+                }
+                System.IO.File.WriteAllLines(_shot + ".building.txt", lines);
+                Log.Print($"[playat] {b.Name}'s furniture listed in {_shot}.building.txt");
+            }
             int buildings = 0;
             var all = new Counts();
             foreach (var c in _world.GetChildren())
