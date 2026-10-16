@@ -170,7 +170,10 @@ hand = player[player.index('        public enum HandKind'):player.index('       
 parts = ['using SDG.Unturned; namespace UnturnedGodot { public static class HandRules {', hand]
 for key in ['CarjackItemId', 'TireItemId']:
     parts.append(match(r'public const ushort ' + key + r'[^;]+;', player))
-for key in ['ThrowCooldown', 'ThrowSpeed', 'WeakThrowScale', 'ThrowLift', 'ThrowReleaseFraction', 'ThrowClearProbe', 'RepeatedHitInterval', 'LookReach']:
+for key in ['ThrowCooldown', 'ThrowSpeed', 'WeakThrowScale', 'ThrowLift', 'ThrowReleaseFraction', 'ThrowClearProbe', 'RepeatedHitInterval', 'LookReach',
+            # Vehicle hand tools: the isReplaceable/isAttachable/isJackable fractions and clip fallbacks.
+            'PaintApplyFraction', 'PaintFallbackUseSeconds', 'TireFitFraction', 'TireFallbackUseSeconds',
+            'CarjackApplyFraction', 'CarjackFallbackUseSeconds']:
     parts.append(match(r'const float ' + key + r'[^;]+;', player).replace('const float', 'public const float'))
 parts.append('}}')
 (out / 'HandRules.g.cs').write_text('\n'.join(parts))

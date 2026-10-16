@@ -2982,3 +2982,27 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - **Authority:** the place validator now also refuses dead and seated senders, as no source hand can reach the ghost there. No wire ids changed.
 - **Special bodies:** the fridge is the source `Refrigerator` (yawed steel box, handle, always-on label, static collider, consumer socket) with no deployable focus or pickup. A proximity `OpenNearestCrate` opens the nearest placed crate within 2.5 m through `openStorage`, with no prompt and ranked below crop harvest; a looked-at campfire keeps its deployable focus. Placeable doors stay LocalOnly as in the source: the host spends the jar, and the placer's machine alone draws a door that swings on F, is never solid mid-swing and is gone with the session. Fluid bodies remain with row 21.
 - **Verification:** core 766, managed 270, JSONL 128 and native 796 pass (the 2 failures are `main_schedule` reading a gitignored coupling artifact absent from this worktree). 19 native, 2 core and 2 managed surgical controls each fail their guard. Three Vulkan fixtures (real local bridge, injected input; not OS journeys) were opened: `bevy-placement-{valid,invalid,placed,wall}`, `bevy-storage-{fridge-ghost,fridge-placed,campfire,wired}` and `bevy-door-{ghost,closed,open}`. See `bevy/docs/DEPLOYABLE_PLACEMENT_PORT.md`.
+
+### 2026-10-16 — Original vehicle hand tools: spraypaint, spare tire, carjack, can pour/siphon (protocol 79)
+
+- Ledger row 9 (`bevy/docs/VEHICLE_HAND_TOOLS_PORT.md`). The source timelines run in `vehicle/hand_tools.rs` and send one intent each:
+  - Spray: sends at 85 % of `Paint_Use`, against the focus at that moment.
+  - Spare: validated at the click with the source alerts; goes on at 75 %.
+  - Carjack: refused before the wind-up where the physics is local; lifts at 75 %, and the hand stays busy for the whole clip.
+  - The viewmodel uses each tool's own Equip/Use clips, the tinted can and the jack mesh, with the source sounds and the carjack's zombie noise.
+- Paint, cmd 50: the bridge never set `PaintColorFor`, so every respray was refused. It now uses the `VehiclePaints` table, and `repaint` swaps only the body material for a palette bake of the accepted `paintRgb`, the same rule as `vehicle_paint.gdshader`.
+- Spare, cmd 55: accepted `poppedTireMask`. Core fits the lowest flat bit, a stated deviation from the source's aimed wheel.
+- Carjack, cmd 56: the host rolls the source force/torque. Only the physics owner applies them, behind `Vehicle.Carjack`'s empty/wreck/`JackableNow` gate, at retail's dv for the real mass.
+- Vehicle pour/siphon: the source only mutated its local car. New Commands 99/100 name the exact held can (B's v78 address+token) and are validated by `VehicleFuelServices`.
+- Tests:
+  - Managed: 7 UDP `VehicleHandToolTests`; full suite 286/286.
+  - Native: 10 hand-tool tests plus the ignored Vulkan fixture; full suite 818 passed, 55 ignored. The two coupling PEI tests need the gitignored `bevy-coupling-os-entered.json` capture, and pass with it.
+  - Core: `VehicleFuelCanWireTests`, the command-table golden, and the keepalive golden (only its version byte moves, 0x4E→0x4F); full suite 766/766.
+- Negative controls fail as intended:
+  - Managed: no paint table, no carjack emit, no fuel service.
+  - Native: no material swap, no `paintRgb` adoption, no passenger gate, no RMB siphon.
+- Vulkan fixture `render_source_spraypaint_spare_and_carjack_on_accepted_state` passes with real sedans, injected LMB and a real local authority. The opened frames show:
+  - the turquoise respray, with lamps, bumper and glass keeping their palette colours;
+  - the reference car keeping its spawn paint;
+  - the flat tyre gone, then back on;
+  - the jacked car in flight, rising from 0.58 m to 1.96 m.
