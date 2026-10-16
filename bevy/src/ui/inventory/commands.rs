@@ -141,8 +141,8 @@ pub(super) fn dispatch(intent: Intent, view: &api::View, pages: &[InventoryPage]
     out
 }
 pub(super) fn context_refusal(name: &str, row: &api::Item) -> Option<&'static str> {
-    if matches!(name, "emptyFuel" | "salvage")
-        && (row.address.page >= OWN_PAGES || row.address.token == 0)
+    if (name == "emptyFuel" && !row.address.addressable())
+        || (name == "salvage" && (row.address.page >= OWN_PAGES || row.address.token == 0))
     {
         Some("Take this item into your inventory first.")
     } else {
@@ -163,6 +163,16 @@ pub(super) fn context(
         "equip" | "hold" | "dequip" => equip(from, row),
         "transfer" => dispatch(Intent::QuickTransfer(from), view, pages),
         "drop" => dispatch(Intent::Drop(from), view, pages),
+        "emptyFuel" if row.address.crate_id != 0 => Dispatch {
+            commands: vec![action(
+                "emptyViewedFuel",
+                json!({
+                    "crateId":row.address.crate_id,"page":from.page,"x":from.x,"y":from.y,
+                    "id":row.address.id,"token":row.address.token
+                }),
+            )],
+            ..Default::default()
+        },
         "emptyFuel" | "salvage" => Dispatch {
             commands: vec![exact(
                 if name == "salvage" {

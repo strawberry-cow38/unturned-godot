@@ -718,3 +718,102 @@ fn actual_owner_controller_scales_captured_mouse_motion_once_without_mutating_ma
         Some(anchor)
     );
 }
+
+#[test]
+fn actual_udp_viewed_magazine_timer_updates_trunk_and_retires_after_close() {
+    let (host, mut app, _) = setup();
+    let reg = crate::vehicle::registration(
+        crate::vehicle::data::named("police").unwrap(),
+        "viewed-magazine".into(),
+        Vec3::new(0., 0., -1.),
+        0.,
+        0,
+    );
+    let id = host
+        .request("worldVehicles", json!({"vehicles":[reg]}))
+        .unwrap()["result"]["vehicles"][0]["netId"]
+        .as_u64()
+        .unwrap();
+    let action = |app: &App, name: &str, args: serde_json::Value| {
+        let reply = app
+            .world()
+            .resource::<CoreBridge>()
+            .request("action", json!({"name":name,"args":args}))
+            .unwrap();
+        assert_eq!(reply["result"]["queued"], true, "{reply}");
+    };
+    action(
+        &app,
+        "openVehicleStorage",
+        json!({"vehicleNetId":id,"kind":0}),
+    );
+    pump(&host, &mut app, 16);
+    step(&mut app, 0.3);
+    assert_ne!(app.world().resource::<UiModel>().storage.net_id, 0);
+    let row = app
+        .world()
+        .resource::<Menu>()
+        .view
+        .items
+        .iter()
+        .find(|r| r.magazine)
+        .unwrap()
+        .clone();
+    action(
+        &app,
+        "moveItem",
+        json!({"page0":row.address.page,"x0":row.address.x,"y0":row.address.y,
+        "page1":7,"x1":0,"y1":0,"rot1":0}),
+    );
+    pump(&host, &mut app, 16);
+    step(&mut app, 0.3);
+    let view = app.world().resource::<Menu>().view.clone();
+    let cell = model::Cell::at(7, 0, 0);
+    let row = view.at(cell).unwrap();
+    let before = view.tile(cell).unwrap().amount;
+    assert_ne!(
+        row.address.crate_id, 0,
+        "accepted storage scope must reach native view"
+    );
+    assert!(before > 1);
+    assert!(
+        app.world_mut()
+            .resource_mut::<Menu>()
+            .magazines
+            .unload(&view, cell)
+    );
+    step(&mut app, 0.6);
+    assert_eq!(
+        app.world()
+            .resource::<Menu>()
+            .view
+            .tile(cell)
+            .unwrap()
+            .amount,
+        before
+    );
+    let sent = flush(&mut app);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "viewedMagazineTransfer");
+    assert_eq!(sent[0].1["magCrateId"], row.address.crate_id);
+    assert_eq!(sent[0].1["roundCrateId"], 0);
+    pump(&host, &mut app, 18);
+    step(&mut app, 0.1);
+    let menu = app.world().resource::<Menu>();
+    assert_eq!(menu.view.tile(cell).unwrap().amount, before - 1);
+    assert_eq!(menu.magazines.operations[0].done, 1);
+    action(&app, "closeStorage", json!({}));
+    pump(&host, &mut app, 16);
+    step(&mut app, 1.);
+    assert!(
+        app.world()
+            .resource::<Menu>()
+            .magazines
+            .operations
+            .is_empty()
+    );
+    assert!(
+        flush(&mut app).is_empty(),
+        "a retired view cannot send another magazine request"
+    );
+}

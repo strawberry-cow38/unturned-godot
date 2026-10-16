@@ -128,6 +128,8 @@ namespace UnturnedNet.Tests
             [79] = "CommandEmptyFuel", // v70 exact owner fuel-container action
             [81] = "CommandMagazineTransfer", // v71 exact magazine round request
             [83] = "CommandVehicleHitch", // v74 source fifth-wheel intent; paired vehicle state framing
+            [84] = "CommandEmptyViewedFuel", // v75 exact currently viewed container instance
+            [85] = "CommandViewedMagazineTransfer", // v75 shares owner-only completion60 and81 replay ledger
             [82] = "CommandCraftingContext", // v72 physical-eye station context
             [80] = "CommandSalvageItem", // v70 exact owner copy into source craft queue
             [75] = "CommandVehicleLighting", // v68 source beam/lightbar/repair intents

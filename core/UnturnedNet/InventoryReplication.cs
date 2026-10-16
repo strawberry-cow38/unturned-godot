@@ -784,7 +784,7 @@ namespace UnturnedGodot.Net
     /// mirrors the SP mechanic exactly -- the crate grid is loaded into the opener's STORAGE page (7), so
     /// MoveItem needs no special crate addressing and the owner block carries the view for free.
     /// </summary>
-    public sealed class InventoryReplication : IReplicatedSystem
+    public sealed partial class InventoryReplication : IReplicatedSystem
     {
         public sealed class PlayerEntry
         {
@@ -1284,13 +1284,18 @@ namespace UnturnedGodot.Net
             }
             WriteWorn(w, inv.wornHat); WriteWorn(w, inv.wornGlasses); WriteWorn(w, inv.wornMask);
             WriteWorn(w, inv.wornShirt); WriteWorn(w, inv.wornVest); WriteWorn(w, inv.wornBackpack); WriteWorn(w, inv.wornPants);
+            // v75 extends the existing owner-only identity tail to every
+            // published container jar. AREA has no scoped inventory authority.
+            // Counts come from the bounded grid block; no independent count can
+            // desynchronize the token sequence from its accepted root cells.
             w.WriteBit(ItemIdentityProvider != null);
             if (ItemIdentityProvider != null)
-                for (byte p = 0; p < PlayerInventory.OWNPAGES; p++)
+                for (byte p = 0; p < PlayerInventory.PAGES; p++)
+                    if (p < PlayerInventory.OWNPAGES || PlayerInventory.IsContainerView(p))
                     foreach (var jar in inv.items[p].items)
                     {
                         ulong token = ItemIdentityProvider(jar.item);
-                        if (token == 0) throw new System.InvalidOperationException("An owned item requires a nonzero identity");
+                        if (token == 0) throw new System.InvalidOperationException("An owned or viewed item requires a nonzero identity");
                         w.WriteUInt64(token);
                     }
         }
@@ -1325,7 +1330,8 @@ namespace UnturnedGodot.Net
             var tokens = new Dictionary<(byte Page, byte X, byte Y), ulong>();
             var seen = new HashSet<ulong>();
             if (hasTokens)
-                for (byte p = 0; p < PlayerInventory.OWNPAGES; p++)
+                for (byte p = 0; p < PlayerInventory.PAGES; p++)
+                    if (p < PlayerInventory.OWNPAGES || PlayerInventory.IsContainerView(p))
                     foreach (var jar in inv.items[p].items)
                     {
                         if (!r.ReadUInt64(out ulong token) || token == 0 || !seen.Add(token)) return;

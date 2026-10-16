@@ -75,8 +75,9 @@ pub(super) struct Denomination {
     pub icon: String,
 }
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub(super) struct Address {
+    pub crate_id: u32,
     pub page: u8,
     pub x: u8,
     pub y: u8,
@@ -84,6 +85,16 @@ pub(super) struct Address {
     pub token: u64,
 }
 impl Address {
+    /// Shape accepted by the scoped wire; authority still rechecks live access.
+    pub fn addressable(self) -> bool {
+        self.token != 0
+            && self.id != 0
+            && if self.crate_id == 0 {
+                self.page < OWN_PAGES
+            } else {
+                container(self.page)
+            }
+    }
     pub fn cell(self) -> Cell {
         Cell::at(self.page, self.x, self.y)
     }

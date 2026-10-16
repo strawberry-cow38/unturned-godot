@@ -540,6 +540,10 @@ namespace UnturnedGodot.Net
                 OnConsume,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
+            commands.Register<EmptyViewedFuelCommand>(ReplicationIds.CommandEmptyViewedFuel, EmptyViewedFuelCommand.TryRead, OnEmptyViewedFuel);
+            commands.Register<ViewedMagazineTransferCommand>(ReplicationIds.CommandViewedMagazineTransfer,
+                ViewedMagazineTransferCommand.TryRead, OnViewedMagazineTransfer);
+
             commands.Register<MagazineTransferCommand>(ReplicationIds.CommandMagazineTransfer,
                 MagazineTransferCommand.TryRead, OnMagazineTransfer);
 

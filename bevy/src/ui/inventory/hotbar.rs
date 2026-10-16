@@ -71,6 +71,7 @@ mod tests {
         let cell = Cell::at(2, 1, 1);
         let mut row = api::Item {
             address: api::Address {
+                crate_id: 0,
                 page: 2,
                 x: 1,
                 y: 1,

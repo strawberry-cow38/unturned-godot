@@ -180,19 +180,19 @@ stages leave the owner wallet at $150. Independent source review passed.
 
 ## Remaining parity
 
-Source InventoryUI offers Empty for fuel cans in viewed storage and Nearby too.
-Command79 intentionally admits owned pages only; viewed-container/ground Empty
-still needs exact live container/item identity plus view/reach authorization.
-The read model retains the source option; native context reports that the item
-must first be taken into the owned inventory. Salvage has the same exact-owner
-restriction. Nearby crafting stations are now integrated through protocol72's
-accepted source-camera probe; quick craft receives only host-accepted tags and
-the host rechecks the action. See CRAFTING_PORT.md.
+Protocol 75 now enables Empty and timed magazine operations on the currently
+accepted storage/freezer/vehicle-compartment view. Exact crate/root/item/token
+identity, current access, shared replay and all-viewer refresh are covered in
+INVENTORY_VIEWED_PORT.md. Commands 79/81 remain owned-only and unchanged.
 
-The exact81 adapter also currently admits only owned magazine/round instances.
-Original InventoryUI can address viewed pages; those operations need a separate
-validated view/ground identity seam before native UI can enable them safely.
-This limitation does not broaden legacy39 or claim the complete dashboard done.
+Nearby still needs the original camera/range/LOS scan, source 6×6 packing and an
+owner-only full-Item projection tied to each live world-item ID. AREA Empty and
+magazine jobs stay disabled. Viewed Salvage also remains disabled: the original
+owned-only adapter can consume another owned copy instead of the selected viewed
+item, so it needs a correct exact-selected queue transaction rather than that bug.
+Nearby crafting stations are integrated through protocol72's accepted camera
+probe; quick craft receives only host-accepted tags and the host rechecks the
+action. See CRAFTING_PORT.md.
 
 The bounded scalar SpinBox evaluator and accelerated capture have source
 oracles, native controller tests and an actual OS expression/capture/split

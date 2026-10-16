@@ -9,7 +9,7 @@ namespace UnturnedBevy;
 /// class does not seed, move, split, consume or otherwise edit a replicated Item.</summary>
 public static class InventoryView
 {
-    public sealed record Address(byte Page, byte X, byte Y, ushort Id, ulong Token);
+    public sealed record Address(byte Page, byte X, byte Y, ushort Id, ulong Token, uint CrateId = 0);
     public sealed record Button(string Action, string Label, string Tooltip = "", int Recipe = -1);
     public sealed record Fluid(byte Type, byte Quality, float Amount, float Capacity, bool AutoDrink,
         string Contents, float[] Color);
@@ -59,7 +59,7 @@ public static class InventoryView
     public static View Read(Catalog catalog, InventoryReplication replicas, ushort owner,
         OwnerEquipmentState held, PlayerSkills skills, ICollection<string> known, object cooker = null,
         (int Page, int X, int Y)? loadFrom = null, (int Page, int X, int Y)? loadTo = null, uint acceptedTick = 0,
-        ICollection<string> stations = null)
+        ICollection<string> stations = null, uint openCrateId = 0)
     {
         replicas.TryGet(owner, out var entry); var inventory = entry?.Inventory;
         var result = new List<ItemView>();
@@ -68,7 +68,7 @@ public static class InventoryView
         Address ItemAddress(byte page, ItemJar jar)
         {
             replicas.TryGetItemToken(owner, page, jar.x, jar.y, out ulong token);
-            return new(page, jar.x, jar.y, jar.item.id, token);
+            return new(page, jar.x, jar.y, jar.item.id, token, PlayerInventory.IsContainerView(page) ? openCrateId : 0);
         }
         EquipPlan Equip(ItemJar jar)
         {
@@ -86,7 +86,7 @@ public static class InventoryView
         {
             var item = jar.item; var a = item?.GetAsset(); if (a == null) continue;
             replicas.TryGetItemToken(owner, page.page, jar.x, jar.y, out ulong token);
-            var address = new Address(page.page, jar.x, jar.y, item.id, token);
+            var address = new Address(page.page, jar.x, jar.y, item.id, token, PlayerInventory.IsContainerView(page.page) ? openCrateId : 0);
             string hand = "";
             if (HandRules.CanEquipItemAsset(a)) hand = held?.Token == token && token != 0 ? "Dequip"
                 : a.IsFluidContainer || a.IsConsumable || a.IsFuelContainer ? "Hold" : "Equip";
@@ -176,6 +176,6 @@ public sealed partial class BridgeHost
             needsFuel = Cooking.NeedsFuel((ECookerKind)kind) } : null;
         return InventoryView.Read(_catalog, _client.Inventories, _client.PlayerId, held, skills?.Skills,
             _client.KnownBlueprints, cooker, Address("loadFrom"), Address("loadTo"), unchecked((uint)_client.Applier.LastAppliedServerTick),
-            AcceptedCraftingStations);
+            AcceptedCraftingStations, _storageView.Current.NetId);
     }
 }

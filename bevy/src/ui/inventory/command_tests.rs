@@ -14,6 +14,7 @@ fn commands(dispatch: Dispatch) -> Vec<(String, serde_json::Value)> {
 fn row(page: u8, id: u16, token: u64) -> api::Item {
     api::Item {
         address: api::Address {
+            crate_id: 0,
             page,
             x: 2,
             y: 1,
@@ -30,6 +31,7 @@ fn container_paperdoll_weapon_moves_displaced_slot_then_waits_for_owner_token_be
     incoming.equip = Some(api::EquipPlan {
         slot: 0,
         displaced: Some(api::Address {
+            crate_id: 0,
             page: 0,
             x: 0,
             y: 0,
@@ -66,6 +68,7 @@ fn container_paperdoll_weapon_moves_displaced_slot_then_waits_for_owner_token_be
     assert!(pending.accepted(&view).is_none());
     let mut accepted = incoming.clone();
     accepted.address = api::Address {
+        crate_id: 0,
         page: 0,
         x: 0,
         y: 0,
@@ -174,4 +177,39 @@ fn own_to_container_uses_source_compartment_plan_and_nearby_always_takes_to_owne
         &pages,
     ));
     assert_eq!(result[0].1["toPage"], 255);
+}
+
+#[test]
+fn viewed_empty_uses_exact_accepted_scope_but_nearby_and_viewed_salvage_stay_unavailable() {
+    let mut selected = row(7, 28, 912);
+    selected.address.crate_id = 65000;
+    let view = api::View {
+        items: vec![selected.clone()],
+        ..Default::default()
+    };
+    assert_eq!(context_refusal("emptyFuel", &selected), None);
+    assert_eq!(
+        commands(context("emptyFuel", &selected, &view, &[])),
+        vec![(
+            "emptyViewedFuel".into(),
+            json!({"crateId":65000,"page":7,"x":2,"y":1,"id":28,"token":912})
+        )]
+    );
+    assert!(
+        context("salvage", &selected, &view, &[])
+            .commands
+            .is_empty()
+    );
+    for (page, scope, token) in [(8, 65000, 912), (7, 0, 912), (2, 65000, 912), (7, 65000, 0)] {
+        let mut invalid = selected.clone();
+        invalid.address.page = page;
+        invalid.address.crate_id = scope;
+        invalid.address.token = token;
+        assert!(
+            context("emptyFuel", &invalid, &view, &[])
+                .commands
+                .is_empty()
+        );
+    }
+    assert_eq!(view.items[0], selected, "no local fluid mutation");
 }

@@ -249,6 +249,8 @@ namespace UnturnedGodot.Net
         public const byte CommandVehicleDoor = 78; // v70: source bus driver/focused toggle intent.
         public const byte CommandEmptyFuel = 79; // v70: empty an exact owned fuel-container instance.
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
+        public const byte CommandEmptyViewedFuel = 84; // v75: exact authorized container fuel instance.
+        public const byte CommandViewedMagazineTransfer = 85; // v75: exact scoped magazine step; owner result60 unchanged.
         public const byte CommandVehicleHitch = 83; // v74: source focused fifth-wheel toggle, independent of rope towing.
         public const byte CommandCraftingContext = 82; // v72: bounded source-camera probe/craft, never client station tags.
         public const byte CommandSalvageItem = 80; // v70: salvage the exact owned item through the original queue.

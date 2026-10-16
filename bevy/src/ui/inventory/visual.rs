@@ -32,6 +32,7 @@ struct Capture {
     magazine: Cell,
     money: bool,
     spin_os: bool,
+    viewed: bool,
     sent: Vec<Value>,
 }
 fn action(bridge: &CoreBridge, name: &str, args: Value) {
@@ -54,24 +55,29 @@ fn view(bridge: &CoreBridge) -> api::View {
 #[test]
 #[ignore = "requires Vulkan/display; UG_INVENTORY_SHOT sets output prefix"]
 fn gpu_original_dashboard_context_accepted_split_and_magazine_wheel() {
-    run(false, false);
+    run(false, false, false);
 }
 #[test]
 #[ignore = "requires Vulkan/display; UG_INVENTORY_SHOT sets output prefix"]
 fn gpu_original_currency_preview_and_accepted_exact_split() {
-    run(true, false);
+    run(true, false, false);
 }
 #[test]
 #[ignore = "requires X11/Vulkan/xdotool; UG_INVENTORY_SHOT sets output prefix"]
 fn os_spinbox_expression_capture_restore_and_accepted_split() {
-    run(true, true);
+    run(true, true, false);
 }
-fn run(money: bool, spin_os: bool) {
+#[test]
+#[ignore = "requires Vulkan/display; accepted viewed-container context and magazine wheel"]
+fn gpu_viewed_trunk_context_and_accepted_magazine_round() {
+    run(false, false, true);
+}
+fn run(money: bool, spin_os: bool, viewed: bool) {
     let prefix =
         std::env::var("UG_INVENTORY_SHOT").unwrap_or_else(|_| "/tmp/bevy-inventory".into());
     let config = WorldConfig::default();
     let bridge = CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-    bridge.request("init", json!({"contentRoot":config.content_root,"starterKit":true,"allowCheats":true,"name":"Inventory test"})).unwrap();
+    bridge.request("init", json!({"contentRoot":config.content_root,"starterKit":true,"allowCheats":true,"name":"Inventory test","spawn":[0,0,0]})).unwrap();
     for id in [24, 23, 27] {
         action(&bridge, "console", json!({"text":format!("give {id}")}));
         tick(&bridge, 8);
@@ -102,15 +108,50 @@ fn run(money: bool, spin_os: bool) {
     for id in if money { [1055, 1054] } else { [6, 95] } {
         action(&bridge, "console", json!({"text":format!("give {id}")}));
     }
-    let snapshot = tick(&bridge, 20);
+    tick(&bridge, 20);
+    if viewed {
+        let reg = crate::vehicle::registration(
+            crate::vehicle::data::named("police").unwrap(),
+            "inventory-viewed-visual".into(),
+            Vec3::new(0., 0., -1.),
+            0.,
+            0,
+        );
+        let id = bridge
+            .request("worldVehicles", json!({"vehicles":[reg]}))
+            .unwrap()["result"]["vehicles"][0]["netId"]
+            .as_u64()
+            .unwrap();
+        action(
+            &bridge,
+            "openVehicleStorage",
+            json!({"vehicleNetId":id,"kind":0}),
+        );
+        tick(&bridge, 12);
+        let current = view(&bridge);
+        let row = current.items.iter().find(|r| r.magazine).unwrap();
+        action(
+            &bridge,
+            "moveItem",
+            json!({"page0":row.address.page,"x0":row.address.x,"y0":row.address.y,
+            "page1":7,"x1":0,"y1":0,"rot1":0}),
+        );
+        tick(&bridge, 12);
+    }
+    let snapshot = tick(&bridge, 4);
     let current = view(&bridge);
     let magazine = current
         .items
         .iter()
         .find(|r| {
-            current
-                .tile(r.address.cell())
-                .is_some_and(|t| t.amount > 5 && if money { t.money } else { r.magazine })
+            current.tile(r.address.cell()).is_some_and(|t| {
+                t.amount > 5
+                    && if money {
+                        t.money
+                    } else {
+                        r.magazine && (!viewed || r.address.crate_id != 0)
+                    }
+            })
         })
         .unwrap()
         .address
@@ -183,6 +224,7 @@ fn run(money: bool, spin_os: bool) {
         magazine,
         money,
         spin_os,
+        viewed,
         sent: vec![],
     })
     .add_systems(Startup, scene)
@@ -230,7 +272,12 @@ fn run(money: bool, spin_os: bool) {
             facts[0]["amount"].as_u64().unwrap() - 3
         );
         assert!(facts[3]["rounds"].as_u64().unwrap() > 0);
-        assert!(sent.iter().any(|r| r["name"] == "magazineTransfer"));
+        assert!(sent.iter().any(|r| r["name"]
+            == if viewed {
+                "viewedMagazineTransfer"
+            } else {
+                "magazineTransfer"
+            }));
     }
     let decode = |stage| {
         Image::from_buffer(
@@ -436,7 +483,7 @@ fn capture(world: &mut World) {
             .filter(|c| c.tile.money)
             .map(|c| c.tile.amount)
             .collect();
-        let facts = json!({"wallets":wallets,"previewAmount":menu.gesture.split_amount,"stage":c.stage,"amount":amount,"rounds":rounds,"selected":menu.gesture.selected.is_some(),"portrait":world.resource::<paperdoll::Portrait>().root.is_some(),"sourceViewport":world.resource::<paperdoll::stage::Surface>().size.to_array(),"sent":c.sent,"state":world.resource::<GameSnapshot>().0});
+        let facts = json!({"viewed":c.viewed,"crateId":menu.view.at(c.magazine).map(|r|r.address.crate_id),"wallets":wallets,"previewAmount":menu.gesture.split_amount,"stage":c.stage,"amount":amount,"rounds":rounds,"selected":menu.gesture.selected.is_some(),"portrait":world.resource::<paperdoll::Portrait>().root.is_some(),"sourceViewport":world.resource::<paperdoll::stage::Surface>().size.to_array(),"sent":c.sent,"state":world.resource::<GameSnapshot>().0});
         c.facts.push(facts);
         let done = c.done.clone();
         world

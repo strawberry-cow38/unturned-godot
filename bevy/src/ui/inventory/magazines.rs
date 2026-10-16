@@ -56,12 +56,7 @@ impl Magazines {
     }
 
     fn start(&mut self, row: &api::Item, batch: u16, round_id: u16, unloading: bool) -> bool {
-        if row.address.page >= OWN_PAGES
-            || row.address.token == 0
-            || !row.magazine
-            || batch == 0
-            || round_id == 0
-        {
+        if !row.address.addressable() || !row.magazine || batch == 0 || round_id == 0 {
             return false;
         }
         self.operations
@@ -110,8 +105,8 @@ impl Magazines {
         capacity
     }
 
-    /// Source FindStack walks page and item order for each round. The new exact
-    /// request supports owned instances; external views must first be taken.
+    /// Source FindStack walks page and item order for each round. Accepted
+    /// container scopes share that order; AREA still needs its own live identity.
     pub fn step(&mut self, open: bool, delta: f32, view: &api::View) -> Vec<UiIntent> {
         if !open {
             return vec![];
@@ -153,8 +148,7 @@ impl Magazines {
             } else {
                 let Some(round) = view.items.iter().find(|r| {
                     r.address.id == op.round_id
-                        && r.address.page < OWN_PAGES
-                        && r.address.token != 0
+                        && r.address.addressable()
                         && view.tile(r.address.cell()).is_some_and(|t| t.amount > 0)
                 }) else {
                     self.operations.remove(index);
@@ -169,11 +163,24 @@ impl Magazines {
             self.next_request = self.next_request.wrapping_add(1).max(1);
             op.pending = Some(Pending::Reply(self.next_request));
             op.elapsed -= INTERVAL;
-            requests.push(commands::action("magazineTransfer", json!({
+            let scoped = op.magazine.crate_id != 0 || round.crate_id != 0;
+            let mut args = json!({
                 "requestId":self.next_request, "magPage":op.magazine.page,"magX":op.magazine.x,"magY":op.magazine.y,
                 "magId":op.magazine.id,"magToken":op.magazine.token,"roundPage":round.page,"roundX":round.x,"roundY":round.y,
                 "roundId":round.id,"roundToken":round.token,"unloading":op.unloading
-            })));
+            });
+            if scoped {
+                args["magCrateId"] = json!(op.magazine.crate_id);
+                args["roundCrateId"] = json!(round.crate_id);
+            }
+            requests.push(commands::action(
+                if scoped {
+                    "viewedMagazineTransfer"
+                } else {
+                    "magazineTransfer"
+                },
+                args,
+            ));
         }
         requests
     }

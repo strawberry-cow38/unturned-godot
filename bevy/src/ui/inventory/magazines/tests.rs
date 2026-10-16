@@ -106,3 +106,71 @@ fn refusal_ends_job_reopen_keeps_counter_and_replacement_never_receives_old_oper
     assert!(ops.unload(&view, Cell::at(2, 0, 0)));
     assert_eq!(request(&ops.step(true, 0.5, &view)[0])["requestId"], 1);
 }
+
+#[test]
+fn viewed_timer_shares_request_ids_and_source_stack_order_then_retires_changed_view() {
+    let mut view = view();
+    let mut ops = Magazines::default();
+    load(&mut ops, &view);
+    assert_eq!(request(&ops.step(true, 0.5, &view)[0])["requestId"], 1);
+    ops.receive(
+        &Completion {
+            request_id: 1,
+            magazine_token: 10,
+            accepted_tick: 5,
+            applied: false,
+            amount: 0,
+        },
+        &view,
+    );
+    view.items[0].address.page = 7;
+    view.items[0].address.crate_id = 65000;
+    view.tiles.cells[0].page = 7;
+    load(&mut ops, &view);
+    assert!(ops.step(false, 10., &view).is_empty());
+    let sent = ops.step(true, 0.5, &view);
+    let UiIntent::Action { name, args } = &sent[0] else {
+        panic!()
+    };
+    assert_eq!(name, "viewedMagazineTransfer");
+    assert_eq!(args["requestId"], 2);
+    assert_eq!(args["magCrateId"], 65000);
+    assert_eq!(args["roundCrateId"], 0);
+    assert_eq!(args["roundToken"], 11);
+    assert!(ops.step(true, 10., &view).is_empty());
+    ops.receive(
+        &Completion {
+            request_id: 2,
+            magazine_token: 10,
+            accepted_tick: 5,
+            applied: true,
+            amount: 1,
+        },
+        &view,
+    );
+    assert!(
+        ops.step(true, 1., &view).is_empty(),
+        "owner fact alone cannot imply inventory echo"
+    );
+    view.accepted_tick = 5;
+    view.tiles.cells[0].tile.amount = 1;
+    view.tiles.cells[1].tile.amount = 0;
+    view.items[2].address.page = 9;
+    view.items[2].address.crate_id = 65000;
+    view.tiles.cells[2].page = 9;
+    let sent = ops.step(true, 0., &view);
+    let UiIntent::Action { name, args } = &sent[0] else {
+        panic!()
+    };
+    assert_eq!(name, "viewedMagazineTransfer");
+    assert_eq!(args["requestId"], 3);
+    assert_eq!(args["roundCrateId"], 65000);
+    assert_eq!(args["roundPage"], 9);
+    assert_eq!(args["roundToken"], 12);
+    view.items[0].address.crate_id = 65001;
+    assert!(ops.step(true, 1., &view).is_empty());
+    assert!(
+        ops.operations.is_empty(),
+        "a new view cannot inherit an old magazine timer"
+    );
+}
