@@ -14,6 +14,7 @@ mod nightvision;
 mod outline;
 mod network;
 mod impact;
+mod install;
 mod info_billboard;
 mod locomotion;
 mod particles;
@@ -48,7 +49,6 @@ use bevy_rapier3d::prelude::*;
 use bridge::CoreBridge;
 use cli::Options;
 use serde_json::json;
-use std::path::Path;
 
 #[derive(Resource)]
 struct LaunchOptions(Options);
@@ -59,7 +59,7 @@ fn main() -> Result<()> {
         println!("{}", cli::HELP);
         return Ok(());
     }
-    let bridge = CoreBridge::launch(Path::new(env!("CARGO_MANIFEST_DIR")))?;
+    let bridge = CoreBridge::launch_installed(install::Layout::current())?;
     if options.headless {
         return headless_check(&bridge, &options);
     }
@@ -82,7 +82,7 @@ fn main() -> Result<()> {
     if options.map.eq_ignore_ascii_case("procedural") {
         let generated =
             bridge.request("terrain", json!({"seed":options.seed,"x":0,"z":0,"lod":0}))?;
-        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join(".local");
+        let directory = install::Layout::current().data_dir();
         std::fs::create_dir_all(&directory)?;
         let path = directory.join(format!("terrain-{}.json", options.seed));
         std::fs::write(&path, serde_json::to_vec(&generated["result"])?)?;

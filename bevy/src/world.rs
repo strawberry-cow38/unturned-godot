@@ -59,7 +59,7 @@ pub struct WorldConfig {
 impl Default for WorldConfig {
     fn default() -> Self {
         Self {
-            content_root: Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/content"),
+            content_root: crate::install::Layout::current().content(),
             map_root: std::env::var_os("UG_UNTURNED_DIR")
                 .map(|p| PathBuf::from(p).join("Maps/PEI")),
             map_name: "PEI".into(),

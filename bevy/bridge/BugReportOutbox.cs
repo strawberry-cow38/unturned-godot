@@ -37,7 +37,10 @@ public sealed class BugReportOutbox
         string typed = r.TryGetProperty("typed", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
         bool wasTap = BridgeHost.Bool(r, "wasTap"), hitTimeout = BridgeHost.Bool(r, "hitTimeout");
         string projectDir = BridgeHost.Text(r, "projectDir");
-        if (!string.IsNullOrEmpty(projectDir)) BuildStamp.ProjectDir ??= projectDir;
+        // A package sends the commit recorded in its marker instead of a directory to search upward from.
+        string buildCommit = r.TryGetProperty("buildCommit", out var bc) && bc.ValueKind == JsonValueKind.String ? bc.GetString() : null;
+        if (buildCommit != null) { if (!BuildStamp.Packaged || BuildStamp.Commit != buildCommit) BuildStamp.UsePackagedCommit(buildCommit); }
+        else if (!string.IsNullOrEmpty(projectDir)) BuildStamp.ProjectDir ??= projectDir;
         var status = typed != null ? AudioStatus.Typed : Status(BridgeHost.Text(r, "audioStatus", "disabled"));
         AudioBuffer audio = null;
         string pcm = BridgeHost.Text(r, "pcm");

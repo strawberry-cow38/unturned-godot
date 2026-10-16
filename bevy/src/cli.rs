@@ -37,7 +37,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            content: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../game/content"),
+            content: crate::install::Layout::current().content(),
             unturned: detect_retail_install(),
             map: "PEI".into(),
             seed: 1337,
@@ -265,7 +265,7 @@ fn detect_retail_install() -> Option<PathBuf> {
 }
 
 pub const HELP: &str = "Unturned Bevy\n\
-Usage: bevy/run.sh [options]\n\
+Usage: bevy/run.sh [options]  (a package: ./unturned-bevy [options])\n\
   --play                   Enter the world immediately\n\
   --dedicated              Headless dedicated server (no window/GPU, no local player)\n\
                            on UDP --port (or UG_PORT, default 47872); see DEDICATED_SERVER_PORT.md\n\
@@ -276,7 +276,7 @@ Usage: bevy/run.sh [options]\n\
   --server-name NAME --max-players 24  Listen server settings\n\
   --map PEI                Map (PEI, Washington, Yukon, or Procedural)\n\
   --unturned PATH          Retail install root (also UG_UNTURNED_DIR)\n\
-  --content PATH           Bundled game/content directory\n\
+  --content PATH           Bundled game/content directory (also UG_CONTENT_DIR)\n\
   --seed 1337              Procedural world seed\n\
   --new-island DIR         Generate original finite editor map in a new directory\n\
   --island DIR             Reopen that map without regenerating authored files\n\
@@ -292,7 +292,10 @@ Usage: bevy/run.sh [options]\n\
   --shot-event NAME        Capture when an authoritative event is rendered\n\
   --fixed-fps N            Deterministic render diagnostic (source movie mode)\n\
   --stay                   Keep running; F12 repeats the capture\n\
-  --help                   Show this help";
+  --help                   Show this help\n\
+Paths: a package finds bridge/ and content/ beside the executable; a checkout\n\
+uses its own. Override with UG_BRIDGE_DLL, UG_CONTENT_DIR, UG_DATA_DIR or\n\
+UG_PACKAGE_ROOT.";
 
 #[cfg(test)]
 mod tests {

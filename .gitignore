@@ -74,3 +74,4 @@ override.cfg
 /bevy/target/
 /bevy/artifacts/
 /bevy/.local/
+/bevy/dist/

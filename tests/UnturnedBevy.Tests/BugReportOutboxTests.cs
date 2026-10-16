@@ -65,6 +65,26 @@ public sealed class BugReportOutboxTests
         Assert.That(typed.GetProperty("toast").GetString(), Is.EqualTo("report saved"), "never claims a send when upload is off");
     }
 
+    [Test]
+    public void PackagedReportCarriesTheMarkerCommitNotAnEnclosingCheckout()
+    {
+        // The package lies inside a checkout whose HEAD is a different build.
+        string package = Path.Combine(root, "dist", "unturned-bevy");
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        Directory.CreateDirectory(package);
+        File.WriteAllText(Path.Combine(root, ".git", "HEAD"), "0123456789abcdef0123456789abcdef01234567\n");
+        try
+        {
+            UnturnedGodot.BugReport.BuildStamp.Reset();
+            using var host = new BridgeHost();
+            string outbox = Path.Combine(root, "outbox");
+            var report = Call(host, "bugReport", new { root = outbox, typed = "x", projectDir = package, buildCommit = "5707bbba9760" });
+            using var ctx = JsonDocument.Parse(File.ReadAllText(Path.Combine(report.GetProperty("dir").GetString(), "context.json")));
+            Assert.That(ctx.RootElement.GetProperty("game_commit").GetString(), Is.EqualTo("5707bbba9760"));
+        }
+        finally { UnturnedGodot.BugReport.BuildStamp.Reset(); }
+    }
+
     [TestCase(200, false, false)]
     [TestCase(422, false, true)]
     [TestCase(401, true, false)]
