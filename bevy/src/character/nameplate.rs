@@ -15,6 +15,18 @@ use bevy::{
 };
 
 pub(super) struct NameplatePlugin;
+#[derive(Resource)]
+struct BillboardShaderRegistered;
+
+/// Register before either material plugin requests this shared shader. Asset
+/// requests can start during plugin build, before CharacterPlugin is installed.
+pub(crate) fn ensure_billboard_shader(app: &mut App) {
+    if app.world().contains_resource::<BillboardShaderRegistered>() {
+        return;
+    }
+    embedded_asset!(app, "nameplate/billboard.wesl");
+    app.insert_resource(BillboardShaderRegistered);
+}
 impl Plugin for NameplatePlugin {
     fn build(&self, app: &mut App) {
         // Character/physics harnesses intentionally omit the text plugin. Do
@@ -22,7 +34,7 @@ impl Plugin for NameplatePlugin {
         if !app.world().contains_resource::<Assets<Font>>() {
             app.init_asset::<Font>();
         }
-        embedded_asset!(app, "nameplate/billboard.wesl");
+        ensure_billboard_shader(app);
         app.add_plugins(MaterialPlugin::<PlateMaterial>::default())
             .init_resource::<raster::OriginalFont>()
             .add_systems(Update, rebuild.run_if(resource_exists::<TextPipeline>))

@@ -2,6 +2,8 @@
 //! camera-facing world quad. Focus has a single winner, so the viewport is shared.
 mod canvas;
 #[cfg(test)]
+mod tests;
+#[cfg(test)]
 mod visual;
 
 use crate::{character::nameplate::raster::Raster, world::WorldConfig};
@@ -76,6 +78,7 @@ impl MaterialExtension for Face {
 pub(crate) struct InfoBillboardPlugin;
 impl Plugin for InfoBillboardPlugin {
     fn build(&self, app: &mut App) {
+        crate::character::nameplate::ensure_billboard_shader(app);
         app.init_resource::<FocusedInfo>()
             .init_resource::<Surface>()
             .init_resource::<canvas::Cache>()

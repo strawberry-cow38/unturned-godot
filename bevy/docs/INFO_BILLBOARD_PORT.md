@@ -12,6 +12,13 @@ original gaps. Icons use the source SubViewport's linear filter; the finished
 world canvas uses nearest filtering. The 0.0042m pixel size, per-camera
 billboard, unshaded material and depth-ignore behavior are preserved.
 
+Both panel and character materials register their shared embedded billboard
+shader before installing their material plugin. Bevy can request the shader
+during plugin construction, so registering it only in the later Character
+plugin made the panel disappear in the main game. The order-sensitive asset
+regression reads the actual shader before adding CharacterPlugin, then checks
+that the later character setup retains it.
+
 Text shares the existing embedded original OpenSans SemiBold font and Bevy
 shaper with character nameplates. Labels shrink from 30/26px to a 15px minimum
 against the original 312px advance-width limit. Their baseline uses the font's
