@@ -22,7 +22,7 @@ pub(super) fn install(app: &mut App) {
     install_harvest(app);
     app.add_systems(Update, console.after(crate::player::PlayerCameraUpdate));
 }
-fn install_harvest(app: &mut App) {
+pub(crate) fn install_harvest(app: &mut App) {
     app.init_resource::<Crops>()
         .add_systems(
             Update,
@@ -68,6 +68,12 @@ pub(crate) struct CropReplica {
     pub grown: bool,
     young: Option<Entity>,
     mature: Option<Entity>,
+}
+#[cfg(test)]
+impl CropReplica {
+    pub(crate) fn for_test(net_id: u32, grown: bool) -> Self {
+        Self { net_id, grown, young: None, mature: None }
+    }
 }
 
 type Part = Option<(Handle<Mesh>, Handle<StandardMaterial>)>;

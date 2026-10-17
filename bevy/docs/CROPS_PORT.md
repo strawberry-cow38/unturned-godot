@@ -45,7 +45,7 @@ Harvest is `RequestHarvestNearestCrop`. When F is pressed it targets the nearest
 - **Planting UX:** the source has no planting UX besides the console verb, so neither does the port.
 - **Look point:** the native ray filter (groups 1|4, no sensors, not the player) approximates the source mask bits 0/5/6, and may also hit other dynamic bodies.
 - **Storage deployables:** a looked-at storage deployable keeps the deployable focus path (`_focusDeployable`, above harvest). Only the proximity `OpenNearestCrate` ranks below harvest and should offer with `open_storage` (ledger row 2).
-- **Proximity vehicle enter on a joined client:** the source's `RequestEnterNearestPuppet` (4 m proximity enter, above harvest) has no native equivalent; native vehicle access is look-only. This is a pre-existing gap, recorded in ledger row 15.
+- **Proximity vehicle enter on a joined client:** the source's `RequestEnterNearestPuppet` (4 m proximity enter) ranks above harvest. It is ported in `vehicle/proximity_enter.rs` ([PROXIMITY_ENTER_PORT.md](PROXIMITY_ENTER_PORT.md)), so a joined client within 4 m of a vehicle enters it instead of harvesting.
 - **`UG_FARMSPEED`:** a dev aid, force-growing at the source's 2 Hz. It accelerates save-loaded crops from their saved age, and does nothing for a speed ≤ 1.
 
 ## Verification

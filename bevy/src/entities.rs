@@ -147,6 +147,21 @@ pub struct ApplyInteractions;
 #[derive(Resource, Default)]
 pub struct InteractionFocus {
     candidate: Option<InteractionCandidate>,
+    /// A proximity dispatch tier (`RequestEnterNearestPuppet`): no look target
+    /// of its own, it takes F from every candidate ranked below it.
+    proximity: Option<(String, Value)>,
+}
+/// The F-chain branches `PlayerController` tries BEFORE `RequestEnterNearestPuppet`
+/// (:8977-8990): stand up from a prop seat (`sitSeat` with NetId 0), the
+/// trailer hitch, a dropped/shelf item pickup and every action a looked-at
+/// vehicle offers. Vehicle exit never meets it (no on-foot focus when seated).
+fn outranks_proximity(candidate: &InteractionCandidate) -> bool {
+    match candidate.action.as_str() {
+        "pickupItem" | shelves::TAKE | "vehicleHitch" | "enterVehicle" | "openVehicleHood"
+        | "openVehicleTrunk" | "vehicleDoor" | "vehicleDoorMoving" => true,
+        "sitSeat" => candidate.args["netId"].as_u64() == Some(0),
+        _ => false,
+    }
 }
 struct InteractionCandidate {
     distance: f32,
@@ -190,7 +205,12 @@ impl InteractionFocus {
             }
         }
     }
+    /// Whether F belongs to (action, NetId) this frame.
     pub fn selected(&self, action: &str, id: u32) -> bool {
+        !self.preempted() && self.looked(action, id)
+    }
+    /// The look winner by NetId, even while a proximity tier holds F.
+    pub(crate) fn looked(&self, action: &str, id: u32) -> bool {
         self.candidate.as_ref().is_some_and(|candidate| {
             candidate.action == action && candidate.args["netId"].as_u64() == Some(u64::from(id))
         })
@@ -198,9 +218,39 @@ impl InteractionFocus {
     /// Whether the winner is exactly (action, args): local targets that are
     /// not keyed by a replicated NetId (world devices by placement index).
     pub(crate) fn selected_args(&self, action: &str, args: &Value) -> bool {
+        !self.preempted() && self.looked_args(action, args)
+    }
+    /// The look winner whatever F dispatches: a look-focus billboard shows even
+    /// while a proximity tier has taken the key (source `SetLookFocused` is
+    /// independent of the F chain).
+    pub(crate) fn looked_args(&self, action: &str, args: &Value) -> bool {
         self.candidate
             .as_ref()
             .is_some_and(|candidate| candidate.action == action && candidate.args == *args)
+    }
+    /// `RequestEnterNearestPuppet`: F dispatches (action, args) unless the look
+    /// winner is one of the branches the source tries first. It shows no prompt
+    /// and no rim; a lower look target keeps its own label and outline.
+    pub(crate) fn offer_proximity(&mut self, action: &str, args: Value) {
+        self.proximity = Some((action.into(), args));
+    }
+    /// Whether the proximity tier has taken F from the look winner (if any).
+    pub(crate) fn preempted(&self) -> bool {
+        self.proximity.is_some() && !self.candidate.as_ref().is_some_and(outranks_proximity)
+    }
+    /// Nothing at all would answer F (the viewmodel inspect fallback).
+    pub fn idle(&self) -> bool {
+        self.candidate.is_none() && self.proximity.is_none()
+    }
+    /// What a generic F press dispatches: (action, args, opens storage).
+    pub(crate) fn dispatch(&self) -> Option<(&str, &Value, bool)> {
+        if self.preempted() {
+            return self.proximity.as_ref().map(|(a, v)| (a.as_str(), v, false));
+        }
+        self.candidate
+            .as_ref()
+            .filter(|c| !c.manual)
+            .map(|c| (c.action.as_str(), &c.args, c.open_storage))
     }
     /// A dispatched candidate with no prompt (the source shows none for it).
     pub fn offer_hidden(&mut self, distance: f32, action: &str, args: Value, open_storage: bool) {
@@ -918,10 +968,11 @@ fn interact_items(
     }
 }
 
-fn reset_focus(mut focus: ResMut<InteractionFocus>) {
+pub(crate) fn reset_focus(mut focus: ResMut<InteractionFocus>) {
     focus.candidate = None;
+    focus.proximity = None;
 }
-fn apply_interaction(
+pub(crate) fn apply_interaction(
     bridge: Res<CoreBridge>,
     focus: Res<InteractionFocus>,
     settings: Res<Settings>,
@@ -934,30 +985,28 @@ fn apply_interaction(
     if ui.captures_input() {
         return;
     }
-    let Some(candidate) = &focus.candidate else {
-        return;
-    };
-    model.interaction = if candidate.show_binding {
-        format!(
-            "[{}] {}",
-            settings.bindings[&GameAction::Interact].label(),
-            candidate.label
-        )
-    } else {
-        candidate.label.clone()
-    };
+    if let Some(candidate) = &focus.candidate {
+        model.interaction = if candidate.show_binding {
+            format!(
+                "[{}] {}",
+                settings.bindings[&GameAction::Interact].label(),
+                candidate.label
+            )
+        } else {
+            candidate.label.clone()
+        };
+    }
     // PlayerController: Interact while ALT-looking interacts with nothing.
-    if candidate.manual
-        || !settings.just_pressed(GameAction::Interact, &keys, &mouse)
+    if !settings.just_pressed(GameAction::Interact, &keys, &mouse)
         || settings.pressed(GameAction::FreeLook, &keys, &mouse)
     {
         return;
     }
-    match bridge.request(
-        "action",
-        json!({"name":candidate.action,"args":candidate.args}),
-    ) {
-        Ok(_) if candidate.open_storage => {
+    let Some((action, args, open_storage)) = focus.dispatch() else {
+        return;
+    };
+    match bridge.request("action", json!({"name":action,"args":args})) {
+        Ok(_) if open_storage => {
             ui.page = model
                 .pages
                 .iter()

@@ -904,7 +904,7 @@ fn animate_viewmodel(
     let wants_inspect = alive
         && !ui.captures_input()
         && occupancy.seat.is_none()
-        && !focus.has_candidate()
+        && focus.idle()
         && settings.just_pressed(GameAction::Interact, &keys, &mouse)
         && !settings.pressed(GameAction::FreeLook, &keys, &mouse);
     let started_inspect = wants_inspect

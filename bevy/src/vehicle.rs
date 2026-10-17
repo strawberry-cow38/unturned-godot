@@ -20,6 +20,7 @@ pub(crate) mod hand_tools;
 mod hearing;
 pub(crate) mod lighting;
 mod npc;
+pub(crate) mod proximity_enter;
 mod remote;
 pub(crate) mod remote_exits;
 mod rope;

@@ -323,7 +323,7 @@ pub(crate) fn prompt(
     let key = settings.bindings[&GameAction::Interact].label();
     for (device, vendor, pose) in &vendors {
         let (action, args) = device.0.action();
-        if !focus.selected_args(action, &args) {
+        if !focus.looked_args(action, &args) {
             continue;
         }
         info.0 = Some(View {

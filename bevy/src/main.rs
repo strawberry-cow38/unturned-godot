@@ -218,14 +218,17 @@ fn add_game_plugins(app: &mut App, dedicated: bool) {
         survival::SurvivalPlugin,
     ));
     // Screen-only presentation: the window/camera/frame limiter, the bug
-    // reporter (which records the microphone) and the focus outline have
-    // nothing to act on without a window or a local player, and the frame
-    // limiter would throttle the headless authority loop.
+    // reporter (which records the microphone), the focus outline and the
+    // proximity vehicle enter have nothing to act on without a window or a
+    // local player, and the frame limiter would throttle the headless
+    // authority loop.
     if !dedicated {
         app.add_plugins((
             graphics::GraphicsPlugin,
             bugreport::BugReportPlugin,
             outline::OutlinePlugin,
+            // F at a joined client's nearest vehicle: player input, no host.
+            vehicle::proximity_enter::ProximityEnterPlugin,
         ));
     }
 }

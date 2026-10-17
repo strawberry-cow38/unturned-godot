@@ -160,7 +160,10 @@ fn apply(
         && snapshot.0["player"]["vehicleNetId"].as_u64().unwrap_or(0) == 0;
     let selected = hovered
         .0
-        .filter(|(id, _, _)| active && focus.as_ref().is_some_and(|f| f.selected(ACTION, *id)));
+        .filter(|(id, _, _)| active && focus.as_ref().is_some_and(|f| f.looked(ACTION, *id)));
+    // RequestEnterNearestPuppet ranks above `_focusDeployable`: the billboard
+    // and the mouse fuel actions stay, but F belongs to the nearby vehicle.
+    let owns_f = focus.as_ref().is_none_or(|f| !f.preempted());
     let Some((id, def_id, position)) = selected else {
         if diagnostic.offered.is_some() {
             diagnostic.gate = "input capture or focus arbitration declined".into();
@@ -234,7 +237,7 @@ fn apply(
     let can_toggle =
         !burning && (def.is_switch || (def.fuel > 0. && (level - target).abs() < 0.001));
     let binding = &settings.bindings[&GameAction::Interact];
-    if gesture.hold.target().is_some_and(|held| held != id) || burning {
+    if gesture.hold.target().is_some_and(|held| held != id) || burning || !owns_f {
         gesture.hold.cancel();
     }
     let mut send = |name: &str, args: Value| {
@@ -279,7 +282,7 @@ fn apply(
             }
             continue;
         }
-        if !binding.matches_window_event(&event.event) {
+        if !owns_f || !binding.matches_window_event(&event.event) {
             continue;
         }
         let down = match &event.event {

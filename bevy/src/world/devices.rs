@@ -307,7 +307,7 @@ pub(crate) fn scenery_info(
     let Some(info) = info.as_mut() else { return };
     for (device, lamp, pose) in &scenery {
         let (action, args) = device.0.action();
-        if focus.selected_args(action, &args) {
+        if focus.looked_args(action, &args) {
             info.0 = Some(lamp.billboard(pose.translation()));
         }
     }
