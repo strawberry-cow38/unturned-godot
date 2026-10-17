@@ -118,6 +118,7 @@ impl FiniteWorld {
                     guid: p.guid,
                     material: p.material,
                     transform: Transform::from_matrix(matrix),
+                    euler: None,
                 })
             })
             .collect()

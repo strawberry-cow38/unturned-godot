@@ -289,7 +289,7 @@ fn capsule(height: f32) -> Collider {
     Collider::capsule(Vec3::Y * radius, Vec3::Y * (height - radius), radius)
 }
 
-fn player_collision_groups() -> CollisionGroups {
+pub(crate) fn player_collision_groups() -> CollisionGroups {
     // PlayerController's own walking mask also supplies HeadroomFor/CapsuleFits:
     // world/props, vehicle model surfaces and remote players. Animals/enemies
     // have separate hit layers, and a stripped driving hull is not a surface.
