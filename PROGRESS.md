@@ -3184,3 +3184,8 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - New tests: salvage across a command gap, deployable salvage under the remote's identity, tool cleanup, fuse/burn/drowned on the remote row, System 21 in the sync check, three zombie parity tests, and dedicated with no horde.
   - Ten negative controls each failed their named test.
   - Full runs after the follow-ups: core 775/775, managed 333/333. No Rust was touched.
+- **Release fix (JSONL regression from the 25-tick window).**
+  - A refused `ToolUse` (no torch in hand) used to leave a held tool behind. If a torch was equipped within 25 ticks, it started repairing with nobody holding it, so `test_blowtorch_repairs_at_source_rate_only_while_held_and_aimed` read 133.5 instead of 130.
+  - Now a refused request clears the tool. Unequipping, an explicit release, death and disconnect each end the tool on the tick they are seen. The window only bridges missing refreshes while the trigger is still down.
+  - New managed tests: a release stops repair on the tick it lands, for both the listen owner and the remote; a refused request does not linger.
+  - Results: JSONL 128/128 (the blowtorch test fails under the lingering revert), core 775/775, managed 335/335.

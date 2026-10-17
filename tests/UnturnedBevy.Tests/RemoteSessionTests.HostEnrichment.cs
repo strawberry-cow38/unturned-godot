@@ -252,4 +252,57 @@ public sealed partial class RemoteSessionTests
         Assert.That(row.GetProperty("burnSeconds").GetSingle(), Is.EqualTo(host.GetProperty("burnSeconds").GetSingle()).Within(.3f));
         Assert.That(row.GetProperty("wreckSalvageable").GetBoolean(), Is.False, "still hot");
     }
+
+    float Exact(uint id) => Server.Vehicles.TryGet(id, out var v) ? v.Health : -1;
+
+    [Test]
+    public void ReleasingTheToolStopsRepairOnTheTickTheReleaseLands()
+    {
+        Listen(); Join(); Pump();
+        uint ahead = HostVehicle(-23.5f, 500, 1000), behind = HostVehicle(-20.5f, 500, 1000);
+        HostPanel(ahead, -23.5f); HostPanel(behind, -20.5f); Pump();
+        Hold(_host, Blowtorch); Hold(_remote, Blowtorch);
+        for (int i = 0; i < 20; i++)
+        {
+            Face(_host, 0); Action(_host, "toolUse", new { active = true });
+            Face(_remote, 180); Action(_remote, "toolUse", new { active = true });
+            Pump(1);
+        }
+        // Listen owner: its release is applied directly, before the next host tick.
+        float a = Exact(ahead), b = Exact(behind);
+        Action(_host, "toolUse", new { active = false });
+        for (int i = 0; i < 30; i++) { Face(_remote, 180); Action(_remote, "toolUse", new { active = true }); Pump(1); }
+        Assert.That(Exact(ahead), Is.EqualTo(a), "the listen owner's release stops its repair on the very next tick, not after the hold window");
+        Assert.That(Exact(behind), Is.GreaterThan(b), "the remote, still holding, keeps repairing");
+
+        // Remote: track the host tick its Command101 release is dispatched; no repair may run in that tick or after.
+        ushort remote = RemoteId;
+        Action(_remote, "toolUse", new { active = false });
+        float before = Exact(behind); int landed = -1;
+        for (int i = 0; i < 40 && landed < 0; i++)
+        {
+            before = Exact(behind); Pump(1);
+            if (!Bodies.ToolOwners.Contains(remote)) landed = i;
+        }
+        Assert.That(landed, Is.GreaterThanOrEqualTo(0), "the release arrived");
+        Assert.That(Exact(behind), Is.EqualTo(before), "no repair in the tick the release landed");
+        float released = Exact(behind); Pump(30);
+        Assert.That(Exact(behind), Is.EqualTo(released), "nor after it");
+    }
+
+    [Test]
+    public void ARefusedToolUseDoesNotLingerUntilATorchIsEquipped()
+    {
+        Listen(); Join(); Pump();
+        uint car = HostVehicle(-23.5f, 500, 1000); HostPanel(car, -23.5f); Pump();
+        Action(_host, "console", new { text = $"give {Blowtorch}" }); Pump();
+        var at = Address(State(_host), Blowtorch);
+        Face(_host, 0);
+        Assert.That(Action(_host, "toolUse", new { active = true }).GetProperty("queued").GetBoolean(), Is.False, "bare hands: refused");
+        Action(_host, "equipAndHold", new { page = at.Page, x = at.X, y = at.Y });
+        float before = Exact(car);
+        for (int i = 0; i < 30; i++) { Face(_host, 0); Pump(1); }
+        Assert.That(State(_host).GetProperty("player").GetProperty("heldItemId").GetInt32(), Is.EqualTo(Blowtorch));
+        Assert.That(Exact(car), Is.EqualTo(before), "the refused request left no held tool behind to start repairing later");
+    }
 }

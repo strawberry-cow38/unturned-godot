@@ -63,9 +63,12 @@ public sealed class BodyCombatServices
     public bool ToolUse(ushort owner, bool active)
     {
         if (!active) { _tools.Remove(owner); return true; }
+        // No repair tool in hand: the source torch never starts, so nothing may linger and start repairing
+        // when one is equipped inside the hold window (the JSONL "only while held" regression).
+        if (!(RepairRate?.Invoke(owner) > 0)) { _tools.Remove(owner); return false; }
         if (!_tools.TryGetValue(owner, out var tool)) _tools[owner] = tool = new();
         tool.Until = Tick + ToolHoldTicks;
-        return RepairRate?.Invoke(owner) > 0;
+        return true;
     }
     /// <summary>Owners whose tool is currently held (diagnostics/tests).</summary>
     public IReadOnlyCollection<ushort> ToolOwners => _tools.Keys;
@@ -74,7 +77,11 @@ public sealed class BodyCombatServices
         foreach (var (owner, tool) in _tools.ToArray())
         {
             // Released, timed out, dead or gone: a dead or disconnected owner's tool never outlives its life.
-            if (tool.Until < Tick || !_server.CombatState.TryGet(owner, out var life) || !life.Alive) { _tools.Remove(owner); continue; }
+            // Released, timed out, unequipped, dead or gone. The hold window only bridges missing refreshes of a
+            // trigger that is still down; every explicit end (ToolUse false, putting the torch away, death,
+            // disconnect) stops the repair on the tick it is seen.
+            if (tool.Until < Tick || !(RepairRate?.Invoke(owner) > 0)
+                || !_server.CombatState.TryGet(owner, out var life) || !life.Alive) { _tools.Remove(owner); continue; }
             StepTool(owner, tool);
         }
     }

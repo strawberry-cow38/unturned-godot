@@ -293,3 +293,12 @@ the source.
     - weapon-noise gate removed;
     - System 21 removed from the sync-check list.
   - **Full runs.** Core 775/775 and managed 333/333.
+- **Release semantics (third commit).**
+  - The hold window only covers missing refreshes of a trigger that is still down.
+  - An explicit release (`ToolUse{Active=false}` or the listen owner's `toolUse` false), putting the torch away, a refused request with no torch, death and disconnect each end the tool on the tick they are seen.
+  - Turning away stops repair on that tick, because the target is resolved per tick.
+  - Tests:
+    - `ReleasingTheToolStopsRepairOnTheTickTheReleaseLands` (listen owner and remote);
+    - `ARefusedToolUseDoesNotLingerUntilATorchIsEquipped`;
+    - the JSONL `test_blowtorch_repairs_at_source_rate_only_while_held_and_aimed`.
+  - Results: JSONL 128/128, core 775/775, managed 335/335.
