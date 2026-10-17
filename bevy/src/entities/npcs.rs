@@ -341,9 +341,9 @@ fn activate(
     let Some(npc) = looked.0.and_then(|e| npcs.get(e).ok()) else {
         return;
     };
-    if !interactions.candidate.as_ref().is_some_and(|c| {
-        c.action == "npcTalk" && c.args["dialogue"].as_i64() == Some(npc.speaker.dialogue as i64)
-    }) {
+    // F belongs to this NPC only if it won the look AND no higher F branch
+    // (RequestEnterNearestPuppet) has taken the key.
+    if !interactions.selected_args("npcTalk", &json!({"dialogue":npc.speaker.dialogue})) {
         return;
     }
     if has_dialogue(&registry, npc.speaker.dialogue) {

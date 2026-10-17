@@ -463,3 +463,38 @@ fn disabled_npc_plate_cannot_be_reopened_by_shared_distance_visibility() {
         "source riding/driving blocks NPC look focus"
     );
 }
+
+/// PlayerController tries RequestEnterNearestPuppet before `_focusNpc`: on a
+/// joined client with a car 2.5 m behind, F on a looked-at trader asks for the
+/// car and the dialogue never opens (the NPC keeps its look and nameplate).
+#[test]
+fn proximity_enter_takes_f_from_a_looked_at_npc_on_a_joined_client() {
+    let mut app = app();
+    app.add_plugins(crate::vehicle::proximity_enter::ProximityEnterPlugin);
+    app.world_mut().resource_mut::<GameSnapshot>().0["network"] = json!({"mode":"client","ownsWorld":false});
+    let chef = character(&app, "Chef");
+    let talk = json!({"dialogue":chef["dialogue"]});
+    add(&mut app, chef, Vec3::ZERO);
+    let car = crate::vehicle::tests::body(&mut app, "police", Vec3::new(0., 0., -4.5));
+    app.world_mut().get_mut::<crate::vehicle::VehicleBody>(car).unwrap().net_id = 40;
+    app.world_mut().entity_mut(car).insert(RigidBody::Fixed).remove::<Collider>();
+    for _ in 0..5 {
+        app.update();
+    }
+    let entity = root(&app, 0);
+    assert_eq!(app.world().resource::<LookedAt>().0, Some(entity));
+    let focus = app.world().resource::<InteractionFocus>();
+    assert!(focus.looked_args("npcTalk", &talk), "the trader still wins the look");
+    assert!(focus.preempted());
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::KeyF);
+    app.update();
+    assert_eq!(app.world().resource::<CurrentNpcSpeaker>().key, "", "no conversation opens");
+    let bridge = app.world().resource::<CoreBridge>();
+    for _ in 0..5 {
+        bridge.request("tick", json!({})).unwrap();
+    }
+    let view = bridge.request("npcView", json!({"speakerKey":"Chef"})).unwrap();
+    assert!(view["result"]["openDialogue"].as_i64().unwrap_or(0) <= 0, "nor on the authority: {}", view["result"]["openDialogue"]);
+}

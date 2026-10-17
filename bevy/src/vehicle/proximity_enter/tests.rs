@@ -159,12 +159,46 @@ fn the_branches_before_it_keep_f_and_the_ones_after_it_lose_it() {
         let focus = app.world().resource::<InteractionFocus>();
         assert!(focus.selected(action, 9) && dispatch(&app).is_none(), "{action}");
     }
-    // Trains/deployables/doors/NPCs/beds/seats/devices all rank below it.
-    for action in ["sitSeat", "toggleDoor", "talkNpc", "claimBed", "openStorage", "forageResource"] {
-        let mut app = app(remote(), Some((action, json!({"netId":9}), false)));
-        vehicle(&mut app, 40, Vec3::new(1., 0., 0.));
-        app.update();
-        assert_eq!(dispatch(&app), enter(40), "{action} ranks below the puppet enter");
+    // Everything after it in the source chain, by the action and args each
+    // production collector really offers (`manual`: offer_status/offer_manual).
+    // The source text check keeps a renamed action from passing by default.
+    let losers: [(&str, Value, bool, &str); 17] = [
+        ("npcTalk", json!({"dialogue":59}), false, include_str!("../../entities/npcs.rs")),
+        ("claimBed", json!({"netId":9}), false, include_str!("../../world/beds.rs")),
+        ("sitSeat", json!({"netId":9}), false, include_str!("../../world/interactables.rs")),
+        ("toggleObjectDoor", json!({"netId":9}), false, include_str!("../../world/interactables.rs")),
+        ("openStorage", json!({"netId":9}), false, include_str!("../../world/interactables.rs")),
+        ("forageResource", json!({"index":9}), false, include_str!("../../entities.rs")),
+        ("toggleDoor", json!({"netId":9}), true, include_str!("../../world/demo_door.rs")),
+        ("placedDoor", json!({"netId":9}), true, include_str!("../../deployables/doors.rs")),
+        ("ordinaryDeployable", json!({"netId":9}), true, include_str!("../../deployables/interaction.rs")),
+        ("toggleLamp", json!({"sourceIndex":9}), true, include_str!("../../world/devices.rs")),
+        ("sceneryDeployable", json!({"sourceIndex":9}), true, include_str!("../../world/devices.rs")),
+        ("readNote", json!({"sourceIndex":9}), true, include_str!("../../world/devices.rs")),
+        ("vend", json!({"sourceIndex":9}), true, include_str!("../../world/devices.rs")),
+        ("toggleRadio", json!({"sourceIndex":9}), true, include_str!("../../world/devices.rs")),
+        ("toggleMonitor", json!({"sourceIndex":9}), true, include_str!("../../world/devices.rs")),
+        ("carLift", json!({"sourceIndex":9}), true, include_str!("../../world/devices.rs")),
+        ("harvestCrop", json!({"netId":9}), false, include_str!("../../entities/crops.rs")),
+    ];
+    for (action, args, manual, source) in losers {
+        assert!(source.contains(&format!("\"{action}\"")), "{action} is a real offered action");
+        for car in [false, true] {
+            let mut app = app(remote(), Some((action, args.clone(), manual)));
+            if car {
+                vehicle(&mut app, 40, Vec3::new(1., 0., 0.));
+            }
+            app.update();
+            let focus = app.world().resource::<InteractionFocus>();
+            if car {
+                assert_eq!(dispatch(&app), enter(40), "{action} ranks below the puppet enter");
+                assert!(!focus.selected_args(action, &args) && focus.looked_args(action, &args), "{action}");
+            } else {
+                assert!(focus.selected_args(action, &args), "{action} owns F with no car near");
+                let own = (!manual).then(|| (action.to_owned(), args.clone()));
+                assert_eq!(dispatch(&app), own, "{action}");
+            }
+        }
     }
 }
 
@@ -215,6 +249,62 @@ fn a_looked_at_vehicle_door_still_uses_the_normal_enter() {
     app.world_mut().query_filtered::<&mut Transform, With<PlayerCamera>>().single_mut(app.world_mut()).unwrap().look_to(Vec3::Y, Vec3::Z);
     app.update();
     assert_eq!(dispatch(&app), enter(11));
+}
+
+/// `_focusVehicle` requires `!IsWreck && !IsTrailer`: aiming at the door zone
+/// of a husk or a trailer offers nothing, so F falls through to the nearest
+/// live car 3 m behind (the looked-at hull is farther). A live police car in
+/// the same pose still takes its door (the control).
+#[test]
+fn a_looked_at_husk_or_trailer_falls_through_to_the_nearest_car() {
+    for (key, wreck, falls) in [("police", true, true), ("dinky_trailer", false, true), ("police", false, false)] {
+        let mut app = app(snapshot(Some(json!({"mode":"client","ownsWorld":false}))), None);
+        app.add_plugins((TransformPlugin, RapierPhysicsPlugin::<NoUserData>::default()))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(20)))
+            .insert_resource(TimestepMode::Fixed { dt: 0.02, substeps: 1 })
+            .add_systems(
+                Update,
+                super::super::access::focus
+                    .in_set(super::super::access::VehicleAccess)
+                    .after(CollectInteractions)
+                    .before(ApplyInteractions),
+            );
+        let looked = crate::vehicle::tests::body(&mut app, key, Vec3::ZERO);
+        {
+            let mut body = app.world_mut().get_mut::<VehicleBody>(looked).unwrap();
+            body.net_id = 10;
+            if wreck {
+                body.flags |= 32;
+            }
+        }
+        app.world_mut().entity_mut(looked).insert(RigidBody::Fixed);
+        let def = data::named(key).unwrap();
+        let door = def.access.iter().find(|z| z.kind == "Door").expect("a door zone");
+        let center = Vec3::from_array(door.center);
+        let side = Vec3::X * center.x.signum();
+        let eye = center + side * 2.2;
+        app.world_mut().spawn((PlayerCamera, Transform::from_translation(eye).looking_at(center, Vec3::Y)));
+        let feet = eye - Vec3::Y * 1.75;
+        *app.world_mut().query_filtered::<&mut Transform, With<PlayerBody>>().single_mut(app.world_mut()).unwrap() =
+            Transform::from_translation(feet);
+        let car = feet + side * 3.;
+        assert!(feet.distance(Vec3::ZERO) > 3. && feet.distance(Vec3::ZERO) < REACH, "{key}: the hull is in range but farther");
+        let other = crate::vehicle::tests::body(&mut app, "police", car);
+        app.world_mut().get_mut::<VehicleBody>(other).unwrap().net_id = 11;
+        app.world_mut().entity_mut(other).insert(RigidBody::Fixed).remove::<Collider>();
+        for _ in 0..3 {
+            app.update();
+        }
+        if falls {
+            assert_eq!(dispatch(&app), enter(11), "{key} wreck={wreck}: F seats in the live car");
+        } else {
+            assert_eq!(
+                dispatch(&app),
+                Some(("enterVehicle".into(), json!({"netId":10,"seat":door.seat.max(0)}))),
+                "control: a live car's door keeps F"
+            );
+        }
+    }
 }
 
 #[test]

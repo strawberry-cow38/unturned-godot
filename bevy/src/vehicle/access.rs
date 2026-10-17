@@ -195,6 +195,13 @@ pub(crate) fn focus(
             bodies.iter().map(|(_,body,pose)|(body,pose)), player.translation,
             distance, from, direction) { return; }
     }
+    // PlayerController's `_focusVehicle` branch requires `!IsWreck && !IsTrailer`
+    // (the hitch above is the trailer's only F): a husk or a trailer offers no
+    // door, hood, trunk or bus door, so F falls through to the next branch
+    // (RequestEnterNearestPuppet on a joined client).
+    if body.flags & 32 != 0 || def.spec.kingpin != [0.; 3] {
+        return;
+    }
     let inv = pose.compute_affine().inverse();
     let zone = resolve(
         &def.access,
@@ -202,7 +209,7 @@ pub(crate) fn focus(
         inv.transform_point3(end),
     );
     match zone.map(|z| z.kind.as_str()) {
-        Some("Hood") if body.flags & 32 == 0 => focus.offer_manual(
+        Some("Hood") => focus.offer_manual(
             distance,
             "Open hood",
             "openVehicleHood",
