@@ -372,6 +372,25 @@ fn a_note_reads_on_f_and_closes_on_f_or_escape() {
         .id();
     step(&mut app, 4);
     assert!(app.world().get::<Note>(note).is_some());
+    {
+        // Look-only (`NoteBody`: layer bit 6, mask 0): the player's walking
+        // mask passes through the padded box the look ray hits.
+        let mut state = bevy::ecs::system::SystemState::<ReadRapierContext>::new(app.world_mut());
+        let read = state.get(app.world()).unwrap();
+        let context = read.single().unwrap();
+        let mut blocked = false;
+        context.intersect_shape(
+            at,
+            Quat::IDENTITY,
+            &Collider::ball(0.3),
+            QueryFilter::default().groups(crate::player::player_collision_groups()),
+            |e, _| {
+                blocked |= app.world().get::<ChildOf>(e).is_some_and(|c| c.parent() == note);
+                true
+            },
+        );
+        assert!(!blocked, "a local-only look box never blocks movement");
+    }
     let focus = app.world().resource::<InteractionFocus>();
     assert!(focus.selected_args("readNote", &json!({"sourceIndex":453})), "the padded look box is hit first");
     assert_eq!(focus.outlined(), Some((note, Color::WHITE)));

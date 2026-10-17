@@ -31,6 +31,32 @@ registers through `MapServices`), and `world::devices::Mains` re-reads it at the
 `DayNightCycle.MainsLive` 4 Hz throttle. The console `toggleglobalpower` therefore
 reaches the lamps only through the server's accepted fixture bits.
 
+### Dedicated hosts
+
+The `--dedicated` app (`dedicated.rs`) keeps `WorldPlugin` for collision and
+host physics, so `DevicePlugin` is loaded there. Every device system is gated
+on `dedicated::has_local_player`, which matches the source's
+`mode != WorldMode.Dedicated` branches. A dedicated host therefore builds no
+lamp light or hum, monitor shader or beeps, radio audio or board, traffic-light
+lens or glow, vending tint or prompt, note reader, or focus.
+
+The car lift is the one exception, as in the source. `WorldBuilder` spawns its
+platform "EVERY MODE, because the ramp is a moving COLLIDER", so
+`carlift::attach` runs on the server. The ramp's authority box (`world.rs`) is
+uploaded in every mode as well.
+
+The test for this is `a_dedicated_host_builds_only_the_car_lift_platform`.
+
+**Vending on a dedicated host.** Every player on a dedicated host is a joined
+client, so vending is refused for everyone there. This matches the source,
+where `PlayerController.CanVend` is the listen-host seam only and the machine
+reads "Out of order". The refusal happens in three places:
+- the native press system does not run;
+- the bridge's dedicated allow-list refuses `action`;
+- `Vend` also refuses on `_dedicated`.
+
+The test for this is `DedicatedServerTests.VendingIsRefusedOnADedicatedHostAsEveryPlayerIsAJoinedClient`.
+
 ## Lamps
 
 What the player meets on PEI (`placements.txt`): 12 `Light_0` ceiling strips,
@@ -168,9 +194,18 @@ Sources: `game/VendingMachine.cs`, `game/RadioDevice.cs`, `game/HeartMonitor.cs`
   dollar on the server inventory (with `ServerMarkDirty`), and `vendDrop` spawns
   the can as a replicated world item at the machine's tray when the shake ends.
   A joined client has no seam in the source (`CanVend` false, "Out of order"); the
-  bridge refuses both actions for a remote session. No wire id was added. The
-  bridge is stricter than the in-process seam: a drop must follow a paid vend
-  and name one of the two drinks (cola 80, soda 465).
+  bridge refuses both actions for a remote session. No wire id was added.
+  The bridge is stricter than the in-process seam:
+  - Both actions name only the machine (`sourceIndex`).
+  - The server reads each Vendor_0/Vendor_1 placement from the manifest
+    (`MapServices.VendMachine`). From that it has the machine's drink and its
+    `DispensePoint` tray, through the same placement matrix and mesh bounds, in
+    the absolute frame minus the current origin.
+  - A pay is refused beyond `VendReach` (4 m, the 2.6 m look reach plus the tray
+    offset and eye height) from the accepted feet.
+  - A drop must follow a paid vend at that machine. It spawns the machine's
+    drink at the server's tray, whatever the request says.
+  - Owed cans are cleared in `StartSession`.
 
 ### Native
 
@@ -180,9 +215,14 @@ Sources: `game/VendingMachine.cs`, `game/RadioDevice.cs`, `game/HeartMonitor.cs`
   state colour, blinking red/white for 0.6 s after a refused press (not while
   dispensing). The look-at billboard (`VendPromptSet`) shows "Cola Machine"/"Soda
   Machine" in the livery colour and the state line at `PromptAnchor`. F on a
-  ready machine asks the host to pay; then the 0.45 s decaying shudder off the
-  rest pose, the `inv_heavy_01` clunk, a 1.0 s cooldown, and the can at
-  `DispensePoint` on the tick the shake ends.
+  ready machine asks the host to pay. Then come the 0.45 s decaying shudder,
+  the `inv_heavy_01` clunk, a 1.0 s cooldown, and the can on the tick the shake
+  ends.
+  - The shudder is added to the current pose and removed again, so a
+    procedural origin rebase mid-shake settles at the shifted home.
+  - The owed can is timed in `DeviceState::vend_drops`, not on the machine's
+    entity. A region re-stream mid-shake still drops the paid can, and the
+    respawned machine resumes "Dispensing...".
 - **Radio** (`radio`): OFF by default, F flips it and clicks (`tv_on`/`tv_off`),
   the `tv_static` loop plays while on and fed (0.30, unit 1.2, max 6 m). The
   forecast board ("TODAY  x\nTOMORROW  y" from the accepted weather outlook,
@@ -196,7 +236,16 @@ Sources: `game/VendingMachine.cs`, `game/RadioDevice.cs`, `game/HeartMonitor.cs`
   One shared clock drives every monitor; alive units beep (`ecg_beep.ogg`) as the
   sweep crosses R (phase 0.42), flatlined ones hold `ecg_flat.wav`
   (-21 dB, unit 7, max 26 m). Each unit is alive with chance 0.7, rolled per client
-  as the source rolls it per world build.
+  as the source rolls it per world build. The roll is kept by placement in
+  `DeviceState`, so a region re-stream does not re-roll it. A new world session
+  rolls again.
+  - All screens share two materials, one beating and one flat. Each is advanced
+    once a frame while shown.
+  - Whether the two sound files exist is checked once.
+  - The radio's forecast board reads the snapshot's `weather` outlook. A joined
+    client has none until the world environment is replicated (agent L's
+    Environment system), so its board stays blank, the same root cause as the
+    traffic clock below.
 
 ### Deviations and gaps
 
@@ -247,6 +296,22 @@ call, `PlayerController` (`_focusCarLift`, the F branch, `FluidPickupHudSet`,
 
 Not interactive and not replicated: every head's aspect is a pure function of the
 shared world clock, as in the source.
+
+**Phase parity for joined clients depends on the replicated day.** The clock is
+`(day + timeOfDay) x dayLength`. A joined client's snapshot has no `day`
+(`RemoteSession.ClockSnapshot`: the environment is built server-side only)
+until agent L's replicated Environment system gives remotes the base day. Until
+then the client counts days itself from the time of day wrapping
+(`traffic::Clock`). Its clock is therefore monotonic, and a battery deadline
+two days out is still reached. Its phases, however, are offset from the
+host's by whole days times the day length, so the two only agree once the
+replicated day arrives.
+
+**Re-stream.** `build_world` respawns every `WorldObject`. A head on its
+battery keeps its deadline (`DeviceState::signal_battery`, by placement and
+head), so a re-stream mid-outage does not restart the two days. Lit lenses
+swap between shared, never-mutated palette materials (32 level steps per
+colour), so a breathing flash writes no material asset per frame.
 
 - **Split:** the lens triangles by palette texel (red u[0.50, 0.75) and amber
   u[0.75, 1.01) on the upper row, green u[0.50, 1.01) on the lower row, all three

@@ -1,8 +1,9 @@
 //! `TrafficLight` on `Traffic_Light_0`: two independently timed heads per mast,
 //! each with its own red/amber/green lenses carved off the prop
 //! (`ObjMesh.SplitTrafficLensesPerHead`). The phase is a pure function of the
-//! shared world clock plus a per-head hash, so every client agrees with nothing
-//! replicated; losing the accepted mains drops a head to the cabinet battery's
+//! shared world clock plus a per-head hash, so every peer that has the world's day
+//! agrees with nothing else replicated (joined clients: see `Clock`); losing
+//! the accepted mains drops a head to the cabinet battery's
 //! breathing flash (amber, or red for a flagged side road), which dies with a
 //! stutter after two in-game days. Not interactive, as in the source.
 use super::*;
@@ -159,14 +160,15 @@ pub(crate) struct Head {
     battery_dead_at: f64,
     pub(crate) phase: Phase,
     pub(crate) level: f32,
+    /// Placement index, the stable key for the persisted battery deadline.
+    pub(crate) placement: usize,
     lenses: [Option<Entity>; 3],
     off: Handle<StandardMaterial>,
-    on: [Handle<StandardMaterial>; 3],
     glow: Entity,
     stutter_t: f32,
     stutter_show: bool,
     seed: u64,
-    shown: Option<(Option<usize>, u32)>,
+    shown: Option<(Option<usize>, u8)>,
     /// `Frozen` (`ForcePhase`, the `--trafficlight` harness).
     pub(crate) frozen: bool,
 }
@@ -181,9 +183,9 @@ impl Head {
             battery_dead_at: f64::INFINITY,
             phase: Phase::Red,
             level: 1.,
+            placement: 0,
             lenses: [None; 3],
             off: default(),
-            on: [default(), default(), default()],
             glow: Entity::PLACEHOLDER,
             stutter_t: 0.,
             stutter_show: true,
@@ -200,6 +202,10 @@ impl Head {
     }
     pub(crate) fn lit(&self) -> Option<usize> {
         lens_index(self.phase)
+    }
+    #[cfg(test)]
+    pub(crate) fn battery_dead_at(&self) -> f64 {
+        self.battery_dead_at
     }
     /// `SetPowered`: the battery deadline is stamped from the clock.
     pub(crate) fn set_powered(&mut self, on: bool, now: f64, day_length: f64) {
@@ -253,9 +259,9 @@ pub(crate) fn attach(
     config: Res<WorldConfig>,
     origin: Option<Res<WorldOrigin>>,
     mut side_roads: ResMut<SideRoads>,
+    state: Res<DeviceState>,
     mut cache: ResMut<crate::content::ContentCache>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut built: Local<Option<Option<(Vec<[Option<(Handle<Mesh>, ObjData)>; 3]>, Handle<Mesh>)>>>,
     objects: Query<
         (Entity, &WorldObject, &Transform, &MeshMaterial3d<StandardMaterial>),
@@ -338,28 +344,21 @@ pub(crate) fn attach(
                     ChildOf(entity),
                 ))
                 .id();
-            let on = COLORS.map(|c| {
-                materials.add(StandardMaterial {
-                    base_color: c,
-                    emissive: c.to_linear() * LENS_EMISSION,
-                    metallic: 0.,
-                    perceptual_roughness: 0.4,
-                    ..default()
-                })
-            });
+            // A head already on its battery keeps its deadline across a re-stream.
+            let battery = state.signal_battery.get(&(object.source_index, h)).copied();
             commands.spawn((
                 Name::new("TrafficLight head"),
                 Head {
                     index: h,
                     offset: offset(world, h),
                     side_road,
-                    powered: true,
-                    battery_dead_at: f64::INFINITY,
+                    powered: battery.is_none(),
+                    battery_dead_at: battery.unwrap_or(f64::INFINITY),
                     phase: Phase::Red,
                     level: 1.,
+                    placement: object.source_index,
                     lenses: ids,
                     off: material.0.clone(),
-                    on,
                     glow,
                     stutter_t: 0.,
                     stutter_show: true,
@@ -375,52 +374,111 @@ pub(crate) fn attach(
 
 /// `TrafficLight.ClockSeconds`: (Day + Time) x DayLength off the accepted world
 /// clock, so every peer computes the same phase; engine time without one.
-pub(crate) fn clock_seconds(snapshot: &Value, elapsed: f64) -> (f64, f64) {
-    let clock = &snapshot["worldClock"];
-    let length = clock["dayLengthSeconds"].as_f64().filter(|l| *l > 0.);
-    match (clock["day"].as_f64(), clock["timeOfDay"].as_f64(), length) {
-        (Some(day), Some(time), Some(length)) => ((day + time) * length, length),
-        (None, Some(time), Some(length)) => (time * length, length),
-        _ => (elapsed, 120.),
+///
+/// A joined client's snapshot carries no `day` until the world's base day is
+/// replicated (`RemoteSession.ClockSnapshot`), so there the day is counted
+/// locally from the time-of-day wrapping. The battery deadline (two days out)
+/// is then still reached, but the phase only matches the host's once the
+/// replicated day arrives.
+#[derive(Debug, Default)]
+pub(crate) struct Clock {
+    last_time: Option<f64>,
+    days: f64,
+}
+impl Clock {
+    pub(crate) fn seconds(&mut self, snapshot: &Value, elapsed: f64) -> (f64, f64) {
+        let clock = &snapshot["worldClock"];
+        let length = clock["dayLengthSeconds"].as_f64().filter(|l| *l > 0.);
+        match (clock["day"].as_f64(), clock["timeOfDay"].as_f64(), length) {
+            (Some(day), Some(time), Some(length)) => {
+                self.last_time = None;
+                self.days = day;
+                ((day + time) * length, length)
+            }
+            (None, Some(time), Some(length)) => {
+                // A drop of more than half a day is the clock wrapping past midnight.
+                if self.last_time.is_some_and(|last| time < last - 0.5) {
+                    self.days += 1.;
+                }
+                self.last_time = Some(time);
+                ((self.days + time) * length, length)
+            }
+            _ => (elapsed, 120.),
+        }
+    }
+}
+
+/// The lit lens materials, shared by every head: one per colour and level step,
+/// built once and never mutated, so a breathing flash only swaps handles.
+#[derive(Resource, Default)]
+pub(crate) struct Palette(HashMap<(usize, u8), Handle<StandardMaterial>>);
+/// Brightness steps of a lit lens (the flash's level, quantised).
+pub(crate) const LEVEL_STEPS: f32 = 32.;
+pub(crate) fn level_step(level: f32) -> u8 {
+    (level.clamp(0., 1.) * LEVEL_STEPS).round() as u8
+}
+impl Palette {
+    fn get(&mut self, materials: &mut Assets<StandardMaterial>, lens: usize, step: u8) -> Handle<StandardMaterial> {
+        self.0
+            .entry((lens, step))
+            .or_insert_with(|| {
+                let c = COLORS[lens];
+                materials.add(StandardMaterial {
+                    base_color: c,
+                    emissive: c.to_linear() * (LENS_EMISSION * f32::from(step) / LEVEL_STEPS),
+                    metallic: 0.,
+                    perceptual_roughness: 0.4,
+                    ..default()
+                })
+            })
+            .clone()
+    }
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
 /// The mains edge (`DriveStreetlights` -> `SetPowered`), `HubTick` and `Apply`.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn tick(
     time: Res<Time>,
     snapshot: Res<GameSnapshot>,
     mains: Res<Mains>,
+    mut state: ResMut<DeviceState>,
+    mut palette: ResMut<Palette>,
     mut heads: Query<&mut Head>,
     mut lenses: Query<&mut MeshMaterial3d<StandardMaterial>>,
     mut lights: Query<(&mut PointLight, &mut Visibility)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let (now, day_length) = clock_seconds(&snapshot.0, time.elapsed_secs_f64());
+    let (now, day_length) = state.signal_clock.seconds(&snapshot.0, time.elapsed_secs_f64());
     for mut head in &mut heads {
         let head = &mut *head;
         if !head.frozen {
             head.set_powered(mains.live, now, day_length);
+            let key = (head.placement, head.index);
+            if head.powered {
+                state.signal_battery.remove(&key);
+            } else {
+                state.signal_battery.insert(key, head.battery_dead_at);
+            }
         }
         head.tick(now, time.delta_secs());
         let lit = head.lit();
-        let level_key = (head.level * 1000.) as u32;
-        if head.shown == Some((lit, level_key)) {
+        let step = level_step(head.level);
+        if head.shown == Some((lit, step)) {
             continue;
         }
-        let lens_changed = head.shown.map(|s| s.0) != Some(lit);
-        head.shown = Some((lit, level_key));
-        if lens_changed {
-            for (i, lens) in head.lenses.iter().enumerate() {
-                if let Some(Ok(mut m)) = lens.map(|e| lenses.get_mut(e)) {
-                    m.0 = if Some(i) == lit { head.on[i].clone() } else { head.off.clone() };
+        head.shown = Some((lit, step));
+        for (i, lens) in head.lenses.iter().enumerate() {
+            if let Some(Ok(mut m)) = lens.map(|e| lenses.get_mut(e)) {
+                let want = if Some(i) == lit { palette.get(&mut materials, i, step) } else { head.off.clone() };
+                if m.0 != want {
+                    m.0 = want;
                 }
             }
-        }
-        if let Some(i) = lit
-            && let Some(mut m) = materials.get_mut(&head.on[i])
-        {
-            m.emissive = COLORS[i].to_linear() * (LENS_EMISSION * head.level);
         }
         if let Ok((mut light, mut visibility)) = lights.get_mut(head.glow) {
             *visibility = if lit.is_some() { Visibility::Inherited } else { Visibility::Hidden };

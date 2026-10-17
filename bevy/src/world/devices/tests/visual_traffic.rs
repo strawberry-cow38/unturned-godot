@@ -46,6 +46,8 @@ fn render_source_traffic_light_demo() {
     .init_resource::<crate::content::ContentCache>()
     .init_resource::<Mains>()
     .init_resource::<traffic::SideRoads>()
+    .init_resource::<traffic::Palette>()
+    .init_resource::<DeviceState>()
     .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.05)))
     .insert_resource(GlobalAmbientLight {
         color: Color::srgb(0.05, 0.06, 0.09),

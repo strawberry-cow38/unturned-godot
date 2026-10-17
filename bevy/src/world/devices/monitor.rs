@@ -100,17 +100,40 @@ impl Monitor {
     }
 }
 
-/// `HeartMonitor.GlobalSeconds`: one clock for the whole ward.
+/// `HeartMonitor.GlobalSeconds`: one clock for the whole ward. Every screen
+/// reads it, so the screens share two materials (a beating trace and a
+/// flatline) advanced once a frame, not one per monitor.
 #[derive(Resource, Default)]
 pub(crate) struct Clock {
     pub(crate) seconds: f64,
     seed: u64,
+    traces: [Option<Handle<EcgMaterial>>; 2],
+    /// Whether `ecg_beep.ogg` / `ecg_flat.wav` exist, checked once.
+    sounds: Option<[bool; 2]>,
+}
+impl Clock {
+    fn trace(&mut self, materials: &mut Assets<EcgMaterial>, alive: bool) -> Handle<EcgMaterial> {
+        self.traces[usize::from(alive)]
+            .get_or_insert_with(|| {
+                materials.add(EcgMaterial {
+                    params: EcgParams {
+                        clock: Vec4::new(0., if alive { 1. } else { 0. }, 1., if alive { BEAT_PERIOD } else { FLATLINE_PERIOD }),
+                        extra: Vec4::new(1., 0., 0., 0.),
+                    },
+                })
+            })
+            .clone()
+    }
+    #[cfg(test)]
+    pub(crate) fn traces(&self) -> usize {
+        self.traces.iter().flatten().count()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach(
     mut commands: Commands,
-    state: Res<DeviceState>,
+    mut state: ResMut<DeviceState>,
     mut clock: ResMut<Clock>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut standard: ResMut<Assets<StandardMaterial>>,
@@ -130,8 +153,12 @@ pub(crate) fn attach(
                 .map_or(0x5EED, |d| d.as_nanos() as u64)
                 | 1;
         }
-        // GD.Randf() < AliveChance, per placement.
-        let alive = crate::particles::random(&mut clock.seed) < ALIVE_CHANCE;
+        // GD.Randf() < AliveChance, per placement, once per world build: a
+        // re-stream keeps the roll.
+        let alive = *state
+            .monitor_alive
+            .entry(object.source_index)
+            .or_insert_with(|| crate::particles::random(&mut clock.seed) < ALIVE_CHANCE);
         let mesh = quad.get_or_insert_with(|| meshes.add(screen_mesh())).clone();
         let off = off
             .get_or_insert_with(|| {
@@ -142,12 +169,7 @@ pub(crate) fn attach(
                 })
             })
             .clone();
-        let material = ecg.add(EcgMaterial {
-            params: EcgParams {
-                clock: Vec4::new(0., if alive { 1. } else { 0. }, 0., if alive { BEAT_PERIOD } else { FLATLINE_PERIOD }),
-                extra: Vec4::new(1., 0., 0., 0.),
-            },
-        });
+        let material = clock.trace(ecg, alive);
         let screen = commands
             .spawn((
                 Name::new("ECG screen"),
@@ -228,6 +250,10 @@ pub(crate) fn tick(
         ear.map_or(0., |ear| crate::sound::distance_gain(AUDIO_DB, AUDIO_UNIT, AUDIO_RANGE, at.distance(ear)) * master)
     };
     let can_play = audio.is_some();
+    let [has_beep, has_flat] = *clock.sounds.get_or_insert_with(|| {
+        ["ecg_beep.ogg", "ecg_flat.wav"].map(|f| config.content_root.join(f).is_file())
+    });
+    let mut traced = [false; 2];
     let mut flat_wanted: HashMap<Entity, Vec3> = HashMap::new();
     for (entity, mut monitor, pose) in &mut monitors {
         let lit = monitor.on && mains.live;
@@ -254,20 +280,13 @@ pub(crate) fn tick(
             continue;
         }
         let period = monitor.period();
-        if let Some(mut material) = materials.as_mut().and_then(|m| m.get_mut(&monitor.ecg)) {
-            material.params.clock = Vec4::new(
-                clock.seconds.rem_euclid(f64::from(period)) as f32,
-                if monitor.alive { 1. } else { 0. },
-                1.,
-                period,
-            );
-        }
+        traced[usize::from(monitor.alive)] = true;
         let at = pose.translation();
         if monitor.alive {
             let phase = (clock.seconds.rem_euclid(f64::from(period)) / f64::from(period)) as f32;
             let crossed = monitor.last_beat >= 0. && monitor.last_beat < R_PHASE && phase >= R_PHASE;
             monitor.last_beat = phase;
-            if crossed && can_play && ear.is_some_and(|e| e.distance(at) < AUDIO_RANGE) && config.content_root.join("ecg_beep.ogg").is_file() {
+            if crossed && can_play && has_beep && ear.is_some_and(|e| e.distance(at) < AUDIO_RANGE) {
                 commands.spawn((
                     Name::new("ECG beep"),
                     AudioPlayer::new(assets.load("ecg_beep.ogg")),
@@ -282,6 +301,16 @@ pub(crate) fn tick(
             flat_wanted.insert(entity, at);
         }
     }
+    // The two shared traces advance once a frame, and only while one is shown.
+    for alive in [false, true] {
+        let Some(handle) = clock.traces[usize::from(alive)].clone().filter(|_| traced[usize::from(alive)]) else {
+            continue;
+        };
+        let period = if alive { BEAT_PERIOD } else { FLATLINE_PERIOD };
+        if let Some(mut material) = materials.as_mut().and_then(|m| m.get_mut(&handle)) {
+            material.params.clock.x = clock.seconds.rem_euclid(f64::from(period)) as f32;
+        }
+    }
     for (voice, flat, mut playback, sink) in &mut flats {
         let Some(at) = flat_wanted.remove(&flat.monitor).filter(|_| flat.epoch == epoch.0) else {
             commands.entity(voice).try_despawn();
@@ -292,7 +321,7 @@ pub(crate) fn tick(
             sink.set_volume(Volume::Linear(gain(at)));
         }
     }
-    if !can_play || !config.content_root.join("ecg_flat.wav").is_file() {
+    if !can_play || !has_flat {
         return;
     }
     for (monitor, at) in flat_wanted {

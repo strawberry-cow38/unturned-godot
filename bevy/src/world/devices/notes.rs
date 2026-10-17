@@ -99,7 +99,9 @@ pub(crate) fn attach(
             .with_child((
                 Name::new("NoteBody look box"),
                 Collider::cuboid(size.x * 0.5, size.y * 0.5, size.z * 0.5),
-                CollisionGroups::new(Group::GROUP_4 | SOURCE_PROP, Group::ALL),
+                // Look-only: SOURCE_PROP without GROUP_4, which the player's
+                // walking mask includes (`NoteBody`: layer bit 6, mask 0).
+                CollisionGroups::new(SOURCE_PROP, Group::ALL),
                 Transform::from_translation(center),
             ));
     }

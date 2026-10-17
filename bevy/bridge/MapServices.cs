@@ -11,7 +11,18 @@ namespace UnturnedBevy;
 /// ResourceField. The original data declarations are extracted at build time.</summary>
 public static partial class MapServices
 {
-    public sealed record Parsed(JsonElement Spec, ObjectMapping[] Objects, object[] Resources);
+    public sealed record Parsed(JsonElement Spec, ObjectMapping[] Objects, object[] Resources,
+        IReadOnlyDictionary<int, VendMachine> Vendors = null);
+    /// <summary>A placed <c>VendingMachine</c>: its tray (<c>DispensePoint</c>) in the absolute
+    /// placement frame, and the one drink it sells.</summary>
+    public sealed record VendMachine(float[] Tray, ushort Drink);
+    /// <summary><c>VendingMachine.DispensePoint</c>: centred across the mesh's +Y front, clear of it by
+    /// 0.35 m, 0.30 m up the mesh's Z, through the placement.</summary>
+    internal static float[] VendTray((float[] lo, float[] hi) b, Matrix4x4 transform)
+    {
+        var at = Vector3.Transform(new(b.lo[0] + (b.hi[0] - b.lo[0]) * .5f, b.hi[1] + .35f, b.lo[2] + .30f), transform);
+        return [at.X, at.Y, at.Z];
+    }
     public sealed class ObjectMapping
     {
         public int SourceIndex { get; init; }
@@ -47,6 +58,7 @@ public static partial class MapServices
         var seatCatalog = WorldBuilder.LoadSeatCatalog(objectDir + Path.DirectorySeparatorChar);
         int index = 0, sourceIndex = -1;
         var bounds = new Dictionary<string, (float[] lo, float[] hi)>();
+        var vendors = new Dictionary<int, VendMachine>();
         foreach (string line in File.ReadLines(manifest))
         {
             sourceIndex++;
@@ -83,6 +95,11 @@ public static partial class MapServices
                 {
                     var rotation = new[] { F(p[4]), yaw, -F(p[6]) }; var scale = new[] { F(p[7]), F(p[8]), F(p[9]) };
                     var transform = PlacementMatrix(rotation, scale); transform.Translation = new(pos[0], pos[1], pos[2]);
+                    if (name is "Vendor_0" or "Vendor_1")
+                    {
+                        if (!bounds.TryGetValue(name, out var vb)) bounds[name] = vb = MeshBounds(Path.Combine(objectDir, name + ".obj"));
+                        if (vb.lo != null) vendors[sourceIndex] = new(VendTray(vb, transform), name == "Vendor_1" ? VendSoda : VendCola);
+                    }
                     if (doorCatalog.TryGetValue(name, out var leaves))
                     {
                         var models = DoorModels(objectDir, name, leaves);
@@ -156,7 +173,7 @@ public static partial class MapServices
             kind = z.Kind.ToString(), shape = z.Shape.ToString() });
         var spec = JsonSerializer.SerializeToElement(new { mapRoot = Text(request, "mapRoot"), resourceCount = resourceIndex, resources = resourceMetadata,
             destructibleCount = index, destructibles, containers, fixtures, taps, objectDoors, containerDoors, seats, npcs, deadzones = zones });
-        return new(spec, mappings.ToArray(), resources.ToArray());
+        return new(spec, mappings.ToArray(), resources.ToArray(), vendors);
     }
     static float F(string s) => float.Parse(s, CultureInfo.InvariantCulture);
     static Dictionary<string, string> ReadPairs(string path)

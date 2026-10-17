@@ -4,6 +4,11 @@
 //! source (`mode != WorldMode.Dedicated`, no command, no replication), so the
 //! port keeps their state local too; the only shared input is the accepted
 //! mains (`PowerNet.MainsLive`), read from replicated GridSource fixtures.
+//!
+//! On a `--dedicated` host none of them run (`has_local_player`), as the
+//! source never builds them there. The car lift is the exception: its
+//! platform is a collider in EVERY mode (`WorldBuilder` "EVERY MODE, because
+//! the ramp is a moving COLLIDER"), so `carlift::attach` runs on the server too.
 //! See `bevy/docs/WORLD_DEVICES_PORT.md`.
 use super::{WorldObject, origin::WorldOrigin};
 use crate::{
@@ -46,6 +51,17 @@ pub(crate) struct DeviceState {
     pub(crate) radio_on: std::collections::HashSet<usize>,
     /// `HeartMonitor._on`: ON by default.
     pub(crate) monitor_off: std::collections::HashSet<usize>,
+    /// `HeartMonitor._alive`: rolled once per world build (`GD.Randf()`), so a
+    /// re-stream must not re-roll it.
+    pub(crate) monitor_alive: HashMap<usize, bool>,
+    /// `TrafficLight._batteryDeadAt` of each head running on its battery, by
+    /// (placement, head): a re-stream mid-outage keeps the deadline.
+    pub(crate) signal_battery: HashMap<(usize, usize), f64>,
+    /// Paid vends whose can has not dropped yet, by placement: seconds left
+    /// on the shake (`_pendingDrink`). Outlives the machine's entity.
+    pub(crate) vend_drops: HashMap<usize, f32>,
+    /// The traffic clock's fallback when the snapshot carries no day.
+    pub(crate) signal_clock: traffic::Clock,
 }
 
 /// `DayNightCycle.MainsLive`, throttled to 4 Hz as the source scan is.
@@ -64,68 +80,84 @@ pub(crate) struct DevicePlugin;
 impl Plugin for DevicePlugin {
     fn build(&self, app: &mut App) {
         register_ecg(app);
-        app.init_resource::<monitor::Clock>()
-            .init_resource::<traffic::SideRoads>()
-            .init_resource::<DeviceState>()
-            .init_resource::<Mains>()
-            .init_resource::<notes::Texts>()
-            .init_resource::<notes::Reader>()
-            .add_systems(
-                Update,
-                (
-                    reset_epoch,
-                    mains,
-                    (
-                        lamps::attach,
-                        notes::attach,
-                        vending::attach,
-                        radio::attach,
-                        monitor::attach,
-                        traffic::attach,
-                        carlift::attach,
-                    ),
-                    (
-                        lamps::grid,
-                        lamps::hum,
-                        (vending::shake, vending::tint).chain(),
-                        radio::hiss,
-                        monitor::tick,
-                        traffic::tick,
-                    ),
-                )
-                    .chain()
-                    .after(crate::entities::WorldServicesReady)
-                    .before(CollectInteractions),
-            )
-            .add_systems(
-                Update,
-                collect_focus
-                    .in_set(CollectInteractions)
-                    .after(PlayerCameraUpdate),
-            )
-            .add_systems(
-                Update,
-                (
-                    scenery_info,
-                    lamps::press,
-                    notes::press,
-                    notes::draw,
-                    vending::press,
-                    vending::prompt,
-                    radio::press,
-                    monitor::press,
-                )
-                    .chain()
-                    .after(CollectInteractions)
-                    .before(crate::entities::ApplyInteractions),
-            )
-            .add_systems(
-                Update,
-                radio::board
-                    .after(radio::press)
-                    .run_if(resource_exists::<bevy::text::TextPipeline>),
-            );
+        systems(app);
     }
+}
+
+/// The device resources and schedule, apart from the render-side material.
+pub(crate) fn systems(app: &mut App) {
+    app.init_resource::<monitor::Clock>()
+        .init_resource::<traffic::SideRoads>()
+        .init_resource::<traffic::Palette>()
+        .init_resource::<DeviceState>()
+        .init_resource::<Mains>()
+        .init_resource::<notes::Texts>()
+        .init_resource::<notes::Reader>()
+        .add_systems(
+            Update,
+            (
+                reset_epoch,
+                mains,
+                (
+                    lamps::attach,
+                    notes::attach,
+                    vending::attach,
+                    radio::attach,
+                    monitor::attach,
+                    traffic::attach,
+                ),
+                (
+                    lamps::grid,
+                    lamps::hum,
+                    (vending::shake, vending::tint).chain(),
+                    radio::hiss,
+                    monitor::tick,
+                    traffic::tick,
+                ),
+            )
+                .chain()
+                .after(crate::entities::WorldServicesReady)
+                .before(CollectInteractions)
+                .run_if(crate::dedicated::has_local_player),
+        )
+        // The platform collider exists in every mode, dedicated included.
+        .add_systems(
+            Update,
+            carlift::attach
+                .after(crate::entities::WorldServicesReady)
+                .before(CollectInteractions),
+        )
+        .add_systems(
+            Update,
+            collect_focus
+                .in_set(CollectInteractions)
+                .after(PlayerCameraUpdate)
+                .run_if(crate::dedicated::has_local_player),
+        )
+        .add_systems(
+            Update,
+            (
+                scenery_info,
+                lamps::press,
+                notes::press,
+                notes::draw,
+                vending::press,
+                vending::prompt,
+                radio::press,
+                monitor::press,
+            )
+                .chain()
+                .after(CollectInteractions)
+                .before(crate::entities::ApplyInteractions)
+                .run_if(crate::dedicated::has_local_player),
+        )
+        .add_systems(
+            Update,
+            radio::board
+                .after(radio::press)
+                .run_if(resource_exists::<bevy::text::TextPipeline>)
+                .run_if(crate::dedicated::has_local_player),
+        );
 }
 
 /// The patient monitor's screen material (`ecg.gdshader`).
@@ -241,7 +273,7 @@ fn collect_focus(
             .exclude_sensors()
             .groups(CollisionGroups::new(
                 Group::GROUP_2,
-                Group::GROUP_1 | Group::GROUP_4,
+                Group::GROUP_1 | Group::GROUP_4 | crate::world::buildings::SOURCE_PROP,
             ))
             .predicate(&exclude_owner),
     ) else {

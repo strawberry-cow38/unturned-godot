@@ -156,6 +156,7 @@ fn signal_app() -> (App, Entity, Entity) {
     .init_resource::<DeviceState>()
     .init_resource::<Mains>()
     .init_resource::<traffic::SideRoads>()
+    .init_resource::<traffic::Palette>()
     .configure_sets(Update, crate::entities::ApplyInteractions.after(CollectInteractions))
     .add_systems(
         Update,
@@ -215,4 +216,171 @@ fn a_mast_runs_two_heads_off_the_world_clock_and_the_lift_focuses_without_a_rim(
     let focus = app.world().resource::<InteractionFocus>();
     assert!(focus.selected_args("carLift", &json!({"sourceIndex":900})));
     assert_eq!(focus.outlined(), None, "_focusCarLift claims no outline");
+}
+
+/// The production device schedule on a `--dedicated` host: the source builds
+/// none of the presentation devices there (`mode != WorldMode.Dedicated`), but
+/// the car lift's platform is a collider "in EVERY MODE". The gated systems'
+/// resources (focus, keys, snapshot, UI) are deliberately absent: a system
+/// that ran anyway would fail its parameter validation.
+#[test]
+fn a_dedicated_host_builds_only_the_car_lift_platform() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default()))
+        .init_asset::<Mesh>()
+        .init_asset::<StandardMaterial>()
+        .insert_resource(WorldConfig::default())
+        .init_resource::<crate::content::ContentCache>()
+        .init_resource::<WorldSessionEpoch>()
+        .insert_resource(crate::LaunchOptions(crate::cli::Options {
+            network: crate::network::Target::Dedicated { port: 47872, name: None, max_players: None },
+            play: true,
+            ..default()
+        }));
+    super::super::systems(&mut app);
+    let world = app.world_mut();
+    let material = world.resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial::default());
+    for (name, index, x) in [("Traffic_Light_0", 1, 40.), (carlift::PROP, 2, 0.), ("Light_0", 3, -8.), ("Vendor_0", 4, 8.)] {
+        let mesh = world.resource_mut::<Assets<Mesh>>().add(obj(name).mesh());
+        let e = Vec3::new(270., 180., 0.);
+        world.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material.clone()),
+            crate::world::placement_transform(Vec3::new(x, 0., 0.), e, Vec3::ONE),
+            WorldObject { guid: String::new(), asset_name: name.into(), source_index: index },
+            PlacementEuler(e),
+        ));
+    }
+    step(&mut app, 4);
+    let world = app.world_mut();
+    assert_eq!(world.query::<&carlift::Ramp>().iter(world).count(), 1, "the platform exists on the server");
+    assert_eq!(
+        world.query_filtered::<(), (With<bevy_rapier3d::prelude::Collider>, With<ChildOf>)>().iter(world).count(),
+        1,
+        "and is a collider"
+    );
+    assert_eq!(world.query::<&Head>().iter(world).count(), 0, "no traffic heads");
+    assert_eq!(world.query::<&lamps::LampFixture>().iter(world).count(), 0, "no lamp lights");
+    assert_eq!(world.query::<&vending::Vendor>().iter(world).count(), 0, "no vending machine");
+    assert!(world.query::<&PointLight>().iter(world).next().is_none(), "no device light at all");
+}
+
+/// A joined client's snapshot has no `day` (`RemoteSession.ClockSnapshot`):
+/// the time of day wraps every day, and the battery deadline two days out
+/// must still be reached, so the fallback counts the wraps itself.
+#[test]
+fn a_dayless_clock_counts_its_own_wraps_so_the_battery_still_dies() {
+    let length = 120.;
+    let mut clock = traffic::Clock::default();
+    let snap = |time: f64| json!({"worldClock":{"day":null,"timeOfDay":time,"dayLengthSeconds":length}});
+    let (start, _) = clock.seconds(&snap(0.9), 0.);
+    let mut head = Head::for_test(0., false);
+    head.set_powered(false, start, length);
+    let mut last = start;
+    let mut dark_at = None;
+    // Three and a half days in 0.01-day steps, wrapping at midnight.
+    for step in 1..=350 {
+        let time = (0.9 + f64::from(step) * 0.01).rem_euclid(1.);
+        let (now, _) = clock.seconds(&snap(time), 0.);
+        assert!(now > last, "monotonic across the wrap at step {step}: {now} after {last}");
+        last = now;
+        head.tick(now, 0.02);
+        if head.phase == Phase::Off && dark_at.is_none() {
+            dark_at = Some(now - start);
+        }
+    }
+    let dark = dark_at.expect("the battery dies on a day-less clock");
+    assert!((2. * length..2. * length + 4.).contains(&dark), "two days plus the stutter: {dark}");
+    // A replicated day takes over from the local count.
+    let replicated = json!({"worldClock":{"day":7,"timeOfDay":0.25,"dayLengthSeconds":length}});
+    assert_eq!(clock.seconds(&replicated, 0.).0, 7.25 * length);
+}
+
+fn set_clock(app: &mut App, seconds: f64) {
+    app.world_mut().resource_mut::<GameSnapshot>().0["worldClock"]["timeOfDay"] = json!(seconds / 1800.);
+}
+fn set_mains(app: &mut App, on: bool) {
+    app.world_mut().resource_mut::<GameSnapshot>().0["deployables"][0]["toggledOn"] = json!(on);
+}
+fn mast_heads(app: &mut App, mast: Entity) -> Vec<(usize, f64)> {
+    let mut q = app.world_mut().query::<(&Head, &ChildOf)>();
+    let mut v: Vec<_> = q
+        .iter(app.world())
+        .filter(|(_, p)| p.parent() == mast)
+        .map(|(h, _)| (h.index, h.battery_dead_at()))
+        .collect();
+    v.sort_by_key(|h| h.0);
+    v
+}
+
+/// `build_world` respawns every `WorldObject` on a re-stream; the source's
+/// nodes never stream, so a head on its battery keeps its deadline.
+#[test]
+fn a_restreamed_mast_keeps_its_battery_deadline() {
+    let (mut app, mast, _) = signal_app();
+    step(&mut app, 4);
+    set_mains(&mut app, false);
+    step(&mut app, 15);
+    let before = mast_heads(&mut app, mast);
+    assert_eq!(before.len(), 2);
+    assert!(before.iter().all(|h| h.1 == 2. * 1800.), "stamped two days out at clock 0: {before:?}");
+    // An hour later the region re-streams: the old mast goes, a new one comes.
+    set_clock(&mut app, 3600.);
+    step(&mut app, 2);
+    let (mesh, material, xf, euler) = {
+        let w = app.world();
+        (
+            w.get::<Mesh3d>(mast).unwrap().clone(),
+            w.get::<MeshMaterial3d<StandardMaterial>>(mast).unwrap().clone(),
+            *w.get::<Transform>(mast).unwrap(),
+            *w.get::<PlacementEuler>(mast).unwrap(),
+        )
+    };
+    app.world_mut().entity_mut(mast).despawn();
+    let again = app
+        .world_mut()
+        .spawn((
+            mesh,
+            material,
+            xf,
+            WorldObject { guid: String::new(), asset_name: "Traffic_Light_0".into(), source_index: 3125 },
+            euler,
+        ))
+        .id();
+    step(&mut app, 4);
+    assert_eq!(mast_heads(&mut app, again), before, "not re-stamped an hour later");
+    // Mains back: the deadline is forgotten.
+    set_mains(&mut app, true);
+    step(&mut app, 15);
+    assert!(mast_heads(&mut app, again).iter().all(|h| h.1 == f64::INFINITY));
+    assert!(app.world().resource::<DeviceState>().signal_battery.is_empty());
+}
+
+#[derive(Resource, Default)]
+struct Modified(usize);
+fn count_modified(mut events: MessageReader<AssetEvent<StandardMaterial>>, mut n: ResMut<Modified>) {
+    n.0 += events.read().filter(|e| matches!(e, AssetEvent::Modified { .. })).count();
+}
+
+/// The breathing flash swaps shared palette handles; it never rewrites a
+/// material asset per frame.
+#[test]
+fn a_breathing_flash_never_mutates_a_material() {
+    let (mut app, mast, _) = signal_app();
+    app.init_resource::<Modified>().add_systems(Last, count_modified);
+    step(&mut app, 4);
+    set_mains(&mut app, false);
+    step(&mut app, 15);
+    app.world_mut().resource_mut::<Modified>().0 = 0;
+    let mut levels = vec![];
+    for frame in 0..150 {
+        set_clock(&mut app, f64::from(frame) * 0.02);
+        step(&mut app, 1);
+        let mut q = app.world_mut().query::<(&Head, &ChildOf)>();
+        levels.extend(q.iter(app.world()).filter(|(_, p)| p.parent() == mast).map(|(h, _)| h.level));
+    }
+    assert!(levels.iter().any(|l| *l > 0.9) && levels.iter().any(|l| *l < 0.1), "it did breathe");
+    assert_eq!(app.world().resource::<Modified>().0, 0, "no material rewritten while breathing");
+    let palette = app.world().resource::<traffic::Palette>().len();
+    assert!(palette <= 3 * (traffic::LEVEL_STEPS as usize + 1), "a bounded shared palette: {palette}");
 }

@@ -2,7 +2,10 @@
 //! 465). The machine's state, shake and refusal flash are local presentation,
 //! as in the source; the purchase goes through the listen host's server
 //! (`MpLoopback.NetVendPay`/`NetVendDrop`, bridge `vendPay`/`vendDrop`). A
-//! joined client has no seam and the machine says "Out of order".
+//! joined client has no seam and the machine says "Out of order". The server
+//! owns the drink and the tray (`MapServices.VendMachine`); the request names
+//! only the machine. A paid can waits in `DeviceState::vend_drops`, which
+//! outlives the machine's entity across a region re-stream.
 use super::*;
 use crate::{bridge::CoreBridge, info_billboard::{Content, FocusedInfo, View}, ui::UiModel};
 
@@ -60,26 +63,28 @@ pub(crate) fn color_of(state: State) -> Color {
 #[derive(Component, Debug)]
 pub(crate) struct Vendor {
     pub(crate) drink: u16,
+    pub(crate) index: usize,
     body_min: Vec3,
     body_max: Vec3,
-    pub(crate) rest: Transform,
+    /// The shudder currently added to the pose: removed, never overwritten
+    /// with a stored rest pose, so a procedural origin rebase mid-shake keeps.
+    pub(crate) offset: Vec3,
     pub(crate) shake: f32,
     pub(crate) cooldown: f32,
-    pub(crate) pending: u16,
     pub(crate) denied: f32,
     pub(crate) state: State,
 }
 impl Vendor {
     #[cfg(test)]
-    pub(crate) fn for_test(drink: u16, body_min: Vec3, body_max: Vec3, rest: Transform) -> Self {
+    pub(crate) fn for_test(drink: u16, body_min: Vec3, body_max: Vec3) -> Self {
         Self {
             drink,
+            index: 0,
             body_min,
             body_max,
-            rest,
+            offset: Vec3::ZERO,
             shake: 0.,
             cooldown: 0.,
-            pending: 0,
             denied: 0.,
             state: State::Ready,
         }
@@ -124,16 +129,6 @@ impl Vendor {
         let c = self.center();
         pose.transform_point(Vec3::new(c.x, c.y, self.body_max.z)) + Vec3::Y * 0.3
     }
-    /// `DispensePoint`: the tray, centred across the +Y front, clear of it by
-    /// 0.35 m, 0.30 m up the mesh's Z.
-    pub(crate) fn dispense_point(&self) -> Vec3 {
-        let size = self.body_max - self.body_min;
-        self.rest.transform_point(Vec3::new(
-            self.body_min.x + size.x * 0.5,
-            self.body_min.y + size.y + 0.35,
-            self.body_min.z + 0.30,
-        ))
-    }
 }
 
 /// `UpdateLookFocus`/`HasFeed`/`StateFor` inputs.
@@ -150,12 +145,13 @@ fn dollars(model: &UiModel) -> u32 {
 
 pub(crate) fn attach(
     mut commands: Commands,
+    state: Res<DeviceState>,
     config: Res<crate::world::WorldConfig>,
     mut cache: ResMut<crate::content::ContentCache>,
     mut meshes: ResMut<Assets<Mesh>>,
-    objects: Query<(Entity, &WorldObject, &Transform), (Added<WorldObject>, With<PlacementEuler>)>,
+    objects: Query<(Entity, &WorldObject), (Added<WorldObject>, With<PlacementEuler>)>,
 ) {
-    for (entity, object, xf) in &objects {
+    for (entity, object) in &objects {
         if !is_vendor_prop(&object.asset_name) {
             continue;
         }
@@ -163,19 +159,21 @@ pub(crate) fn attach(
         let Ok((_, data)) = cache.load_mesh(&path, &mut meshes) else {
             continue;
         };
+        // Mid-vend across a re-stream: still shaking, still owed its can.
+        let shake = state.vend_drops.get(&object.source_index).copied().unwrap_or(0.);
         commands.entity(entity).insert((
             Device(Target::Vendor(object.source_index)),
             DeviceTint(Color::WHITE),
             Vendor {
                 drink: if object.asset_name == "Vendor_1" { SODA } else { COLA },
+                index: object.source_index,
                 body_min: data.min,
                 body_max: data.max,
-                rest: *xf,
-                shake: 0.,
-                cooldown: 0.,
-                pending: 0,
+                offset: Vec3::ZERO,
+                shake,
+                cooldown: if shake > 0. { shake + 0.55 } else { 0. },
                 denied: 0.,
-                state: State::Ready,
+                state: if shake > 0. { State::Dispensing } else { State::Ready },
             },
         ));
     }
@@ -209,13 +207,14 @@ pub(crate) fn press(
     focus: Res<InteractionFocus>,
     bridge: Option<Res<CoreBridge>>,
     mut model: ResMut<UiModel>,
-    mut vendors: Query<(&Device, &mut Vendor)>,
+    mut state: ResMut<DeviceState>,
+    mut vendors: Query<(&Device, &mut Vendor, &Transform)>,
     mut commands: Commands,
     config: Res<crate::world::WorldConfig>,
     assets: Res<AssetServer>,
     audio: Option<Res<Assets<AudioSource>>>,
 ) {
-    for (device, mut vendor) in &mut vendors {
+    for (device, mut vendor, pose) in &mut vendors {
         if !pressed_target(&ui, &settings, &keys, &mouse, &focus, device.0) {
             continue;
         }
@@ -228,7 +227,7 @@ pub(crate) fn press(
         }
         let paid = bridge.as_ref().is_some_and(|bridge| {
             bridge
-                .request("action", json!({"name":"vendPay","args":{}}))
+                .request("action", json!({"name":"vendPay","args":{"sourceIndex":vendor.index}}))
                 .map(|r| r["result"]["queued"] == true)
                 .unwrap_or_else(|error| {
                     model.notice(error.to_string());
@@ -239,7 +238,7 @@ pub(crate) fn press(
             vendor.denied = DENY_SECONDS;
             continue;
         }
-        vendor.pending = vendor.drink;
+        state.vend_drops.insert(vendor.index, SHAKE_SECONDS);
         vendor.shake = SHAKE_SECONDS;
         vendor.cooldown = SHAKE_SECONDS + 0.55;
         vendor.state = State::Dispensing;
@@ -253,19 +252,21 @@ pub(crate) fn press(
                     .with_spatial(true)
                     .with_spatial_scale(bevy::audio::SpatialScale::new(0.5 / 20.))
                     .with_volume(bevy::audio::Volume::Linear(0.9)),
-                Transform::from_translation(vendor.rest.transform_point(vendor.center())),
+                Transform::from_translation(pose.transform_point(vendor.center())),
             ));
         }
     }
 }
 
-/// `HubTick`: timers, the decaying shudder off the rest pose, and the can on
-/// the tick the shake reaches zero.
+/// `HubTick`: timers, the decaying shudder on the pose, and the can on the
+/// tick the shake reaches zero. The owed cans are timed off the machine's
+/// entity, so a re-stream mid-shake still drops the paid can.
 pub(crate) fn shake(
     time: Res<Time>,
     ui: Option<Res<UiState>>,
     bridge: Option<Res<CoreBridge>>,
     mut model: ResMut<UiModel>,
+    mut state: ResMut<DeviceState>,
     mut vendors: Query<(&mut Vendor, &mut Transform)>,
 ) {
     let dt = if ui.is_some_and(|ui| crate::player::simulation_paused(&ui)) {
@@ -283,20 +284,30 @@ pub(crate) fn shake(
         vendor.shake = (vendor.shake - dt).max(0.);
         let amp = 0.018 * (vendor.shake / SHAKE_SECONDS);
         let ph = vendor.shake * 46.;
-        let off = Vec3::new(ph.sin() * amp, 0., (ph * 0.7).cos() * amp * 0.5);
-        pose.translation = vendor.rest.translation + off;
-        if vendor.shake <= 0. {
-            pose.translation = vendor.rest.translation;
-            let drink = std::mem::take(&mut vendor.pending);
-            if drink != 0
-                && let Some(bridge) = &bridge
-                && let Err(error) = bridge.request(
-                    "action",
-                    json!({"name":"vendDrop","args":{"drinkId":drink,"position":vendor.dispense_point().to_array()}}),
-                )
-            {
-                model.notice(error.to_string());
-            }
+        let off = if vendor.shake > 0. {
+            Vec3::new(ph.sin() * amp, 0., (ph * 0.7).cos() * amp * 0.5)
+        } else {
+            Vec3::ZERO
+        };
+        pose.translation += off - vendor.offset;
+        vendor.offset = off;
+    }
+    if dt <= 0. {
+        return;
+    }
+    let mut due = vec![];
+    state.vend_drops.retain(|index, left| {
+        *left -= dt;
+        if *left <= 0. {
+            due.push(*index);
+        }
+        *left > 0.
+    });
+    for index in due {
+        if let Some(bridge) = &bridge
+            && let Err(error) = bridge.request("action", json!({"name":"vendDrop","args":{"sourceIndex":index}}))
+        {
+            model.notice(error.to_string());
         }
     }
 }

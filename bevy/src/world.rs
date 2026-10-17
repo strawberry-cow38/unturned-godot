@@ -1714,8 +1714,6 @@ pub fn is_walk_through(name: &str) -> bool {
     .iter()
     .any(|p| name.starts_with(p))
 }
-/// WorldBuilder's solid ladder box: raw rungs contain centre-line gaps and cannot
-/// serve the source's continuous 0.75m attach/hold ray.
 /// `CarLift.Spawn`'s platform box (the ramp mesh's AABB) at the lift's pose,
 /// as authority collision.
 pub(crate) fn car_lift_ramp(lift: Transform, ramp: &ObjData) -> ObjectCollider {
@@ -1725,6 +1723,8 @@ pub(crate) fn car_lift_ramp(lift: Transform, ramp: &ObjData) -> ObjectCollider {
         lift * Transform::from_translation(center),
     )
 }
+/// WorldBuilder's solid ladder box: raw rungs contain centre-line gaps and cannot
+/// serve the source's continuous 0.75m attach/hold ray.
 fn ladder_box_geometry(mesh: &ObjData) -> ObjData {
     let h = (mesh.max - mesh.min) * 0.5;
     let mut out = ObjData {

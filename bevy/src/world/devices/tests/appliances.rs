@@ -17,14 +17,14 @@ fn vending_states_rank_as_the_source_does() {
 }
 
 /// Godot oracle (`bevy/tools/VendingOracle.cs` on `--proptest=Vendor_0` at
-/// RotationDegrees(270, 0, 0)): PromptAnchor (0, 2.8, -0.5723389) and the
-/// private DispensePoint (0, 0.30000004, -1.494679).
+/// RotationDegrees(270, 0, 0)): PromptAnchor (0, 2.8, -0.5723389). The private
+/// DispensePoint (0, 0.30000004, -1.494679) is the server's now
+/// (`VendingTests.TheTrayIsTheGodotDispensePoint`).
 #[test]
-fn the_tray_and_prompt_anchor_match_the_godot_vending_machine() {
+fn the_prompt_anchor_matches_the_godot_vending_machine() {
     let data = obj("Vendor_0");
     let rest = Transform::from_rotation(Quat::from_rotation_x(270f32.to_radians()));
-    let v = vending::Vendor::for_test(vending::COLA, data.min, data.max, rest);
-    assert!(v.dispense_point().distance(Vec3::new(0., 0.300_000_04, -1.494_679)) < 1e-4, "{}", v.dispense_point());
+    let v = vending::Vendor::for_test(vending::COLA, data.min, data.max);
     assert!(v.prompt_anchor(&rest).distance(Vec3::new(0., 2.8, -0.572_338_9)) < 1e-4, "{}", v.prompt_anchor(&rest));
     assert_eq!(v.prompt("F"), "[F] $1 cola");
 }
@@ -186,6 +186,62 @@ fn a_monitor_shows_its_ecg_while_on_and_fed_and_the_off_panel_otherwise() {
     assert!(!ecg(&app), "dark with the grid");
 }
 
+#[derive(Resource, Default)]
+struct EcgWrites(usize);
+fn count_ecg_writes(mut events: MessageReader<AssetEvent<monitor::EcgMaterial>>, mut n: ResMut<EcgWrites>) {
+    n.0 += events.read().filter(|e| matches!(e, AssetEvent::Modified { .. })).count();
+}
+
+/// A ward of monitors shares the two ward-clock traces (one write each per
+/// frame, not one per monitor), and a re-stream keeps each one's alive roll
+/// (`HeartMonitor` rolls once per world build; source nodes never stream).
+#[test]
+fn a_ward_shares_two_traces_and_a_restream_keeps_every_alive_roll() {
+    let (mut app, first) = prop_app(monitor::PROP, 100, Vec3::new(270., 0., 0.), grid(true), UiModel::default());
+    app.init_resource::<EcgWrites>().add_systems(Last, count_ecg_writes);
+    let euler = Vec3::new(270., 0., 0.);
+    let spawn_ward = |app: &mut App| -> Vec<Entity> {
+        let world = app.world_mut();
+        let mesh = world.get::<Mesh3d>(first).unwrap().clone();
+        let material = world.get::<MeshMaterial3d<StandardMaterial>>(first).unwrap().clone();
+        (101..130)
+            .map(|i| {
+                world
+                    .spawn((
+                        mesh.clone(),
+                        material.clone(),
+                        crate::world::placement_transform(Vec3::new(i as f32 * 2., 0., -2.), euler, Vec3::ONE),
+                        WorldObject { guid: String::new(), asset_name: monitor::PROP.into(), source_index: i },
+                        PlacementEuler(euler),
+                    ))
+                    .id()
+            })
+            .collect()
+    };
+    let ward = spawn_ward(&mut app);
+    step(&mut app, 4);
+    let rolls = |app: &mut App| -> Vec<(usize, bool)> {
+        let mut q = app.world_mut().query::<&monitor::Monitor>();
+        let mut v: Vec<_> = q.iter(app.world()).filter(|m| m.index > 100).map(|m| (m.index, m.alive)).collect();
+        v.sort();
+        v
+    };
+    let before = rolls(&mut app);
+    assert_eq!(before.len(), 29);
+    assert!(before.iter().any(|m| m.1) && before.iter().any(|m| !m.1), "both kinds rolled: {before:?}");
+    assert!(app.world().resource::<Assets<monitor::EcgMaterial>>().len() <= 2, "two shared traces");
+    app.world_mut().resource_mut::<EcgWrites>().0 = 0;
+    step(&mut app, 10);
+    assert!(app.world().resource::<EcgWrites>().0 <= 20, "at most one write per trace per frame");
+    // The region re-streams: every monitor is despawned and spawned again.
+    for e in ward {
+        app.world_mut().entity_mut(e).despawn();
+    }
+    spawn_ward(&mut app);
+    step(&mut app, 4);
+    assert_eq!(rolls(&mut app), before, "no monitor re-rolled");
+}
+
 fn pump(app: &mut App) {
     let state = {
         let bridge = app.world().resource::<CoreBridge>();
@@ -205,17 +261,7 @@ fn pump(app: &mut App) {
 /// broke, the press only flashes the rim and asks the server for nothing.
 #[test]
 fn the_host_buys_a_can_through_the_server_and_a_broke_press_only_flashes() {
-    let bridge = CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-    bridge
-        .request("init", json!({"contentRoot":WorldConfig::default().content_root,"name":"vending","spawn":[0,0,0],"allowCheats":true}))
-        .unwrap();
-    let (mut app, prop) = prop_app("Vendor_0", 12, Vec3::new(270., 0., 0.), json!({"player":{"alive":true}}), UiModel::default());
-    app.insert_resource(bridge);
-    pump(&mut app);
-    step(&mut app, 4);
-    fn vendor(app: &App, prop: Entity) -> &vending::Vendor {
-        app.world().get::<vending::Vendor>(prop).unwrap()
-    }
+    let (mut app, prop) = vend_app();
     assert!(app.world().resource::<UiModel>().network.owns_world);
     assert_eq!(vendor(&app, prop).state, State::NoFunds);
     let info = app.world().resource::<crate::info_billboard::FocusedInfo>().0.clone().unwrap();
@@ -225,30 +271,111 @@ fn the_host_buys_a_can_through_the_server_and_a_broke_press_only_flashes() {
     press_f(&mut app);
     assert!(vendor(&app, prop).denied > 0., "a refusal flashes");
     assert_eq!(vendor(&app, prop).shake, 0.);
-    app.world().resource::<CoreBridge>().request("action", json!({"name":"console","args":{"text":"give 1056"}})).unwrap();
-    pump(&mut app);
-    step(&mut app, 40);
-    let dollars = |app: &App| -> u32 {
-        app.world().resource::<UiModel>().pages.iter().filter(|p| p.index < 7).flat_map(|p| p.items.iter())
-            .filter(|i| i.id == 1056).map(|i| u32::from(i.amount)).sum()
-    };
-    let before = dollars(&app);
-    assert!(before >= 1);
-    assert_eq!(vendor(&app, prop).state, State::Ready);
+    let before = fund(&mut app, prop);
     let info = app.world().resource::<crate::info_billboard::FocusedInfo>().0.clone().unwrap();
     assert_eq!(info.content.prompt, "[F] $1 cola");
-    let rest = vendor(&app, prop).rest.translation;
+    let rest = app.world().get::<Transform>(prop).unwrap().translation;
     press_f(&mut app);
     assert_eq!(vendor(&app, prop).state, State::Dispensing);
     assert!(app.world().get::<Transform>(prop).unwrap().translation.distance(rest) > 0., "the machine shudders");
     pump(&mut app);
     assert_eq!(dollars(&app), before - 1, "the server took one dollar");
     step(&mut app, 30);
-    assert_eq!(app.world().get::<Transform>(prop).unwrap().translation, rest, "it lands exactly home");
+    let home = app.world().get::<Transform>(prop).unwrap().translation;
+    assert!(home.distance(rest) < 1e-5, "it lands home (to float rounding of the removed shudder): {home} vs {rest}");
     pump(&mut app);
-    let tray = vendor(&app, prop).dispense_point();
+    assert_can_at_tray(&app);
+}
+
+/// PEI placement 608 (Vendor_0, cola): the server's tray, the Godot
+/// `DispensePoint` (0, 0.30000004, -1.494679) off its (-615.061, 33.562,
+/// -189.329) pose.
+const MACHINE: usize = 608;
+const TRAY: Vec3 = Vec3::new(-615.061, 33.862, -190.823_68);
+fn vendor(app: &App, prop: Entity) -> &vending::Vendor {
+    app.world().get::<vending::Vendor>(prop).unwrap()
+}
+fn dollars(app: &App) -> u32 {
+    app.world().resource::<UiModel>().pages.iter().filter(|p| p.index < 7).flat_map(|p| p.items.iter())
+        .filter(|i| i.id == 1056).map(|i| u32::from(i.amount)).sum()
+}
+/// A real bridge listen host with PEI's machines registered and the player
+/// standing at machine 608; the native prop stands in for that machine.
+fn vend_app() -> (App, Entity) {
+    let bridge = CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let root = WorldConfig::default().content_root;
+    bridge.request("init", json!({"contentRoot":root,"name":"vending","spawn":[0,0,0],"allowCheats":true})).unwrap();
+    bridge.request("mapServices", json!({"contentRoot":root,"mapName":"PEI"})).unwrap();
+    let at = format!("teleport {} {} {}", TRAY.x, TRAY.y, TRAY.z + 1.5);
+    bridge.request("action", json!({"name":"console","args":{"text":at}})).unwrap();
+    let (mut app, prop) = prop_app("Vendor_0", MACHINE, Vec3::new(270., 0., 0.), json!({"player":{"alive":true}}), UiModel::default());
+    app.insert_resource(bridge);
+    pump(&mut app);
+    step(&mut app, 4);
+    (app, prop)
+}
+fn fund(app: &mut App, prop: Entity) -> u32 {
+    app.world().resource::<CoreBridge>().request("action", json!({"name":"console","args":{"text":"give 1056"}})).unwrap();
+    pump(app);
+    step(app, 40);
+    let before = dollars(app);
+    assert!(before >= 1);
+    assert_eq!(vendor(app, prop).state, State::Ready);
+    before
+}
+fn assert_can_at_tray(app: &App) {
     let can = app.world().resource::<GameSnapshot>().0["worldItems"].as_array().unwrap().iter()
         .find(|i| i["itemId"] == 80).cloned().expect("the server's can");
     let at = crate::player::vector(&can["position"]).unwrap();
-    assert!(Vec2::new(at.x, at.z).distance(Vec2::new(tray.x, tray.z)) < 0.3, "{at} vs tray {tray}");
+    assert!(Vec2::new(at.x, at.z).distance(Vec2::new(TRAY.x, TRAY.z)) < 0.3, "{at} vs tray {TRAY}");
+}
+
+/// `build_world` respawns the machine mid-shake: the dollar is already spent,
+/// so the can must still drop (source nodes never stream).
+#[test]
+fn a_restream_mid_shake_still_drops_the_paid_can() {
+    let (mut app, prop) = vend_app();
+    let before = fund(&mut app, prop);
+    press_f(&mut app);
+    assert_eq!(vendor(&app, prop).state, State::Dispensing);
+    let (mesh, material, xf) = {
+        let w = app.world();
+        (w.get::<Mesh3d>(prop).unwrap().clone(), w.get::<MeshMaterial3d<StandardMaterial>>(prop).unwrap().clone(), *w.get::<Transform>(prop).unwrap())
+    };
+    app.world_mut().entity_mut(prop).despawn();
+    step(&mut app, 2);
+    let again = app
+        .world_mut()
+        .spawn((
+            mesh,
+            material,
+            xf,
+            WorldObject { guid: String::new(), asset_name: "Vendor_0".into(), source_index: MACHINE },
+            PlacementEuler(Vec3::new(270., 0., 0.)),
+        ))
+        .id();
+    step(&mut app, 1);
+    assert_eq!(vendor(&app, again).state, State::Dispensing, "the respawned machine is still mid-vend");
+    step(&mut app, 30);
+    pump(&mut app);
+    assert_eq!(dollars(&app), before - 1);
+    assert_can_at_tray(&app);
+    assert!(app.world().resource::<DeviceState>().vend_drops.is_empty());
+}
+
+/// A procedural origin rebase moves every root by `-shift` mid-shake; the
+/// shudder is relative, so the machine settles at its shifted home.
+#[test]
+fn an_origin_rebase_mid_shake_settles_at_the_shifted_home() {
+    let (mut app, prop) = prop_app("Vendor_0", 5, Vec3::new(270., 0., 0.), grid(true), UiModel::default());
+    step(&mut app, 4);
+    let home = app.world().get::<Transform>(prop).unwrap().translation;
+    app.world_mut().get_mut::<vending::Vendor>(prop).unwrap().shake = 0.45;
+    step(&mut app, 3);
+    let shift = Vec3::new(256., 0., -512.);
+    app.world_mut().get_mut::<Transform>(prop).unwrap().translation -= shift;
+    step(&mut app, 30);
+    assert_eq!(vendor(&app, prop).shake, 0.);
+    let at = app.world().get::<Transform>(prop).unwrap().translation;
+    assert!(at.distance(home - shift) < 1e-3, "{at} vs {}", home - shift);
 }

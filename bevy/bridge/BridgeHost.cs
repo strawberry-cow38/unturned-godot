@@ -192,7 +192,8 @@ public sealed partial class BridgeHost : IDisposable
                 mapSpec["mapResources"] = JsonSerializer.SerializeToNode(parsed.Resources);
                 var persistedSpec = JsonSerializer.SerializeToElement(mapSpec);
                 if (_originX != 0 || _originZ != 0) persistedSpec = CoordinateJson.ServiceSpec(persistedSpec, new((float)-_originX, 0, (float)-_originZ));
-                var mapResult = _services.Register(persistedSpec); AdoptFiniteRespawns(persistedSpec); _serviceSpecs.Add(persistedSpec); _worldChanged = true; return mapResult;
+                var mapResult = _services.Register(persistedSpec); AdoptFiniteRespawns(persistedSpec); _serviceSpecs.Add(persistedSpec); _worldChanged = true;
+                AdoptVendors(parsed); return mapResult;
             case "worldServices":
                 RequireSession();
                 var registration = _services.Register(r); _serviceSpecs.Add(r.Clone()); _worldChanged = true; return registration;
@@ -344,7 +345,7 @@ public sealed partial class BridgeHost : IDisposable
     void StartSession(WorldSave save, VehicleLightingServices.Saved[] lights, VehicleMaintenanceServices.Saved[] maintenance, VehicleDoorServices.Saved[] doors, VehicleHitchServices.Saved[] hitches)
     {
         _scopeSteady.Reset(); _wantsSteady = false; _localProfileSent = false; _ownerReady = false; ResetTemperature();
-        _worldChanged = false; _geometry.ClearDynamic();
+        _worldChanged = false; _geometry.ClearDynamic(); ResetVending();
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _vehicleRecov.Clear(); _vehicleRecovery.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         if (IsRemote) { StartRemote(); return; }
         _server = new NetWorldServer(ServerTransport(), _dedicated ? DedicatedConnectionDropped : null, maxPeers: _maxPeers,

@@ -344,6 +344,22 @@ public sealed class DedicatedServerTests
     }
 
     [Test]
+    public void VendingIsRefusedOnADedicatedHostAsEveryPlayerIsAJoinedClient()
+    {
+        // Source PlayerController.CanVend is the listen-host seam only; a dedicated host has no local
+        // player, so the bridge's vendPay/vendDrop never reach the server inventory or spawn a can.
+        Boot();
+        var peer = Peer("buyer");
+        Pump();
+        Assert.That(peer.State, Is.EqualTo(NetSessionState.Connected));
+        Assert.Throws<InvalidOperationException>(() => Call("action", new { name = "vendPay", args = new { } }));
+        Assert.Throws<InvalidOperationException>(() => Call("action", new { name = "vendDrop", args = new { drinkId = 80, position = new[] { 1f, 0.5f, -2f } } }));
+        Pump();
+        Assert.That(Network().GetProperty("serving").GetBoolean(), Is.True, "the refusal leaves the host serving");
+        Assert.That(peer.WorldItems.Count, Is.Zero, "no can was spawned (the ring test shows one would replicate here)");
+    }
+
+    [Test]
     public void ThrowingServiceIsLoggedAndTheServerKeepsServing()
     {
         // Godot logged a frame's exception and kept running; a deterministic throw
