@@ -69,7 +69,13 @@ joined clients alike.
 - **Bound hands are also enforced by the server** (review fix; the source only gated the cuffed
   client's own equip): core drops a cuffed sender's fire, melee and throw (`CombatDispatch`; reload
   is harmless and kept) and any command-71 select other than empty hands. The bridge keeps the
-  source's client message. Surrender needs empty hands, so a prisoner holds nothing to begin with.
+  source's client message. The v80 repair tool (command 101) is gated the same way:
+  `BodyCombatServices.ToolUse` refuses a cuffed owner and `StepTools` ends an active torch on the
+  tick the arrest lands, not after the 25-tick hold window.
+- **The arrest does not empty the hand, as in the source.** Neither `PlayerController` nor the arrest
+  path dequips the victim. Surrender needs empty hands, but a surrendered player may still equip, so
+  a prisoner can be cuffed holding a gun or a torch. It stays in hand and is inert: the gates above
+  refuse its use. (The retail decompiled source is not on this box, so retail could not be checked.)
 - **No local "Nobody to use that on.":** that alert is the source's direct-SP branch with no
   `NetAimedPlayer`; the port is always a client of a server, like `MpLoopback`.
 - **Death and disconnect release the cuffs** (review fix): `ServerTransactions.ReleaseArrest` runs in
@@ -86,11 +92,13 @@ joined clients alike.
   surrendering, a dead captor and a dead target are refused; the accepted arrest spends the cuffs;
   a forged or dead freer's key frees nobody; the key frees, returns the cuffs and is kept; 63
   alternating struggles plus a repeated side keep a cable tie on and the 64th breaks it.
-- **Managed** (`RestraintTests`, 2, real UDP, listen host cuffs a joined peer): not surrendering
+- **Managed** (`RestraintTests`, 4, real UDP, listen host cuffs a joined peer): not surrendering
   and beyond 7 m are refused; the cuffs arrive on the peer's own entity and on the host's replica;
   the cuffed peer's equip is refused with "Your hands are bound." and a wave with "You're cuffed.";
   a key frees and returns the cuffs; 127 alternating leans and a repeat do not break handcuffs,
-  the 128th does.
+  the 128th does. A forged hand cuffs and frees nobody. A torch equipped after
+  surrendering survives the arrest in hand, but the cuffs end its active hold at once and refuse
+  another ToolUse.
 - **Native** (`restraints`, 6, and the hand-tool viewmodel test): `AimedPlayer` reach, cone and
   best-dot choice; every source alert; `Cuff_Use` timing with one attempt at a time; the key at
   the click; `TickArrest` only while a restraint is held; catalog parsing; the restraints hold

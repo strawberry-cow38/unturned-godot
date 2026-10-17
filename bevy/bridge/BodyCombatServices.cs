@@ -66,10 +66,15 @@ public sealed class BodyCombatServices
         // No repair tool in hand: the source torch never starts, so nothing may linger and start repairing
         // when one is equipped inside the hold window (the JSONL "only while held" regression).
         if (!(RepairRate?.Invoke(owner) > 0)) { _tools.Remove(owner); return false; }
+        // Cuffed hands are not free hands (PlayerController.EquipItemAsset): a torch that was already in hand
+        // when the cuffs landed stays there, as in the source, but it starts nothing.
+        if (HandsBound(owner)) { _tools.Remove(owner); return false; }
         if (!_tools.TryGetValue(owner, out var tool)) _tools[owner] = tool = new();
         tool.Until = Tick + ToolHoldTicks;
         return true;
     }
+    /// <summary>The server's arrest record, not the client's gesture: cuffs end a held tool on the tick they land.</summary>
+    bool HandsBound(ushort owner) => _server.Transactions.IsArrested(owner);
     /// <summary>Owners whose tool is currently held (diagnostics/tests).</summary>
     public IReadOnlyCollection<ushort> ToolOwners => _tools.Keys;
     void StepTools()
@@ -77,10 +82,10 @@ public sealed class BodyCombatServices
         foreach (var (owner, tool) in _tools.ToArray())
         {
             // Released, timed out, dead or gone: a dead or disconnected owner's tool never outlives its life.
-            // Released, timed out, unequipped, dead or gone. The hold window only bridges missing refreshes of a
-            // trigger that is still down; every explicit end (ToolUse false, putting the torch away, death,
-            // disconnect) stops the repair on the tick it is seen.
-            if (tool.Until < Tick || !(RepairRate?.Invoke(owner) > 0)
+            // Released, timed out, unequipped, cuffed, dead or gone. The hold window only bridges missing refreshes
+            // of a trigger that is still down; every explicit end (ToolUse false, putting the torch away, cuffs,
+            // death, disconnect) stops the repair on the tick it is seen.
+            if (tool.Until < Tick || !(RepairRate?.Invoke(owner) > 0) || HandsBound(owner)
                 || !_server.CombatState.TryGet(owner, out var life) || !life.Alive) { _tools.Remove(owner); continue; }
             StepTool(owner, tool);
         }

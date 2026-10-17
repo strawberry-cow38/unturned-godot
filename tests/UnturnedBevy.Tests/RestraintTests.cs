@@ -120,4 +120,35 @@ public sealed class RestraintTests
         Action(_peer,"struggle",new{side=(byte)1});Pump(4);
         Assert.That((Gesture(_peer),HostSeesPeer),Is.EqualTo(((byte)0,(byte)0)),"the 128th alternating lean breaks the handcuffs");
     }
+
+    /// <summary>Cuffed hands are not free hands, for the v80 repair tool too. The source does not empty the
+    /// hand at the arrest (surrender is refused with something held, but a surrendered player may still equip),
+    /// so the torch stays in hand; what the cuffs end is its use: the active hold stops on the tick the arrest
+    /// lands, not after the 25-tick hold window, and a fresh ToolUse is refused.</summary>
+    [Test]
+    public void CuffsEndAHeldRepairToolAndRefuseAnother()
+    {
+        const ushort Blowtorch=76;
+        ushort host=State(_host).GetProperty("playerId").GetUInt16();
+        var bodies=(BodyCombatServices)typeof(BridgeHost).GetField("_bodies",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(_host)!;
+        Action(_host,"requestGesture",new{gesture=Surrender});Pump();
+        Assert.That(Gesture(_host),Is.EqualTo(Surrender));
+        Give(_host,Blowtorch);var torch=Cell(_host,Blowtorch);Action(_host,"equipAndHold",new{page=torch.Page,x=torch.X,y=torch.Y});Pump(24);
+        Assert.That(State(_host).GetProperty("player").GetProperty("heldItemId").GetInt32(),Is.EqualTo(Blowtorch));
+        Give(_peer,ArrestDef.Handcuffs);Hold(_peer,ArrestDef.Handcuffs);
+        Action(_peer,"console",new{text="teleport 1 0 1"});Pump(30);
+        Assert.That(Gesture(_host),Is.EqualTo(Surrender),"equipping does not drop the hands");
+
+        Assert.That(Action(_host,"toolUse",new{active=true}).GetProperty("queued").GetBoolean(),Is.True,"control: a free torch starts");
+        Assert.That(bodies.ToolOwners,Does.Contain(host));
+        Action(_peer,"arrestPlayer",new{targetPlayerId=host});Pump(10);
+        Assert.That(Gesture(_host),Is.EqualTo(Arrest));
+        Assert.That(10,Is.LessThan(BodyCombatServices.ToolHoldTicks));
+        Assert.That(bodies.ToolOwners,Does.Not.Contain(host),"the cuffs end the held torch at once");
+        Assert.That(State(_host).GetProperty("player").GetProperty("heldItemId").GetInt32(),Is.EqualTo(Blowtorch),
+            "source parity: the arrest itself does not empty the hand");
+
+        Assert.That(Action(_host,"toolUse",new{active=true}).GetProperty("queued").GetBoolean(),Is.False,"a cuffed ToolUse is refused");
+        Assert.That(bodies.ToolOwners,Does.Not.Contain(host));
+    }
 }
