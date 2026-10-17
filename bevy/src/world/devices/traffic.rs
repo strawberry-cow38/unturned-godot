@@ -375,11 +375,11 @@ pub(crate) fn attach(
 /// `TrafficLight.ClockSeconds`: (Day + Time) x DayLength off the accepted world
 /// clock, so every peer computes the same phase; engine time without one.
 ///
-/// A joined client's snapshot carries no `day` until the world's base day is
-/// replicated (`RemoteSession.ClockSnapshot`), so there the day is counted
-/// locally from the time-of-day wrapping. The battery deadline (two days out)
-/// is then still reached, but the phase only matches the host's once the
-/// replicated day arrives.
+/// Since protocol 80 a joined client's snapshot carries the host's replicated
+/// day (System 21, `RemoteEnvironment`). Before the first environment block
+/// arrives there is no `day`, and the day is counted locally from the
+/// time-of-day wrapping. The battery deadline (two days out) is then still
+/// reached, and the phase matches the host's once the replicated day arrives.
 #[derive(Debug, Default)]
 pub(crate) struct Clock {
     last_time: Option<f64>,

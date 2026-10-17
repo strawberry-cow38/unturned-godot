@@ -242,10 +242,10 @@ Sources: `game/VendingMachine.cs`, `game/RadioDevice.cs`, `game/HeartMonitor.cs`
   - All screens share two materials, one beating and one flat. Each is advanced
     once a frame while shown.
   - Whether the two sound files exist is checked once.
-  - The radio's forecast board reads the snapshot's `weather` outlook. A joined
-    client has none until the world environment is replicated (agent L's
-    Environment system), so its board stays blank, the same root cause as the
-    traffic clock below.
+  - The radio's forecast board reads the snapshot's `weather` outlook. Since
+    protocol 80 a joined client receives the host's weather and calendar
+    (System 21, `RemoteEnvironment`; see [MP_WIRE_GAPS_PORT.md](MP_WIRE_GAPS_PORT.md)),
+    so its board shows the host's `today`/`tomorrow`.
 
 ### Deviations and gaps
 
@@ -297,15 +297,15 @@ call, `PlayerController` (`_focusCarLift`, the F branch, `FluidPickupHudSet`,
 Not interactive and not replicated: every head's aspect is a pure function of the
 shared world clock, as in the source.
 
-**Phase parity for joined clients depends on the replicated day.** The clock is
-`(day + timeOfDay) x dayLength`. A joined client's snapshot has no `day`
-(`RemoteSession.ClockSnapshot`: the environment is built server-side only)
-until agent L's replicated Environment system gives remotes the base day. Until
-then the client counts days itself from the time of day wrapping
-(`traffic::Clock`). Its clock is therefore monotonic, and a battery deadline
-two days out is still reached. Its phases, however, are offset from the
-host's by whole days times the day length, so the two only agree once the
-replicated day arrives.
+**Phase parity for joined clients.** The clock is
+`(day + timeOfDay) x dayLength`. Since protocol 80 a joined client's snapshot
+carries the host's `worldClock.day` (replicated base day + the replicated clock,
+`RemoteEnvironment.DayAt`), so its phases equal the host's. The managed
+`HostWeatherAndDayReachTheRemote` test checks that the day survives a midnight wrap.
+The native `a_joined_clients_replicated_day_puts_every_head_in_the_hosts_phase`
+test checks that a remote-shaped snapshot puts every head in the host's phase.
+The wrap-counting fallback (`traffic::Clock`) remains only for the moment
+before the first environment block arrives.
 
 **Re-stream.** `build_world` respawns every `WorldObject`. A head on its
 battery keeps its deadline (`DeviceState::signal_battery`, by placement and

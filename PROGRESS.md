@@ -3222,3 +3222,9 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   - Now a refused request clears the tool. Unequipping, an explicit release, death and disconnect each end the tool on the tick they are seen. The window only bridges missing refreshes while the trigger is still down.
   - New managed tests: a release stops repair on the tick it lands, for both the listen owner and the remote; a refused request does not linger.
   - Results: JSONL 128/128 (the blowtorch test fails under the lingering revert), core 775/775, managed 335/335.
+- **Merged port/bevy a860cee0 (world devices).**
+  - Joined clients now get the host's `worldClock.day` and `weather`, so traffic phase parity and the radio forecast board work there. `WORLD_DEVICES_PORT.md` caveats and the `traffic::Clock` doc are updated.
+  - New native test `a_joined_clients_replicated_day_puts_every_head_in_the_hosts_phase`: a remote-shaped snapshot gives every head the host's phase, and the day-less fallback is shown to be whole days off.
+  - After the merge:
+    - core 775/775, managed 340/340, JSONL 128/128;
+    - native 933 passed, 66 ignored. The 2 PEI coupling tests need the gitignored `bevy/artifacts/bevy-coupling-os-entered.json`; with it copied in they pass, 6/6 in `main_schedule`.
