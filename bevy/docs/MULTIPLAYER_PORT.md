@@ -40,13 +40,15 @@ Inventory, combat, skills, world entities and appearances read client replicas.
 Commands retain connection identity and original validators; no local console or
 damage shortcuts run in this mode.
 
-Host-only registration, save/load, damage and rebasing are refused. Unknown
-host enrichments remain absent and `network.wireGaps` enumerates them: repair, explicit
-respawn, weather/absolute day, held-weapon cosmetic flights, detailed impact/held-warhead/stuck-pose
-facts, projectile expiry, vehicle part health, host wildlife/zombie data,
-password authentication and accepted shot tick. Authored map bindings now use the
-read-only adapter described below. These are concrete
-protocol follow-ups. The existing automatic respawn and recovery events work.
+Host-only registration, save/load, damage and rebasing are refused. Protocol 80
+closed three host enrichments: repair (Command 101), weather and absolute day
+(System 21) and vehicle part health (a System 9 tail); see
+[MP_WIRE_GAPS_PORT.md](MP_WIRE_GAPS_PORT.md). `network.wireGaps` now lists only
+held-weapon cosmetic flights and held-warhead effects. `network.sourceAbsent` lists
+what the source never sent a joined client either (explicit respawn, detailed
+impacts, stuck pose, projectile expiry, wildlife/zombie host data, password,
+accepted shot tick). Authored map bindings now use the
+read-only adapter described below. The existing automatic respawn and recovery events work.
 The original handshake has no password field, so a nonempty password is refused.
 
 Mounted flight and blasts now have an accepted presentation path: protocol66

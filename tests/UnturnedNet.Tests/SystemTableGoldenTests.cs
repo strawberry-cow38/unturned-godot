@@ -46,6 +46,7 @@ namespace UnturnedNet.Tests
             ["SystemDestructibles"] = 16, ["SystemInteractables"] = 17, ["SystemProfiles"] = 18,
             ["SystemOwnerEquipment"] = 19, // v62 owner-only selected instance and weapon clocks
             ["SystemVehicleMounts"] = 20, // v64 accepted mount angles/belts/cooldowns
+            ["SystemEnvironment"] = 21, // v80 host weather/calendar singleton (row 15A)
             ["SystemSyncCheck"] = 255,
         };
 
@@ -126,6 +127,7 @@ namespace UnturnedNet.Tests
             "CropReplication = 11 (SystemCrops)",
             "DeployableReplication = 6 (SystemDeployables)",
             "DestructibleReplication = 16 (SystemDestructibles)",
+            "EnvironmentReplication = 21 (SystemEnvironment)",
             "InteractableStateReplication = 17 (SystemInteractables)",
             "InventoryReplication = 7 (SystemInventory)",
             "OwnerEquipmentReplication = 19 (SystemOwnerEquipment)",

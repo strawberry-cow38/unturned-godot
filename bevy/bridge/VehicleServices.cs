@@ -39,6 +39,7 @@ public sealed class VehicleServices
         { p.Engine = Math.Clamp(s.Engine, 0, p.EngineMax); p.Main = Math.Clamp(s.Main, 0, p.MainMax); p.Tail = Math.Clamp(s.Tail, 0, p.TailMax); p.Drowned = s.Drowned; }
     }
     public float EngineHealth(uint id) => _parts.TryGetValue(id, out var p) ? p.Engine : 0;
+    public float EngineMax(uint id) => _parts.TryGetValue(id, out var p) ? p.EngineMax : 0;
     public bool IsHelicopter(uint id) => _bodySpecs.TryGetValue(id, out var spec) && Bool(spec, "isHeli");
     public float MainRotorMax(uint id) => _parts.TryGetValue(id, out var p) ? p.MainMax : 0;
     public float TailRotorMax(uint id) => _parts.TryGetValue(id, out var p) ? p.TailMax : 0;

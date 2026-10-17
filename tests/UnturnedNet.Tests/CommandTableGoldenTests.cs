@@ -129,6 +129,7 @@ namespace UnturnedNet.Tests
             [90] = "CommandDepositFuel", // v78 exact held fuel container poured into a generator
             [99] = "CommandPourVehicleFuel", // v79 exact held fuel container poured into a car (TryDepositFuel vehicle branch)
             [100] = "CommandSiphonVehicleFuel", // v79 car siphoned into the exact held fuel container (TryExtractFuel vehicle branch)
+            [101] = "CommandToolUse", // v80 a remote owner holds/releases the held repair tool (BodyCombatServices.ToolUse)
             [103] = "CommandFishingCast", // v81 the bobber landed in fishable water; the server starts the bite timer
             [104] = "CommandFishingInput", // v81 press/release/stop on the server's line
             [81] = "CommandMagazineTransfer", // v71 exact magazine round request

@@ -19,11 +19,19 @@ public sealed class BodyCombatServices
     readonly Dictionary<(bool vehicle, uint id), Life> _life = new();
     readonly Dictionary<(bool vehicle, uint id), (float exact, float published)> _repair = new();
     readonly Dictionary<(ushort owner, uint id), long> _salvageApproved = new();
-    ushort _toolOwner;
-    long _toolUntil = -1, _toolStarted;
-    (bool vehicle, uint id)? _toolTarget;
+    /// <summary>One held-tool session per owner. The source shell ran its blowtorch per player; a single
+    /// shared owner/target/clock here let a second repairer's ToolUse overwrite the first one's (row 15A).</summary>
+    sealed class Tool { public long Until = -1, Started; public (bool vehicle, uint id)? Target; }
+    /// <summary>How long one ToolUse(true) keeps the tool held. The native shell repeats it every frame and a
+    /// remote at most once per bridge tick, but a remote's copy rides ReliableOrdered, whose retransmit
+    /// floor is NetProtocol.MinRtoTicks (5): a window of 5 lapsed on a single lost datagram, dropping the
+    /// target and restarting a 150-tick wreck salvage. Five RTO floors survive ordinary loss; an explicit
+    /// release still ends it at once.</summary>
+    public const long ToolHoldTicks = 5 * NetProtocol.MinRtoTicks;
+    readonly Dictionary<ushort, Tool> _tools = new();
     public Func<ushort, float> RepairRate;
-    public Action<uint> RequestSalvage;
+    /// <summary>(owner, wreck) -- the cooled deployable wreck salvage that the owner's tool completed.</summary>
+    public Action<ushort, uint> RequestSalvage;
     const long NoTime = long.MinValue;
     sealed class Life { public long Fuse = NoTime, Burn = NoTime; }
     public sealed record Saved(bool Vehicle, int Ordinal, ushort DefId, float[] Position, long FuseRemaining, long BurnElapsed);
@@ -37,6 +45,11 @@ public sealed class BodyCombatServices
             && _salvageApproved.TryGetValue((owner, id), out long approved) && approved >= Tick;
         geometry.VehicleExists = id => server.Vehicles.TryGet(id, out _);
         geometry.DeployableExists = id => server.Deployables.TryGet(id, out _);
+        // v80 Command101: a remote owner's hold/release of the held repair tool. Everything but the bit is
+        // resolved here from the sender's accepted held item and pose, exactly like the listen owner's path.
+        server.Commands.Register<ToolUseCommand>(ReplicationIds.CommandToolUse, ToolUseCommand.TryRead,
+            (sender, cmd) => ToolUse(sender, cmd.Active),
+            (sender, _) => server.CombatState.TryGet(sender, out var life) && life.Alive);
     }
     Life State(bool vehicle, uint id)
     {
@@ -49,36 +62,55 @@ public sealed class BodyCombatServices
     public bool Salvageable(bool vehicle, uint id) => BurnSeconds(vehicle, id) >= BodyRules.CoolSeconds;
     public bool ToolUse(ushort owner, bool active)
     {
-        _toolOwner = owner; _toolUntil = active ? Tick + 5 : -1;
-        if (!active) _toolTarget = null;
-        return !active || RepairRate?.Invoke(owner) > 0;
+        if (!active) { _tools.Remove(owner); return true; }
+        // No repair tool in hand: the source torch never starts, so nothing may linger and start repairing
+        // when one is equipped inside the hold window (the JSONL "only while held" regression).
+        if (!(RepairRate?.Invoke(owner) > 0)) { _tools.Remove(owner); return false; }
+        if (!_tools.TryGetValue(owner, out var tool)) _tools[owner] = tool = new();
+        tool.Until = Tick + ToolHoldTicks;
+        return true;
     }
-    void StepTool()
+    /// <summary>Owners whose tool is currently held (diagnostics/tests).</summary>
+    public IReadOnlyCollection<ushort> ToolOwners => _tools.Keys;
+    void StepTools()
     {
-        float rate = RepairRate?.Invoke(_toolOwner) ?? 0;
-        if (_toolUntil < Tick || rate <= 0 || !_server.Players.TryGetByOwner(_toolOwner, out var player)
-            || !_server.CombatState.TryGet(_toolOwner, out var combat) || !combat.Alive || _server.Vehicles.All.Any(v => v.DriverPlayerId == _toolOwner || (v.Passengers?.Contains(_toolOwner) ?? false)))
-        { _toolTarget = null; return; }
-        float yaw = player.YawDegrees * Mathf.Deg2Rad, pitch = (_server.PlayerHost.TryGetDrivenState(_toolOwner, out var pose) ? pose.PitchDegrees : 0) * Mathf.Deg2Rad;
+        foreach (var (owner, tool) in _tools.ToArray())
+        {
+            // Released, timed out, dead or gone: a dead or disconnected owner's tool never outlives its life.
+            // Released, timed out, unequipped, dead or gone. The hold window only bridges missing refreshes of a
+            // trigger that is still down; every explicit end (ToolUse false, putting the torch away, death,
+            // disconnect) stops the repair on the tick it is seen.
+            if (tool.Until < Tick || !(RepairRate?.Invoke(owner) > 0)
+                || !_server.CombatState.TryGet(owner, out var life) || !life.Alive) { _tools.Remove(owner); continue; }
+            StepTool(owner, tool);
+        }
+    }
+    void StepTool(ushort owner, Tool tool)
+    {
+        float rate = RepairRate?.Invoke(owner) ?? 0;
+        if (tool.Until < Tick || rate <= 0 || !_server.Players.TryGetByOwner(owner, out var player)
+            || !_server.CombatState.TryGet(owner, out var combat) || !combat.Alive || _server.Vehicles.All.Any(v => v.DriverPlayerId == owner || (v.Passengers?.Contains(owner) ?? false)))
+        { tool.Target = null; return; }
+        float yaw = player.YawDegrees * Mathf.Deg2Rad, pitch = (_server.PlayerHost.TryGetDrivenState(owner, out var pose) ? pose.PitchDegrees : 0) * Mathf.Deg2Rad;
         var direction = new Vector3(-MathF.Sin(yaw) * MathF.Cos(pitch), MathF.Sin(pitch), -MathF.Cos(yaw) * MathF.Cos(pitch));
         var origin = player.Pos + new Vector3(0, PlayerMovementDef.EyeHeightForStance(player.Stance switch { 2 => EPlayerStance.CROUCH, 3 => EPlayerStance.PRONE, _ => EPlayerStance.STAND }), 0);
         if (!_geometry.RayDetailed(origin, origin + direction * HandRules.LookReach, out var hit) || (hit.VehicleNetId == 0 && hit.DeployableNetId == 0))
-        { _toolTarget = null; return; }
+        { tool.Target = null; return; }
         var key = (vehicle: hit.VehicleNetId != 0, id: hit.VehicleNetId != 0 ? hit.VehicleNetId : hit.DeployableNetId);
-        if (_toolTarget != key) { _toolTarget = key; _toolStarted = Tick; }
+        if (tool.Target != key) { tool.Target = key; tool.Started = Tick; }
         if (Salvageable(key.vehicle, key.id))
         {
-            if (Tick - _toolStarted < Ticks(BodyRules.SalvageSeconds)) return;
+            if (Tick - tool.Started < Ticks(BodyRules.SalvageSeconds)) return;
             if (key.vehicle && _server.Vehicles.TryGet(key.id, out var wreck))
             {
                 for (int i = 0; i < 3; i++) _server.WorldItems.ServerSpawn(_server.Ids.Mint(), new Item(67), wreck.Pos + new Vector3((i - 1) * .6f, .5f, 0), Tick);
                 _server.Vehicles.ServerRemove(new(key.id), Tick);
-                _emit("vehicleSalvaged", new { netId = key.id, playerId = _toolOwner });
+                _emit("vehicleSalvaged", new { netId = key.id, playerId = owner });
             }
-            else { _salvageApproved[(_toolOwner, key.id)] = Tick + 10; RequestSalvage?.Invoke(key.id); }
-            _toolTarget = null; return;
+            else { _salvageApproved[(owner, key.id)] = Tick + 10; RequestSalvage?.Invoke(owner, key.id); }
+            tool.Target = null; return;
         }
-        _toolStarted = Tick;
+        tool.Started = Tick;
         float health, maximum;
         if (key.vehicle)
         {
@@ -224,9 +256,26 @@ public sealed class BodyCombatServices
             if ((p.Pos - position).magnitude is var range && range < radius)
                 _server.Combat.DamagePlayerExternal(p.OwnerPlayerId, ExplosionMath.Linear(damage, range, radius), zone: Durability.Zone.Whole);
     }
+    /// <summary>v80 System9 tail: copy the host's exact part pools and fire lifecycle onto the replicated
+    /// entity, quantized (VehicleReplication.ServerSetParts dirties only on a real change). Runs after the
+    /// lifecycle Step so a fuse lit or a wreck ignited this tick goes out in this tick's snapshot.</summary>
+    public void PublishParts()
+    {
+        foreach (var e in _server.Vehicles.All)
+        {
+            uint id = e.NetIdValue;
+            _life.TryGetValue((true, id), out var life);
+            int? burn = life == null || life.Burn == NoTime ? null : (int)Math.Clamp(life.Burn, int.MinValue, int.MaxValue);
+            _server.Vehicles.ServerSetParts(new(id),
+                VehicleReplication.QuantizePart(_vehicles.EngineHealth(id), _vehicles.EngineMax(id)),
+                VehicleReplication.QuantizePart(_vehicles.MainRotorHealth(id), _vehicles.MainRotorMax(id)),
+                VehicleReplication.QuantizePart(_vehicles.TailRotorHealth(id), _vehicles.TailRotorMax(id)),
+                _vehicles.EngineDrowned(id), life != null && life.Fuse != NoTime, burn, Tick + 1);
+        }
+    }
     public void Step()
     {
-        StepTool();
+        StepTools();
         // Also adopt an explicitly supplied initial wreck / external host crash.
         foreach (var e in _server.Vehicles.All)
         {

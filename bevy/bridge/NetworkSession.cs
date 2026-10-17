@@ -86,6 +86,7 @@ public sealed partial class BridgeHost
         protocol = NetProtocol.Version,
         awaitingSpawn = IsRemote && !_remoteSpawnAdopted,
         wireGaps = IsRemote ? RemoteWireGaps : System.Array.Empty<string>(),
+        sourceAbsent = IsRemote ? RemoteSourceAbsent : System.Array.Empty<string>(),
     };
 
     object[] PlayerReplicas() => PlayerReplicas(_client.Players, _client.CombatState, _client.Profiles);

@@ -63,16 +63,18 @@ public sealed partial class BridgeHost
         {
             _tempProbeTimer = TemperatureProbeSeconds;
             long tick = _server?.Session.CurrentTick ?? _client.Applier.LastAppliedServerTick;
-            // No accepted day/weather (a remote client today: dayNumber/weather wire gaps) uses the
-            // source's "no cycle" fallback: day 0, no weather.
-            int day = _environment?.DayAt(_client.Clock, tick) ?? 0;
+            // A remote reads the host's accepted day/weather (v80 System21, RemoteEnvironment). Before the
+            // first environment block arrives it uses the source's "no cycle" fallback: day 0, no weather.
+            int day = _environment?.DayAt(_client.Clock, tick) ?? _remoteEnvironment?.DayAt(_client.Clock, tick) ?? 0;
             float tod = _client.Clock.TimeOfDayAt(tick);
             var weather = _environment?.Sim;
-            float blend = weather?.BlendAlpha ?? 0f;   // WeatherManager.RainIntensity IS the blend alpha
+            // WeatherManager.RainIntensity IS the blend alpha
+            float blend = weather?.BlendAlpha ?? _remoteEnvironment?.BlendAlpha ?? 0f;
+            string active = weather != null ? weather.Active?.Name : _remoteEnvironment?.Active?.Name;
             _tempAmbientC = WorldTemperature.AmbientC(WorldTemperature.DayOfYear(WorldTemperature.StartDayOfYear, day), tod,
-                WorldTemperature.WeatherOffsetC(weather?.Active?.Name, blend));
+                WorldTemperature.WeatherOffsetC(active, blend));
             _tempSourceC = _probeSourceC;
-            _tempRaining = weather?.IsRaining ?? false;
+            _tempRaining = weather?.IsRaining ?? _remoteEnvironment?.IsRaining ?? false;
             _tempSheltered = _tempRaining && _probeSheltered;
         }
         _client.Inventories.TryGet(me, out var owned);

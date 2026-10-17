@@ -344,6 +344,22 @@ public sealed class DedicatedServerTests
     }
 
     [Test]
+    public void VendingIsRefusedOnADedicatedHostAsEveryPlayerIsAJoinedClient()
+    {
+        // Source PlayerController.CanVend is the listen-host seam only; a dedicated host has no local
+        // player, so the bridge's vendPay/vendDrop never reach the server inventory or spawn a can.
+        Boot();
+        var peer = Peer("buyer");
+        Pump();
+        Assert.That(peer.State, Is.EqualTo(NetSessionState.Connected));
+        Assert.Throws<InvalidOperationException>(() => Call("action", new { name = "vendPay", args = new { } }));
+        Assert.Throws<InvalidOperationException>(() => Call("action", new { name = "vendDrop", args = new { drinkId = 80, position = new[] { 1f, 0.5f, -2f } } }));
+        Pump();
+        Assert.That(Network().GetProperty("serving").GetBoolean(), Is.True, "the refusal leaves the host serving");
+        Assert.That(peer.WorldItems.Count, Is.Zero, "no can was spawned (the ring test shows one would replicate here)");
+    }
+
+    [Test]
     public void ThrowingServiceIsLoggedAndTheServerKeepsServing()
     {
         // Godot logged a frame's exception and kept running; a deterministic throw
@@ -519,5 +535,27 @@ public sealed class DedicatedServerTests
         peer.SendFishingInput(FishingInputCommand.Stop);
         for (int n = 0; n < 60 && states.Count == 1; n++) Hold(1);
         Assert.That(states.Last().State, Is.EqualTo(FishingStateEvent.Idle));
+    }
+
+    /// <summary>Row 15A source parity: the source dedicated server builds no horde (WorldBuilder's Dedicated
+    /// branch has no ZombieChunkField; DedicatedServer removed ZombieNetSync), so neither does this host,
+    /// even with a field offered right where a joined player stands.</summary>
+    [Test]
+    public void TheDedicatedHostStepsNoZombieHorde()
+    {
+        Boot();
+        Call("worldGeometry", new { meshes = new[] { new { terrain = true, vertices = new[] {
+            new[] { -2000f, 0, -2000 }, new[] { 2000f, 0, -2000 }, new[] { 2000f, 0, 2000 },
+            new[] { -2000f, 0, -2000 }, new[] { 2000f, 0, 2000 }, new[] { -2000f, 0, 2000 } } } } });
+        var field = JsonSerializer.SerializeToElement(Call("worldZombies", new { mapRoot = _dir,
+            points = new[] { new[] { 2f, 1, 2 }, new[] { -2f, 1, 3 }, new[] { 3f, 1, -2 } } }), JsonOptions);
+        Assert.That(field.TryGetProperty("disabled", out var disabled) && disabled.GetBoolean(), Is.True);
+        var peer = Peer("near the field"); Pump(150);
+        Assert.That(peer.State, Is.EqualTo(NetSessionState.Connected));
+        var zombies = (ZombieServices)typeof(BridgeHost).GetField("_zombies", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(_host);
+        Assert.That(JsonSerializer.SerializeToElement(zombies.Summary(), JsonOptions).GetProperty("bodies").GetInt32(), Is.Zero);
+        Assert.That(State().GetProperty("zombies").ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+            || State().GetProperty("zombies").GetArrayLength() == 0, Is.True);
+        Assert.That(peer.Zombies.Count, Is.Zero, "a joined player sees none");
     }
 }

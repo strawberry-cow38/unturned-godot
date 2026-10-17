@@ -10,7 +10,7 @@ using UnityEngine;
 namespace UnturnedBevyTests;
 
 [TestFixture, NonParallelizable]
-public sealed class RemoteSessionTests
+public sealed partial class RemoteSessionTests
 {
     NetWorldClient RemoteClient => (NetWorldClient)typeof(BridgeHost).GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_remote);
     BridgeHost _host, _remote;
@@ -246,8 +246,14 @@ public sealed class RemoteSessionTests
         Assert.That(state.GetProperty("player").GetProperty("position")[2].GetSingle(), Is.EqualTo(-22).Within(.02));
         Assert.That(state.GetProperty("network").GetProperty("ownsWorld").GetBoolean(), Is.False);
         Assert.That(State(_host).GetProperty("players").GetArrayLength(), Is.EqualTo(2));
-        Assert.That(state.GetProperty("weather").ValueKind, Is.EqualTo(JsonValueKind.Null));
-        Assert.That(state.GetProperty("network").GetProperty("wireGaps").EnumerateArray().Any(v => v.GetString() == "weather"), Is.True);
+        // v80: the host's weather arrives as System21; the client still runs no weather of its own.
+        Assert.That(state.GetProperty("weather").ValueKind, Is.EqualTo(JsonValueKind.Object));
+        Assert.That(typeof(BridgeHost).GetField("_environment", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_remote), Is.Null);
+        Assert.That(state.GetProperty("network").GetProperty("wireGaps").EnumerateArray().Select(v => v.GetString()),
+            Is.EquivalentTo(new[] { "heldCosmeticBullets", "heldWarheadEffects" }));
+        Assert.That(state.GetProperty("network").GetProperty("sourceAbsent").EnumerateArray().Select(v => v.GetString()),
+            Is.EquivalentTo(new[] { "explicitRespawn", "acceptedImpactDetails", "stuckProjectilePose", "projectileLifetime",
+                "wildlifeHostState", "zombieHostState", "password", "acceptedShotTick" }));
     }
 
     [Test]
@@ -348,7 +354,9 @@ public sealed class RemoteSessionTests
         Assert.That(State(_remote).GetProperty("weather").ValueKind, Is.EqualTo(JsonValueKind.Object));
         Join(); Pump();
         Assert.That(Count(State(_remote), 4), Is.Zero);
-        Assert.That(State(_remote).GetProperty("weather").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        // The old local WorldEnvironment is gone; any weather now is the host's replicated System21 view.
+        Assert.That(typeof(BridgeHost).GetField("_environment", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_remote), Is.Null);
+        Assert.That(State(_remote).GetProperty("weather").GetProperty("name").GetString(), Is.EqualTo(State(_host).GetProperty("weather").GetProperty("name").GetString()));
         Assert.That(State(_remote).GetProperty("weapon").GetProperty("held").ValueKind, Is.EqualTo(JsonValueKind.Null));
         Assert.That(State(_remote).GetProperty("worldItems").GetArrayLength(), Is.Zero);
         Assert.That(Call(_remote, "diagnostics").GetProperty("host").GetBoolean(), Is.False);

@@ -330,7 +330,7 @@ public sealed partial class BridgeHost
         state = _stopped ? "Stopped" : _serving ? "Serving" : "Loading",
         reason = "", rejectReason = "", rejectText = (string)null, retryable = false, serverProtocol = 0,
         contentHash = NetContent.Hash.ToString("X16"), peers = _server?.Session.Peers.Count,
-        protocol = NetProtocol.Version, awaitingSpawn = false, wireGaps = System.Array.Empty<string>(),
+        protocol = NetProtocol.Version, awaitingSpawn = false, wireGaps = System.Array.Empty<string>(), sourceAbsent = System.Array.Empty<string>(),
         serving = _serving, savePath = _savePath, allowCheats = _allowCheats,
         bans = _server?.Transactions.Moderation.Count ?? 0, tickFaults = _tickFaults,
         autosaveInSeconds = Math.Max(0, AutosaveSeconds - _sinceSave),

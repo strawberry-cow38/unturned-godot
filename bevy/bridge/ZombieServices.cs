@@ -18,6 +18,21 @@ public sealed partial class ZombieServices
     string _mapRoot;
     float _loadX,_loadZ;
     public Func<float> RainIntensity;
+    /// <summary>The source builds the horde as <c>ZombieChunkField{Player=player}</c> for the SP/listen player
+    /// only (WorldBuilder.cs:2370/2869): it streams and sights on that one player, and the dedicated server
+    /// builds none. This is that player's id on the host (0 = none yet). Row 15A source parity.</summary>
+    public Func<ushort> Owner;
+    ushort OwnerId=>Owner?.Invoke()??0;
+    /// <summary>Whether a player takes part in this horde: the listen owner, or 0 for an anonymous source
+    /// (NPC rounds, world noise). A remote player's shots, swings and gunfire never reach it.</summary>
+    public bool Participant(ushort player)=>player==0||player==OwnerId;
+    /// <summary>The source's <c>else if (Player != null) _anchors.Add(Player.GlobalPosition);</c>.</summary>
+    bool OwnerAnchor(out Vector3 position)
+    {
+        position=default;
+        if(OwnerId==0||!_server.Players.TryGetByOwner(OwnerId,out var owner))return false;
+        position=G(owner.Pos);return true;
+    }
     long Tick=>_server.Session.CurrentTick;
     static UVector U(Vector3 v)=>new(v.X,v.Y,v.Z);
     static Vector3 G(UVector v)=>new(v.x,v.y,v.z);

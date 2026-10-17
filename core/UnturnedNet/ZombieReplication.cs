@@ -43,6 +43,13 @@ namespace UnturnedGodot.Net
         /// replicas never set it.</summary>
         public InterestPolicy Interest;
 
+        /// <summary>Server-only audience filter (row 15A source parity, no wire change): null = every
+        /// client. A client outside it is composed an EMPTY block -- zero rows, zero removals -- so it never
+        /// learns of an entity and has nothing to retire. The hybrid listen host limits zombies to its own
+        /// client because the source publishes none to a joined client.</summary>
+        public System.Func<ushort, bool> Audience;
+        bool Excluded(in ReplicationContext ctx) => Audience != null && !Audience(ctx.ClientPlayerId);
+
         readonly NetEntityRegistry<ZombieEntity> _zombies = new NetEntityRegistry<ZombieEntity>();
         readonly Dictionary<uint, long> _removedAtTick = new Dictionary<uint, long>();
         readonly RelevancyTracker _relevancy = new RelevancyTracker();
@@ -117,6 +124,7 @@ namespace UnturnedGodot.Net
 
         public void WriteFull(NetPakWriter w, in ReplicationContext ctx)
         {
+            if (Excluded(ctx)) { w.WriteUInt16(0); return; }
             var ids = SortedIds();
             if (Interest != null)
             {
@@ -139,6 +147,7 @@ namespace UnturnedGodot.Net
 
         public void WriteDelta(NetPakWriter w, in ReplicationContext ctx, long baselineTick)
         {
+            if (Excluded(ctx)) { w.WriteUInt16(0); w.WriteUInt16(0); PruneTombstones(ctx.ServerTick); return; }
             var changed = new List<uint>();
             var removed = new List<uint>();
             foreach (uint id in SortedIds())

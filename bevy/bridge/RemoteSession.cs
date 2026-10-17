@@ -13,6 +13,7 @@ public sealed partial class BridgeHost
     ushort _connectPort = 47872;
     bool _remoteSpawnAdopted, _remoteProfileSent;
     RemoteWeaponView _remoteWeapon;
+    RemoteEnvironment _remoteEnvironment;
     bool IsRemote => _connectHost != null;
 
     void ConfigureRemote(JsonElement request)
@@ -35,12 +36,43 @@ public sealed partial class BridgeHost
         ? ["movement", "udpClient", "inventory", "vitals", "combat", "crafting", "catalog", "terrain", "worldClock", "eventAck", "clientReplicas", "mapBindings"]
         : ["movement", "memSession", "udpListen", "inventory", "vitals", "combat", "crafting", "save", "terrain", "catalog", "worldGeometry", "worldLoot", "worldWildlife", "worldZombies", "worldClock", "weather", "eventAck", "rebase"];
 
+    /// <summary>Host enrichments the remote still lacks and that the source client HAD (protocol follow-ups).
+    /// v80 closed repairTool (Command101), weather/dayNumber (System21) and vehiclePartHealth (System9 tail).</summary>
     static readonly string[] RemoteWireGaps = [
-        "repairTool",
-        "explicitRespawn", "weather", "dayNumber", "heldCosmeticBullets", "acceptedImpactDetails",
-        "heldWarheadEffects", "stuckProjectilePose", "projectileLifetime", "vehiclePartHealth",
+        "heldCosmeticBullets", "heldWarheadEffects",
+    ];
+
+    /// <summary>Host data a remote lacks because the Godot source never sent it to a joined client either --
+    /// not gaps to port, recorded so nobody invents them (row 15A, each checked against game/):
+    /// explicitRespawn -- PlayerController.Die leaves the death-screen buttons dead on a remote server
+    ///   (`_serverOwnedRespawn &amp;&amp; NetRequestRespawn == null`); only the automatic server respawn runs.
+    /// acceptedImpactDetails -- ClientWorldSession.ImpactFx renders position + flesh/not-flesh only.
+    /// stuckProjectilePose, projectileLifetime -- ProjectileReplicaView mirrors in-flight System4 entities
+    ///   only; it frees the node when the server retires the entity and has no pose/expiry of its own.
+    /// wildlifeHostState -- AnimalPuppets interpolate transform + anim byte; no health or corpse clock.
+    /// zombieHostState -- ClientWorldSession removed the ZombiePuppets renderer with the old zombie system and
+    ///   DedicatedServer removed ZombieNetSync; the current ZombieChunkField is built only for the local SP/
+    ///   listen player (WorldBuilder Player = player), never published, and has no attack on players at all.
+    /// password -- the original handshake has no password field (init refuses a nonempty one).
+    /// acceptedShotTick -- PlayerFiredEvent carries origin/dir/gun only.</summary>
+    static readonly string[] RemoteSourceAbsent = [
+        "explicitRespawn", "acceptedImpactDetails", "stuckProjectilePose", "projectileLifetime",
         "wildlifeHostState", "zombieHostState", "password", "acceptedShotTick",
     ];
+
+    long _toolSentAt = -1;
+    bool _toolSentActive;
+    /// <summary>v80 Command101. Native repeats Tool(true) every frame while the trigger is held; the host
+    /// window is five ticks (BodyCombatServices.ToolUse), so one command per bridge tick is enough and a
+    /// change of state always goes out at once.</summary>
+    bool SendRemoteToolUse(bool active)
+    {
+        long now = _network.CurrentTick;
+        if (active && _toolSentActive && _toolSentAt == now) return true;
+        if (!_client.SendToolUse(active)) return false;
+        _toolSentAt = now; _toolSentActive = active;
+        return true;
+    }
 
     void CheckRemoteOperation(string operation)
     {
@@ -53,10 +85,11 @@ public sealed partial class BridgeHost
 
     void StartRemote()
     {
-        _remoteSpawnAdopted = false; _remoteProfileSent = false;
+        _remoteSpawnAdopted = false; _remoteProfileSent = false; _toolSentAt = -1; _toolSentActive = false;
         _position = Vector3.zero; _velocity = Vector3.zero; _held = 0;
         CreateClient(new UdpClientTransport(_connectHost, _connectPort));
         _remoteWeapon = new RemoteWeaponView(_client, _catalog, Emit);
+        _remoteEnvironment = new RemoteEnvironment(_client.Environment);
         _remoteMounted = new RemoteMountedFlights(_catalog.Mounted,
             (kind,data,tick)=>_events.Add(new(++_eventSequence,kind,data,tick)));
         // Handshake is intentionally asynchronous. The native frame loop keeps
@@ -123,7 +156,8 @@ public sealed partial class BridgeHost
         if (name == "setFiremode") return new { queued = _remoteWeapon.SetFiremode(Int(args, "mode", -1)) };
         if (name is "installAttachment" or "removeAttachment" or "chooseShellType" or "unloadShells" or "rackGun")
             return new { queued = _remoteWeapon.RequestAttachment(name,args) };
-        if (name is "respawn" or "toolUse")
+        if (name == "toolUse") return new { queued = SendRemoteToolUse(Bool(args, "active")) };
+        if (name == "respawn")
         {
             string reason = $"{name} has no corresponding complete remote request in the current protocol";
             Emit("actionRejected", new { text = reason });
@@ -140,7 +174,7 @@ public sealed partial class BridgeHost
     object ClockSnapshot()
     {
         long tick = _server?.Session.CurrentTick ?? _client.Applier.LastAppliedServerTick;
-        return new { day = _environment == null ? (int?)null : _environment.DayAt(_client.Clock, tick),
+        return new { day = _environment != null ? _environment.DayAt(_client.Clock, tick) : _remoteEnvironment?.DayAt(_client.Clock, tick),
             timeOfDay = _client.Clock.TimeOfDayAt(tick), dayLengthSeconds = _client.Clock.DayLengthSeconds };
     }
 

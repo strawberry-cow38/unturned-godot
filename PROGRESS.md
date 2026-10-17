@@ -3155,6 +3155,80 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - Second review and merges: guarded tick steps (a throw is logged, never fatal), no save after an unrecovered failure, its own `saves/dedicated/` directory, origin refusals that leave the file in place, one-shot sounds ended headless, a branch-guarded deploy script running from its own worktree, and an opt-in SIGTERM process-group test. After merging `port/bevy` b8f90b40: managed 321/321, native 900 pass (the same 2 capture failures), core suites green except 5 UnturnedSim procedural-building tests (their code and data are identical to `port/bevy`; this slice touches neither). A fresh boot rejoined at the exact saved spot after two SIGTERM restarts, with entities flat over 22 min. A package-layout `--dedicated` boot ran from `/tmp`.
 - Remaining: a slow client's first join times out (rejoin works); no remote crash damage on dedicated; claw cut-over. See `bevy/docs/DEDICATED_SERVER_PORT.md`.
 
+### 2026-10-16 — World devices 1: indoor lamps and readable notes (ledger row 20)
+
+- `bevy/src/world/devices{,/lamps,/notes}.rs` port `LampLight`/`GridLight` and `NoteBody`/`NoteReader` onto retail placements. All of it is client-local in the source (`mode != Dedicated`, no wire); the one shared input is the mains, read from the accepted GridSource rows (`deployables::mains_live`, `PowerNet.MainsLive`) at the 4 Hz `DayNightCycle` throttle.
+  - PEI: 12 `Light_0` strips and one tilted `Lamp_1` are grid-fed `LampLight`s (source emitter split + `CapHoles`, warm emissive, the omni at `ComputeLightLocal`, the `InitJitter` wear and reaction-delay stutter); the tilted lamp is a silent white-outlined toggle. The 39 upright desk/standing lamps are `WorldScenery` deployables: dark (unwireable), `Deployable.OutlineColor`, name + full-HP billboard, no prompt, inert F.
+  - Notes (Washington; PEI's four note GUIDs have no mesh in the source): padded see-through look box, white outline, F opens the `Screen::Note` paper panel, F or Esc closes it.
+- Tests: 11 native (Rapier schedule journeys for lamps, scenery and notes) + 2 ignored GPU fixtures; full native suite 891/0. The omni pose and energy match the Godot `--lamptest UG_LAMP_POSE` oracle within 1e-4 m for all three fixtures. Six negative controls failed as intended and were restored byte-identical (upright rule, mains ignored, F focus gate, note look box, F-close, strip float).
+- Visual: native `--lamptest` and note-reader fixtures beside Godot 4.6.2 (`bevy/artifacts/{godot,bevy}-lamp-*.png`, `{godot,bevy}-note-military1.png`, `bevy-lamp-lamp1-outline.png`): same glow placement, pools and panel wrap; the deviations (panel height, shadows budget, brownouts) are in `bevy/docs/WORLD_DEVICES_PORT.md`.
+
+### 2026-10-16 — World devices 2: vending machines, radios and patient monitors (ledger row 20)
+
+- `world::devices::{vending,radio,monitor}` + `ecg.wesl`. Radios (OFF by default, static loop, clicks, the forecast board from the accepted weather outlook) and `Science_3` monitors (the ECG shader ported line for line, R-wave beeps / flatline tone, alive with chance 0.7) are client-local as in the source; their feed is the accepted mains (their plugs are unwireable NetId-0 ports).
+- Vending: local state/shake/refusal flash/billboard (`VendPromptSet`) and rim in the state colour; the purchase is the source's listen-host seam, ported as bridge `vendPay`/`vendDrop` (`bevy/bridge/VendingServices.cs`: one dollar off the server inventory, the can as a replicated world item at the tray; a drop needs a paid vend; a joined client is refused, as `CanVend` is false in the source). No wire ids.
+- Tests: native 7 (+1 GPU fixture), including a real-bridge purchase journey and Godot-oracle tray/anchor numbers; managed `VendingTests` 2 (real UDP). Full suites: native 898/0, managed 300/0. Negative controls failed as intended (6 native, 1 managed); removing `ServerMarkDirty` did not fail (the bridge echoes the spend regardless; kept for parity).
+- Visual: monitor ECG, radio board and vending billboard beside Godot 4.6.2 `--proptest` renders (`bevy/artifacts/{godot,bevy}-{monitor-alive,radio-7,vending}.png`). Deviations in `bevy/docs/WORLD_DEVICES_PORT.md`.
+
+### 2026-10-16 — World devices 3: traffic signals and the car lift (ledger row 20)
+
+- `world::devices::{traffic,carlift}`. Traffic signals (21 on PEI) split per head by palette texel and the mast's largest lens gap, each head's aspect a pure function of the accepted world clock plus the source per-head hash (green 25 / amber 4 / all-red 2 s), lit lenses emissive with a forward-floated glow light; a dead accepted mains starts the cabinet battery's breathing flash (amber; red for a flagged side road, none active in the shipped file), dark after two in-game days. Car lifts (3) get the platform the rip lacked as a native body and an authority-geometry box; F focuses it silently with no rim, and with no reachable power it never moves, as in the shipped source (whose "no power" line is blanked before it renders).
+- TVs/computer screens (`TVDevice`) and the elevator (unplaced by maps) are deferred; see `bevy/docs/WORLD_DEVICES_PORT.md`.
+- Tests: native 7 + 1 GPU fixture; full native suite 905/0. Seven negative controls failed as intended (the first amber-duration control passed and exposed a loose test, now tightened). Visual: `--trafficlight green/red` and the car-lift proptest beside Godot 4.6.2 (`bevy/artifacts/{godot,bevy}-{traffic-green-red,carlift}.png`).
+
+### 2026-10-16 — World devices: merge with the dedicated server, review fixes (ledger row 20)
+
+- Merged port/bevy 1266b052 (dedicated server + packaging); only PROGRESS/PORT_PLAN text conflicted. On `--dedicated`, every device system is gated on `has_local_player` (source `mode != WorldMode.Dedicated`); the car lift's platform alone still attaches, as `WorldBuilder` builds it "EVERY MODE" as a collider. Vending is refused for everyone on a dedicated host (all players are joined clients): the allow-list refuses `action`, and `Vend` refuses on `_dedicated` too.
+- Review fixes:
+  - **Traffic clock:** with no replicated `day` (joined clients), `traffic::Clock` counts time-of-day wraps, so the clock stays monotonic and the battery still dies. Phase parity with the host waits on the replicated day (agent L's Environment system); the radio forecast is likewise blank on joined clients.
+  - **Re-streams:** `DeviceState` now persists, by placement, a head's battery deadline, a monitor's alive roll and a paid-but-undropped vend, so a re-stream mid-shake still drops the can.
+  - **Vending authority:** the bridge reads machines from the manifest (drink plus the `DispensePoint` tray in the absolute frame minus the origin); a pay is bounded to 4 m of the accepted feet; the request names only `sourceIndex`; owed cans clear in `StartSession`.
+  - **Smaller fixes:** the shudder is relative to the pose (origin-rebase safe); monitors share two ECG materials and check their sound files once; lit lenses swap shared palette handles (no per-frame material writes); the note look box is SOURCE_PROP only, so it no longer blocks walking; the ladder doc comment is back on its function.
+- Tests: the native suite is 934/0 and managed UnturnedBevy.Tests 326/0. `./test.sh` L0 is otherwise green, except 8 UnturnedSim building-layout failures; `core/`, `game/` and `tests/UnturnedSim.Tests` are identical to port/bevy, so those come from port/bevy, not this branch.
+- Negative controls (12 controls across four builds), each failing its target test as intended and each file restored byte-identical: dedicated gate, day-less wraps, battery restore, material write, alive re-roll, per-monitor material, vend drop lost on re-attach, rest-pose shake, note box in the walking mask, pay reach, session reset, request drink/position. The first material-write control did not fail, because a `get_mut` with no field write raises no `Modified` in this Bevy; it was redone with a real write and then failed.
+- A headless `--dedicated` boot served on UDP 47991 at 49.8 authority ticks/s with the devices loaded, then SIGTERM wrote the final save.
+
+### 2026-10-16 — MP wire gaps, part A: host enrichment over the wire (ledger row 15A, protocol 80)
+
+- **New wire ids**, documented in one place in `bevy/docs/MP_WIRE_GAPS_PORT.md`:
+  - Command 101 `ToolUse`;
+  - System 21 `Environment`;
+  - a presence-bit part-health tail on the System 9 vehicle entity.
+  - v79 peers are refused. The fishing branch also claims v80, so the integrator renumbers at merge.
+- **Repair tool for remote players.**
+  - A remote's held blowtorch repairs host vehicles and deployables through Command 101.
+  - Bug fixed: `BodyCombatServices` had one shared `_toolOwner`, so a second repairer took the tool from the first. Tool state is now per owner.
+  - Wreck salvage by a non-listen owner now goes through the original validator under that owner's identity. Before, it was refused on a listen host and hit a null client on dedicated.
+- **Weather and day on remote clients.**
+  - The host publishes seed, base day, type, stage and blend/puddle/snow (u8).
+  - `RemoteEnvironment` rebuilds the host's `State()`. Remote `weather`, `worldClock.day`, `today`/`tomorrow` and the temperature band now match the host's instead of being null or day 0.
+- **Vehicle part health on remote clients.**
+  - Engine, main rotor and tail rotor are sent as u8 fractions, with drowned, fuse and burn tick.
+  - Remote rows now carry part health, `onFire`, `burnSeconds` and `wreckSalvageable`.
+- **`network.sourceAbsent`.** The tokens the source never sent a joined client either were checked against `game/` and moved here. `wireGaps` keeps only the slice B pair.
+- **Zombies: source parity, as decided.** In the source, remotes see no zombies, the horde never damages players and dedicated builds none. The extractor now anchors the horde on the listen owner only. A dedicated host steps none. Remote rounds, swings and gunfire no longer reach it (`ServerCombat.RayShooter`). System 3 rows go only to the listen owner's client (`ZombieReplication.Audience`). There are no wire changes.
+- **Verification.**
+  - Core: 773/773, including 5 new wire tests and three updated goldens.
+  - Managed: 325/325 full run; the RemoteSession suite is 24/24 with the day-wrap assertion.
+  - Each new behaviour has a negative control that fails under revert: Command 101 unregistered, single shared tool, environment publish dropped, part publish dropped, remote day not derived from the clock.
+  - Two-process capture: a managed v80 listen host plus a native UDP client under Xvfb. Host `weather rain` makes the client draw rain (`bevy/artifacts/row15a/client-rain-joined.png`); the `weather clear` control is dry (`client-clear-joined.png`). Both PNGs were opened.
+- **Review follow-ups.**
+  - The tool hold window was 5 ticks, equal to the RTO floor; it is now 25, and a dead or disconnected owner's tool is dropped.
+  - New tests: salvage across a command gap, deployable salvage under the remote's identity, tool cleanup, fuse/burn/drowned on the remote row, System 21 in the sync check, three zombie parity tests, and dedicated with no horde.
+  - Ten negative controls each failed their named test.
+  - Full runs after the follow-ups: core 775/775, managed 333/333. No Rust was touched.
+- **Release fix (JSONL regression from the 25-tick window).**
+  - A refused `ToolUse` (no torch in hand) used to leave a held tool behind. If a torch was equipped within 25 ticks, it started repairing with nobody holding it, so `test_blowtorch_repairs_at_source_rate_only_while_held_and_aimed` read 133.5 instead of 130.
+  - Now a refused request clears the tool. Unequipping, an explicit release, death and disconnect each end the tool on the tick they are seen. The window only bridges missing refreshes while the trigger is still down.
+  - New managed tests: a release stops repair on the tick it lands, for both the listen owner and the remote; a refused request does not linger.
+  - Results: JSONL 128/128 (the blowtorch test fails under the lingering revert), core 775/775, managed 335/335.
+- **Merged port/bevy a860cee0 (world devices).**
+  - Joined clients now get the host's `worldClock.day` and `weather`, so traffic phase parity and the radio forecast board work there. `WORLD_DEVICES_PORT.md` caveats and the `traffic::Clock` doc are updated.
+  - New native test `a_joined_clients_replicated_day_puts_every_head_in_the_hosts_phase`: a remote-shaped snapshot gives every head the host's phase, and the day-less fallback is shown to be whole days off.
+  - After the merge:
+    - core 775/775, managed 340/340, JSONL 128/128;
+    - native 933 passed, 66 ignored. The 2 PEI coupling tests need the gitignored `bevy/artifacts/bevy-coupling-os-entered.json`; with it copied in they pass, 6/6 in `main_schedule`.
+
 ### 2026-10-16 — Restraints, binoculars, umbrella and fishing (ledger rows 11-12)
 
 - **Restraints (row 11).** Native LMB with handcuffs, the cable tie or the key (`bevy/src/restraints.rs`) ports `TryRestraintUse`/`TickArrest`: `AimedPlayer` over the puppets, the source alerts, `Cuff_Use` then command 52 at its end, the key's command 53 at the click. The bridge refuses equips while the owner is `ARREST_START` ("Your hands are bound."). Core review fix: 52/53 now need the restraint or key in the sender's bag and a living sender (the client-reported `HeldId` cuffed with pairs nobody owned). Details: `bevy/docs/RESTRAINTS_TOOLS_PORT.md`.
@@ -3163,3 +3237,4 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - **Merged the dedicated server** (port/bevy 1266b052): the fishing/umbrella services serve the headless host (`StartSession`/`StepWorldServices`, managed dedicated cast test); restraints/fishing input and the binocular presentation stay out of `--dedicated`.
 - **Review fixes:** bound hands enforced by core (cuffed fire/melee/throw and non-empty selects dropped); cuffs released on death and disconnect, the key refuses a dead target; the umbrella exemption needs the umbrella in the bag and a landing within the source's 2 x 9.81 x g descent cap, and `gravityMultiplier` must be 0..1; the fishing water test samples the terrain like `BobberOverFishableWater` (server and native); every press/release on a line is sent; binocular passengers may raise them and the PiP target follows the window. Protocol moves to v81 (v80 is a parallel MP-wire branch's). 12 more negative controls fail as intended.
 - **Tests (after the merge and review):** core 777/777, managed 332/332, native 920 passed / 64 ignored. UnturnedSim has 8 BuildingGen failures in code this branch does not touch. 31 negative controls fail as intended (two fishing controls first passed and their test was tightened). Opened Godot oracles: `--rig` gestures, `--vm --gun=handcuffs`, PEI binoculars lowered/raised; native fixtures beside them, and the fishing bobber without an oracle (`bevy/artifacts/*restraint*`, `*gesture*`, `*binoculars*`, `*fishing*`).
+- **Merged port/bevy 4ada148a** (L's v80 host-enrichment wire, zombie horde parity, world devices): v81 and the keepalive byte 0x51 stay, with commands 103/104 and event 78 next to L's command 101 and system 21; no id collides. L's v79-refusal test now pins `Version >= 80`. The bound-hands gate is unchanged in `CombatDispatch`; L's per-owner repair-tool hold (command 101) is not gated on cuffs, since the source only gates the equip. After the merge: core 784/784, managed 351/351, JSONL 128/128, native 953 passed / 68 ignored.
