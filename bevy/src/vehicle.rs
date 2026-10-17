@@ -21,10 +21,11 @@ mod hearing;
 pub(crate) mod lighting;
 mod npc;
 mod remote;
+pub(crate) mod remote_exits;
 mod rope;
 mod render;
 pub(crate) mod seats;
-mod spawns;
+pub(crate) mod spawns;
 #[cfg(test)]
 pub(crate) mod tests;
 mod tires;
@@ -220,6 +221,7 @@ impl Plugin for VehiclePlugin {
             .init_resource::<damage::WreckMaterial>()
             .init_resource::<effects::Effects>()
             .add_message::<contacts::DamageRequest>()
+            .add_message::<WorldRestored>()
             .add_message::<contacts::Feedback>()
             .add_systems(Update, seats::input.after(crate::ui::UiUpdate).before(PlayerUpdate))
             .add_systems(
@@ -255,6 +257,12 @@ impl Plugin for VehiclePlugin {
             .add_systems(
                 FixedUpdate,
                 turrets::input::send
+                    .after(VehiclePublish)
+                    .before(crate::player::PublishPlayer),
+            )
+            .add_systems(
+                FixedUpdate,
+                remote_exits::publish
                     .after(VehiclePublish)
                     .before(crate::player::PublishPlayer),
             )
@@ -530,6 +538,13 @@ pub(crate) fn registration(
         "hitRegions":hit_regions,"engineRegion":{"rear":s.rear_engine,"threshold":s.box_center[2] + if s.rear_engine { 0.15 } else { -0.15 } * s.box_size[2],"health":s.health * 10. * 0.4},
         "storage":{"trunkWidth":if trunk{6}else{0},"trunkHeight":if trunk{4}else{0},"gloveboxWidth":if hood{3}else{0},"gloveboxHeight":if hood{2}else{0},"seats":seats}})
 }
+/// The authority restored a save outside the `UiIntent::Load` path (a dedicated
+/// host restores at admission): host bodies adopt the restored replica poses
+/// exactly as on Load, or a parked body would wake at its spawn pose and
+/// publish it over the restored one.
+#[derive(Message)]
+pub(crate) struct WorldRestored;
+
 fn sync_vehicles(
     mut commands: Commands,
     snapshot: Res<GameSnapshot>,
@@ -543,10 +558,13 @@ fn sync_vehicles(
     mut images: ResMut<Assets<Image>>,
     assets: Res<AssetServer>,
     mut intents: MessageReader<crate::ui::UiIntent>,
+    // Optional: partial apps (tool and rope fixtures) run sync_vehicles alone.
+    restores: Option<MessageReader<WorldRestored>>,
 ) {
-    let restored = intents
+    let loaded = intents
         .read()
         .any(|intent| matches!(intent, crate::ui::UiIntent::Load));
+    let restored = restores.is_some_and(|mut r| r.read().count() > 0) || loaded;
     if !model.connected {
         return;
     }
@@ -973,6 +991,7 @@ fn step_bodies(
     pilots: Option<Res<npc::Autopilots>>,
     ui: Option<Res<UiState>>,
     geometry: Option<Res<WorldGeometry>>,
+    residency: Option<Res<crate::dedicated::Residency>>,
     context: ReadRapierContext,
     terrain: Query<(), With<crate::world::WorldTerrain>>,
     mut query: Query<(
@@ -1017,8 +1036,10 @@ fn step_bodies(
         })
         .collect();
     let outside_region: HashSet<u32> = query.iter().filter_map(|(_,body,pose,_,_,_,_,_,_,_)| {
-        geometry.as_ref().is_some_and(|g| g.loaded_radius > 0.
-            && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius).then_some(body.net_id)
+        (geometry.as_ref().is_some_and(|g| g.loaded_radius > 0.
+            && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius)
+            // A dedicated host's region is every player's surroundings instead.
+            || residency.as_ref().is_some_and(|r| r.outside(pose.translation))).then_some(body.net_id)
     }).collect();
     for (
         entity,
@@ -1293,6 +1314,8 @@ fn publish_bodies(
     model: Res<UiModel>,
     ui: Res<UiState>,
     occupancy: Res<Occupancy>,
+    residency: Option<Res<crate::dedicated::Residency>>,
+    pilots: Option<Res<npc::Autopilots>>,
     query: Query<(&VehicleBody, &Transform, &Velocity)>,
 ) {
     if !model.connected || crate::player::simulation_paused(&ui) {
@@ -1321,7 +1344,11 @@ fn publish_bodies(
                     "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array()});
             }
             if let Err(e) = bridge.request("action",json!({"name":"vehicleState","args":args})) { warn!("Vehicle state: {e}"); }
-        } else if coupling::state::driver(body) == 0 {
+        } else if coupling::state::driver(body) == 0
+            // Parked outside every player's region: frozen, nothing to report.
+            && !(residency.as_ref().is_some_and(|r| r.outside(pose.translation))
+                && !pilots.as_ref().is_some_and(|p| p.managed(body.net_id)))
+        {
             unattended.push(json!({"netId":body.net_id,"position":pose.translation.to_array(),"eulerDegrees":angles,"linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),
             "steerDegrees":body.drivetrain.steering,"flags":body.flags,"engineDrowned":body.engine_drowned,"swamped":body.swamp.active}));
         }

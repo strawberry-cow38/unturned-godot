@@ -2,17 +2,17 @@
 //! owner before sending positions, and closing a listen session releases its port.
 use super::*;
 use crate::{network::Target, world::WorldConfig};
-fn bridge() -> CoreBridge {
+pub(super) fn bridge() -> CoreBridge {
     CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap()
 }
-fn free_port() -> u16 {
+pub(super) fn free_port() -> u16 {
     std::net::UdpSocket::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
         .port()
 }
-fn app(target: Target, play: bool) -> App {
+pub(super) fn app(target: Target, play: bool) -> App {
     let mut app = App::new();
     let spawn = Vec3::new(-99., 40., 55.);
     app.add_plugins(MinimalPlugins)

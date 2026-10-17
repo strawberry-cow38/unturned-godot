@@ -139,7 +139,7 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | 13 | Crops (`CropManager`, cmds 24/25) | No render/harvest | S-M | low-med | DONE (crops checkpoint, `CROPS_PORT.md`) |
 | 14 | Store shelves (`StoreShelf`, cmd 45) | Contents not drawn; take-one not sent | M | med | DONE (shelves checkpoint, `STORE_SHELVES_PORT.md`; outline glow with the focus-outlines row; back-to-back twin needs server registration) |
 | 15 | MP wire gaps (`RemoteWireGaps`) | Repair, respawn, weather/day, cosmetic flights, impacts, projectile expiry, part health, wildlife/zombie host data; joined-client proximity vehicle enter (`RequestEnterNearestPuppet`, 4 m, ranks above crop harvest) | L | high (MP) | queued |
-| 16 | Hybrid dedicated server and moderation | No headless bridge host on 47872; live Godot server is protocol 61 | L | high (MP) | agent D (in progress) |
+| 16 | Hybrid dedicated server and moderation | DONE: headless `--dedicated` host, admission restore, autosave/shutdown save, BanStore moderation, sync-check, NetLog, signals, versioned units/deploy script, two-process restart journey ([DEDICATED_SERVER_PORT.md](DEDICATED_SERVER_PORT.md)); remaining: slow-client first-join timeout, remote crash damage on dedicated, claw cut-over | L | high (MP) | agent D (merge with integrator) |
 | 17 | Infinite/finite world MP | Origin protocol, island descriptor negotiation | L | med | queued |
 | 18 | Menus/settings/bug report/launcher | Landed: source dashboard/submenus, singleplayer selector (retail, Generate Island, Proc list, Infinite, Zombies rule to the host), full settings rows/tabs/key binds with native effects, hold-to-report outbox/upload. Remaining: barn diorama, Playground world, render scale/distance, sun shafts/fog, SSR, outline, Workshop editor rows, arena (dedicated, row 16), launcher Bevy release path. See [SETTINGS_MENU_PORT.md](SETTINGS_MENU_PORT.md) | L | med | agent E (partial) |
 | 19 | Generated buildings | Preview stage; furniture data only (`61272db6`) | L | med | queued |
@@ -149,8 +149,8 @@ Owner "agent" means an isolated worktree branch merged by the integrator.
 | — | Nearby AREA operations and selected-item Salvage | Drag/split/equip/drop/Empty/magazine/Salvage | M | high | DONE (`0b3075df`, protocol 77; whole ground drag refused as source) |
 | — | Remaining power utilities | Specialized endpoints, fuel/ramp, consumer lights/audio, readouts | L | med | DONE (`17b9a035`, protocol 78; vehicle pour/siphon with row 9) |
 | — | Fifth-wheel towing | Full-game rocking fixed; remote/MP towing journey, rigid cargo | M | med | integrator |
+| — | Packaging | Landed: runtime bridge/content/cache resolution (`install.rs`: env overrides, exe-relative package marker, checkout fallback), `bevy/tools/package.sh` (self-contained bridge, bundled content, 787 MB linux-x64), relocation proven with the repo masked. Package bridge runs in place; reports carry the packaged commit. Remaining: Windows/macOS packages, launcher download path. See [PACKAGING_PORT.md](PACKAGING_PORT.md) | M | high (ship) | agent J (linux DONE) |
 | — | Focus outlines (`OutlineOverlay`: items, shelves/containers, notes, puppets, fruit) | DONE for items, containers, shelf items, deployables, vehicles (rarity), doors/seats and the Outline toggle (`OUTLINE_PORT.md`); TVs (lamps, notes, radios, monitors and vending done with row 20), skinned NPC bodies, forage fruit and the red tool-can't-act colour remain | M | med | integrator |
-| — | Packaging | Bridge/content paths are compile-time `CARGO_MANIFEST_DIR`; no relocatable release | M | high (ship) | agent J (in progress) |
 
 N/A: the zombie attack loop/death loot and NPC map placements/quest persistence
 are absent from the source itself. FreezeMode, TargetDummy, DamageNumbers,

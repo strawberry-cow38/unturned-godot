@@ -23,6 +23,8 @@ pub struct Options {
     pub demo_furniture: bool,
     pub play: bool,
     pub headless: bool,
+    /// `--netlog`: route core NetLog to stderr (source flag; also UG_NETLOG=1).
+    pub netlog: bool,
     pub ticks: u32,
     pub screenshot: Option<PathBuf>,
     pub screenshot_frame: u32,
@@ -35,7 +37,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            content: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../game/content"),
+            content: crate::install::Layout::current().content(),
             unturned: detect_retail_install(),
             map: "PEI".into(),
             seed: 1337,
@@ -54,6 +56,7 @@ impl Default for Options {
             demo_furniture: false,
             play: false,
             headless: false,
+            netlog: false,
             ticks: 250,
             screenshot: None,
             screenshot_frame: 90,
@@ -71,9 +74,10 @@ impl Options {
         let mut args = args.into_iter();
         let mut listen = None;
         let mut connect = None;
-        let mut port = crate::network::DEFAULT_PORT;
-        let mut server_name = "Bevy world".to_owned();
-        let mut max_players = 24u8;
+        let mut dedicated = false;
+        let mut port = None;
+        let mut server_name = None;
+        let mut max_players = None;
         while let Some(arg) = args.next() {
             let (key, inline) = arg
                 .split_once('=')
@@ -88,6 +92,8 @@ impl Options {
                 "--help" | "-h" => options.help = true,
                 "--play" | "--peiplay" => options.play = true,
                 "--headless" => options.headless = true,
+                "--dedicated" => dedicated = true,
+                "--netlog" => options.netlog = true,
                 "--demo-furniture" => options.demo_furniture = true,
                 "--lakes" => options.lakes = true,
                 "--no-zombies" => options.zombies = false,
@@ -109,10 +115,10 @@ impl Options {
                 }
                 "--listen" => listen = Some(value()?.parse::<u16>()?),
                 "--connect" => connect = Some(value()?),
-                "--port" => port = value()?.parse()?,
+                "--port" => port = Some(value()?.parse::<u16>()?),
                 "--name" => options.player_name = value()?,
-                "--server-name" => server_name = value()?,
-                "--max-players" => max_players = value()?.parse()?,
+                "--server-name" => server_name = Some(value()?),
+                "--max-players" => max_players = Some(value()?.parse::<u8>()?),
                 "--vehicle" => options.vehicle = Some(value()?.to_ascii_lowercase()),
                 "--content" => options.content = value()?.into(),
                 "--unturned" => options.unturned = Some(value()?.into()),
@@ -125,15 +131,47 @@ impl Options {
                 _ => bail!("Unknown option {arg}. Use --help."),
             }
         }
-        if listen.is_some() && connect.is_some() {
-            bail!("--listen and --connect are mutually exclusive");
+        if [listen.is_some(), connect.is_some(), dedicated].iter().filter(|m| **m).count() > 1 {
+            bail!("--listen, --connect and --dedicated are mutually exclusive");
         }
-        if listen == Some(0) || port == 0 {
+        if listen == Some(0) || port == Some(0) {
             bail!("Network port must be 1..65535");
         }
-        if !(1..=32).contains(&max_players) {
+        if max_players.is_some_and(|n| !(1..=32).contains(&n)) {
             bail!("--max-players must be 1..32");
         }
+        if dedicated {
+            // Source Main.PortEnv: UG_PORT overrides the standard 47872.
+            let port = match port {
+                Some(port) => port,
+                None => match std::env::var("UG_PORT").ok().filter(|p| !p.is_empty()) {
+                    Some(text) => text
+                        .parse::<u16>()
+                        .ok()
+                        .filter(|p| *p != 0)
+                        .ok_or_else(|| anyhow::anyhow!("UG_PORT must be 1..65535"))?,
+                    None => crate::network::DEFAULT_PORT,
+                },
+            };
+            if options.headless || options.island.is_some() || options.new_island.is_some() {
+                bail!("--dedicated hosts a retail map; it excludes --headless and finite islands");
+            }
+            if options.screenshot.is_some() || options.fixed_fps.is_some() {
+                bail!("--dedicated has no renderer; --shot and --fixed-fps do not apply");
+            }
+            if options.vehicle.is_some() || options.hitch.is_some() || options.demo_furniture {
+                bail!("--vehicle/--hitch/--demo-furniture stage props beside a local player; a dedicated server has none");
+            }
+            options.network = crate::network::Target::Dedicated {
+                port,
+                name: server_name.clone(),
+                max_players,
+            };
+            options.play = true;
+        }
+        let port = port.unwrap_or(crate::network::DEFAULT_PORT);
+        let server_name = server_name.unwrap_or_else(|| "Bevy world".to_owned());
+        let max_players = max_players.unwrap_or(24);
         if let Some(host) = connect {
             let (host, port) = crate::network::parse_address(&host, &port.to_string())
                 .map_err(anyhow::Error::msg)?;
@@ -227,15 +265,18 @@ fn detect_retail_install() -> Option<PathBuf> {
 }
 
 pub const HELP: &str = "Unturned Bevy\n\
-Usage: bevy/run.sh [options]\n\
+Usage: bevy/run.sh [options]  (a package: ./unturned-bevy [options])\n\
   --play                   Enter the world immediately\n\
+  --dedicated              Headless dedicated server (no window/GPU, no local player)\n\
+                           on UDP --port (or UG_PORT, default 47872); see DEDICATED_SERVER_PORT.md\n\
+  --netlog                 Network diagnostics on stderr (also UG_NETLOG=1)\n\
   --connect HOST --port 47872  Probe and join an actual UDP server\n\
   --listen 47872           Host a UDP world and play locally\n\
   --name Survivor          Local player profile name\n\
   --server-name NAME --max-players 24  Listen server settings\n\
   --map PEI                Map (PEI, Washington, Yukon, or Procedural)\n\
   --unturned PATH          Retail install root (also UG_UNTURNED_DIR)\n\
-  --content PATH           Bundled game/content directory\n\
+  --content PATH           Bundled game/content directory (also UG_CONTENT_DIR)\n\
   --seed 1337              Procedural world seed\n\
   --new-island DIR         Generate original finite editor map in a new directory\n\
   --island DIR             Reopen that map without regenerating authored files\n\
@@ -251,7 +292,10 @@ Usage: bevy/run.sh [options]\n\
   --shot-event NAME        Capture when an authoritative event is rendered\n\
   --fixed-fps N            Deterministic render diagnostic (source movie mode)\n\
   --stay                   Keep running; F12 repeats the capture\n\
-  --help                   Show this help";
+  --help                   Show this help\n\
+Paths: a package finds bridge/ and content/ beside the executable; a checkout\n\
+uses its own. Override with UG_BRIDGE_DLL, UG_CONTENT_DIR, UG_DATA_DIR or\n\
+UG_PACKAGE_ROOT.";
 
 #[cfg(test)]
 mod tests {

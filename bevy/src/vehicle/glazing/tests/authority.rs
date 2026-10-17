@@ -286,3 +286,55 @@ fn original_police_geometry_normal_fire_and_remote_repair_drive_native_aperture(
         "repair is not another break burst"
     );
 }
+
+/// A joined rider's F is a CommandExitVehicle with no local probe behind it: the
+/// host must keep a fresh door clearance for remote seats, or the authority
+/// refuses every door (found on the dedicated-server journey: stuck in a seat).
+#[test]
+fn joined_rider_gets_out_through_a_door_the_host_probes() {
+    for probing in [false, true] {
+        let mut app = app();
+        app.world_mut().spawn((
+            RigidBody::Fixed,
+            Collider::cuboid(30., 0.25, 30.),
+            CollisionGroups::new(Group::GROUP_1, Group::ALL),
+            Transform::from_xyz(0., -0.25, 0.),
+        ));
+        if probing {
+            app.add_systems(Update, crate::vehicle::remote_exits::publish);
+        }
+        let mut journey = Journey::install(&mut app);
+        let rider = journey.peer_state["playerId"].as_u64().unwrap();
+        journey
+            .peer
+            .request("action", json!({"name":"console","args":{"text":"teleport 2 0.1 0"}}))
+            .unwrap();
+        journey.pump(app.world_mut(), 10);
+        journey
+            .peer
+            .request("action", json!({"name":"enterVehicle","args":{"netId":journey.id,"seat":1}}))
+            .unwrap();
+        journey.pump(app.world_mut(), 20);
+        let seated = |journey: &Journey| {
+            journey.host_state["vehicles"].as_array().unwrap().iter()
+                .find(|r| r["netId"] == journey.id).unwrap()["passengers"]
+                .as_array().is_some_and(|p| p.iter().any(|id| id.as_u64() == Some(rider)))
+        };
+        assert!(seated(&journey), "the rider took seat 1: {}", journey.row());
+        for step in 0..40 {
+            if step == 12 {
+                // The rider's F lands at an arbitrary tick once the host is steady.
+                journey.peer.request("action", json!({"name":"exitVehicle","args":{}})).unwrap();
+            }
+            // The host reads its own snapshot: the rider is a remote player there.
+            app.world_mut().resource_mut::<GameSnapshot>().0 = journey.host_state.clone();
+            app.update();
+            journey.pump(app.world_mut(), 1);
+        }
+        assert_eq!(
+            seated(&journey),
+            !probing,
+            "without a host probe the authority refuses the door; with one the rider gets out"
+        );
+    }
+}

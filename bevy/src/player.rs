@@ -26,6 +26,8 @@ use persistence::save_path;
 #[cfg(test)]
 mod network_tests;
 #[cfg(test)]
+mod dedicated_tests;
+#[cfg(test)]
 mod seated_tests;
 #[cfg(test)]
 mod mounted_tests;
@@ -62,14 +64,16 @@ impl Plugin for PlayerPlugin {
             .init_resource::<GameSnapshot>()
             .init_resource::<CraftingEye>()
             .init_resource::<crate::survival::TemperatureProbe>()
-            .add_systems(Startup, spawn_player.after(WorldReady))
+            // A dedicated host has no local body, camera or input: its own
+            // driver ticks the bridge (crate::dedicated); session setup is shared.
+            .add_systems(Startup, spawn_player.after(WorldReady).run_if(crate::dedicated::has_local_player))
             .add_systems(
                 Update,
                 (
                     initialize_session,
                     ui_intents,
                     crate::world::origin::adopt_authority,
-                    read_input,
+                    read_input.run_if(crate::dedicated::has_local_player),
                     physics_configuration,
                 )
                     .chain()
@@ -81,28 +85,34 @@ impl Plugin for PlayerPlugin {
                 Update,
                 (sync_seated_body, camera_follow)
                     .chain()
+                    .run_if(crate::dedicated::has_local_player)
                     .in_set(PlayerCameraUpdate)
                     .after(crate::vehicle::VehicleUpdate)
                     .after(PlayerUpdate),
             )
             .add_systems(
                 Update,
-                persistence::entry_restore.after(crate::entities::WorldServicesReady),
+                // The dedicated host restores at admission (dedicatedServe) instead.
+                persistence::entry_restore
+                    .after(crate::entities::WorldServicesReady)
+                    .run_if(crate::dedicated::has_local_player),
             )
-            .add_systems(FixedUpdate, lean::step.before(simulate))
+            .add_systems(FixedUpdate, lean::step.before(simulate).run_if(crate::dedicated::has_local_player))
             .add_systems(
                 Update,
-                lean::ease.after(PlayerUpdate).before(PlayerCameraUpdate),
+                lean::ease.after(PlayerUpdate).before(PlayerCameraUpdate).run_if(crate::dedicated::has_local_player),
             )
             .add_systems(
                 FixedUpdate,
                 simulate
+                    .run_if(crate::dedicated::has_local_player)
                     .in_set(SimulatePlayer)
                     .before(PhysicsSet::SyncBackend),
             )
             .add_systems(
                 FixedUpdate,
                 publish_body
+                    .run_if(crate::dedicated::has_local_player)
                     .in_set(PublishPlayer)
                     .after(PhysicsSet::Writeback)
                     .after(crate::vehicle::VehiclePublish),
@@ -114,7 +124,7 @@ impl Plugin for PlayerPlugin {
 pub struct GameSnapshot(pub Value);
 
 #[derive(Resource)]
-struct Session {
+pub(crate) struct Session {
     initialized: bool,
     failed: bool,
     correction_version: u64,
@@ -125,6 +135,13 @@ struct Session {
     heights: StanceHeights,
     /// WorldSaveDriver.LoadIntoWorld is still owed to this host session.
     restore_pending: bool,
+}
+
+impl Session {
+    /// The bridge refused or lost `init` (e.g. an occupied UDP port).
+    pub(crate) fn failed(&self) -> bool {
+        self.failed
+    }
 }
 
 impl Default for Session {
@@ -367,12 +384,18 @@ fn initialize_session(
     // WorldSaveDriver owns one file per map on the host; a remote client has none,
     // and neither does the native vehicle render harness (source harness entries
     // never attach the MpLoopback that owns the save).
-    let restore = (options.0.network.owns_world() && options.0.vehicle.is_none())
-        .then(|| persistence::adopt_legacy_save(&options.0.map));
+    let restore = (options.0.network.owns_world() && options.0.vehicle.is_none()).then(|| {
+        if options.0.network.dedicated() {
+            persistence::dedicated_save_path(&options.0.map)
+        } else {
+            persistence::adopt_legacy_save(&options.0.map)
+        }
+    });
     if let Some(path) = &restore {
         request["savePath"] = json!(path);
         request["restorePending"] = json!(path.is_file());
     }
+    crate::dedicated::configure_init(&options.0, &mut request);
     match bridge.request("init", request) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
             model.reset_session();
@@ -498,8 +521,9 @@ fn ui_intents(
                             json!({"seed":options.0.seed,"x":0,"z":0,"lod":0}),
                         ) {
                             Ok(response) => {
-                                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                                    .join(".local/terrain-selected.json");
+                                let path = crate::install::Layout::current()
+                                    .data_dir()
+                                    .join("terrain-selected.json");
                                 let saved = std::fs::create_dir_all(path.parent().unwrap())
                                     .and_then(|_| {
                                         std::fs::write(&path, response["result"].to_string())

@@ -48,7 +48,12 @@ impl Plugin for RemotePlayersPlugin {
             )
             .add_systems(
                 Update,
-                (lights::update, profiles::update).after(crate::character::CharacterUpdate),
+                (
+                    lights::update,
+                    // Avatar art is presentation: a dedicated host has no screen.
+                    profiles::update.run_if(crate::dedicated::has_local_player),
+                )
+                    .after(crate::character::CharacterUpdate),
             );
     }
 }

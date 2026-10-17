@@ -148,7 +148,8 @@ public sealed partial class WildlifeServices
             if(Tick%PublishDivisorTicks==0) _server.Animals.ServerPublish(new(a.NetId),U(a.GlobalPosition),a.Yaw,a.Dead?(byte)AnimalNetAnim.Dead:a.NetAnim,Tick);
         }
     }
-    public object[] Snapshots(NetWorldClient client) => client.Animals.All.Select(e=>{
+    public object[] Snapshots(NetWorldClient client) => Snapshots(client.Animals);
+    public object[] Snapshots(AnimalReplication animals) => animals.All.Select(e=>{
         _brains.TryGetValue(e.NetIdValue,out var a); var kind=AnimalCatalog.Get(e.Species);
         return (object)new{netId=e.NetIdValue,species=e.Species,animalId=kind.AnimalId,position=Array(e.Pos),yaw=e.YawDegrees,
             hostPosition=a==null?null:Array(U(a.GlobalPosition)),hostYaw=a?.Yaw,

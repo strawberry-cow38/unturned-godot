@@ -183,11 +183,15 @@ public sealed partial class WorldGeometry
         var up = new Vector3(0, .8f, 0); from += up; to += up;
         return RayContact(from,to,out _,out _,out _,out _,true);
     }
-    public float GroundHeight(float x, float z)
+    public float GroundHeight(float x, float z) => TryGroundHeight(x, z, out float height) ? height : 0;
+    /// <summary>GroundHeight without its 0 miss sentinel, for callers that must
+    /// tell unregistered terrain from ground at y=0.</summary>
+    public bool TryGroundHeight(float x, float z, out float height)
     {
         float t = 1f; Triangle triangle = default; bool hit = false;
         Visit(_terrainRoot, new(x, 10000, z), new(0, -20000, 0), ref t, ref triangle, ref hit);
-        return hit ? 10000 - 20000 * t : 0;
+        height = hit ? 10000 - 20000 * t : 0;
+        return hit;
     }
     bool Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref Triangle nearestTriangle, ref bool found, bool worldOnly = false,uint excludedVehicle=0,uint excludedDeployable=0,bool sourceWorldOnly=false)
     {

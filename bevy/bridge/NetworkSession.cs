@@ -30,6 +30,7 @@ public sealed partial class BridgeHost
         _motd = Text(request, "motd");
         _worldHoliday = Main.ActiveHolidayNow();
         ConfigureRemote(request);
+        ConfigureDedicated(request);
     }
 
     IServerTransport ServerTransport()
@@ -65,7 +66,7 @@ public sealed partial class BridgeHost
             throw new ArgumentException("UDP spawn must fit the original shared world-position wire range");
     }
 
-    object NetworkState() => new {
+    object NetworkState() => _dedicated ? DedicatedNetworkState() : new {
         mode = IsRemote ? "client" : _listenPort == 0 ? "local" : "listen",
         ownsWorld = _server != null,
         host = _connectHost,
@@ -87,9 +88,10 @@ public sealed partial class BridgeHost
         wireGaps = IsRemote ? RemoteWireGaps : System.Array.Empty<string>(),
     };
 
-    object[] PlayerReplicas() => _client.Players.All.Select(player => {
-        _client.CombatState.TryGet(player.OwnerPlayerId, out var combat);
-        _client.Profiles.TryGet(player.OwnerPlayerId, out var profile);
+    object[] PlayerReplicas() => PlayerReplicas(_client.Players, _client.CombatState, _client.Profiles);
+    object[] PlayerReplicas(PlayerReplication players, PlayerCombatReplication combatState, PlayerProfileReplication profiles) => players.All.Select(player => {
+        combatState.TryGet(player.OwnerPlayerId, out var combat);
+        profiles.TryGet(player.OwnerPlayerId, out var profile);
         return (object)new {
             playerId = player.OwnerPlayerId, position = Array(player.Pos), yaw = player.YawDegrees,
             profile = profile == null ? null : new { name = profile.Name, face = profile.Face, avatarHash = profile.AvatarHash },

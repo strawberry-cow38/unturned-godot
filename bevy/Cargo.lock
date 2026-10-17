@@ -5684,6 +5684,7 @@ dependencies = [
  "bevy",
  "bevy_rapier3d",
  "cpal",
+ "ctrlc",
  "fastnoise-lite",
  "serde",
  "serde_json",

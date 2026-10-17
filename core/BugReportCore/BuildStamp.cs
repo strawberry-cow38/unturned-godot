@@ -30,10 +30,33 @@ namespace UnturnedGodot.BugReport
         /// <summary>Set by the host from ProjectSettings application/config/version, if an export stamped one.</summary>
         public static string ConfiguredVersion;
 
+        /// <summary>True for a relocatable package. Its commit was recorded when it was packaged, and the folder
+        /// may sit inside an unrelated checkout (bevy/dist, a launcher dir in a repo), so walking up to a .git
+        /// would name the WRONG build. Set via <see cref="UsePackagedCommit"/>.</summary>
+        public static bool Packaged { get; private set; }
+
         public static string Commit => _cached ??= Resolve();
+
+        /// <summary>A packaged host's recorded commit (or "unknown"); .git is never read afterwards.</summary>
+        public static void UsePackagedCommit(string commit)
+        {
+            ConfiguredVersion = string.IsNullOrWhiteSpace(commit) ? null : commit.Trim();
+            Packaged = true;
+            _cached = null;
+        }
+
+        /// <summary>Forget the host configuration and the cached stamp (tests).</summary>
+        public static void Reset()
+        {
+            ProjectDir = null;
+            ConfiguredVersion = null;
+            Packaged = false;
+            _cached = null;
+        }
 
         static string Resolve()
         {
+            if (Packaged) return string.IsNullOrEmpty(ConfiguredVersion) ? "unknown" : ConfiguredVersion;
             try
             {
                 string root = FindGitRoot(ProjectDir ?? Directory.GetCurrentDirectory());
