@@ -216,6 +216,11 @@ namespace UnturnedGodot.Net
         /// <summary>Optional bullet-only geometry (for example the source water splash slab).
         /// Melee and blast shelter retain WorldRayDetailed; null uses that existing ray.</summary>
         public CombatWorldRayDetailed BulletRayDetailed;
+        /// <summary>The player whose bullet or melee swing the world ray in flight belongs to (0 = no player:
+        /// an NPC round, blast shelter or any other caller). Server-only context for host ray hooks that the
+        /// ray delegate signature cannot carry -- e.g. the listen-owner-only zombie field (row 15A source
+        /// parity: a remote's shot passes where a host-local zombie would be).</summary>
+        public ushort RayShooter { get; private set; }
         public Action<CombatResourceHit> DamageResource;
         public Action<CombatBodyHit> DamageBody;
         /// <summary>Optional original TargetDummy host. Null preserves existing world-body behavior.</summary>
@@ -656,9 +661,11 @@ namespace UnturnedGodot.Net
                         { bestT = t; hitKind = 2; hitZombie = ze; hitRelY = relY; hitTop = top; }
                     }
                 CombatWorldHit worldHit;
+                RayShooter = b.Npc ? (ushort)0 : b.Shooter;
                 bool hitWorld = b.FiringVehicle != 0 && MountedRayDetailed != null
                     ? MountedRayDetailed(b.FiringVehicle, b.Pos, next, out worldHit)
                     : BulletRayDetailed != null ? BulletRayDetailed(b.Pos, next, out worldHit) : RayWorld(b.Pos, next, out worldHit);
+                RayShooter = 0;
                 if (hitWorld)
                 {
                     var wp = worldHit.Point;
@@ -829,7 +836,9 @@ namespace UnturnedGodot.Net
                     // no fighter in the cone -> a short forward ray can still land on a destructible prop's
                     // collider (fence/sign/billboard). The break fx rides the replicated ObjectDestroyed event.
                     var to = origin + fwd * reach;
+                    RayShooter = pm.Attacker;
                     bool hitWorld = RayWorld(origin, to, out var worldHit);
+                    RayShooter = 0;
                     if (hitWorld && worldHit.CrewSlot != 0) { } // original TargetDummy has bullet hits only
                     else if (hitWorld && (worldHit.VehicleNetId != 0 || worldHit.DeployableNetId != 0))
                         DamageBody?.Invoke(new CombatBodyHit(worldHit, pm.Attacker, melee.VehicleDamage * mult, true, fwd, tick));

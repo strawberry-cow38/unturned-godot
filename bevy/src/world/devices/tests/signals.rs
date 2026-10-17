@@ -296,6 +296,35 @@ fn a_dayless_clock_counts_its_own_wraps_so_the_battery_still_dies() {
     assert_eq!(clock.seconds(&replicated, 0.).0, 7.25 * length);
 }
 
+/// Row 15A: a joined client's snapshot now carries the host's replicated
+/// `worldClock.day` (System 21 base day, `RemoteEnvironment.DayAt`). A remote that
+/// joined on day 3 has never seen a wrap, so without the day its fallback would
+/// count from 0 and every head would run whole days behind the host. With the
+/// remote-shaped snapshot the clock, and so every head's phase, equals the host's.
+#[test]
+fn a_joined_clients_replicated_day_puts_every_head_in_the_hosts_phase() {
+    let length = 1440.;
+    let host = json!({"worldClock":{"day":3,"timeOfDay":0.41816285,"dayLengthSeconds":length}});
+    // The bridge's remote row: the same accepted day, time derived from the applied tick.
+    let remote = json!({"worldClock":{"day":3,"timeOfDay":0.41816285,"dayLengthSeconds":length},
+        "network":{"mode":"client","ownsWorld":false}});
+    let (host_t, _) = traffic::Clock::default().seconds(&host, 0.);
+    let (remote_t, _) = traffic::Clock::default().seconds(&remote, 0.);
+    assert_eq!(remote_t, host_t);
+    let dayless = json!({"worldClock":{"day":null,"timeOfDay":0.41816285,"dayLengthSeconds":length}});
+    let (fallback_t, _) = traffic::Clock::default().seconds(&dayless, 0.);
+    assert_eq!(host_t - fallback_t, 3. * length, "without the day a fresh joiner is whole days behind");
+    let mut differs = false;
+    for (n, at) in [Vec3::ZERO, Vec3::new(12.5, 0., -40.), Vec3::new(-300., 0., 87.)].into_iter().enumerate() {
+        for head in 0..2 {
+            let offset = traffic::offset(at, head);
+            assert_eq!(phase_at(remote_t, offset), phase_at(host_t, offset), "head {head} of mast {n}");
+            differs |= phase_at(fallback_t, offset) != phase_at(host_t, offset);
+        }
+    }
+    assert!(differs, "the fixture is sensitive to the day: some head disagrees without it");
+}
+
 fn set_clock(app: &mut App, seconds: f64) {
     app.world_mut().resource_mut::<GameSnapshot>().0["worldClock"]["timeOfDay"] = json!(seconds / 1800.);
 }

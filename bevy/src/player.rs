@@ -713,7 +713,10 @@ fn read_input(
         Res<Time>,
     ),
     mut mounted: Option<ResMut<crate::vehicle::turrets::Operator>>,
-    optics: Option<Res<crate::ui::tank_optics::TankOptics>>,
+    (optics, binoculars): (
+        Option<Res<crate::ui::tank_optics::TankOptics>>,
+        Option<Res<crate::viewmodel::binoculars::Binoculars>>,
+    ),
 ) {
     if let Some(mounts) = &mut mounted { mounts.refresh(&recoil.1.0, recoil.3.0); }
     // VehicleUpdate adopts physical seat poses later this frame. Use the already
@@ -823,7 +826,7 @@ fn read_input(
         let sensitivity = settings.mouse_sensitivity * if ride.is_some() {
             optics.as_ref().map_or(1., |o| o.look_sensitivity())
         } else {
-            viewmodel.look_sensitivity()
+            viewmodel.look_sensitivity() * binoculars.as_ref().map_or(1., |b| b.look_sensitivity())
         };
         if !input.in_seat {
             // Original AddLookDelta receives mouse deltas after sensitivity,
@@ -988,7 +991,8 @@ fn simulate(
         "moveX":input.movement.x,"moveY":input.movement.y,"jump":input.jump,"grounded":body.grounded,
         "stance":wanted_stance,"yaw":input.yaw,"pitch":input.pitch,"velocity":body.velocity.to_array(),"heldItemId":input.held_item_id,
         "headroom":headroom,"capsuleHeight":body.height,"equipmentAllowsSprint":!viewmodel.aiming,
-        "steadyKey":input.steady_key,"aiming":viewmodel.aiming,"scopeZoom":viewmodel.scope_zoom
+        "steadyKey":input.steady_key,"aiming":viewmodel.aiming,"scopeZoom":viewmodel.scope_zoom,
+        "gravityMultiplier":crate::umbrella::gravity(catalog.items.get(&viewmodel.held), viewmodel.ready)
     }}));
         input.jump = false;
         match response {

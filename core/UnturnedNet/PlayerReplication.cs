@@ -36,6 +36,7 @@ namespace UnturnedGodot.Net
         public const byte SystemProfiles = 18;      // display name + avatar hash per player (ProfileReplication.cs). Everyone-visible, unlike skills: the point is that other players see it. The avatar BYTES do not ride the snapshot -- only a 64-bit content hash does, and the image goes out once per (peer, hash) as EventAvatarData.
         public const byte SystemOwnerEquipment = 19; // v62: owner-only accepted held instance and weapon clocks
         public const byte SystemVehicleMounts = 20; // v64: accepted source vehicle gun angles/belts/cooldowns
+        public const byte SystemEnvironment = 21;   // v80 (row 15A): host weather type/stage/blend/puddle/snow + seed/base day singleton (EnvironmentReplication.cs). Remote clients rebuild WorldEnvironment.State() from it.
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 
@@ -251,6 +252,9 @@ namespace UnturnedGodot.Net
         public const byte CommandDepositFuel = 90; // v78: pour the exact held fuel container into a generator (TryDepositFuel).
         public const byte CommandPourVehicleFuel = 99; // v79: TryDepositFuel's vehicle branch -- pour the exact held can into a car.
         public const byte CommandSiphonVehicleFuel = 100; // v79: TryExtractFuel's vehicle branch -- siphon a car into the exact held can.
+        public const byte CommandToolUse = 101; // v80 (row 15A): hold/release the held repair tool (blowtorch) -- BodyCombatServices.ToolUse for a remote owner; per-owner tool state on the host.
+        public const byte CommandFishingCast = 103; // v81: the bobber landed in fishable water at this point and gauge strength; the server starts its bite timer.
+        public const byte CommandFishingInput = 104; // v81: primary pressed/released on the server's line (catch, reel, challenge pull), or the rod put away.
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
         public const byte CommandNearbyInventory = 86; // v76: bounded source Nearby projection and exact transfer.
         public const byte CommandNearbyOperation = 87; // v77: exact Nearby row split to a cell or emptied (op 0 reserved, refused); result rides Event63.
@@ -328,6 +332,7 @@ namespace UnturnedGodot.Net
         public const byte EventMagazineTransfer = 60; // v71: owner-only exact magazine request completion.
         public const byte EventCraftingContext = 61; // v72: owner-only station access and contextual craft outcome.
         public const byte EventNearbyInventory = 63; // v76: owner-only full Nearby items and world contributors.
+        public const byte EventFishingState = 78; // v81: to the caster only -- the server's line state (idle/line/bite/challenge) and a landed fish.
         public const byte EventRespawnPose = 62; // v73: optional owner facing, paired with unchanged PlayerRespawned.
         public const byte EventVehicleDoor = 59; // v70: actual open/close edge, no late-join replay.
         public const byte EventVehicleLighting = 57; // v68: accepted alarm horn/lamp contact facts

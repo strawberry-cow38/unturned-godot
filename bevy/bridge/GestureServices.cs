@@ -14,6 +14,11 @@ public sealed partial class BridgeHost
             requiredStance = definition.RequiredStance?.ToString().ToLowerInvariant() };
     }).ToArray();
 
+    const string HandsBound = "Your hands are bound.";
+    /// <summary>PlayerController.IsArrested: the accepted gesture on our own combat entity.</summary>
+    bool OwnerArrested() => _client != null && _client.CombatState.TryGet(_client.PlayerId, out var self)
+        && self.Gesture == (byte)EPlayerGesture.ARREST_START;
+
     // PlayerController.RequestGesture performs this same local advisory check
     // before sending. Never pose optimistically: the publisher still decides on
     // its next tick using authoritative hands/stance and emits the accepted fact.

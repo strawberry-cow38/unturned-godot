@@ -270,7 +270,10 @@ zfield = zfield.replace('Terr != null && Terrain.IsWater(Terr.SampleDominantLaye
 zfield = zfield.replace('Terr != null ? Terr.SampleHeight(gx, gz) : 0f', 'SampleGround(gx, gz)')
 zfield = zfield.replace('Terr != null ? Terr.SampleHeight(nx, nz) : z.Pos.Y', 'SampleGround(nx, nz)')
 zfield = zfield.replace('else if (Player != null) _anchors.Add(Player.GlobalPosition);\n            else foreach (var p in PlayerRegistry.All) if (GodotObject.IsInstanceValid(p)) _anchors.Add(p.GlobalPosition);',
-    'else foreach (var p in _server.Players.All) _anchors.Add(G(p.Pos));')
+    # Source parity (row 15A): the hybrid builds the horde only for the SP/listen player, exactly as
+    # WorldBuilder does (Player = player); the PlayerRegistry branch belonged to server worlds that
+    # the source never builds a horde for, so the dedicated host steps none and remotes never anchor it.
+    'else if (OwnerAnchor(out var ownerAnchor)) _anchors.Add(ownerAnchor);')
 zfield = zfield.replace('else if (c.Tier == Tier.Frozen && c.Live != null) c.Live = null;',
     'else if (c.Tier == Tier.Frozen && c.Live != null) Freeze(c);')
 zfield = zfield.replace('!GodotObject.IsInstanceValid(z.Body)', 'z.Body.Freed')

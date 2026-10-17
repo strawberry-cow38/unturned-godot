@@ -9,6 +9,7 @@ mod dedicated;
 mod deployables;
 mod entities;
 mod environment;
+mod fishing;
 mod hdr;
 mod nightvision;
 mod outline;
@@ -22,6 +23,7 @@ mod player;
 mod profile;
 mod projectiles;
 mod recoil;
+mod restraints;
 mod rig;
 mod settings;
 mod sound;
@@ -29,6 +31,7 @@ mod survival;
 mod footsteps;
 mod graphics;
 mod ui;
+mod umbrella;
 mod use_items;
 mod vehicle;
 mod viewmodel;
@@ -229,6 +232,10 @@ fn add_game_plugins(app: &mut App, dedicated: bool) {
             outline::OutlinePlugin,
             // F at a joined client's nearest vehicle: player input, no host.
             vehicle::proximity_enter::ProximityEnterPlugin,
+            // The local player's cuff/key LMB and fishing cast: client input and
+            // presentation. The dedicated host serves both through the bridge.
+            restraints::RestraintsPlugin,
+            fishing::FishingPlugin,
         ));
     }
 }

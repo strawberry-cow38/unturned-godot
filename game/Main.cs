@@ -1020,7 +1020,8 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
-                bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan" || gun == "carjack";   // settled-hold frame capture (no ADS/fire) -- a jack has no ADS and never fires, so the gun frame list would capture nothing but the carry pose twice
+                bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan" || gun == "carjack"
+                    || gun is "handcuffs" or "cabletie" or "handcuffskey" or "umbrella" or "fishingrod";   // empty-hands holds (Bevy port oracle): no ADS, no fire   // settled-hold frame capture (no ADS/fire) -- a jack has no ADS and never fires, so the gun frame list would capture nothing but the carry pose twice
                 _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
                     ? new[] { 52, 56, 60, 64, 68, 72 }          // UG_HAMMER: the rack window (PlayHammer at f50) -> verify the gun ROTATES through the charge
                     : deployVm
@@ -1954,7 +1955,16 @@ namespace UnturnedGodot
             // comment above already names for food.
             bool isJack = gunName == "carjack";
             bool isFuel = gunName == "gascan";   // gas can: held in-hand via the DeployableMesh+NaturalHold path -- must beat isMelee (gascan.txt exists)
-            _vm = isFists
+            // THE EMPTY-HANDS HOLDS (Bevy port oracle), built exactly as EquipHeldRestraint / EquipHeldUmbrella /
+            // EquipHeldFisher build them: no carry model, so EmptyHands wins the equip precedence (Melee_Equip), and a
+            // restraint carries its own Use clip, which the ConsumeUseDriver below replays.
+            bool isKey = gunName == "handcuffskey";
+            bool isRestraint = isKey || gunName == "handcuffs" || gunName == "cabletie";
+            bool isEmptyHands = isRestraint || gunName == "umbrella" || gunName == "fishingrod";
+            _vm = isEmptyHands
+                ? (isRestraint ? new Viewmodel { EmptyHands = true, ConsumableEquipClip = isKey ? "Key_Equip" : "Cuff_Equip", ConsumableUseClip = isKey ? "Key_Use" : "Cuff_Use" }
+                               : new Viewmodel { EmptyHands = true })
+                : isFists
                 ? new Viewmodel { Fists = true }                                                  // bare-fists unarmed state (arms + melee ready hold, no mesh)
                 : isWire
                 ? new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f), HeldToolKind = ToolKind.Wire }   // wire tool in-hand (the kind is EXPLICIT now -- it used to be inferred from the absence of the others)
@@ -1990,7 +2000,8 @@ namespace UnturnedGodot
                     return true;
                 };
             }
-            _vmMelee = isMelee || isFists || isDeploy || isWire || isFuel || isConsumable;
+            _vmMelee = isMelee || isFists || isDeploy || isWire || isFuel || isConsumable || isEmptyHands;
+            if (isRestraint) AddChild(new ConsumeUseDriver { VM = _vm, Period = isKey ? 2.3f : 2f });   // TryRestraintUse's PlayConsumeUse, on a loop
             // EATING IS A THING THE HARNESS CAN SHOW NOW (strawberry 2026-09-10: "its YOUR demo harness. if theres
             // something it cant do, write it"). I had reported the consumable part rip as unverifiable because
             // nothing could put food in a hand -- which is a gap in my own tool, not a reason. A driver replays the

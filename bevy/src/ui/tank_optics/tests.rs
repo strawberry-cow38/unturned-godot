@@ -450,3 +450,27 @@ fn mounted_crosshair_uses_owned_crosshair_mount_in_fp_tp_and_suppresses_masked_g
     adopt(&mut app, 2, 1, true, 1);
     assert!(!shown(&mut app));
 }
+#[test]
+fn raised_hand_binoculars_share_the_periscope_overlay_and_divide_the_fov_once() {
+    use crate::viewmodel::binoculars::Binoculars;
+    let (mut app, _, camera) = app();
+    app.world_mut().resource_mut::<Occupancy>().seat = None;
+    let pair = Some(crate::use_items::Cell { id: 333, page: 2, x: 0, y: 0 });
+    let mut binoculars = Binoculars::default();
+    binoculars.step(pair, false, true); // 8x, lowered
+    app.insert_resource(binoculars);
+    app.update();
+    assert!((fov(&app, camera) - 72.).abs() < 1e-5, "lowered: no zoom");
+    assert_eq!(overlay(&mut app).0, Visibility::Hidden);
+    app.world_mut().resource_mut::<Binoculars>().step(pair, true, false);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert!((fov(&app, camera) - 9.).abs() < 1e-5, "raised: FOV / 8, never accumulated");
+    let (visible, settings) = overlay(&mut app);
+    assert_eq!((visible, settings.y), (Visibility::Inherited, 1.), "the retail binoculars overlay");
+    app.world_mut().resource_mut::<Binoculars>().step(pair, false, false);
+    app.update();
+    assert!((fov(&app, camera) - 72.).abs() < 1e-5);
+    assert_eq!(overlay(&mut app).0, Visibility::Hidden);
+}

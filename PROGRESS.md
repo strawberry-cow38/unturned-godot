@@ -3188,6 +3188,58 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
 - Negative controls (12 controls across four builds), each failing its target test as intended and each file restored byte-identical: dedicated gate, day-less wraps, battery restore, material write, alive re-roll, per-monitor material, vend drop lost on re-attach, rest-pose shake, note box in the walking mask, pay reach, session reset, request drink/position. The first material-write control did not fail, because a `get_mut` with no field write raises no `Modified` in this Bevy; it was redone with a real write and then failed.
 - A headless `--dedicated` boot served on UDP 47991 at 49.8 authority ticks/s with the devices loaded, then SIGTERM wrote the final save.
 
+### 2026-10-16 — MP wire gaps, part A: host enrichment over the wire (ledger row 15A, protocol 80)
+
+- **New wire ids**, documented in one place in `bevy/docs/MP_WIRE_GAPS_PORT.md`:
+  - Command 101 `ToolUse`;
+  - System 21 `Environment`;
+  - a presence-bit part-health tail on the System 9 vehicle entity.
+  - v79 peers are refused. The fishing branch also claims v80, so the integrator renumbers at merge.
+- **Repair tool for remote players.**
+  - A remote's held blowtorch repairs host vehicles and deployables through Command 101.
+  - Bug fixed: `BodyCombatServices` had one shared `_toolOwner`, so a second repairer took the tool from the first. Tool state is now per owner.
+  - Wreck salvage by a non-listen owner now goes through the original validator under that owner's identity. Before, it was refused on a listen host and hit a null client on dedicated.
+- **Weather and day on remote clients.**
+  - The host publishes seed, base day, type, stage and blend/puddle/snow (u8).
+  - `RemoteEnvironment` rebuilds the host's `State()`. Remote `weather`, `worldClock.day`, `today`/`tomorrow` and the temperature band now match the host's instead of being null or day 0.
+- **Vehicle part health on remote clients.**
+  - Engine, main rotor and tail rotor are sent as u8 fractions, with drowned, fuse and burn tick.
+  - Remote rows now carry part health, `onFire`, `burnSeconds` and `wreckSalvageable`.
+- **`network.sourceAbsent`.** The tokens the source never sent a joined client either were checked against `game/` and moved here. `wireGaps` keeps only the slice B pair.
+- **Zombies: source parity, as decided.** In the source, remotes see no zombies, the horde never damages players and dedicated builds none. The extractor now anchors the horde on the listen owner only. A dedicated host steps none. Remote rounds, swings and gunfire no longer reach it (`ServerCombat.RayShooter`). System 3 rows go only to the listen owner's client (`ZombieReplication.Audience`). There are no wire changes.
+- **Verification.**
+  - Core: 773/773, including 5 new wire tests and three updated goldens.
+  - Managed: 325/325 full run; the RemoteSession suite is 24/24 with the day-wrap assertion.
+  - Each new behaviour has a negative control that fails under revert: Command 101 unregistered, single shared tool, environment publish dropped, part publish dropped, remote day not derived from the clock.
+  - Two-process capture: a managed v80 listen host plus a native UDP client under Xvfb. Host `weather rain` makes the client draw rain (`bevy/artifacts/row15a/client-rain-joined.png`); the `weather clear` control is dry (`client-clear-joined.png`). Both PNGs were opened.
+- **Review follow-ups.**
+  - The tool hold window was 5 ticks, equal to the RTO floor; it is now 25, and a dead or disconnected owner's tool is dropped.
+  - New tests: salvage across a command gap, deployable salvage under the remote's identity, tool cleanup, fuse/burn/drowned on the remote row, System 21 in the sync check, three zombie parity tests, and dedicated with no horde.
+  - Ten negative controls each failed their named test.
+  - Full runs after the follow-ups: core 775/775, managed 333/333. No Rust was touched.
+- **Release fix (JSONL regression from the 25-tick window).**
+  - A refused `ToolUse` (no torch in hand) used to leave a held tool behind. If a torch was equipped within 25 ticks, it started repairing with nobody holding it, so `test_blowtorch_repairs_at_source_rate_only_while_held_and_aimed` read 133.5 instead of 130.
+  - Now a refused request clears the tool. Unequipping, an explicit release, death and disconnect each end the tool on the tick they are seen. The window only bridges missing refreshes while the trigger is still down.
+  - New managed tests: a release stops repair on the tick it lands, for both the listen owner and the remote; a refused request does not linger.
+  - Results: JSONL 128/128 (the blowtorch test fails under the lingering revert), core 775/775, managed 335/335.
+- **Merged port/bevy a860cee0 (world devices).**
+  - Joined clients now get the host's `worldClock.day` and `weather`, so traffic phase parity and the radio forecast board work there. `WORLD_DEVICES_PORT.md` caveats and the `traffic::Clock` doc are updated.
+  - New native test `a_joined_clients_replicated_day_puts_every_head_in_the_hosts_phase`: a remote-shaped snapshot gives every head the host's phase, and the day-less fallback is shown to be whole days off.
+  - After the merge:
+    - core 775/775, managed 340/340, JSONL 128/128;
+    - native 933 passed, 66 ignored. The 2 PEI coupling tests need the gitignored `bevy/artifacts/bevy-coupling-os-entered.json`; with it copied in they pass, 6/6 in `main_schedule`.
+
+### 2026-10-16 — Restraints, binoculars, umbrella and fishing (ledger rows 11-12)
+
+- **Restraints (row 11).** Native LMB with handcuffs, the cable tie or the key (`bevy/src/restraints.rs`) ports `TryRestraintUse`/`TickArrest`: `AimedPlayer` over the puppets, the source alerts, `Cuff_Use` then command 52 at its end, the key's command 53 at the click. The bridge refuses equips while the owner is `ARREST_START` ("Your hands are bound."). Core review fix: 52/53 now need the restraint or key in the sender's bag and a living sender (the client-reported `HeldId` cuffed with pairs nobody owned). Details: `bevy/docs/RESTRAINTS_TOOLS_PORT.md`.
+- **Binoculars and umbrella (row 12).** `bevy/src/viewmodel/binoculars.rs` ports the 333 carry pose, the eyepiece PiP, the raised overlay/zoom/sensitivity (sharing the tank periscope overlay) and the LMB 4/8/12x cycle. The umbrella's fall gravity reaches the bridge `simulate`, and its fall-damage gate (PlayerLife:2399) now runs on the server-derived fall damage (core `FallGravityMultiplier`, `bridge/UmbrellaServices.cs`).
+- **Fishing (row 12).** The source granted fish and XP on the client, which adoption overwrote. Protocol 81 adds command 103 (cast), 104 (press/release/stop) and caster-only event 78; the bridge `FishingServices` owns the `FishingSim` (as `ConfigureForPei`), the window with retail's 1 s leniency, the challenge and the grant. `bevy/src/fishing.rs` keeps the gauge, the bobber's flight, the 4 m depth test, the bob/tug and the line.
+- **Merged the dedicated server** (port/bevy 1266b052): the fishing/umbrella services serve the headless host (`StartSession`/`StepWorldServices`, managed dedicated cast test); restraints/fishing input and the binocular presentation stay out of `--dedicated`.
+- **Review fixes:** bound hands enforced by core (cuffed fire/melee/throw and non-empty selects dropped); cuffs released on death and disconnect, the key refuses a dead target; the umbrella exemption needs the umbrella in the bag and a landing within the source's 2 x 9.81 x g descent cap, and `gravityMultiplier` must be 0..1; the fishing water test samples the terrain like `BobberOverFishableWater` (server and native); every press/release on a line is sent; binocular passengers may raise them and the PiP target follows the window. Protocol moves to v81 (v80 is a parallel MP-wire branch's). 12 more negative controls fail as intended.
+- **Tests (after the merge and review):** core 777/777, managed 332/332, native 920 passed / 64 ignored. UnturnedSim has 8 BuildingGen failures in code this branch does not touch. 31 negative controls fail as intended (two fishing controls first passed and their test was tightened). Opened Godot oracles: `--rig` gestures, `--vm --gun=handcuffs`, PEI binoculars lowered/raised; native fixtures beside them, and the fishing bobber without an oracle (`bevy/artifacts/*restraint*`, `*gesture*`, `*binoculars*`, `*fishing*`).
+- **Merged port/bevy 4ada148a** (L's v80 host-enrichment wire, zombie horde parity, world devices): v81 and the keepalive byte 0x51 stay, with commands 103/104 and event 78 next to L's command 101 and system 21; no id collides. L's v79-refusal test now pins `Version >= 80`. After the merge: core 784/784, managed 351/351, JSONL 128/128, native 953 passed / 68 ignored.
+- **Cuffs and the repair tool:** a cuffed owner's command-101 ToolUse is refused and an active torch ends on the tick the arrest lands (`BodyCombatServices.HandsBound`). The source does not empty the hand at arrest, so neither does the port; the held item stays and is inert. New managed test `CuffsEndAHeldRepairToolAndRefuseAnother`, with 2 negative controls that fail as intended.
+
 ### 2026-10-16 — Proximity vehicle enter for joined clients (ledger row 15, part C)
 
 - `bevy/src/vehicle/proximity_enter.rs` ports `NearestPuppet`/`RequestEnterNearestPuppet` (`PlayerController.cs:6535-6562`). On a joined client only (`network.ownsWorld == false`, on foot, alive, no UI), F asks for the nearest vehicle whose origin is strictly within 4 m of the player origin, with seat 255. It goes through the existing `enterVehicle` action (Command 21 `AnySeat`); there is no wire change, and `CanEnter` plus the `VehicleEntered` echo do the seating. As in the source, it shows no prompt and no rim. The plugin is added only for non-dedicated apps.

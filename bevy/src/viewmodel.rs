@@ -15,6 +15,7 @@ use bevy::{
 use std::{collections::HashMap, fs, path::Path};
 
 pub(crate) mod attachments;
+pub(crate) mod binoculars;
 mod driving;
 mod inspect;
 pub(crate) mod lighting;
@@ -242,6 +243,7 @@ impl Plugin for ViewmodelPlugin {
                 scopes::ScopePlugin,
                 lights::LightPlugin,
                 lighting::LightingPlugin,
+                binoculars::BinocularsPlugin,
             ))
             .add_systems(
                 Update,

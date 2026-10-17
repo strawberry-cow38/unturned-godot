@@ -106,6 +106,13 @@ namespace UnturnedGodot.Net
             public float DoorFold { get; internal set; }
             // v74 fifth-wheel relation; inverse is derived, never rope TowedNetId.
             public uint CoupledTrailerNetId { get; internal set; }
+            // v80 part-health tail (VehiclePartTail.cs): u8 fractions, 255 = full/absent part.
+            public byte EnginePart { get; internal set; } = PartFull;
+            public byte MainRotorPart { get; internal set; } = PartFull;
+            public byte TailRotorPart { get; internal set; } = PartFull;
+            public bool EngineDrowned { get; internal set; }
+            public bool FuseLit { get; internal set; }
+            public int? BurnTick { get; internal set; }
             // Host-only link generation: detach/relink of the same ID must not
             // reuse a raw driver pose from the previous physical joint.
             internal ulong CouplingRevision;
@@ -533,6 +540,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixByte(h, e.HasBiFoldDoor ? (byte)1 : (byte)0);
                 if (e.HasBiFoldDoor) { h = NetHash.MixByte(h, e.DoorOpen ? (byte)1 : (byte)0); h = NetHash.MixUInt32(h, BitConverter.SingleToUInt32Bits(e.DoorFold)); }
                 h = NetHash.MixUInt32(h, e.CoupledTrailerNetId);
+                h = MixPartTail(h, e);   // v80
             }
             return h;
         }
@@ -586,6 +594,7 @@ namespace UnturnedGodot.Net
             w.WriteBit(e.HasBiFoldDoor);
             if (e.HasBiFoldDoor) { w.WriteBit(e.DoorOpen); w.WriteFloat(e.DoorFold); }
             w.WriteUInt32(e.CoupledTrailerNetId);
+            WritePartTail(w, e);   // v80 presence-bit part-health tail
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -633,8 +642,11 @@ namespace UnturnedGodot.Net
             bool doorOpen = false; float doorFold = 0;
             if (hasDoor && (!r.ReadBit(out doorOpen) || !r.ReadFloat(out doorFold) || !float.IsFinite(doorFold) || doorFold < 0 || doorFold > 1)) return false;
             if (!r.ReadUInt32(out uint coupledTrailer) || coupledTrailer == id) return false;
+            if (!ReadPartTail(r, out var parts)) return false;   // v80
             e = new VehicleEntity
             {
+                EnginePart = parts.engine, MainRotorPart = parts.main, TailRotorPart = parts.tail,
+                EngineDrowned = parts.drowned, FuseLit = parts.fuse, BurnTick = parts.burn,
                 CoupledTrailerNetId = coupledTrailer,
                 HasBiFoldDoor = hasDoor, DoorOpen = doorOpen, DoorFold = doorFold,
                 GlassMask = glassMask, BrokenGlassMask = brokenGlass, TireMask = tireMask,

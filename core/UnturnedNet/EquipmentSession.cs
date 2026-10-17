@@ -15,7 +15,9 @@ namespace UnturnedGodot.Net
         {
             Commands.Register<SelectHeldCommand>(ReplicationIds.CommandSelectHeld, SelectHeldCommand.TryRead,
                 (owner, cmd) => SelectHeldRequested(owner, cmd),
-                (owner, unused) => SelectHeldRequested != null && Inventories.TryGet(owner, out _) && CombatState.TryGet(owner, out var life) && life.Alive);
+                // Bevy port review: a cuffed player cannot take anything into the hand (EquipItemAsset's gate, enforced here).
+                (owner, cmd) => SelectHeldRequested != null && Inventories.TryGet(owner, out _) && CombatState.TryGet(owner, out var life) && life.Alive
+                    && (cmd.Address.Id == 0 || !Transactions.IsArrested(owner)));
             Commands.Register<WeaponIntentCommand>(ReplicationIds.CommandWeaponIntent, WeaponIntentCommand.TryRead,
                 (owner, cmd) => WeaponIntentRequested(owner, cmd),
                 (owner, unused) => WeaponIntentRequested != null && Inventories.TryGet(owner, out _) && CombatState.TryGet(owner, out var life) && life.Alive);
