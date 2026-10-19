@@ -178,18 +178,31 @@ namespace UnturnedGodot
             StorySites++;
         }
 
-        /// <summary>A line of concrete barriers across the carriageway, leaving a gap on `side` -- a chicane, not a wall.</summary>
+        /// <summary>A CHICANE of concrete barriers across the carriageway (strawberry 2026-10-19: "shouldnt they have a
+        /// different layout? like alternating 2 lanes blocked so important traffic can still pass through ... and its also
+        /// going onto the sidewalk a bit"). TWO staggered rows a few metres apart, each blocking from one kerb and leaving a
+        /// gap at the other, the gaps on OPPOSITE sides -- so a vehicle weaves through. The barriers stay INSIDE the
+        /// carriageway: a 3 m block centred at `lat` reaches lat +-1.5, so centres are clamped to +-(half - 1.5) and the ends
+        /// sit at the kerb, never on the pavement.</summary>
         void BarrierLine(EditorObjects objs, Terrain terr, Vector3 at, Vector3 along, Vector3 right, float half, int side, ulong h)
         {
             // ⚠ barriers SPAN the road: their 3 m length runs along `right` (across the carriageway), not along it. Same
             // convention as EditorBlockRoad -- YawForDir(d.X, -d.Z) orients a Block_Road_0's length along d -- fed the ACROSS
             // direction. My first cut dropped the -Z and the blocks ran WITH the road line (strawberry 2026-10-19).
             float yaw = ProcIsland.YawForDir(right.X, -right.Z);
-            float gap = 3.2f;                                       // one lane left open
-            float from = -half + 0.5f, to = half - 0.5f - gap;      // leave the gap on the +side end
-            if (side < 0) { from = -half + 0.5f + gap; to = half - 0.5f; }
-            for (float lat = from; lat <= to + 1e-3f; lat += 3.0f)   // Block_Road_0 is 3 m
-                PlaceProp(objs, terr, Barrier, at + right * lat, yaw);
+            const float Len = 3f, HalfLen = Len * 0.5f, Lane = 3.5f;   // Block_Road_0 is 3 m; the weave lane left open
+            float cLo = -half + HalfLen, cHi = half - HalfLen;         // centres that keep a block's ENDS inside the kerbs
+            if (cHi - cLo < Len) { PlaceProp(objs, terr, Barrier, at, yaw); return; }   // too narrow for a chicane: one block
+            for (int row = 0; row < 2; row++)
+            {
+                // the two rows sit a car-length apart along the road; row 0's gap is on +side, row 1's on -side
+                var rowAt = at + along * (row == 0 ? -3f : 3f);
+                bool gapPlus = (row == 0) == (side > 0);
+                float a = gapPlus ? cLo : cLo + Lane;                  // block from one kerb...
+                float b = gapPlus ? cHi - Lane : cHi;                  // ...to Lane short of the other
+                for (float lat = a; lat <= b + 1e-3f; lat += Len)
+                    PlaceProp(objs, terr, Barrier, rowAt + right * Mathf.Min(lat, cHi), yaw);
+            }
         }
 
         string Civ(ulong h) => CivilianCars[(int)(Unit(h, 30) * CivilianCars.Length) % CivilianCars.Length];
