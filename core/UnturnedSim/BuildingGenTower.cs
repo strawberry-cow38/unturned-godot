@@ -55,7 +55,7 @@ namespace UnturnedSim
 
         /// <summary>The rooms a tower's plans hold past the house caps (CapCells), gated to the tower as the strip's dining room is: an
         /// open office floor (the slab's, 139 cells), a banking hall (the setback's, 12 x 18 cells), a plant room (the crown, 84; the
-        /// penthouse, 128) -- and an office bent to four rows over the banking hall (20). Null: the kind's own cap.</summary>
+        /// penthouse, 136) -- and an office bent to four rows over the banking hall (20). Null: the kind's own cap.</summary>
         static int? TowerCap(RoomKind k) => k switch
         {
             RoomKind.Office => 160, RoomKind.Shop => 220, RoomKind.Workshop => 160, RoomKind.Shaft => int.MaxValue,
