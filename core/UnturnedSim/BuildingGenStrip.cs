@@ -161,8 +161,20 @@ namespace UnturnedSim
                                                   Business.Laundromat, Business.Video, Business.Liquor, Business.Lawyer, Business.Accountant, Business.Office };
         /// <summary>What a restaurant's slot -- a tenant with a kitchen or a dining room -- may be: the diner family's.</summary>
         static readonly Business[] StripFood = { Business.Diner, Business.Pizza, Business.Cafe };
-        /// <summary>Percent of tenants that sell what the research's tenant in that slot did, where we have the shop for it.</summary>
-        const int StripKeepsTenant = 55;
+        /// <summary>Percent of tenants that sell what the research's tenant in that slot did, where we have the shop for it -- in a
+        /// working town (Working); in a poor or an affluent one, StripLeanKeeps where the town leans to it, StripOffKeeps where not.</summary>
+        const int StripKeepsTenant = 55, StripLeanKeeps = 70, StripOffKeeps = 30;
+        /// <summary>How much likelier a tenant the town leans to is drawn than any other.</summary>
+        const int StripLean = 3;
+        /// <summary>What a town of this wealth leans to (the coordinator, 2026-10-19, with the town generator's owner): a poor
+        /// town's strips to liquor, laundromats, pizza, video and cheap offices; an affluent town's to lawyers and accountants,
+        /// cafes, clothes and botanists; a working town's to nothing -- the plain mix.</summary>
+        static bool Leans(TownWealth w, Business b) => w switch
+        {
+            TownWealth.Poor => b is Business.Liquor or Business.Laundromat or Business.Pizza or Business.Video or Business.Office,
+            TownWealth.Affluent => b is Business.Lawyer or Business.Accountant or Business.Cafe or Business.Clothes or Business.Botanist,
+            _ => false,
+        };
 
         static BuildingGenResult Strip(BuildingGenSpec spec, BuildingGenResult res, Rng rng, DoorPlanner connect)
         {
@@ -317,24 +329,41 @@ namespace UnturnedSim
             foreach (var r in rooms) g.Paint(r);
             var runs = Runs(g);
 
-            // ---- what each tenant sells: a restaurant's slot (a kitchen or a dining room) a diner, a pizzeria or a cafe, any other
-            // the research's tenant's business now and then and else any shop or office that needs no kitchen -- never the same as
-            // its neighbour's -- and
-            // the palette of its shop it wears; the strip's walls wear one of its tenants'
+            // ---- what each tenant sells: an anchor -- a tenant of more than one sales floor -- what its plan has it (the post-war
+            // strip's hardware store), first; then a restaurant's slot (a kitchen or a dining room) a diner, a pizzeria or a cafe,
+            // any other the research's tenant's business now and then and else any shop or office that needs no kitchen -- never
+            // the same as a neighbour's -- and the palette of its shop it wears; the strip's walls wear one of its tenants'
+            var sells = new Business[units];
+            Business PreferOf(int u) { char who = unitOf.First(p => p.Value == u).Key; return who - 'a' < layout.Prefer.Length ? layout.Prefer[who - 'a'] : Business.None; }
+            bool Anchor(int u) => rooms.Count(r => r.Unit == u && r.Kind is RoomKind.Shop or RoomKind.DiningRoom) > 1 && PreferOf(u) != Business.None;
+            for (int u = 0; u < units; u++) if (Anchor(u)) sells[u] = PreferOf(u);
+            // (by the town's wealth, seeded: the slot's own tenant kept more often where the town leans to it, less where not, and
+            // the rest drawn with what it leans to StripLean times as likely; a working town's the plain mix)
+            var wealth = spec.Wealth;
+            int Keeps(Business b) => wealth == TownWealth.Working ? StripKeepsTenant : Leans(wealth, b) ? StripLeanKeeps : StripOffKeeps;
+            Business Draw(Business[] pool)
+            {
+                if (wealth == TownWealth.Working) return pool[rng.Int(pool.Length)];
+                int total = pool.Sum(b => Leans(wealth, b) ? StripLean : 1), at = rng.Int(total);
+                foreach (var b in pool) { at -= Leans(wealth, b) ? StripLean : 1; if (at < 0) return b; }
+                return pool[^1];
+            }
             for (int u = 0; u < units; u++)
             {
-                char who = unitOf.First(p => p.Value == u).Key;
-                var prefer = who - 'a' < layout.Prefer.Length ? layout.Prefer[who - 'a'] : Business.None;
+                if (Anchor(u)) continue;
+                var prefer = PreferOf(u);
                 bool kitchen = rooms.Any(r => r.Unit == u && r.Kind is RoomKind.Kitchen or RoomKind.DiningRoom);
-                Business pick = Business.None;
                 for (int t = 0; t < 6; t++)
                 {
-                    pick = kitchen ? (StripFood.Contains(prefer) && rng.Chance(StripKeepsTenant) ? prefer : StripFood[rng.Int(StripFood.Length)])
-                         : prefer != Business.None && StripShops.Contains(prefer) && rng.Chance(StripKeepsTenant) ? prefer : StripShops[rng.Int(StripShops.Length)];
-                    if (u == 0 || pick != res.UnitBusiness[u - 1]) break;
+                    sells[u] = kitchen ? (StripFood.Contains(prefer) && rng.Chance(Keeps(prefer)) ? prefer : Draw(StripFood))
+                             : prefer != Business.None && StripShops.Contains(prefer) && rng.Chance(Keeps(prefer)) ? prefer : Draw(StripShops);
+                    if ((u == 0 || sells[u] != sells[u - 1]) && (u + 1 == units || sells[u] != sells[u + 1])) break;
                 }
-                res.UnitBusiness.Add(pick);
-                var pals = ShopPalettes(pick);
+            }
+            foreach (var b in sells)
+            {
+                res.UnitBusiness.Add(b);
+                var pals = ShopPalettes(b);
                 res.UnitPalette.Add(pals[rng.Int(pals.Length)]);
             }
             res.Business = Business.None;

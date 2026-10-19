@@ -32,6 +32,12 @@ namespace UnturnedSim
     /// Furnish's ShopFloor.</summary>
     public enum Business { None, Cafe, Clothes, Diner, Grocer, Guns, Hardware, Botanist, Pizza, Laundromat, Video, Liquor, Lawyer, Accountant, Office }
 
+    /// <summary>How well off a town is (the town generator sets it per town, TownBuildings.SpecFor): Working, the default --
+    /// first, so a spec nobody set is Working and nothing changes for any caller -- Poor, Affluent. A strip's tenants lean by it
+    /// (BuildingGenStrip.cs: a poor town's to liquor, laundromats, pizza, video and cheap offices; an affluent one's to lawyers,
+    /// accountants, cafes, clothes and botanists). Houses do not read it yet.</summary>
+    public enum TownWealth { Working, Poor, Affluent }
+
     /// <summary>Whether a building has a basement (strawberry: "anything can get a basement, they can be specificially asked
     /// for by the building plot, or specifically rejected, if neither specified, its just a random chance for one"): Auto
     /// for the seeded chance (BuildingGen.BasementChance), Forbid for none, Require for one.</summary>
@@ -103,6 +109,8 @@ namespace UnturnedSim
         public BasementAccess BasementAccess;
         /// <summary>A strip mall's plan (BuildingKind.Strip, BuildingGenStrip.cs): one of the fixed styles, Auto for a seeded one.</summary>
         public StripStyle Strip;
+        /// <summary>How well off its town is (TownWealth): a strip's tenants lean by it. Working unless the town says.</summary>
+        public TownWealth Wealth = TownWealth.Working;
 
         internal BuildingGenSpec Copy()
         {
