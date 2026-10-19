@@ -80,8 +80,15 @@ namespace UnturnedGodot
         /// which a landing still is. Stairs only; see AddStepBlock.</summary>
         public float StepRise;
         /// <summary>Handrail sides of a stepped tread: 1 its U = 0 edge, 2 its U = Length edge (BuildingGen.RailStairs picks
-        /// the open ones). A rail on a post per tread, at RailHeight over the line of the noses, in the trim colour.</summary>
+        /// the open ones). A rail on a post per tread, at RailHeight over the flight's pitch line, in the trim colour. 4: this
+        /// is its flight's first tread, so each rail starts at a newel post standing at the foot (TreadRails).</summary>
         public int Rails;
+        /// <summary>The Rails of a flight's `index`-th tread, given the flight's railed sides: the first one also stands the
+        /// newel posts at the foot.</summary>
+        public static int TreadRails(int sides, int index) => sides == 0 ? 0 : index == 0 ? sides | 4 : sides;
+        /// <summary>A newel post's section, and how far it stands over the rail it ends: where rails meet -- a guard's end, a
+        /// corner, a flight's foot -- one post stands, and the joins of the rail boxes are inside it.</summary>
+        public const float Newel = 0.2f, NewelCap = 0.06f;
         /// <summary>How high a handrail stands over the line of the noses (BuildingGen.RailHeight).</summary>
         public const float RailHeight = BuildingGen.RailHeight;
         bool Stepped => Kind == SurfaceKind.Stairs && StepRise > WallOpenings.Eps && Openings.Count == 0;
@@ -698,14 +705,18 @@ namespace UnturnedGodot
             return p;
         }
 
-        /// <summary>A rail on a post along each railed edge of a stepped tread: the rail follows the line of the noses at
-        /// RailHeight over it, from this nose to the next, so a flight's rails join end to end; the post stands in the middle
-        /// of the tread.</summary>
+        /// <summary>A rail on a post along each railed edge of a stepped tread: the rail runs RailHeight over the flight's
+        /// pitch line, from this nose to the next, so a flight's rails join end to end; the post stands in the middle of the
+        /// tread.</summary>
         void AddRails(SurfaceTool st, float t)
         {
-            const float Inset = 0.12f, Bar = 0.14f, Post = 0.09f;
+            const float Inset = BuildingGen.RailInset, Bar = 0.14f, Post = 0.09f;
             float g = Height, slope = StepRise / Mathf.Max(g, 0.01f);
-            float Nose(float v) => t + v * slope + RailHeight;   // the rail's centre line
+            // the rail's centre line: RailHeight over the line from the flight's FOOT to its top end (not the line of the
+            // noses, a step higher), so it starts level with the guard on the floor it leaves and ends level with the
+            // guard on the floor it reaches -- the rails join without a step (strawberry: "make sure the railings connect
+            // seamlessly"). This tread's top is one rise over that line at its nose.
+            float Nose(float v) => t - StepRise + v * slope + RailHeight;
             for (int side = 0; side < 2; side++)
             {
                 if ((Rails & (1 << side)) == 0) continue;
@@ -723,6 +734,15 @@ namespace UnturnedGodot
                 }
                 AddHexa(st, st, rail);
                 AddHexa(st, st, post);
+                if ((Rails & 4) != 0)
+                {
+                    // the newel at the foot: on the floor in front of the first riser, up past the rail's start
+                    var newel = new Vector3[8];
+                    for (int i = 0; i < 8; i++)
+                        newel[i] = new Vector3(uc + ((i & 1) != 0 ? 0.5f : -0.5f) * Newel, ((i & 2) != 0 ? 0.5f : -0.5f) * Newel,
+                                               (i & 4) != 0 ? Nose(0f) + 0.5f * Bar + NewelCap : t - StepRise);
+                    AddHexa(st, st, newel);
+                }
             }
         }
 
@@ -733,6 +753,7 @@ namespace UnturnedGodot
         {
             const float Bar = 0.14f, Post = 0.09f, Spacing = 1.0f;
             float h = Height, half = Mathf.Min(Thickness, Bar) * 0.5f;
+            // a short piece is a join -- a flight's rail to a guard, a corner -- and the posts either side of it carry it
             static Vector3[] Box(float u0, float u1, float y0, float y1, float z0, float z1)
             {
                 var p = new Vector3[8];
@@ -742,10 +763,15 @@ namespace UnturnedGodot
             }
             // (the box's index bits run X, Y, Z here, so its "top" face is the +Z side: no matter, both go to the trim)
             AddHexa(st, st, Box(0f, Length, h - Bar, h, -half, half));
-            int n = Mathf.Max(2, Mathf.CeilToInt((Length - Post) / Spacing) + 1);
-            for (int k = 0; k < n; k++)
+            if (Length < BuildingGen.GuardJoin) return;
+            // newels at the two ends, CENTRED on them -- so where two guards meet in a corner, or a guard meets a flight's
+            // rail, the posts coincide and hide the rails' butt joins -- and plain posts at most Spacing apart between
+            AddHexa(st, st, Box(-Newel * 0.5f, Newel * 0.5f, 0f, h + NewelCap, -Newel * 0.5f, Newel * 0.5f));
+            AddHexa(st, st, Box(Length - Newel * 0.5f, Length + Newel * 0.5f, 0f, h + NewelCap, -Newel * 0.5f, Newel * 0.5f));
+            int n = Mathf.Max(2, Mathf.CeilToInt(Length / Spacing) + 1);
+            for (int k = 1; k < n - 1; k++)
             {
-                float u = Post * 0.5f + (Length - Post) * k / (n - 1);
+                float u = Length * k / (n - 1);
                 AddHexa(st, st, Box(u - Post * 0.5f, u + Post * 0.5f, 0f, h - Bar, -Post * 0.5f, Post * 0.5f));
             }
         }

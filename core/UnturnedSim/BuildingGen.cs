@@ -721,8 +721,13 @@ namespace UnturnedSim
         public const float RailHeight = 0.45f * WallOpenings.DoorHeight;
         /// <summary>A guard rail's thickness, and how far in from the edge it guards its centre line stands.</summary>
         public const float GuardThickness = 0.14f, GuardInset = 0.1f;
-        /// <summary>A guard shorter than this is not drawn: the leftover either side of a flight's top, say.</summary>
-        public const float GuardMin = 0.4f;
+        /// <summary>A guard shorter than this is not drawn: a sliver left between a flight's handrail and a corner.</summary>
+        public const float GuardMin = 0.15f;
+        /// <summary>A guard piece shorter than this is a JOIN -- a handrail's end to a guard, a corner -- drawn as rail alone,
+        /// the posts of what it joins carrying it.</summary>
+        public const float GuardJoin = 0.4f;
+        /// <summary>How far in from a flight's edge its handrail's centre line runs (WallSurface.AddRails).</summary>
+        public const float RailInset = 0.12f;
 
         /// <summary>Guard rails where a floor drops away (strawberry 2026-10-19: "make sure the halfway landing has railings on
         /// sides with no adjascent wall. as well as the top landing having railings around the hole (again, where there isnt a
@@ -764,6 +769,14 @@ namespace UnturnedSim
             var upright = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && MathF.Abs(w.Pitch) <= 1f).ToList();
             foreach (var (y, x0, z0, x1, z1, hole) in drops)
             {
+                // nothing inside a wall: a hole's notch running under one
+                bool InWall(float px, float pz, float slack = 0.05f) => upright.Any(w =>
+                {
+                    if (w.Y > y + 0.5f || w.Y + w.Height < y + 1f) return false;
+                    var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                    float along = (px - w.X) * c + (pz - w.Z) * -sn, off = MathF.Abs((px - w.X) * -sn - (pz - w.Z) * c);
+                    return along > -slack && along < w.Length + slack && off < w.Thickness * 0.5f + slack;
+                });
                 // the four edges, each with its run and the way in to the floor beside it
                 var edges = new (float X, float Z, float DX, float DZ, float Len, float NX, float NZ)[]
                 {
@@ -775,6 +788,7 @@ namespace UnturnedSim
                 foreach (var e in edges)
                 {
                     var keep = new List<(float A, float B)> { (0f, e.Len) };
+                    var walled = new List<(float A, float B)>();
                     void Cut(float a, float b)
                     {
                         for (int k = keep.Count - 1; k >= 0; k--)
@@ -797,6 +811,7 @@ namespace UnturnedSim
                         if (!Parallel(c, -sn) || Off(w.X, w.Z) > RailWallGap) continue;
                         float a = Along(w.X, w.Z), b = Along(w.X + c * w.Length, w.Z - sn * w.Length);
                         Cut(MathF.Min(a, b) - 0.1f, MathF.Max(a, b) + 0.1f);
+                        walled.Add((MathF.Min(a, b) - 0.1f, MathF.Max(a, b) + 0.1f));
                     }
                     // a hole's edge shared with another hole on the level is not an edge: the two are one stairwell
                     if (hole)
@@ -808,37 +823,80 @@ namespace UnturnedSim
                             float a = e.DX != 0f ? h.X0 - e.X : h.Z0 - e.Z, b = e.DX != 0f ? h.X1 - e.X : h.Z1 - e.Z;
                             Cut(a, b);
                         }
+                    // a flight's end lying along this edge -- its top arriving here; on a landing, its foot leaving too --
+                    // leaves a gap its width. A railed side's gap ends ON that side's handrail, and a short level piece runs
+                    // from the handrail's end out to this edge's guard, so the two are one rail (strawberry: "make sure
+                    // the railings connect seamlessly"); an unrailed side's gap runs just past the flight.
+                    var fixedEnds = new List<float>();
+                    var joins = new List<(float X, float Z, float Pos)>();
                     foreach (var s in res.Stairs)
                     {
                         float rise = s.Rise > 0f ? s.Rise : Storey;
                         var (bx, bz) = s.Back; var (rx, rz) = s.Right;
-                        // a flight's end lying along this edge: its top arriving here; on a landing, its foot leaving too
                         var ends = new List<(float X, float Z)>();
                         if (MathF.Abs(s.Y + rise - y) < Lv) ends.Add((s.X + bx * s.Run, s.Z + bz * s.Run));
                         if (!hole && MathF.Abs(s.Y - y) < Lv) ends.Add((s.X, s.Z));
                         foreach (var (px, pz) in ends)
                         {
                             if (!Parallel(rx, rz) || Off(px, pz) > WallOpenings.StairHoleMargin + 0.15f) continue;
-                            float a = Along(px, pz), b = Along(px + rx * s.Width, pz + rz * s.Width);
-                            Cut(MathF.Min(a, b) - 0.05f, MathF.Max(a, b) + 0.05f);
+                            float a0 = Along(px, pz), a1 = Along(px + rx * s.Width, pz + rz * s.Width);
+                            float inward = a1 > a0 ? 1f : -1f;                     // from side 0 toward side 1, along the edge
+                            float r0 = (s.Rails & 1) != 0 ? a0 + inward * RailInset : a0 - inward * 0.05f;
+                            float r1 = (s.Rails & 2) != 0 ? a1 - inward * RailInset : a1 + inward * 0.05f;
+                            Cut(MathF.Min(r0, r1), MathF.Max(r0, r1));
+                            for (int side = 0; side < 2; side++)
+                            {
+                                if ((s.Rails & (1 << side)) == 0) continue;
+                                float off = side == 0 ? RailInset : s.Width - RailInset;
+                                float pos = side == 0 ? r0 : r1;
+                                fixedEnds.Add(pos);
+                                joins.Add((px + rx * off, pz + rz * off, pos));
+                            }
                         }
                     }
-                    // and nothing inside a wall: a hole's notch running under one
-                    bool InWall(float px, float pz) => upright.Any(w =>
+                    bool InHole(float px, float pz) => holes.Any(h => MathF.Abs(h.Y - y) < Lv && px > h.X0 && px < h.X1 && pz > h.Z0 && pz < h.Z1);
+                    // the guard's line, and its ends fitted to the guards it meets: at a corner of the rectangle a hole's guard
+                    // runs on out to the next edge's guard line (they cross in the corner); a landing's, inside its rectangle,
+                    // stops short at it; where the next stretch of floor beyond the end is stairwell (an inside corner of a
+                    // stairwell two rectangles make), it stops short too. An end on a flight's handrail stays where it is.
+                    float Fit(float pos, float dir)
                     {
-                        if (w.Y > y + 0.5f || w.Y + w.Height < y + 1f) return false;
-                        var (c, sn) = PlanTrig.CosSin(w.Yaw);
-                        float along = (px - w.X) * c + (pz - w.Z) * -sn, off = MathF.Abs((px - w.X) * -sn - (pz - w.Z) * c);
-                        return along > -0.05f && along < w.Length + 0.05f && off < w.Thickness * 0.5f + 0.05f;
-                    });
-                    foreach (var (a, b) in keep)
+                        if (fixedEnds.Any(f => MathF.Abs(f - pos) < 0.01f)) return pos;
+                        float gx = e.X + e.DX * pos + e.NX * GuardInset, gz = e.Z + e.DZ * pos + e.NZ * GuardInset;
+                        float qx = gx + e.DX * dir * (GuardInset + 0.02f), qz = gz + e.DZ * dir * (GuardInset + 0.02f);
+                        if (hole && InHole(qx, qz)) return pos - dir * GuardInset;
+                        bool corner = MathF.Abs(pos) < 0.01f || MathF.Abs(pos - e.Len) < 0.01f;
+                        if (!corner) return pos;
+                        if (hole) return pos + dir * GuardInset;
+                        // a landing's corner: stop short at the next edge's guard -- or, where a wall stands across the end
+                        // instead, run on to its face
+                        return InWall(gx + e.DX * dir * 0.1f, gz + e.DZ * dir * 0.1f, 0.15f) ? pos : pos - dir * GuardInset;
+                    }
+                    float yaw = MathF.Atan2(-e.DZ, e.DX) * 180f / MathF.PI;
+                    foreach (var (ka, kb) in keep)
                     {
+                        float a = Fit(ka, -1f), b = Fit(kb, 1f);
                         if (b - a < GuardMin) continue;
+                        // a short piece that meets no handrail is a sliver left beside a flight, not a join
+                        if (b - a < GuardJoin && !fixedEnds.Any(f => MathF.Abs(f - ka) < 0.01f || MathF.Abs(f - kb) < 0.01f)) continue;
                         float sx = e.X + e.DX * a + e.NX * GuardInset, sz = e.Z + e.DZ * a + e.NZ * GuardInset;
                         if (InWall(sx + e.DX * (b - a) * 0.5f, sz + e.DZ * (b - a) * 0.5f)) continue;
                         res.Walls.Add(new WallPlan
                         {
-                            X = sx, Y = y, Z = sz, Yaw = MathF.Atan2(-e.DZ, e.DX) * 180f / MathF.PI, Length = b - a,
+                            X = sx, Y = y, Z = sz, Yaw = yaw, Length = b - a,
+                            Height = RailHeight, Thickness = GuardThickness, Kind = SurfaceKind.Railing,
+                        });
+                    }
+                    // the joins: from a handrail's end, square to the edge, out to the guard's line
+                    foreach (var (jx, jz, pos) in joins)
+                    {
+                        if (walled.Any(w => pos > w.A && pos < w.B)) continue;           // a wall there, no guard to meet
+                        float d = (jx - e.X) * e.NX + (jz - e.Z) * e.NZ;                // how far the end stands floor-side of the edge
+                        float len = GuardInset - d;
+                        if (len < 0.02f) continue;
+                        res.Walls.Add(new WallPlan
+                        {
+                            X = jx, Y = y, Z = jz, Yaw = MathF.Atan2(-e.NZ, e.NX) * 180f / MathF.PI, Length = len,
                             Height = RailHeight, Thickness = GuardThickness, Kind = SurfaceKind.Railing,
                         });
                     }

@@ -581,9 +581,11 @@ namespace UnturnedGodot
                 var (top, body) = StairTexels(mat, s.Concrete);
                 // the stair room's flight down is the basement's; the hatch's, in a well open to the sky, is the outside's
                 var treadParent = below != null && s.Floor == -1 && !InWell(res, s.X, s.Z) ? below : root;
+                int tread = 0;
                 foreach (var p in EditorBuildings.StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
                     NewWall(treadParent, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
-                            top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise), rails: s.Rails);
+                            top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise),
+                            rails: WallSurface.TreadRails(s.Rails, tread++));
                 StairRamp(root, o, s.Yaw, s.Run, s.Width, rise);
                 // a switchback's half flights: the generator cut their floor's hole itself (it covers the landing too)
                 if (rise >= EditorBuildings.StoreyHeight - 0.01f) CutStairHole(walls, o, s.Yaw, s.Run, s.Width, rise, Punch);

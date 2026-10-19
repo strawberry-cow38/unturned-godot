@@ -2797,9 +2797,11 @@ namespace UnturnedGodot
                 int steps = WallOpenings.StairSteps(rise);
                 // (a basement hatch's flight is concrete: the palette's concrete texel)
                 var (top, body) = BuildingRuntime.StairTexels(mat, s.Concrete);
+                int tread = 0;
                 foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
                     SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
-                              top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise), rails: s.Rails);
+                              top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise),
+                              rails: WallSurface.TreadRails(s.Rails, tread++));
                 FitStairsToStructure(o, s.Yaw, s.Run, s.Width, rise, cutFloor: rise >= StoreyHeight - 0.01f);
             }
             var solved = SolveCorners();
@@ -3347,10 +3349,11 @@ namespace UnturnedGodot
             // a drawn flight stands where it was put, walls or none, so it is railed both sides (a generated one is railed
             // on its open sides only: BuildingGen.RailStairs)
             var (top, body) = BuildingRuntime.StairTexels(ActiveMaterial, false);
+            int index = 0;
             foreach (var p in StairTreadOrigins(origin, yawDeg, run, width))
                 made.Add(SpawnWall(p, yawDeg, width, tread, ActiveMaterial, null,
                                    going, -90f, SurfaceKind.Stairs, 0f, top, materialBack: ActiveMaterial, texelBack: body,
-                                   stepRise: stepRise, rails: 3));
+                                   stepRise: stepRise, rails: WallSurface.TreadRails(3, index++)));
             int rampsBefore = _stairRamps.Count;
             FitStairsToStructure(origin, yawDeg, run, width);
             var mine = _stairRamps.GetRange(rampsBefore, _stairRamps.Count - rampsBefore);
