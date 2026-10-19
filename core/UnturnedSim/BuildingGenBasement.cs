@@ -74,7 +74,7 @@ namespace UnturnedSim
         /// and its way down: a stair room carved out of the ground floor (with its door), or a hatch's well against an outside
         /// wall. After the ground floor's doors are decided and before anything is built (BuildOut builds it: BuildBasement).
         /// The rooms' labels are drawn again, as the stair room took cells from the room it was carved from.</summary>
-        static void PlanBasement(BuildingGenResult res, BuildingGenSpec spec, List<Grid> grids)
+        static void PlanBasement(BuildingGenResult res, BuildingGenSpec spec, List<Grid> grids, bool hatchOnly = false, Sides avoid = Sides.None)
         {
             var brng = new Rng(unchecked(spec.Seed * 7919 + 0x4241));
             // (every draw made whatever the spec asks, so asking for one thing does not move the others)
@@ -87,11 +87,13 @@ namespace UnturnedSim
             var ground = grids[0];
             StairStrip? strip = null; HatchSpot? hatch = null;
             if (want == BasementAccess.Stairs) strip = CarveStairRoom(res, ground, brng);
-            if (strip == null) hatch = PickHatch(res, ground, brng);
-            if (strip == null && hatch == null && want == BasementAccess.Hatch) strip = CarveStairRoom(res, ground, brng);
+            if (strip == null) hatch = PickHatch(res, ground, brng, avoid);
+            // (a hatch or nothing where a stair room would join the basement to one tenant and not the next: a strip's)
+            if (strip == null && hatch == null && want == BasementAccess.Hatch && !hatchOnly) strip = CarveStairRoom(res, ground, brng);
             if (strip == null && hatch == null)
             {
-                if (spec.Basement == BasementChoice.Require) res.Notes.Add("a basement was asked for, but no way down fitted: no room could give up a stair room, and no outside wall had the room for a hatch");
+                if (spec.Basement == BasementChoice.Require) res.Notes.Add(hatchOnly ? "a cellar was asked for, but no outside wall had the room for its hatch"
+                                                                                   : "a basement was asked for, but no way down fitted: no room could give up a stair room, and no outside wall had the room for a hatch");
                 return;
             }
             if (want == BasementAccess.Stairs && strip == null) res.Notes.Add("no room on the ground floor could give up a stair room: the basement is reached by a hatch");
@@ -222,7 +224,7 @@ namespace UnturnedSim
         /// building's corners by a metre, of the porch any outside door may get (as long as AddPorches makes one, either side
         /// of the door) and of a garage's or warehouse's walls (its vehicle door and the lane to it); its outer faces clear of
         /// the building. Off the front door's wall where it can be, then off the back door's.</summary>
-        static HatchSpot? PickHatch(BuildingGenResult res, Grid ground, Rng rng)
+        static HatchSpot? PickHatch(BuildingGenResult res, Grid ground, Rng rng, Sides avoid = Sides.None)
         {
             float he = Ext * 0.5f, alongNeed = WellLanding + WallOpenings.StairDefaultRun(Storey + Grade);
             var outsideDoors = res.Doors.Where(d => d.Floor == 0 && d.B == null).ToList();
@@ -231,6 +233,7 @@ namespace UnturnedSim
             {
                 if (run.A.Kind is RoomKind.Garage or RoomKind.Warehouse) continue;
                 var face = ground.Out(run.AlongX, run.Line, run.S0);
+                if ((face & avoid) != 0) continue;   // (a side the plot keeps blind: a party wall, a neighbour against it)
                 int e = face is Sides.North or Sides.East ? 1 : -1;
                 int pref = outsideDoors.Any(d => d.Role == DoorRole.Front && d.AlongX == run.AlongX && d.Line == run.Line) ? 2
                          : outsideDoors.Any(d => d.AlongX == run.AlongX && d.Line == run.Line) ? 1 : 0;

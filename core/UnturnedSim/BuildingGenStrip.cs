@@ -477,12 +477,25 @@ namespace UnturnedSim
             res.Layout.AddRange(rooms);
             res.Doors.AddRange(doors);
             foreach (var r in rooms) res.Rooms.Add(new RoomDesignation(r.Kind, (r.X0 + r.X1) * 0.5f * Cell, (r.Z0 + r.Z1) * 0.5f * Cell, 0));
+            // ---- the taxpayer row's cellar (the research: "expect a cellar under the row (hatch/stair per unit, often one
+            // shared cellar)"): the shared one, under the whole row, reached by a hatch from outside -- a flight down from one
+            // tenant would open it to that shop and not the next -- on the basement's own streams (PlanBasement), unless the
+            // plot forbids one; a store or bare, as a business's is; its well never on a side kept blind (the side doors'
+            // frame). A well is 9.6 m along its wall (its 3 m landing, a 6 m flight, its two walls) and keeps off each door's
+            // porch, so it never fits between back doors a bay (12 m) apart: a row with neighbours at both ends has no wall
+            // for one and no cellar (said so). Every other strip is a slab on grade.
+            if (layout.Style == StripStyle.Taxpayer && spec.Basement != BasementChoice.Forbid)
+            {
+                var cellar = spec.Copy();
+                cellar.Basement = BasementChoice.Require; cellar.BasementAccess = BasementAccess.Hatch;
+                PlanBasement(res, cellar, new List<Grid> { g }, hatchOnly: true, avoid: blind);
+            }
             if (spec.PlanOnly) return res;
 
             // ---- the street on the south: the building laid out with it on the north, turned half round, last
             bool turn = front == Sides.South;
             res.NoWindowSides = turn ? Turned(spec.NoWindows) : spec.NoWindows;
-            // walls, the canopy, furniture -- no chimney, no basement (a slab on grade) -- then the parapets, as every flat roof's
+            // walls, the canopy, furniture, the taxpayer row's cellar -- no chimney -- then the parapets, as every flat roof's
             BuildOut(res, new List<Grid> { g }, 1, 0, spec, spec.Porches, chimney: false);
             SolveCorners(res.Walls, RoofShapes.AddParapets(res.Walls).Contains);
             SettleShared(res);
