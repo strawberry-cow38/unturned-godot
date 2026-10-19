@@ -168,6 +168,9 @@ namespace UnturnedSim
         public bool Wide;
         /// <summary>How wide its opening came out, metres.</summary>
         public float Width = BuildingGen.ArchSizes[BuildingGen.ArchDoor].W;
+        /// <summary>The leaf hung in it where not the house door (DefaultDoor): a strip's storefront door is plate glass.
+        /// Outside doors only (BuildWalls); null for every door a house or shop has.</summary>
+        public string DoorProp;
         /// <summary>The middle of its opening in plan, metres.</summary>
         public (float X, float Z) Middle => AlongX ? (At, Line * BuildingGen.Cell) : (Line * BuildingGen.Cell, At);
         public override string ToString() => $"{A}->{(B == null ? "outside" : B.ToString())} at {(AlongX ? "z" : "x")}={Line} {At:0.0}{(Role != DoorRole.Inside ? " " + Role : "")}";
@@ -2936,7 +2939,9 @@ namespace UnturnedSim
                     if (d.B == null)
                     {
                         var w = Side(d.AlongX, d.Line, d.At);
-                        w.Openings.Add(Make(ArchDoor, U(w, d.At), ArchSizes[ArchDoor].W));
+                        var od = Make(ArchDoor, U(w, d.At), ArchSizes[ArchDoor].W);
+                        if (d.DoorProp != null) od.DoorProp = d.DoorProp;
+                        w.Openings.Add(od);
                         outDoors.Add((d.AlongX, d.Line, d.At));
                         continue;
                     }
