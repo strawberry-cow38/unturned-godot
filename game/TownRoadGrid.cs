@@ -8308,6 +8308,76 @@ namespace UnturnedGodot
         public readonly List<(string prop, Vector3 at, int road)> MedianPlants = new();
 
         /// <summary>Plant every grass median; returns the props placed.</summary>
+        // ================== POWER LINES ALONG THE OUTSKIRTS (strawberry 2026-10-19) ==================
+        /// <summary>Whether the town strings wooden power poles + wires along its outskirt roads. UG_TOWNNOPOWER=1 off.</summary>
+        public bool PowerLines = System.Environment.GetEnvironmentVariable("UG_TOWNNOPOWER") != "1";
+        /// <summary>A road is "outskirts" when the density where it runs is below this -- the edge, where the overhead lines go
+        /// (a downtown's are buried). So a hamlet is strung throughout, a city only round its rim.</summary>
+        public float OutskirtDensity = 0.33f;
+        /// <summary>Poles this far apart, metres (under PowerLineField.MaxSpan 140), and held this far back from a junction.</summary>
+        public float PoleSpacing = 46f, PoleEndClear = 10f;
+        /// <summary>How far outside the pavement the pole line stands.</summary>
+        public float PoleSetback = 1.0f;
+        public int PowerPoles, PowerSpans; public Vector3 FirstPoleAt;
+
+        /// <summary>String wooden power poles and wires down the outskirt roads (strawberry 2026-10-19: "add power line splines
+        /// along roads on the outskirts"). A pole is an OBJECT (Power_Line_0) like the showcase and the editor place them; the
+        /// PowerLineField then hangs the wires between consecutive poles of each run. Call after the props are down.</summary>
+        public int BuildPowerLines(RoadField roads, PowerLineField field, EditorObjects objs, Terrain terr)
+        {
+            PowerPoles = PowerSpans = 0;
+            if (!PowerLines || roads == null || field == null || objs == null) return 0;
+            // each outskirt road's poles, in order along it, one side (seeded), kept off the junctions
+            var runs = new List<List<(Vector3 at, float yawDeg)>>();
+            foreach (int r in Built)
+            {
+                float L = roads.RoadLength(r);
+                if (L < PoleSpacing + 2f * PoleEndClear) continue;
+                float dens = ClassAware && roads.EvaluateAlong(r, L * 0.5f, out var rm, out _, snapTerrain: false)
+                             ? Density(new Vector3(rm.X, 0f, rm.Z)) : 0.5f;
+                if (dens > OutskirtDensity) continue;                    // not the outskirts
+                int side = Unit(LineSeed(roads, r, 0x50E7EUL), 0) < 0.5f ? 1 : -1;
+                float half = roads.RoadHalfWidth(r), off = half + PavementGap + PavementWidth + PoleSetback;
+                float lo = PoleEndClear, hi = L - PoleEndClear;
+                int n = Mathf.Max(1, Mathf.RoundToInt((hi - lo) / PoleSpacing));
+                var run = new List<(Vector3, float)>();
+                for (int k = 0; k <= n; k++)
+                {
+                    float d = Mathf.Lerp(lo, hi, (float)k / n);
+                    if (!roads.EvaluateAlong(r, d, out var p, out var t, snapTerrain: false)) continue;
+                    var along = new Vector3(t.X, 0f, t.Z).Normalized();
+                    var right = new Vector3(t.Z, 0f, -t.X).Normalized() * side;
+                    var at = p + right * off;
+                    if (!ClearOfRoads(roads, at, 0.5f)) continue;        // never in a carriageway or a junction's slab
+                    at.Y = terr != null ? terr.SampleHeight(at.X, at.Z) : p.Y;
+                    // yaw so the crossarms sit ACROSS the run (Upright(0) = arms across a Z-running line, MapShowcase)
+                    float yaw = Mathf.RadToDeg(Mathf.Atan2(along.X, along.Z));
+                    run.Add((at, yaw));
+                }
+                if (run.Count >= 2) runs.Add(run);
+            }
+            if (runs.Count == 0) return 0;
+            // place every pole as an object, then let the field re-gather and string each run
+            foreach (var run in runs)
+                foreach (var (at, yaw) in run)
+                { if (PowerPoles == 0) FirstPoleAt = at; objs.Place(PowerLineField.PoleMesh, at, EditorObjects.Upright(yaw)); PowerPoles++; }
+            var all = new List<(Transform3D, string)>();
+            foreach (var x in objs.PlacedOf(PowerLineField.PoleMesh)) all.Add((x, PowerLineField.PoleMesh));
+            foreach (var x in objs.PlacedOf(PowerLineField.PylonMesh)) all.Add((x, PowerLineField.PylonMesh));
+            field.RefreshPoles(all, out _);
+            // ⚠ CONNECT BY POSITION, not by index: RefreshPoles re-orders, and two runs' poles must not join end to end
+            // (the editor tool matches spans by pole position for the same reason).
+            foreach (var run in runs)
+                for (int k = 0; k + 1 < run.Count; k++)
+                {
+                    int a = field.PickPole(run[k].at, 4f), b = field.PickPole(run[k + 1].at, 4f);
+                    if (a >= 0 && b >= 0 && a != b && field.Connect(a, b, out _)) PowerSpans++;
+                }
+            field.Rebuild();
+            Log.Print($"[towngrid] power lines: {PowerPoles} poles down {runs.Count} outskirt road(s), {PowerSpans} spans (density < {OutskirtDensity:0.00}); first pole ({FirstPoleAt.X:0.0}, {FirstPoleAt.Z:0.0})");
+            return PowerSpans;
+        }
+
         public int PlantMedians(RoadField roads, EditorObjects objs, List<Node3D> into = null)
         {
             MedianPlants.Clear();

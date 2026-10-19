@@ -10985,6 +10985,9 @@ namespace UnturnedGodot
             // ...and no meter left under anything put up after the meters were (strawberry 2026-10-15: "prevent street lights or
             // hydrants being placed on top of parking meters")
             if (!noWalk) town.ClearMeterClashes(editor.Objects);
+            // power poles + wires along the outskirt roads (strawberry 2026-10-19: "add power line splines along roads on the
+            // outskirts"): placed as objects, strung by the map's PowerLineField -- after the props so they stand clear
+            if (!noWalk && editor.PowerLines != null) town.BuildPowerLines(rf, editor.PowerLines, editor.Objects, terrain);
             // a town to PLAY (Generate Town): somewhere on its pavements to start, and to come back to
             if (!noWalk && playSeed.HasValue) town.PlaceSpawns(rf, editor.Spawns);
             Lap("props");
