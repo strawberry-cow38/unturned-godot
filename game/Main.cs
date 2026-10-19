@@ -7819,11 +7819,12 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
-                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop[,basement[,style[,way[,strip]]]]]]]]]]]]]
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop[,basement[,style[,way[,strip[,wealth]]]]]]]]]]]]]]
                 // (sides as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
                 // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...; basement Y/N, its style U/S/F/W -- bare, store,
                 // finished, workshop -- and its way down S/H, stairs or hatch; strip a Strip kind's plan, Convenience/PostWar/MiniMall/
-                // Taxpayer or the research's L6/L3/L5/L1, anything else seeded) generates a building from a seed instead
+                // Taxpayer or the research's L6/L3/L5/L1, anything else seeded; wealth the town's, P poor / A affluent / else working)
+                // generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
@@ -7879,6 +7880,10 @@ namespace UnturnedGodot
                             "L1" => UnturnedSim.StripStyle.Taxpayer,
                             _ => System.Enum.TryParse<UnturnedSim.StripStyle>(g[18], true, out var strip) ? strip : UnturnedSim.StripStyle.Auto,
                         } : UnturnedSim.StripStyle.Auto,
+                        Wealth = g.Length > 19 ? g[19].ToUpperInvariant() switch
+                        {
+                            "P" => UnturnedSim.TownWealth.Poor, "A" => UnturnedSim.TownWealth.Affluent, _ => UnturnedSim.TownWealth.Working,
+                        } : UnturnedSim.TownWealth.Working,
                     });
                     // UG_TERRAINBASEMENT=x,z,yaw cuts the generated building's basement (BuildingGenResult.Dig) out of the MAP's
                     // terrain (Terrain.AddBasementCut: the ground bent to the outline, the inside dug), as if the building stood at
