@@ -10988,6 +10988,9 @@ namespace UnturnedGodot
             // power poles + wires along the outskirt roads (strawberry 2026-10-19: "add power line splines along roads on the
             // outskirts"): placed as objects, strung by the map's PowerLineField -- after the props so they stand clear
             if (!noWalk && editor.PowerLines != null) town.BuildPowerLines(rf, editor.PowerLines, editor.Objects, terrain);
+            // ⭐ STORIES: wrecks, crashes, blockades, abandoned cars along the roads + in the lots (strawberry 2026-10-19).
+            // After the power lines; vehicles are added to the editor, which is the play world when a town is played.
+            if (!noWalk) town.BuildStories(rf, editor.Objects, terrain, editor, playSeed.HasValue);
             // a town to PLAY (Generate Town): somewhere on its pavements to start, and to come back to
             if (!noWalk && playSeed.HasValue) town.PlaceSpawns(rf, editor.Spawns);
             Lap("props");
