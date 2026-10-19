@@ -382,9 +382,12 @@ namespace UnturnedGodot
             for (int k = 0; k < want.Count; k++)
             {
                 var o = Openings[want[k]];
+                // A plate-glass leaf intrinsically carries a pane. Reuse the existing glazing flags for
+                // damage, repair and persistence even when a generator only supplies its DoorProp.
+                if (DoorDeploy.IsPlateGlass(o.DoorProp) && !o.Glazed) { o.Glazed = true; Openings[want[k]] = o; }
                 // (which way it swings is part of what it was built as: a door re-hung on its other jamb is a new leaf)
                 var spec = (want[k], o.DoorProp, o.Width, o.Height, o.DoorHingeAtStart, o.DoorOpensFront, o.DoorAction);
-                if (k < _doors.Count && _doorSpec[k] == spec) { PlaceDoor(_doors[k], o); continue; }
+                if (k < _doors.Count && _doorSpec[k] == spec) { PlaceDoor(_doors[k], o); ConfigureDoorGlass(_doors[k], o); continue; }
 
                 // The swing (WallOpening.DoorHingeAtStart / DoorOpensFront; the generator's layout chooses them). Door_Pine
                 // hinges at its mesh's +X end and opens toward -Z, so as built it hangs on the U1 jamb and opens out of the
@@ -417,6 +420,10 @@ namespace UnturnedGodot
                 }
                 else { _doors.Add(made); _doorSpec.Add(spec); }
                 PlaceDoor(made, o);
+                ConfigureDoorGlass(made, o);
+                if (DoorDeploy.IsPlateGlass(o.DoorProp))
+                    foreach (var c in made.GetChildren())
+                        if (c is ObjectDoor od) od.PlateGlassShattered += () => MarkDoorGlassBroken(made);
             }
         }
 
@@ -477,6 +484,13 @@ namespace UnturnedGodot
             // hung on the U jamb: the whole door turned half round about the vertical (see RebuildDoors). The measuring
             // below is of the leaf's geometry in this wall's space, so it centres a turned door as it does a plain one.
             host.Transform = new Transform3D(o.DoorHingeAtStart ? new Basis(Vector3.Up, Mathf.Pi) : Basis.Identity, new Vector3(o.U + o.Width * 0.5f, o.V, 0f));
+            // New frame art is centred in X and foot-anchored in Z. Do not measure the live swinging leaf
+            // to re-seat it: that would move an open door (and its attached glass) on an unrelated rebuild.
+            if (DoorDeploy.IsPlateGlass(o.DoorProp))
+            {
+                host.Position += Vector3.Up * (o.V > WallOpenings.Eps ? TrimProfile : 0f);
+                return;
+            }
 
             // Then align by MEASURING the leaf, on BOTH axes. These meshes are not centred on their own
             // origin: Door_Pine spans x -2.35..+0.10 (centre -1.12, it is anchored at the hinge) and
@@ -514,6 +528,23 @@ namespace UnturnedGodot
                                              0f);
         }
 
+        void ConfigureDoorGlass(Node3D host, WallOpening o)
+        {
+            if (!DoorDeploy.IsPlateGlass(o.DoorProp)) return;
+            foreach (var c in host.GetChildren())
+                if (c is ObjectDoor door)
+                    door.SetPlateGlassOptions(o.GlassTint != 0 ? TintFromRgb(o.GlassTint) : GlassPane.DefaultHue,
+                        o.GlassHp > 0f ? o.GlassHp : 1f, o.GlassIndestructible, o.GlassBroken,
+                        Thickness < (WallOpenings.DefaultThickness + WallOpenings.InteriorThickness) * .5f);
+        }
+
+        void MarkDoorGlassBroken(Node3D host)
+        {
+            int i = OpeningIndexForDoorHost(host);
+            if (i < 0 || i >= Openings.Count) return;
+            var o = Openings[i]; o.GlassBroken = true; Openings[i] = o;
+        }
+
         void RebuildGlass()
         {
             // A shattered pane frees ITSELF, so the list can hold dead instances before we have looked at it.
@@ -522,7 +553,7 @@ namespace UnturnedGodot
 
             var want = new List<int>();
             for (int i = 0; i < Openings.Count; i++)
-                if (Openings[i].HasGlass) want.Add(i);
+                if (Openings[i].HasGlass && !DoorDeploy.IsPlateGlass(Openings[i].DoorProp)) want.Add(i);
 
             while (_panes.Count > want.Count)
             {
@@ -580,7 +611,7 @@ namespace UnturnedGodot
 
             var want = new List<int>();
             for (int i = 0; i < Openings.Count; i++)
-                if (Openings[i].Glazed && Openings[i].GlassBroken) want.Add(i);
+                if (Openings[i].Glazed && Openings[i].GlassBroken && !DoorDeploy.IsPlateGlass(Openings[i].DoorProp)) want.Add(i);
 
             while (_shards.Count > want.Count)
             {

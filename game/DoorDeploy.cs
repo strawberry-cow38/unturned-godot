@@ -50,6 +50,7 @@ namespace UnturnedGodot
         public static Node3D SpawnProp(string prop, Node parent, Vector3 pos, float yawDeg, Vector2? fit = null, bool reverse = false)
         {
             if (string.IsNullOrEmpty(prop) || parent == null) return null;
+            if (IsPlateGlass(prop)) return SpawnPlateGlass(prop, parent, pos, yawDeg, fit, reverse);
             var def = new DeployableDef { DoorProp = prop };
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
