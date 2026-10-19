@@ -636,12 +636,14 @@ namespace UnturnedGodot
             Vector3 A = new(x0, y0, -t), B = new(x1, y0, -t), P = new(mid, y1, -t);   // back face
             Vector3 C = new(x0, y0, t), D = new(x1, y0, t), Q = new(mid, y1, t);      // front face
 
-            // Godot treats CLOCKWISE as front-facing, so each face is emitted in the order that reads
-            // anticlockwise from outside -- the same reversal AddBoxFaces does, for the same reason.
-            Tri(st, P, B, A);        // -Z gable triangle
-            Tri(st, C, D, Q);        // +Z gable triangle
-            Quad(st, A, C, Q, P);    // left slope
-            Quad(st, P, Q, D, B);    // right slope
+            // Godot treats CLOCKWISE as front-facing, so each face is emitted CLOCKWISE as seen from outside
+            // (its right-hand normal points in) -- what AddBoxFaces ends up emitting after its reversal.
+            // strawberry 2026-10-19: "the wall under roofs is rendering inside out" -- this cap had been wound
+            // the other way since it was written (08-07): every face was culled from outside and lit from inside.
+            Tri(st, A, B, P);        // -Z gable triangle
+            Tri(st, Q, D, C);        // +Z gable triangle
+            Quad(st, P, Q, C, A);    // left slope
+            Quad(st, B, D, Q, P);    // right slope
             // no bottom face: it sits flush on the wall head and would z-fight the wall's own top
         }
 
