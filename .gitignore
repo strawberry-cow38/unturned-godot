@@ -64,6 +64,8 @@ game/content/spawns/
 # heightmap and object saves above -- derived from the seed, reproducible, and not source.
 game/content/foliage_island_*/
 game/content/resources_island_*/
+# ...and a generated town's trees and bushes (ProcIslandFoliage.BakeResourceList, rewritten every build: its seed is the town)
+game/content/resources_town/
 
 # per-machine engine overrides written by the in-game graphics options (render thread toggle)
 game/override.cfg
