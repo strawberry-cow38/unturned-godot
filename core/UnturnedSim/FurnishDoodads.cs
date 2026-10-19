@@ -503,7 +503,7 @@ namespace UnturnedSim
         /// BuildingGenResult.Doodads -- with no room (Room null), as outside is none.</summary>
         static void Outdoors(BuildingGenResult res, int seed)
         {
-            bool house = res.Kind == BuildingKind.Residential, business = res.Kind is BuildingKind.Commercial or BuildingKind.Industrial;
+            bool house = res.Kind == BuildingKind.Residential, business = res.Kind is BuildingKind.Commercial or BuildingKind.Industrial or BuildingKind.Strip;
             if (!house && !business) return;
             var yard = new Yard(res);
             if (yard.Faces.Count == 0) return;

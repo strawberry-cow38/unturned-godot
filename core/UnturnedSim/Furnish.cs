@@ -640,7 +640,7 @@ namespace UnturnedSim
                 {
                     case RoomKind.Bedroom: Bedroom(); break;
                     case RoomKind.LivingRoom: LivingRoom(); break;
-                    case RoomKind.DiningRoom: Dining(); break;
+                    case RoomKind.DiningRoom: if (_res.Kind == BuildingKind.Strip) Restaurant(); else Dining(); break;
                     case RoomKind.Kitchen: Kitchen(); break;
                     case RoomKind.Bathroom: Bathroom(); break;
                     case RoomKind.Office: Office(); break;
@@ -649,7 +649,7 @@ namespace UnturnedSim
                     case RoomKind.Garage: Garage(); break;
                     case RoomKind.Warehouse: Warehouse(); break;
                     case RoomKind.Workshop: Workshop(); break;
-                    case RoomKind.Shop: Shop(); break;
+                    case RoomKind.Shop: ShopFloor(_res.BusinessOf(_room)); break;
                     case RoomKind.Hall: Hall(); break;
                     case RoomKind.BreakRoom: BreakRoom(); break;
                 }
@@ -1476,6 +1476,17 @@ namespace UnturnedSim
             /// <summary>How many places a table is tried at, of each kind, for one that seats enough.</summary>
             const int TableTries = 12;
 
+            /// <summary>A strip's restaurant's dining room -- its sales floor, a shop floor's size (TraitOf): tables while they go
+            /// in, each seated, a room's worth of them (one a RestaurantCover of floor, RestaurantTables at most), each as a house's
+            /// dining table goes in (Dining) round those already there.</summary>
+            void Restaurant()
+            {
+                int most = Math.Clamp((int)(_area / RestaurantCover), 1, RestaurantTables);
+                for (int k = 0; k < most && Dining() != null; k++) { }
+            }
+            const float RestaurantCover = 40f;
+            const int RestaurantTables = 6;
+
             /// <summary>Seat a table: each way of seating it in turn, actually placed (a chair the room's walk cannot spare is
             /// refused only then), keeping the first that seats everyone or else the one that seats the most.</summary>
             List<FurniturePlan> Seat(FurniturePlan t)
@@ -1702,7 +1713,8 @@ namespace UnturnedSim
                     // a big kitchen fills its floor (a 108 m2 one stood empty with every appliance in one corner): an
                     // island always from 54 m2, and a breakfast table as well from 72
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
-                    if (_area >= 72f) Dining();
+                    // (not a strip's restaurant's: its tables are out in its dining room)
+                    if (_area >= 72f && _res.Kind != BuildingKind.Strip) Dining();
                 }
                 // and where none of that leaves it a fridge, a sink AND a stove, a galley (Galley). Only here, once every layout,
                 // the scatter and the table have had their go and their draws -- a kitchen laid again for its table included --
@@ -2332,6 +2344,87 @@ namespace UnturnedSim
                 Put("Barrel_0", Against("Barrel_0", Side.Back).Where(p => Corner("Barrel_0", p)));
             }
 
+            /// <summary>A shop floor, as its tenant's business has it (BuildingGenResult.BusinessOf): a shop's checkout, coolers and
+            /// gondolas (Shop) -- every single shop's, whose business is one of BuildingGen.Shops, as it always was -- and a strip's
+            /// own tenants' their own (strawberry, 2026-10-19): a laundromat's machines, a video store's racks, a liquor store's
+            /// coolers, an office's desks and waiting chairs; and in a strip a food place's front -- a pizzeria's, a diner's, a
+            /// cafe's -- a counter and tables.</summary>
+            void ShopFloor(Business b)
+            {
+                switch (b)
+                {
+                    case Business.Laundromat: Laundromat(); break;
+                    case Business.Video: VideoStore(); break;
+                    case Business.Liquor: LiquorStore(); break;
+                    case Business.Lawyer or Business.Accountant or Business.Office: OfficeFloor(b); break;
+                    case Business.Pizza: Takeout(); break;
+                    case Business.Diner or Business.Cafe when _res.Kind == BuildingKind.Strip: Takeout(); break;
+                    default: Shop(); break;
+                }
+            }
+
+            /// <summary>A food place's front: the counter by the street door, a drinks cooler, and tables (Restaurant).</summary>
+            void Takeout()
+            {
+                Till();
+                Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                Restaurant();
+            }
+
+            /// <summary>A laundromat (strawberry: "washers along one wall, dryers along the other, folding table"): the attendant's
+            /// counter by the door; the washers backed to one long wall and the dryers to the one across, each packed from one end
+            /// as far as the wall goes; a folding table down the middle; and a few chairs to wait in.</summary>
+            void Laundromat()
+            {
+                Till();
+                var r = _room.Rects.OrderByDescending(q => (q.X1 - q.X0) * (q.Z1 - q.Z0)).First();
+                bool longX = r.X1 - r.X0 >= r.Z1 - r.Z0;
+                // (a machine faces into the room off its wall: across the long axis, one way or the other)
+                foreach (var (name, sign) in new[] { ("Washer_0", 1), ("Dryer_0", -1) })
+                {
+                    bool Faces((float X, float Z, float Yaw) c) { var (fx, fz) = FrontOf(c.Yaw); return (longX ? fz : fx) * sign > 0.5f; }
+                    var line = Against(name, Side.Back).Where(Faces).ToList();
+                    for (int k = 0; k < LaundryMachines; k++)
+                        if (Put(name, line, (x, z, yaw) => -(longX ? x : z)) == null) break;
+                }
+                var (cx, cz) = Centre();
+                PutWithRoom("Table_Metal_0", 1.0f, cx, cz);
+                for (int k = 0; k < 3; k++) Put("Chair_Wood_1", Against("Chair_Wood_1", Side.Back), (x, z, yaw) => -NearestDoor(x, z));
+            }
+            /// <summary>The most washers, and dryers, a laundromat's wall takes.</summary>
+            const int LaundryMachines = 8;
+
+            /// <summary>A video store: the counter by the door, shelves of tapes round the walls (bookcases), racks in rows down
+            /// the floor (Gondolas, of the low rack).</summary>
+            void VideoStore()
+            {
+                Till();
+                AlongWalls(new[] { "Shelf_2" }, 10);
+                Gondolas("Shelf_3");
+            }
+
+            /// <summary>A liquor store: the counter by the door, drink coolers along the walls -- as many as a back wall takes --
+            /// wine racks along the sides, gondolas down the middle.</summary>
+            void LiquorStore()
+            {
+                Till();
+                for (int k = 0; k < 6; k++) if (Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z)) == null) break;
+                AlongWalls(new[] { "Shelf_3" }, 4, Side.Left);
+                Gondolas();
+            }
+
+            /// <summary>Cheap office space -- a lawyer's, an accountant's, an office to let: a reception desk facing the street
+            /// door, chairs to wait in along the wall by it, desks with their chairs and screens (a lawyer's few, and his law
+            /// books; an accountant's more, and more filing cabinets).</summary>
+            void OfficeFloor(Business b)
+            {
+                Till(desk: true);
+                for (int k = 0; k < 4; k++) Put("Chair_Wood_1", Against("Chair_Wood_1", Side.Back), (x, z, yaw) => -NearestDoor(x, z));
+                for (int k = 0; k < (b == Business.Lawyer ? 2 : 4); k++) if (!Desk()) break;
+                AlongWalls(new[] { "Files_0" }, b == Business.Accountant ? 4 : 2);
+                if (b == Business.Lawyer) AlongWalls(new[] { "Shelf_2" }, 3);
+            }
+
             /// <summary>The checkout by the street door, the clerk's back to the room, a till on it; coolers along the
             /// back wall; gondolas in rows with aisles you can pass in.</summary>
             void Shop()
@@ -2346,7 +2439,7 @@ namespace UnturnedSim
             /// door or no spot takes it.</summary>
             FurniturePlan Till(bool desk = false)
             {
-                // (its own street door: a building with more than one has the first first)
+                // (its own street door: a strip's every tenant has one, and the building's first is the end unit's)
                 var front = _res.Doors.FirstOrDefault(d => d.Role == DoorRole.Front && d.A == _room) ?? _res.Front;
                 var doors = Doors();
                 FurniturePlan co = null;
@@ -2392,7 +2485,7 @@ namespace UnturnedSim
             /// <summary>Gondolas in rows down the shop's length, every row starting from the same line and every gondola
             /// end to end with the next, two to a run before a cross aisle (strawberry: "store shelves should try to align
             /// to other shelves"): aisles of 1.8 m between rows and a walk of 1.6 m round the room's edge. (`shelf`: another
-            /// piece in the gondolas' place.)</summary>
+            /// piece in the gondolas' place -- a video store's racks.)</summary>
             void Gondolas(string shelf = "Shelf_1")
             {
                 var gs = FurnitureCatalog.Sizes[shelf];

@@ -321,7 +321,7 @@ namespace UnturnedSim
             {
                 bool home = _res.Kind is BuildingKind.Residential or BuildingKind.Apartment;
                 if (r.Need.HasFlag(DecorNeed.Home) && !home) return false;
-                if (r.Need.HasFlag(DecorNeed.Business) && _res.Kind is not (BuildingKind.Commercial or BuildingKind.Industrial)) return false;
+                if (r.Need.HasFlag(DecorNeed.Business) && _res.Kind is not (BuildingKind.Commercial or BuildingKind.Industrial or BuildingKind.Strip)) return false;
                 if (_room.Kind == RoomKind.Bedroom)
                 {
                     var bed = _mine.FirstOrDefault(m => m.Name.StartsWith("Bed"));

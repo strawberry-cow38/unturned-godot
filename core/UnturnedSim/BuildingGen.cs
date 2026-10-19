@@ -23,8 +23,14 @@ namespace UnturnedSim
     /// <summary>What a shop sells (strawberry: "shops should use the pallette of the shop they are, ie donuts, hardware etc
     /// etc"): one of the retail shops, whose palettes it wears (BuildingGen.ShopPalettes). None: not a shop -- or, asked of
     /// a Commercial spec, any of them, a seeded draw. A doughnut shop is a Cafe (strawberry: "so if its not doughnuts its a
-    /// cafe pallette"): no retail building is a donut shop, so there is no palette of its own to wear.</summary>
-    public enum Business { None, Cafe, Clothes, Diner, Grocer, Guns, Hardware, Botanist }
+    /// cafe pallette"): no retail building is a donut shop, so there is no palette of its own to wear.
+    ///
+    /// The strip mall's tenants added (strawberry, 2026-10-19), on the END since a kind is saved by name: Pizza ("'diner' is a
+    /// category with several different food places within it in the vanilla editor": a food place of the diner family, its
+    /// palettes); Laundromat, Video (a video rental), Liquor; and cheap offices -- Lawyer, Accountant, and Office, plain office
+    /// space. None of them is drawn for a single shop (Shops): they are a strip's (BuildingGenStrip.cs), furnished by
+    /// Furnish's ShopFloor.</summary>
+    public enum Business { None, Cafe, Clothes, Diner, Grocer, Guns, Hardware, Botanist, Pizza, Laundromat, Video, Liquor, Lawyer, Accountant, Office }
 
     /// <summary>Whether a building has a basement (strawberry: "anything can get a basement, they can be specificially asked
     /// for by the building plot, or specifically rejected, if neither specified, its just a random chance for one"): Auto
@@ -95,6 +101,8 @@ namespace UnturnedSim
         public BasementChoice Basement;
         public BasementStyle BasementStyle;
         public BasementAccess BasementAccess;
+        /// <summary>A strip mall's plan (BuildingKind.Strip, BuildingGenStrip.cs): one of the fixed styles, Auto for a seeded one.</summary>
+        public StripStyle Strip;
 
         internal BuildingGenSpec Copy()
         {
@@ -210,6 +218,23 @@ namespace UnturnedSim
         public string Palette;
         /// <summary>What a Commercial building sells, which chose its palette (BuildingGen.ShopPalettes); None for every other kind.</summary>
         public Business Business;
+        /// <summary>A strip mall's tenants, by GenRoom.Unit: what each sells (UnitBusiness) and the palette of its shop it wears
+        /// (UnitPalette -- its floors; the walls are the strip's one Palette, as a strip has one landlord's front). Empty for
+        /// every other kind of building, which has one Business and one Palette for the lot.</summary>
+        public List<Business> UnitBusiness = new List<Business>();
+        public List<string> UnitPalette = new List<string>();
+        /// <summary>What the room's tenant sells: a strip's unit's own, else the building's.</summary>
+        public Business BusinessOf(GenRoom g) => g != null && g.Unit >= 0 && g.Unit < UnitBusiness.Count ? UnitBusiness[g.Unit] : Business;
+        /// <summary>The palette the room's floor wears: a strip's tenant's own, else the building's.</summary>
+        public string PaletteOf(GenRoom g) => g != null && g.Unit >= 0 && g.Unit < UnitPalette.Count ? UnitPalette[g.Unit] : Palette;
+        /// <summary>A strip's canopy over the walk in front of its shops (BuildingGenStrip.cs): each run of it as cells outside
+        /// one outside wall -- along the lattice line Line (of constant z when AlongX), cells [S0, S1) along it, standing out
+        /// on its E side (+1 north or east, -1 south or west). Laid by AddPorches, in a strip's place of a porch.</summary>
+        internal List<(bool AlongX, int Line, int S0, int S1, int E)> StripCanopy = new List<(bool, int, int, int, int)>();
+        /// <summary>A strip's street side -- its shop fronts, their doors and its canopy face it, toward the town's parking -- and
+        /// its alley side, its back doors', as built (after any turn). The canopy over the walk (Porches) stands one cell and its
+        /// overhang out past CellsX x CellsZ on StreetSide. None for every other kind of building.</summary>
+        public Sides StreetSide, AlleySide;
         public RoofKind Roof;
         public float RoofPitch;
         /// <summary>Walls with their openings, footings, a floor per storey and the roofs, in building-local metres: the
@@ -489,7 +514,10 @@ namespace UnturnedSim
             RoomKind.Bathroom => new Trait(5, 2, FloorPref.Any, ArchSlit),          // a high slit of glass, not a view
             RoomKind.Kitchen => new Trait(9, 3, FloorPref.Ground, ArchWindow),
             RoomKind.LivingRoom => new Trait(12, 3, FloorPref.Ground, ArchWindow),
-            RoomKind.DiningRoom => new Trait(9, 3, FloorPref.Ground, ArchWindow),
+            // (a strip's restaurant's dining room is its sales floor -- the tables the shop's gondolas are -- and fronts the
+            // street as the shops beside it do: a shop floor's size and tall windows, not a house's dining room's. Gated on
+            // the strip, so no house's or shop's room moves)
+            RoomKind.DiningRoom => b == BuildingKind.Strip ? new Trait(20, 4, FloorPref.GroundOnly, ArchTallWindow) : new Trait(9, 3, FloorPref.Ground, ArchWindow),
             RoomKind.Closet => new Trait(4, 2, FloorPref.Upper, -1),
             RoomKind.Garage => new Trait(GarageWide * GarageDeep, 2, FloorPref.GroundOnly, ArchGarage),   // 2 x 3 cells: see MaxCells
             RoomKind.Workshop => new Trait(16, 4, FloorPref.GroundOnly, ArchWindow),
@@ -559,6 +587,8 @@ namespace UnturnedSim
             BuildingKind.Residential => new[] { RoomKind.Hall, RoomKind.LivingRoom },
             // a block of flats: its lobby -- the stairwell, on the ground floor -- or the corridor, never a flat
             BuildingKind.Apartment => new[] { RoomKind.Stairwell, RoomKind.Hall },
+            // a strip: each tenant's sales floor, a restaurant's dining room (one front door a tenant: BuildingGenStrip.cs)
+            BuildingKind.Strip => new[] { RoomKind.Shop, RoomKind.DiningRoom },
             _ => new[] { RoomKind.Hall },
         };
 
@@ -571,6 +601,9 @@ namespace UnturnedSim
             BuildingKind.Residential => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.DiningRoom },
             // a block of flats: out of the end of its corridor (a flat has no door of its own to outside)
             BuildingKind.Apartment => new[] { RoomKind.Hall },
+            // a strip's tenant: out of its rear vestibule where it has one, else its stock room, onto the alley (the research:
+            // "rear door per unit to the service drive out of the SR (S5, S8: out of the HLa vestibule)")
+            BuildingKind.Strip => new[] { RoomKind.Hall, RoomKind.Storage, RoomKind.Kitchen, RoomKind.Workshop, RoomKind.Office },
             _ => new[] { RoomKind.Hall, RoomKind.Storage, RoomKind.BreakRoom },
         };
 
@@ -609,6 +642,8 @@ namespace UnturnedSim
             // (a house drew from these too until a block of flats was a kind of its own: see Generate)
             BuildingKind.Apartment => ApartmentPalettes(),
             BuildingKind.Commercial => Shops.SelectMany(ShopPalettes).ToArray(),
+            // (a strip wears one of its own tenants' shops' palettes: BuildingGenStrip.cs draws which)
+            BuildingKind.Strip => Shops.SelectMany(ShopPalettes).ToArray(),
             BuildingKind.Industrial => ApartmentPalettes(),
             _ => new[] { "Office_0", "Office_1", "Office_2", "Office_3" },
         };
@@ -627,6 +662,14 @@ namespace UnturnedSim
             Business.Guns => new[] { "Guns_0" },
             Business.Hardware => new[] { "Hardware_0" },
             Business.Botanist => new[] { "Botanist_0" },
+            // the strip's tenants, with no retail building of their own to measure (BuildingGenStrip.cs): a pizzeria a diner's
+            // (strawberry: a food place "within" the diner category), a liquor store a grocer's, offices an office's ("office
+            // should use office pallette"); a laundromat the clean grey and teal of Clothes_1, a video store Cafe_0's brown and red
+            Business.Pizza => new[] { "Diner_0", "Diner_1", "Diner_2" },
+            Business.Liquor => new[] { "Grocer_0" },
+            Business.Laundromat => new[] { "Clothes_1" },
+            Business.Video => new[] { "Cafe_0" },
+            Business.Lawyer or Business.Accountant or Business.Office => new[] { "Office_0", "Office_1", "Office_2", "Office_3" },
             _ => Array.Empty<string>(),
         };
         /// <summary>The apartment block's palettes: a block of flats', and an industrial building's (PalettesFor). Each call
@@ -1002,8 +1045,9 @@ namespace UnturnedSim
         /// plan is built, said so.</summary>
         public static BuildingGenResult Generate(BuildingGenSpec spec)
         {
-            // (a block of flats fits itself -- corridor, stairwell and whole flats, not rooms a floor: BuildingGenApartments)
-            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0 || spec.Kind == BuildingKind.Apartment) return GenerateOnce(spec);
+            // (a block of flats fits itself -- corridor, stairwell and whole flats, not rooms a floor: BuildingGenApartments -- and
+            // a strip by whole bays: BuildingGenStrip)
+            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0 || spec.Kind is BuildingKind.Apartment or BuildingKind.Strip) return GenerateOnce(spec);
             int maxF = Math.Max(1, spec.MaxFloors), minF = Math.Clamp(spec.MinFloors, 1, maxF);
             // stairs need a bay two rows deep (on a narrow plot; three elsewhere), a hall and two rows north of it: a
             // shallower plot is one storey
@@ -1109,7 +1153,20 @@ namespace UnturnedSim
                     case RoomKind.Bathroom: Need(g, "tub or sink", Has(g, "Tub", "Counter_1")); break;
                     case RoomKind.Office: Need(g, "desk", Has(g, "Table_Wood_2")); break;
                     case RoomKind.BreakRoom: Need(g, "table", Has(g, "Table"), 1); Need(g, "sink", Has(g, "Counter_1")); Need(g, "fridge", Has(g, "Fridge")); break;
-                    case RoomKind.Shop: Need(g, "shelves", Has(g, "Shelf_1"), 1); break;
+                    case RoomKind.Shop:
+                        // (by its tenant's business: a shop's gondolas; a strip's own tenants' their own pieces -- ShopFloor)
+                        var (what, pieces) = r.BusinessOf(g) switch
+                        {
+                            Business.Laundromat => ("washers", new[] { "Washer_0" }),
+                            Business.Video => ("shelves", new[] { "Shelf_2", "Shelf_3" }),
+                            Business.Liquor => ("coolers", new[] { "Cooler_0" }),
+                            Business.Lawyer or Business.Accountant or Business.Office => ("desk", new[] { "Table_Wood_2" }),
+                            Business.Pizza => ("tables", new[] { "Table_Wood" }),
+                            Business.Diner or Business.Cafe when r.Kind == BuildingKind.Strip => ("tables", new[] { "Table_Wood" }),
+                            _ => ("shelves", new[] { "Shelf_1" }),
+                        };
+                        Need(g, what, Has(g, pieces), 1);
+                        break;
                     case RoomKind.Warehouse: case RoomKind.Storage: Need(g, "racks", Has(g, "Shelf"), 1); break;
                 }
             // what each outside wall's openings let into: the room a metre in from the middle of each
@@ -1180,6 +1237,8 @@ namespace UnturnedSim
             // a block of flats is laid out its own way (BuildingGenApartments.cs) -- corridor, stairwell, flats -- and joins
             // this one for its doors (Connect, which keeps every door inside a flat or at its way in), walls, roof, furniture
             if (kind == BuildingKind.Apartment) return Apartments(spec, res, rng, Connect);
+            // a strip mall too (BuildingGenStrip.cs): its tenants' rooms off a fixed plan, each doored by Connect on its own
+            if (kind == BuildingKind.Strip) return Strip(spec, res, rng, Connect);
             int maxFloors = Math.Max(1, spec.MaxFloors), minFloors = Math.Clamp(spec.MinFloors, 1, maxFloors);
             int perFloor = Math.Max(1, spec.MaxRoomsPerFloor), capacity = maxFloors * perFloor;
             // a kitchen with the dining table in it is a size up (see `diner` below)
@@ -2164,7 +2223,10 @@ namespace UnturnedSim
                     progress = false;
                     foreach (var r in left.ToList())
                     {
-                        var parents = Next(r).Where(p => reached.Contains(p) && MayOpenOff(r.Kind, p.Kind) && (r.Unit < 0 || OffInAFlat(r.Kind, p.Kind))).ToList();
+                        // (a flat's rooms as a flat's are -- OffInAFlat; a strip's tenant is a shop, whose toilet may open off its
+                        // sales floor: the research's small shops have it straight behind)
+                        var parents = Next(r).Where(p => reached.Contains(p) && MayOpenOff(r.Kind, p.Kind)
+                                                         && (r.Unit < 0 || kind == BuildingKind.Strip || OffInAFlat(r.Kind, p.Kind))).ToList();
                         if (parents.Count == 0) continue;
                         // a closet (or a bathroom that rolls an en-suite) off a bedroom or office first; then the
                         // hall, since a bathroom off the hall beats one off the kitchen; then whatever it faces
@@ -2929,7 +2991,7 @@ namespace UnturnedSim
                 }
 
                 // what each room has in its outside walls
-                bool business = res.Kind == BuildingKind.Commercial || res.Kind == BuildingKind.Misc;
+                bool business = res.Kind is BuildingKind.Commercial or BuildingKind.Misc or BuildingKind.Strip;
                 var fr = res.Front;
                 var frSide = fr == null ? Sides.None : grids[0].Out(fr.AlongX, fr.Line, (int)MathF.Floor(fr.At / Cell));
                 Face Facing(Sides sd) => fr == null ? Face.Side : sd == frSide ? Face.Front : sd == Turned(frSide) ? Face.Back : Face.Side;
@@ -3084,7 +3146,12 @@ namespace UnturnedSim
                     // windows on the front and less or none on the sides"): its front wall more and wider windows, a shop
                     // none on its sides and anything else one a stretch there
                     var face = Facing(runSide);
+                    // (a strip's every tenant fronts its own street door -- an L's two legs face two ways: StripFacing)
+                    if (res.Kind == BuildingKind.Strip) face = StripFacing(res, g, room, runSide);
                     bool shopFront = business && face == Face.Front, side = business && face == Face.Side;
+                    // and an end unit's sales floor is glazed round the corner, on its end wall as on its front (the research:
+                    // "end caps get glazing on their side wall too")
+                    if (res.Kind == BuildingKind.Strip && side && room.Kind is RoomKind.Shop or RoomKind.DiningRoom) { shopFront = true; side = false; }
                     if (side && room.Kind == RoomKind.Shop) win = -1;
                     // (and each window's share of its stretch -- its slot, half Spread's gap in from either end -- where a
                     // room's layout may later slide it: Furnish. Spread lays a window anywhere in its slot as readily as at
@@ -3135,12 +3202,17 @@ namespace UnturnedSim
                 int baseTexel = FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Floor : -1;
                 foreach (var room in res.Layout.Where(r => r.Floor == f))
                 {
-                    int tx = FloorTexelFor(res.Palette, room.Kind);
-                    if (tx < 0 || tx == baseTexel) continue;
+                    // (a strip's tenant's floor is its own shop's palette's, a cover over all of it: BuildingGenResult.PaletteOf --
+                    // every other building's room's palette is the building's)
+                    string pal = res.PaletteOf(room);
+                    bool own = pal != res.Palette;
+                    int tx = FloorTexelFor(pal, room.Kind);
+                    if (tx < 0 || (tx == baseTexel && !own)) continue;
                     foreach (var q in room.Rects)
                     {
                         var cover = SlabPlan(q.X0 * Cell, q.X1 * Cell, q.Z0 * Cell, q.Z1 * Cell, y + 0.02f, SurfaceKind.Floor);
                         cover.Thickness = 0.04f; cover.Y = y + 0.02f - 0.02f; cover.Texel = tx;
+                        if (own) cover.Palette = pal;
                         res.Walls.Add(cover);
                     }
                 }
@@ -3685,6 +3757,8 @@ namespace UnturnedSim
         /// open edges, as the house has. Its own rng stream, so a building without one is the building it was.</summary>
         static void AddPorches(BuildingGenResult res, Grid ground, PorchChoice choice, int seed)
         {
+            // a strip's porch is its canopy, the length of its shop fronts (BuildingGenStrip.cs)
+            if (res.Kind == BuildingKind.Strip) { AddCanopies(res, ground); return; }
             var prng = new Rng(unchecked(seed * 31337 + 0x504F));
             bool house = res.Kind == BuildingKind.Residential;
             bool rollFront = prng.Chance(house ? 55 : 30), rollBack = prng.Chance(house ? 30 : 10);

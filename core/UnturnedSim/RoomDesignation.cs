@@ -11,8 +11,11 @@ namespace UnturnedSim
     ///
     /// Apartment: a block of flats (strawberry: "apartments should function differently from houses, no staircase
     /// inside the apartment, shared corridor and staircases"). On the END, as RoomKind's new members are: kinds persist
-    /// by NAME, but nothing should renumber.</summary>
-    public enum BuildingKind { Residential, Commercial, Industrial, Misc, Apartment }
+    /// by NAME, but nothing should renumber.
+    ///
+    /// Strip: a strip mall, a one-storey row of shops each its own tenant (strawberry, 2026-10-19, on the strip research:
+    /// "and yes keep working on this") -- BuildingGenStrip.cs.</summary>
+    public enum BuildingKind { Residential, Commercial, Industrial, Misc, Apartment, Strip }
 
     /// <summary>What one ROOM is for. Extending this is a one-line change and safe: designations persist by
     /// NAME, never by ordinal, so adding or reordering members cannot silently re-label existing saves.
