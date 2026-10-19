@@ -105,6 +105,9 @@ namespace UnturnedGodot
             public int Bends;
             /// <summary>Junctions the 45-degree diagonal made where it crosses the grid.</summary>
             public int DiagonalCrossings;
+            /// <summary>A varied town: blocks joined, spans pruned as loose, what the seed chose, and the rules checked.</summary>
+            public int Superblocks, Pruned;
+            public string Layout, Rules;
             public float Metres;
             public ulong Checksum;
             public override string ToString() =>
@@ -812,7 +815,21 @@ namespace UnturnedGodot
         // ⚠ ALL THREE TAKE LATTICE-CENTRED INDICES (i, j already offset by -n, so the middle line is 0).
         // The first cut passed raw grid indices to one and centred ones to another, which is the sort of
         // mismatch that silently makes every third street a main one in the wrong place.
-        bool MainLine(int line) => (line % Mathf.Max(1, MainEvery)) == 0;
+        /// <summary>Is this line a main street? axis 0 = a row (indexed by j), 1 = a column (by i). Every MainEvery-th line,
+        /// counted from the line its axis's phase picks -- 0 for both on a fixed lattice, the seed's choice on a varied town
+        /// (ChooseLayout), so the main streets are not always the two through the middle.</summary>
+        bool MainLine(int axis, int line)
+        {
+            int e = Mathf.Max(1, MainEvery);
+            return (((line + _mainPhase[axis & 1]) % e) + e) % e == 0;
+        }
+        readonly int[] _mainPhase = new int[2];
+        /// <summary>The main line on this axis nearest the middle: where the boulevard runs.</summary>
+        int CentreMain(int axis)
+        {
+            int e = Mathf.Max(1, MainEvery), ph = _mainPhase[axis & 1] % e;
+            return ph <= e - ph ? -ph : e - ph;
+        }
 
         /// <summary>Which axis OWNS a node: 0 = the row runs through it, 1 = the column does. The through
         /// street keeps its centreline to the node; every other arm stops at that street's kerb.
@@ -821,7 +838,7 @@ namespace UnturnedGodot
         /// its opposite number running across the intersection.</summary>
         int DominantAxis(int i, int j)
         {
-            bool rowMain = MainLine(j), colMain = MainLine(i);
+            bool rowMain = MainLine(0, j), colMain = MainLine(1, i);
             if (rowMain != colMain) return rowMain ? 0 : 1;
             return 0;
         }
@@ -866,6 +883,351 @@ namespace UnturnedGodot
         /// None on a draped town (its streets ride the ground) or under the control.</summary>
         public float StreetSink => OldGrade || FollowTerrain ? 0f : Mathf.Max(0f, PavementKerb - PavementProud);
 
+        // ================== LAYOUT: a different town per seed, inside a set of rules ==================
+        // strawberry 2026-10-19: "add a bunch of rules about how roads connect, min distances between junctions, areas where 45s
+        // arent allowed. then shake up the shape/layout of roads within each different town, as well as support for clamped
+        // sizes for towns". Until then every seed laid the same 5 x 5 lattice with one diagonal -- 51 roads, 29 junctions --
+        // and only the jitter changed.
+
+        /// <summary>Lay out a different town per seed (ChooseLayout): its size, block, bearing, outline, main streets,
+        /// superblocks and diagonal avenues. Off, it is the fixed lattice every test was written against. The game turns it on.</summary>
+        public bool Vary;
+        /// <summary>A town's width and depth, metres, each picked per seed between these -- and a RequestedSize is clamped into
+        /// them. Measured centreline to centreline of the outer streets, so it is the lattice that is held to it.</summary>
+        public float SizeMin = 220f, SizeMax = 760f;
+        /// <summary>A whole width asked for (both ways), or 0 to let the seed pick. Clamped to SizeMin..SizeMax.</summary>
+        public float RequestedSize;
+        /// <summary>The block (node spacing) a varied town picks between. ⚠ Not much under 100 m: a junction's fillets eat ~18 m
+        /// of every street end (see Spacing).</summary>
+        public float SpacingMin = 100f, SpacingMax = 125f;
+        /// <summary>Leave Bearing as it was set; otherwise a varied town picks its own.</summary>
+        public bool KeepBearing;
+        /// <summary>Per corner of the outline, the chance a corner of blocks is left out: an L, a T, a stepped edge.</summary>
+        public float BiteChance = 0.35f;
+        /// <summary>Per interior side-street span, the chance it is left out and the two blocks either side become one.</summary>
+        public float SuperblockChance = 0.12f;
+
+        // ---- the rules ----
+        /// <summary>No two junctions closer than this, metres. A diagonal's crossing has to stand this far from both ends of the
+        /// street it crosses, or the avenue is not built across that street.</summary>
+        public float MinJunctionGap = 35f;
+        /// <summary>No junction with more arms than this. The lattice gives four, and a diagonal runs half a block off every
+        /// node -- so it only ever makes a new four-way, never a five- or six-way.</summary>
+        public int MaxArms = 4;
+        /// <summary>No loose ends: a span left with an end on nothing (the outline, the gates, a superblock) is taken out, again
+        /// and again, and only the biggest connected piece of the network is kept.</summary>
+        public bool PruneDeadEnds = true;
+        /// <summary>A diagonal avenue shorter than this many blocks is not built: one block of 45-degree road reads as a slip
+        /// road, not an avenue.</summary>
+        public int MinDiagonalBlocks = 2;
+        /// <summary>Where a 45-degree avenue may not go: rectangles in the lattice's own metres (u, v, before the jitter). The
+        /// core -- the four blocks round where the middle main streets cross -- always; the seed may add another.</summary>
+        public readonly List<Rect2> No45 = new();
+        /// <summary>The diagonals the seed picked: the line v = slope * u + c in the lattice's metres.</summary>
+        readonly List<(int slope, float c)> _diagonals = new();
+        /// <summary>Lattice nodes the outline leaves out (lattice-centred i, j), and the half-counts the size allows each way.</summary>
+        readonly HashSet<(int, int)> _outside = new();
+        int _nU = int.MaxValue, _nV = int.MaxValue;
+        bool _layoutChosen;
+        /// <summary>One line saying what the seed chose and what the rules did to it.</summary>
+        public string LayoutSummary = "";
+        /// <summary>The half-span of the varied town, metres: how far from its centre its outer streets' kerbs reach.</summary>
+        public float HalfSpan => (Mathf.Max(_nU == int.MaxValue ? 0 : _nU, _nV == int.MaxValue ? 0 : _nV) * Spacing) + 15f;
+
+        bool InShape(int i, int j) => !Vary || (Mathf.Abs(i) <= _nU && Mathf.Abs(j) <= _nV && !_outside.Contains((i, j)));
+
+        /// <summary>Pick this seed's town. Deterministic from Seed alone (the site comes later), and only once.</summary>
+        public void ChooseLayout()
+        {
+            if (!Vary || _layoutChosen) return;
+            _layoutChosen = true;
+            ulong h0 = Mix(((ulong)(uint)Seed << 32) ^ 0x7A40C5UL), h1 = Mix(h0 ^ 0x51DE5UL), h2 = Mix(h1 ^ 0xD1A6UL);
+            if (!KeepBearing) Bearing = Unit(h0, 0) * Mathf.Pi * 0.5f;
+            Spacing = Mathf.Lerp(Mathf.Min(SpacingMin, SpacingMax), Mathf.Max(SpacingMin, SpacingMax), Unit(h0, 16));
+            // ---- SIZE, clamped: each way a whole number of blocks whose width falls inside SizeMin..SizeMax where one does
+            float lo = Mathf.Min(SizeMin, SizeMax), hi = Mathf.Max(SizeMin, SizeMax);
+            int Half(float size)
+            {
+                int nLo = Mathf.Max(1, Mathf.CeilToInt(lo * 0.5f / Spacing - 1e-3f)), nHi = Mathf.Max(1, Mathf.FloorToInt(hi * 0.5f / Spacing + 1e-3f));
+                if (nLo > nHi) return nHi;                     // no whole block fits the range: the largest under its top
+                return Mathf.Clamp(Mathf.RoundToInt(Mathf.Clamp(size, lo, hi) * 0.5f / Spacing), nLo, nHi);
+            }
+            _nU = Half(RequestedSize > 0f ? RequestedSize : Mathf.Lerp(lo, hi, Unit(h0, 32)));
+            _nV = Half(RequestedSize > 0f ? RequestedSize : Mathf.Lerp(lo, hi, Unit(h0, 48)));
+            int n = Mathf.Max(_nU, _nV);
+            Extent = n * Spacing + Spacing * 0.5f;             // the lattice's own reach; the outline masks it down from there
+            // ---- OUTLINE: a corner of blocks bitten out here and there, never down to under two blocks either way
+            _outside.Clear();
+            var bites = new List<string>();
+            for (int corner = 0; corner < 4; corner++)
+            {
+                int sx = (corner & 1) == 0 ? 1 : -1, sy = (corner & 2) == 0 ? 1 : -1;
+                ulong hc = Mix(h1 ^ ((ulong)(corner + 1) * 0x9E3779B97F4A7C15UL));
+                if (_nU < 2 || _nV < 2 || Unit(hc, 0) >= BiteChance) continue;
+                int bu = Mathf.Clamp(1 + (int)(Unit(hc, 16) * (_nU - 1)), 1, _nU - 1);
+                int bv = Mathf.Clamp(1 + (int)(Unit(hc, 32) * (_nV - 1)), 1, _nV - 1);
+                for (int i = -_nU; i <= _nU; i++)
+                    for (int j = -_nV; j <= _nV; j++)
+                        if (sx * i > _nU - bu && sy * j > _nV - bv) _outside.Add((i, j));
+                bites.Add($"{(sy > 0 ? "N" : "S")}{(sx > 0 ? "E" : "W")} {bu}x{bv}");
+            }
+            // ---- MAIN STREETS: which lines, each way
+            int e = Mathf.Max(1, MainEvery);
+            _mainPhase[0] = (int)(Unit(h1, 48) * e) % e; _mainPhase[1] = (int)(Unit(h2, 48) * e) % e;
+            // ---- WHERE A 45 MAY NOT GO: the core, round where the middle mains cross, and maybe one more patch of blocks
+            No45.Clear();
+            int iM = CentreMain(1), jM = CentreMain(0);
+            No45.Add(new Rect2((iM - 1) * Spacing, (jM - 1) * Spacing, 2f * Spacing, 2f * Spacing));
+            if (Unit(h2, 0) < 0.4f && n >= 2)
+            {
+                int zi = -n + (int)(Unit(h2, 8) * (2 * n - 1)), zj = -n + (int)(Unit(h2, 24) * (2 * n - 1));
+                No45.Add(new Rect2(zi * Spacing, zj * Spacing, 2f * Spacing, 2f * Spacing));
+            }
+            // ---- DIAGONAL AVENUES: none, one, or two parallel ones at least two blocks apart (two that crossed each other
+            // would meet ON a lattice line -- a six-way -- whichever offsets they had)
+            _diagonals.Clear();
+            float pick = Unit(h1, 32);
+            int count = Diagonal ? (pick < 0.3f ? 0 : pick < 0.8f ? 1 : 2) : 0;
+            int slope = Unit(h2, 16) < 0.5f ? 1 : -1;
+            int k1 = -n + (int)(Unit(h2, 32) * (2 * n));
+            for (int d = 0; d < count; d++)
+            {
+                int k = d == 0 ? k1 : k1 + (k1 > 0 ? -1 : 1) * (2 + (int)(Unit(h2, 40) * 2f));
+                _diagonals.Add((slope, (k + 0.5f) * Spacing));
+            }
+            LayoutSummary = $"seed {Seed}: {2 * _nU * Spacing:0} x {2 * _nV * Spacing:0} m ({2 * _nU} x {2 * _nV} blocks of {Spacing:0} m, "
+                          + $"clamped {lo:0}..{hi:0}), bearing {Mathf.RadToDeg(Bearing):0} deg, "
+                          + $"outline {(bites.Count > 0 ? string.Join(", ", bites) + " bitten out" : "whole")}, "
+                          + $"mains on rows {_mainPhase[0]}/cols {_mainPhase[1]} of {e}, {_diagonals.Count} diagonal(s) planned, "
+                          + $"{No45.Count} no-45 zone(s)";
+        }
+
+        /// <summary>Leave out a few interior side-street spans, joining the blocks either side into one. Only where both ends
+        /// keep three arms (no corners or loose ends made) and neither block has been joined already.</summary>
+        int DropSpans(List<Span> plan, int n)
+        {
+            var degree = new Dictionary<(int, int), int>();
+            foreach (var sp in plan) { Bump(degree, (sp.AI, sp.AJ)); Bump(degree, (sp.BI, sp.BJ)); }
+            static void Bump(Dictionary<(int, int), int> d, (int, int) k) => d[k] = d.TryGetValue(k, out int c) ? c + 1 : 1;
+            bool Whole(int gi, int gj) => gi >= 0 && gj >= 0 && gi + 1 < _nodeOk.GetLength(0) && gj + 1 < _nodeOk.GetLength(1)
+                                          && _nodeOk[gi, gj] && _nodeOk[gi + 1, gj] && _nodeOk[gi, gj + 1] && _nodeOk[gi + 1, gj + 1];
+            var joined = new HashSet<(int, int)>();
+            int dropped = 0;
+            for (int k = plan.Count - 1; k >= 0; k--)
+            {
+                var sp = plan[k];
+                if (sp.Main || sp.Axis > 1) continue;
+                // the two blocks either side of it
+                (int, int) b0, b1;
+                if (sp.Axis == 0) { b0 = (Mathf.Min(sp.AI, sp.BI), sp.AJ - 1); b1 = (Mathf.Min(sp.AI, sp.BI), sp.AJ); }
+                else { b0 = (sp.AI - 1, Mathf.Min(sp.AJ, sp.BJ)); b1 = (sp.AI, Mathf.Min(sp.AJ, sp.BJ)); }
+                if (!Whole(b0.Item1, b0.Item2) || !Whole(b1.Item1, b1.Item2) || joined.Contains(b0) || joined.Contains(b1)) continue;
+                if (degree[(sp.AI, sp.AJ)] < 4 || degree[(sp.BI, sp.BJ)] < 4) continue;   // both ends stay at least tees
+                ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)sp.Axis << 40) ^ ((ulong)(uint)sp.AI << 20) ^ (uint)sp.AJ ^ 0x5B10CUL));
+                if (Unit(h, 0) >= SuperblockChance) continue;
+                plan.RemoveAt(k);
+                degree[(sp.AI, sp.AJ)]--; degree[(sp.BI, sp.BJ)]--;
+                joined.Add(b0); joined.Add(b1);
+                dropped++;
+            }
+            return dropped;
+        }
+
+        /// <summary>Take out every span with a loose end, until none is left, then keep only the biggest connected piece.
+        /// Returns how many spans went.</summary>
+        int PruneLoose(List<Span> plan)
+        {
+            int removed = 0;
+            for (bool any = true; any;)
+            {
+                any = false;
+                var degree = new Dictionary<(int, int), int>();
+                foreach (var sp in plan)
+                {
+                    degree[(sp.AI, sp.AJ)] = degree.TryGetValue((sp.AI, sp.AJ), out int a) ? a + 1 : 1;
+                    degree[(sp.BI, sp.BJ)] = degree.TryGetValue((sp.BI, sp.BJ), out int b) ? b + 1 : 1;
+                }
+                for (int k = plan.Count - 1; k >= 0; k--)
+                    if (degree[(plan[k].AI, plan[k].AJ)] < 2 || degree[(plan[k].BI, plan[k].BJ)] < 2) { plan.RemoveAt(k); removed++; any = true; }
+            }
+            // the biggest piece: union-find over the nodes
+            var parent = new Dictionary<(int, int), (int, int)>();
+            (int, int) Find((int, int) x)
+            {
+                if (!parent.TryGetValue(x, out var p)) { parent[x] = x; return x; }
+                if (p.Equals(x)) return x;
+                var r = Find(p); parent[x] = r; return r;
+            }
+            foreach (var sp in plan) { var ra = Find((sp.AI, sp.AJ)); var rb = Find((sp.BI, sp.BJ)); if (!ra.Equals(rb)) parent[ra] = rb; }
+            var size = new Dictionary<(int, int), int>();
+            foreach (var sp in plan) { var r = Find((sp.AI, sp.AJ)); size[r] = size.TryGetValue(r, out int c) ? c + 1 : 1; }
+            if (size.Count > 1)
+            {
+                var keep = default((int, int)); int best = -1;
+                foreach (var kv in size) if (kv.Value > best) { best = kv.Value; keep = kv.Key; }
+                for (int k = plan.Count - 1; k >= 0; k--)
+                    if (!Find((plan[k].AI, plan[k].AJ)).Equals(keep)) { plan.RemoveAt(k); removed++; }
+            }
+            return removed;
+        }
+
+        /// <summary>A diagonal avenue by the rules (a varied town's; AddDiagonal is the fixed lattice's): the line v = slope u + c
+        /// across whatever of the grid is there, a crossing wherever it meets a street -- but only a crossing that stands
+        /// MinJunctionGap from both ends of that street, and only a block's worth of avenue whose middle is inside the town and
+        /// outside every No45 zone. What is left is cut into runs; a run shorter than MinDiagonalBlocks is not built.
+        /// Returns the crossings made, and adds the runs it cut (with why) to `why`.</summary>
+        int AddDiagonalRuled(List<Span> plan, Node[,] grid, int w, int baseRow, RoadField roads, Func<float, float, float> heightAt,
+                             int slope, float c, List<string> why)
+        {
+            var (hits, lay, gapCut, zoneCut, outCut, shortCut) = PlanDiagonal(plan, slope, c);
+            return LayDiagonal(plan, grid, w, baseRow, roads, heightAt, slope, c, why, hits, lay, gapCut, zoneCut, outCut, shortCut);
+        }
+
+        /// <summary>Where a diagonal on v = slope u + c would cross the planned streets, and which blocks of it the rules allow
+        /// -- without building or splitting anything, so a town can try every offset and keep the best.</summary>
+        (List<(int span, float t, float s, Vector3 x, bool ok)> hits, bool[] lay, int gapCut, int zoneCut, int outCut, int shortCut)
+            PlanDiagonal(List<Span> plan, int slope, float c)
+        {
+            var P0 = ToWorld(0f, c, 0f);
+            var P1 = ToWorld(Spacing, c + slope * Spacing, 0f);
+            var dir = new Vector3(P1.X - P0.X, 0f, P1.Z - P0.Z).Normalized();
+            static float Cross(Vector3 a, Vector3 b) => a.X * b.Z - a.Z * b.X;
+            var hits = new List<(int span, float t, float s, Vector3 x, bool ok)>();
+            for (int k = 0; k < plan.Count; k++)
+            {
+                var sp = plan[k];
+                if (sp.Axis > 1 || sp.Bent || sp.Pts == null || sp.Pts.Count < 2) continue;
+                var A = sp.Pts[0]; var B = sp.Pts[sp.Pts.Count - 1];
+                var ab = new Vector3(B.X - A.X, 0f, B.Z - A.Z);
+                float den = Cross(ab, dir);
+                if (Mathf.Abs(den) < 1e-6f) continue;
+                var ap = new Vector3(P0.X - A.X, 0f, P0.Z - A.Z);
+                float t = Cross(ap, dir) / den;
+                if (t <= 0f || t >= 1f) continue;
+                float len = ab.Length();
+                bool ok = t * len >= MinJunctionGap && (1f - t) * len >= MinJunctionGap;     // ⚠ THE GAP RULE
+                hits.Add((k, t, Cross(ap, ab) / den, new Vector3(A.X + ab.X * t, 0f, A.Z + ab.Z * t), ok));
+            }
+            hits.Sort((a, b) => a.s.CompareTo(b.s));
+            // which blocks of avenue survive the rules
+            float cs = Mathf.Cos(Bearing), sn = Mathf.Sin(Bearing);
+            (float u, float v) Local(Vector3 p) { float dx = p.X - Centre.X, dz = p.Z - Centre.Z; return (dx * cs + dz * sn, -dx * sn + dz * cs); }
+            var lay = new bool[Mathf.Max(0, hits.Count - 1)];
+            int gapCut = 0, zoneCut = 0, outCut = 0;
+            for (int h = 0; h + 1 < hits.Count; h++)
+            {
+                if (!hits[h].ok || !hits[h + 1].ok) { gapCut++; continue; }
+                var mid = (hits[h].x + hits[h + 1].x) * 0.5f;
+                // one block's step, and over a block that is really there (not across the outline's bite or the void past it)
+                if (Flat(hits[h].x, hits[h + 1].x) > Spacing * 1.05f) { outCut++; continue; }
+                var blk = BlockOf(mid);
+                if (blk is not { } b || !(_nodeOk[b.Item1, b.Item2] && _nodeOk[b.Item1 + 1, b.Item2] && _nodeOk[b.Item1, b.Item2 + 1] && _nodeOk[b.Item1 + 1, b.Item2 + 1]))
+                { outCut++; continue; }
+                var (mu, mv) = Local(mid);
+                bool inZone = false;
+                foreach (var z in No45) if (z.HasPoint(new Vector2(mu, mv))) { inZone = true; break; }
+                if (inZone) { zoneCut++; continue; }
+                lay[h] = true;
+            }
+            // runs: a run shorter than MinDiagonalBlocks is not built
+            int shortCut = 0;
+            for (int h = 0; h < lay.Length;)
+            {
+                if (!lay[h]) { h++; continue; }
+                int e2 = h; while (e2 < lay.Length && lay[e2]) e2++;
+                if (e2 - h < MinDiagonalBlocks) { for (int q = h; q < e2; q++) lay[q] = false; shortCut++; }
+                h = e2;
+            }
+            return (hits, lay, gapCut, zoneCut, outCut, shortCut);
+        }
+
+        int LayDiagonal(List<Span> plan, Node[,] grid, int w, int baseRow, RoadField roads, Func<float, float, float> heightAt,
+                        int slope, float c, List<string> why, List<(int span, float t, float s, Vector3 x, bool ok)> hits, bool[] lay,
+                        int gapCut, int zoneCut, int outCut, int shortCut)
+        {
+            // the crossings the surviving runs need, one node each, split into the spans they cross
+            var key = new (int, int)[hits.Count];
+            var splitAt = new Dictionary<int, (float t, (int, int) key)>();
+            int made = 0;
+            for (int h = 0; h < hits.Count; h++)
+            {
+                bool used = (h > 0 && lay[h - 1]) || (h < lay.Length && lay[h]);
+                if (!used) continue;
+                int gi = baseRow + made / w, gj = made % w;
+                if (gi >= grid.GetLength(0)) break;
+                var (k, t, _, x, _) = hits[h];
+                var sp = plan[k];
+                var on = PointAlong(sp.Pts, t * PolyLen(sp.Pts));
+                grid[gi, gj] = new Node { P = new Vector3(x.X, on.Y, x.Z), Ok = true, Junction = -1, Extra = true,
+                                          CrossHalf = roads.RoadHalfWidthOfMaterial(MatOf(sp)) };
+                key[h] = (gi, gj);
+                splitAt[k] = (t, (gi, gj));
+                DiagonalNodes.Add(grid[gi, gj].P);
+                made++;
+            }
+            var outPlan = new List<Span>(plan.Count + made * 2);
+            for (int k = 0; k < plan.Count; k++)
+            {
+                var sp = plan[k];
+                if (!splitAt.TryGetValue(k, out var cut)) { outPlan.Add(sp); continue; }
+                float len = PolyLen(sp.Pts), sCut = cut.t * len;
+                var first = CutBack(sp.Pts, 0f, len - sCut);
+                var second = CutBack(sp.Pts, sCut, 0f);
+                if (first == null || second == null) { outPlan.Add(sp); continue; }
+                var xp = grid[cut.key.Item1, cut.key.Item2].P;
+                first[first.Count - 1] = xp; second[0] = xp;
+                var a = sp; a.BI = cut.key.Item1; a.BJ = cut.key.Item2; a.Pts = first; a.Len = PolyLen(first);
+                var b = sp; b.AI = cut.key.Item1; b.AJ = cut.key.Item2; b.Pts = second; b.Len = PolyLen(second);
+                outPlan.Add(a); outPlan.Add(b);
+            }
+            int pieces = 0;
+            for (int h = 0; h < lay.Length; h++)
+            {
+                if (!lay[h]) continue;
+                var na = grid[key[h].Item1, key[h].Item2]; var nb = grid[key[h + 1].Item1, key[h + 1].Item2];
+                var pts = SpanPoints(na.P, nb.P, heightAt, out float len);
+                if (pts == null) continue;                                  // too steep or wet: the avenue breaks here
+                outPlan.Add(new Span { AI = key[h].Item1, AJ = key[h].Item2, BI = key[h + 1].Item1, BJ = key[h + 1].Item2,
+                                       Axis = 2, AxisA = 2, AxisB = 2, Main = DiagonalMain, Pts = pts, Len = len });
+                pieces++;
+            }
+            plan.Clear(); plan.AddRange(outPlan);
+            why.Add($"v = {(slope > 0 ? "+" : "-")}u{(c >= 0 ? "+" : "-")}{Mathf.Abs(c):0}: {pieces} blocks built; cut {gapCut} at a crossing under "
+                  + $"{MinJunctionGap:0} m from a junction, {zoneCut} in a no-45 zone, {outCut} outside the town, {shortCut} run(s) too short");
+            return made;
+        }
+
+        /// <summary>The rules, measured on what was planned (not taken on trust): the most arms at any junction, and the closest
+        /// two junctions come -- with how many pairs are under MinJunctionGap.</summary>
+        string CheckRules(List<Span> plan, Node[,] grid)
+        {
+            var degree = new Dictionary<(int, int), int>();
+            foreach (var sp in plan)
+            {
+                degree[(sp.AI, sp.AJ)] = degree.TryGetValue((sp.AI, sp.AJ), out int a) ? a + 1 : 1;
+                degree[(sp.BI, sp.BJ)] = degree.TryGetValue((sp.BI, sp.BJ), out int b) ? b + 1 : 1;
+            }
+            int most = 0, loose = 0;
+            var junctions = new List<Vector3>();
+            foreach (var kv in degree)
+            {
+                most = Mathf.Max(most, kv.Value);
+                if (kv.Value == 1) loose++;
+                if (kv.Value >= 3) junctions.Add(grid[kv.Key.Item1, kv.Key.Item2].P);
+            }
+            float closest = float.MaxValue; int under = 0;
+            for (int a = 0; a < junctions.Count; a++)
+                for (int b = a + 1; b < junctions.Count; b++)
+                {
+                    float d = Flat(junctions[a], junctions[b]);
+                    closest = Mathf.Min(closest, d);
+                    if (d < MinJunctionGap) under++;
+                }
+            string verdict = most <= MaxArms && under == 0 && (!PruneDeadEnds || loose == 0) ? "all held" : "BROKEN";
+            return $"rules {verdict}: at most {most} arms (max {MaxArms}), {loose} loose end(s), closest junctions {closest:0.0} m apart "
+                 + $"({under} pair(s) under {MinJunctionGap:0} m) over {junctions.Count} junctions";
+        }
+
         /// <summary>Lay the grid into <paramref name="roads"/>. <paramref name="heightAt"/> is the ground
         /// sampler (Terrain.Active.SampleHeight in game; a lambda in a test, which is the only way to test the
         /// gates at all -- you cannot arrange a cliff in the real map on demand). <paramref name="siteOk"/>
@@ -876,6 +1238,7 @@ namespace UnturnedGodot
             _heightAt = heightAt;
             Built.Clear(); _profiles.Clear(); Marks.Clear(); _throughEnds.Clear(); _crossAlong.Clear(); _clips.Clear(); DiagonalRoads.Clear();
             _wideTrimRoads = null;
+            if (Vary) ChooseLayout();          // (once per town: Main asks first, to size the site it looks for)
             if (roads == null || heightAt == null || Spacing < 4f || Extent < Spacing) return rep;
             // the kerb return follows the road's width, so everything measured off it does too
             CornerKerbRadius = Mathf.Clamp(roads.RoadHalfWidthOfMaterial(MainMaterial) * CornerKerbFraction, 2f, 9f);
@@ -909,8 +1272,10 @@ namespace UnturnedGodot
                     float sx = Mathf.Abs(heightAt(flat.X + probe, flat.Z) - heightAt(flat.X - probe, flat.Z)) / (2f * probe);
                     float sz = Mathf.Abs(heightAt(flat.X, flat.Z + probe) - heightAt(flat.X, flat.Z - probe)) / (2f * probe);
                     bool flatEnough = Mathf.Max(sx, sz) <= MaxNodeSlope;
-                    node.Ok = dry && flatEnough && (siteOk == null || siteOk(flat.X, flat.Z));
-                    if (node.Ok) rep.Nodes++; else rep.NodesRejected++;
+                    // (a node the outline leaves out is not refused by the ground, so it is not counted as refused)
+                    bool inShape = InShape(i, j);
+                    node.Ok = inShape && dry && flatEnough && (siteOk == null || siteOk(flat.X, flat.Z));
+                    if (node.Ok) rep.Nodes++; else if (inShape) rep.NodesRejected++;
                     if (node.Ok)
                     {
                         _frameU0 = Mathf.Min(_frameU0, u); _frameU1 = Mathf.Max(_frameU1, u);
@@ -928,12 +1293,13 @@ namespace UnturnedGodot
             for (int axis = 0; axis < 2; axis++)
                 for (int line = 0; line < w; line++)
                 {
-                    bool main = MainLine(line - n);
+                    bool main = MainLine(axis, line - n);
                     bool boulevard = main && BoulevardLine(axis, line - n);
                     for (int k = 0; k + 1 < w; k++)
                     {
                         int ai = axis == 0 ? k : line, aj = axis == 0 ? line : k;
                         int bi = axis == 0 ? k + 1 : line, bj = axis == 0 ? line : k + 1;
+                        if (!InShape(ai - n, aj - n) || !InShape(bi - n, bj - n)) continue;     // past the outline: never planned
                         if (!grid[ai, aj].Ok || !grid[bi, bj].Ok) { rep.SpansRejected++; continue; }
                         var pts = SpanPoints(grid[ai, aj].P, grid[bi, bj].P, heightAt, out float len);
                         if (pts == null) { rep.SpansRejected++; continue; }
@@ -949,11 +1315,57 @@ namespace UnturnedGodot
             // kerb-line setback, which is worse-looking but never leaves a hole.
             // ---- 2a. THE DIAGONAL, before the bends: its crossings split grid spans, and a split span next to
             // a corner is what the bend pass then has to round.
-            if (Diagonal) rep.DiagonalCrossings = AddDiagonal(plan, grid, w, roads, heightAt);
+            if (Vary)
+            {
+                // ---- a varied town: its superblocks, its avenues by the rules, then no loose ends and one network
+                rep.Superblocks = SuperblockChance > 0f ? DropSpans(plan, n) : 0;
+                DiagonalNodes.Clear();
+                var why = new List<string>();
+                // ⭐ EACH AVENUE GOES WHERE THE RULES LEAVE IT MOST ROOM: every half-block offset is tried, the seed's slope first,
+                // and the longest run of 45-degree road clear of the zones, the outline and the junction gap wins (ties: the seed).
+                // A fixed offset ran straight through the core on most seeds and the zone cut it to nothing.
+                // A second avenue runs parallel to the first and at least two blocks off it: two that crossed would meet ON a
+                // lattice line, a six-way, whatever their offsets.
+                int slope0 = _diagonals.Count > 0 ? _diagonals[0].slope : 1;
+                var usedK = new List<int>();
+                for (int d = 0; d < _diagonals.Count && d < 2; d++)
+                {
+                    int bestK = int.MinValue, bestBlocks = 0, bestSlope = slope0; ulong bestTie = 0;
+                    foreach (int sl in new[] { slope0, -slope0 })
+                    {
+                        if (d > 0 && sl != slope0) continue;
+                        for (int k = -n; k < n; k++)
+                        {
+                            bool near = false; foreach (int u in usedK) if (Math.Abs(u - k) < 2) near = true;
+                            if (near) continue;
+                            var pd = PlanDiagonal(plan, sl, (k + 0.5f) * Spacing);
+                            int blocks = 0; foreach (bool b in pd.lay) if (b) blocks++;
+                            ulong tie = Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)(k + 64) << 8) ^ (ulong)(uint)(d * 2 + (sl > 0 ? 1 : 0)) ^ 0xD1A9UL));
+                            if (blocks > bestBlocks || (blocks == bestBlocks && blocks > 0 && tie > bestTie))
+                            { bestBlocks = blocks; bestK = k; bestSlope = sl; bestTie = tie; }
+                        }
+                        if (bestBlocks >= MinDiagonalBlocks) break;          // the seed's own slope found room
+                    }
+                    if (bestBlocks < MinDiagonalBlocks) { why.Add($"#{d + 1}: no offset leaves {MinDiagonalBlocks} blocks clear of the rules"); break; }
+                    usedK.Add(bestK); slope0 = bestSlope;
+                    rep.DiagonalCrossings += AddDiagonalRuled(plan, grid, w, w + 2 * d, roads, heightAt, bestSlope, (bestK + 0.5f) * Spacing, why);
+                }
+                if (PruneDeadEnds) rep.Pruned = PruneLoose(plan);
+                // a lattice node nothing reaches any more is no node: the plots and their lanes ask _nodeOk
+                var reached = new HashSet<(int, int)>();
+                foreach (var sp in plan) { reached.Add((sp.AI, sp.AJ)); reached.Add((sp.BI, sp.BJ)); }
+                for (int gi = 0; gi < w; gi++)
+                    for (int gj = 0; gj < w; gj++)
+                        if (_nodeOk[gi, gj] && !reached.Contains((gi, gj))) _nodeOk[gi, gj] = false;
+                rep.Layout = LayoutSummary + $"; {rep.Superblocks} superblock(s); " + (why.Count > 0 ? "diagonal " + string.Join(" / ", why) : "no diagonal")
+                           + $"; {rep.Pruned} span(s) pruned as loose";
+            }
+            else if (Diagonal) rep.DiagonalCrossings = AddDiagonal(plan, grid, w, roads, heightAt);
 
             // ---- 2b. BENDS, BEFORE THE NODES: a corner fused here is not a node any more, so the node pass
             // must never see it -- it would otherwise slab it as a two-arm junction, which is the sharp point.
             if (CurveCorners) rep.Bends = MergeBends(plan, roads);
+            if (Vary) rep.Rules = CheckRules(plan, grid);
 
             var touching = new Dictionary<(int, int), List<(int span, bool atEnd)>>();
             foreach (var (sp, idx) in Enumerate(plan))
@@ -1220,7 +1632,7 @@ namespace UnturnedGodot
         float HalfAt(RoadField roads, int i, int j)
         {
             int ax = DominantAxis(i, j);
-            bool mainHere = ax == 0 ? MainLine(j) : MainLine(i);
+            bool mainHere = ax == 0 ? MainLine(0, j) : MainLine(1, i);
             bool boulHere = ax == 0 ? BoulevardLine(0, j) : BoulevardLine(1, i);
             return roads.RoadHalfWidthOfMaterial(boulHere ? BoulevardMaterial : mainHere ? MainMaterial : StreetMaterial);
         }
@@ -4603,11 +5015,11 @@ namespace UnturnedGodot
                     int wl = _lineU.Length;
                     float mainOff = roads.RoadHalfWidthOfMaterial(MainMaterial) + PavementGap + _walkWidth + PlotSetback;
                     float streetOff = roads.RoadHalfWidthOfMaterial(StreetMaterial) + PavementGap + _walkWidth + PlotSetback;
-                    float OffOf(int line) => MainLine(line - _lineN) ? mainOff : streetOff;
+                    float OffOf(int axis, int line) => MainLine(axis, line - _lineN) ? mainOff : streetOff;
                     // the boulevard is a main as wide again as its median: a u line is an axis-1 line, a v line an axis-0 one
                     float boulOff = BoulevardMaterial >= 0 ? roads.RoadHalfWidthOfMaterial(BoulevardMaterial) + PavementGap + _walkWidth + PlotSetback : mainOff;
-                    float OffU(int line) => BoulevardLine(1, line - _lineN) ? boulOff : OffOf(line);
-                    float OffV(int line) => BoulevardLine(0, line - _lineN) ? boulOff : OffOf(line);
+                    float OffU(int line) => BoulevardLine(1, line - _lineN) ? boulOff : OffOf(1, line);
+                    float OffV(int line) => BoulevardLine(0, line - _lineN) ? boulOff : OffOf(0, line);
                     void Lane(Vector3 p0, Vector3 p1, bool knee = false)
                     {
                         var dir = p1 - p0; dir.Y = 0f; float len = dir.Length(); if (len < 1f) return;
@@ -4676,14 +5088,14 @@ namespace UnturnedGodot
                         }
                         return at;
                     }
-                    PlotKind[] KindsOn(int line) => MainLine(line - _lineN) ? MainPlotKinds : StreetPlotKinds;
+                    PlotKind[] KindsOn(int axis, int line) => MainLine(axis, line - _lineN) ? MainPlotKinds : StreetPlotKinds;
                     for (int gi = 0; gi + 1 < wl; gi++)
                         for (int gj = 0; gj + 1 < wl; gj++)
                         {
                             if (!_nodeOk[gi, gj] || !_nodeOk[gi + 1, gj] || !_nodeOk[gi, gj + 1] || !_nodeOk[gi + 1, gj + 1]) continue;
                             if (laneBlocks != null && !laneBlocks.Contains((gi, gj))) continue;     // nothing here asked for a lane
-                            bool row0 = MainLine(gj - _lineN), row1 = MainLine(gj + 1 - _lineN);
-                            bool col0 = MainLine(gi - _lineN), col1 = MainLine(gi + 1 - _lineN);
+                            bool row0 = MainLine(0, gj - _lineN), row1 = MainLine(0, gj + 1 - _lineN);
+                            bool col0 = MainLine(1, gi - _lineN), col1 = MainLine(1, gi + 1 - _lineN);
                             bool rowsMain = row0 || row1, colsMain = col0 || col1;
                             float uLo = _lineU[gi] + OffU(gi), uHi = _lineU[gi + 1] - OffU(gi + 1);
                             float vLo = _lineV[gj] + OffV(gj), vHi = _lineV[gj + 1] - OffV(gj + 1);
@@ -4692,7 +5104,7 @@ namespace UnturnedGodot
                             {
                                 // mains on two sides: an L from inside the block out to the other two
                                 int rowOut = row0 ? gj + 1 : gj, colOut = col0 ? gi + 1 : gi;
-                                float ua = BestLane(uLo, uHi, KindsOn(rowOut), ch), va = BestLane(vLo, vHi, KindsOn(colOut), ch ^ 0x5EEDUL);
+                                float ua = BestLane(uLo, uHi, KindsOn(0, rowOut), ch), va = BestLane(vLo, vHi, KindsOn(1, colOut), ch ^ 0x5EEDUL);
                                 var knee = ToWorld(ua, va, 0f);
                                 Lane(knee, ToWorld(ua, _lineV[rowOut], 0f), knee: true);
                                 Lane(knee, ToWorld(_lineU[colOut], va, 0f), knee: true);
@@ -7616,7 +8028,7 @@ namespace UnturnedGodot
         int BoulevardAxisNow => BoulevardAxis >= 0 ? BoulevardAxis : (int)(Unit(Mix(((ulong)(uint)Seed << 32) ^ 0xB0A1EUL), 0) * 2f) % 2;
         /// <summary>Is grid line `line` (counted from the centre) of `axis` the boulevard? The CENTRAL main line of one
         /// axis: the town's high street, crossing a plain main at its middle.</summary>
-        bool BoulevardLine(int axis, int line) => BoulevardMaterial >= 0 && line == 0 && axis == BoulevardAxisNow && MainLine(line);
+        bool BoulevardLine(int axis, int line) => BoulevardMaterial >= 0 && axis == BoulevardAxisNow && line == CentreMain(axis);
         /// <summary>The material a span is built from.</summary>
         int MatOf(Span sp) => sp.Boulevard && BoulevardMaterial >= 0 ? BoulevardMaterial
                             : sp.Main ? (_plainMain >= 0 ? _plainMain : MainMaterial)

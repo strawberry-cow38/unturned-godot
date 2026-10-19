@@ -10717,6 +10717,47 @@ namespace UnturnedGodot
                 Log.Print($"[towngrid] rolled hills of {hillAmp:0.0} m under the site (steepest about {hillAmp * 0.0196f * 100f:0}%)");
             }
             float HeightAt(float x, float z) => terrain.SampleHeight(x, z);
+            // GRADE THE SITE by default: a town cuts and fills its streets, and a grid draped over raw PEI
+            // (the flattest 400 m box on this map still has 34 m of relief) bucks over every hummock.
+            // UG_TOWNDRAPE=1 turns it off and lets the streets follow the ground instead.
+            bool drape = System.Environment.GetEnvironmentVariable("UG_TOWNDRAPE") == "1";
+            var town = new TownRoadGrid { Seed = 1337, Bearing = 0.35f,
+                                          GradeSite = !drape, FollowTerrain = drape };
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNFACET"),
+                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fct) && fct > 0.5f)
+                town.ArcFacetDegrees = fct;   // the control for "is the faceting what you are seeing"
+            // UG_TOWNMAT=<n>: build the whole town from one road material, so "does this support the smaller
+            // 2-lane roads?" is a run rather than an opinion. 0 = Highway_0 (18.4 m), 1 = Highway_1 (13.8 m).
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNMAT"), out int tmat) && tmat >= 0)
+            { town.MainMaterial = tmat; town.StreetMaterial = tmat; }
+            if (playSeed.HasValue) town.Seed = playSeed.Value;
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
+            // UG_TOWNDIAG=0 takes the 45-degree avenue back out (strawberry 2026-10-12: "work on 45° intersections").
+            town.Diagonal = System.Environment.GetEnvironmentVariable("UG_TOWNDIAG") != "0";
+            // which junctions are crossed (strawberry 2026-10-19: "support for junctions to not have crossings (but keeping stop
+            // lines)"): a main street's always, a side street's sometimes. UG_TOWNCROSSINGS=all|none|auto.
+            town.CrossingsAt = (System.Environment.GetEnvironmentVariable("UG_TOWNCROSSINGS") ?? "auto").ToLowerInvariant() switch
+            {
+                "all" => TownRoadGrid.CrossingRule.All,
+                "none" => TownRoadGrid.CrossingRule.None,
+                _ => TownRoadGrid.CrossingRule.Auto,
+            };
+            // ⭐ A DIFFERENT TOWN PER SEED (strawberry 2026-10-19: "shake up the shape/layout of roads within each different town, as
+            // well as support for clamped sizes for towns"): its size, block, bearing, outline, main streets, superblocks and
+            // avenues, by TownRoadGrid's rules. UG_TOWNVARY=0 is the fixed lattice it used to be; UG_TOWNSIZEMIN/MAX clamp the size
+            // (metres across), UG_TOWNEXTENT asks for one (a half-width, as it always was), UG_TOWNSPACING fixes the block.
+            town.Vary = System.Environment.GetEnvironmentVariable("UG_TOWNVARY") != "0";
+            var icT = System.Globalization.CultureInfo.InvariantCulture;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSIZEMIN"), System.Globalization.NumberStyles.Float, icT, out float tmin) && tmin > 50f) town.SizeMin = tmin;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSIZEMAX"), System.Globalization.NumberStyles.Float, icT, out float tmax) && tmax > 50f) town.SizeMax = tmax;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
+                    System.Globalization.NumberStyles.Float, icT, out float tex) && tex > 50f) { town.Extent = tex; town.RequestedSize = 2f * tex; }
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSPACING"),
+                    System.Globalization.NumberStyles.Float, icT, out float tsp) && tsp > 10f) { town.Spacing = tsp; town.SpacingMin = town.SpacingMax = tsp; }
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNBEARING"), System.Globalization.NumberStyles.Float, icT, out float tbr))
+            { town.Bearing = Mathf.DegToRad(tbr); town.KeepBearing = true; }
+            town.ChooseLayout();
+            if (town.Vary) Log.Print($"[towngrid] layout {town.LayoutSummary}");
             // ⚠ SITE THE TOWN ON THE FLATTEST DRY GROUND, by scanning -- not at the origin, and not at
             // "wherever road 0 happens to be". A town dropped on a hillside is mostly refused nodes, and
             // the render would then be of the gates working rather than of a grid. The scan is over the
@@ -10726,8 +10767,9 @@ namespace UnturnedGodot
             // at the centre and reported a perfect 0.0 m -- then the grid, which reaches 192 m out, had 26
             // of its 49 nodes refused and built no crossroads at all. The number was true and answered a
             // different question than the one that decides whether a town fits.
-            float reach = 200f;
-            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
+            // (a varied town knows its own size by now: the ground it needs is its half-span, kerbs included)
+            float reach = town.Vary ? town.HalfSpan : 200f;
+            if (!town.Vary && float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
                     System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float wantEx) && wantEx > 50f) reach = wantEx;
             // ⚠ SCAN INSIDE THE MAP, and keep the whole FOOTPRINT inside it. SampleHeight CLAMPS past the
             // edge, so an off-map probe reads a perfectly plausible height: the flat map's "best" site came
@@ -10778,35 +10820,7 @@ namespace UnturnedGodot
                     && float.TryParse(siteParts[1], System.Globalization.NumberStyles.Float, ic, out float sz2))
                     site = new Vector3(sx2, HeightAt(sx2, sz2), sz2);
             }
-            // GRADE THE SITE by default: a town cuts and fills its streets, and a grid draped over raw PEI
-            // (the flattest 400 m box on this map still has 34 m of relief) bucks over every hummock.
-            // UG_TOWNDRAPE=1 turns it off and lets the streets follow the ground instead.
-            bool drape = System.Environment.GetEnvironmentVariable("UG_TOWNDRAPE") == "1";
-            var town = new TownRoadGrid { Centre = site, Seed = 1337, Bearing = 0.35f,
-                                          GradeSite = !drape, FollowTerrain = drape };
-            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNFACET"),
-                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fct) && fct > 0.5f)
-                town.ArcFacetDegrees = fct;   // the control for "is the faceting what you are seeing"
-            // UG_TOWNMAT=<n>: build the whole town from one road material, so "does this support the smaller
-            // 2-lane roads?" is a run rather than an opinion. 0 = Highway_0 (18.4 m), 1 = Highway_1 (13.8 m).
-            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNMAT"), out int tmat) && tmat >= 0)
-            { town.MainMaterial = tmat; town.StreetMaterial = tmat; }
-            if (playSeed.HasValue) town.Seed = playSeed.Value;
-            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
-            // UG_TOWNDIAG=0 takes the 45-degree avenue back out (strawberry 2026-10-12: "work on 45° intersections").
-            town.Diagonal = System.Environment.GetEnvironmentVariable("UG_TOWNDIAG") != "0";
-            // which junctions are crossed (strawberry 2026-10-19: "support for junctions to not have crossings (but keeping stop
-            // lines)"): a main street's always, a side street's sometimes. UG_TOWNCROSSINGS=all|none|auto.
-            town.CrossingsAt = (System.Environment.GetEnvironmentVariable("UG_TOWNCROSSINGS") ?? "auto").ToLowerInvariant() switch
-            {
-                "all" => TownRoadGrid.CrossingRule.All,
-                "none" => TownRoadGrid.CrossingRule.None,
-                _ => TownRoadGrid.CrossingRule.Auto,
-            };
-            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
-                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tex) && tex > 50f) town.Extent = tex;
-            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSPACING"),
-                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tsp) && tsp > 10f) town.Spacing = tsp;
+            town.Centre = site;
             {   // ⚠ READ THE TABLE, DO NOT ASSUME IT. "Road" sounded like the town-street material and is
                 // 18.4 m of HALF width -- a 37 m carriageway, which is where the 40 m asphalt blob at
                 // every junction came from.
@@ -10823,6 +10837,7 @@ namespace UnturnedGodot
             var rep = town.Generate(rf, HeightAt);
             Lap("streets");
             Log.Print($"[towngrid] site ({site.X:0},{site.Y:0.0},{site.Z:0}) relief {flattest:0.0} m ACROSS THE FOOTPRINT -- {rep}");
+            if (town.Vary) Log.Print($"[towngrid] {rep.Layout}; {rep.Rules}");
             // UG_TOWNNOWALK=1: no pavements at all. An ABLATION, because five measured explanations for the
             // dark wedges at every mouth have now missed and the only honest next question is which mesh the
             // pixels belong to.
