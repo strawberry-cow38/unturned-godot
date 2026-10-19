@@ -1147,7 +1147,12 @@ namespace UnturnedGodot
                     menu.OnGenerateMap = (seed, lakes) => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true, genLakes: lakes); };
                     // Generate Town (strawberry 2026-10-15: "add a way to play a town map like this, with a seed"): a flat map with
                     // the town grid laid on it from the seed -- buildings and all -- and straight into play
-                    menu.OnGenerateTown = seed => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Town {seed}"), autoPlay: true, townSeed: seed); };
+                    menu.OnGenerateTown = seed =>
+                    {
+                        bool diag = menu.TownDiagonals;      // (read before the menu goes)
+                        menu.QueueFree();
+                        BuildEditorNew(EditorMaps.Unique($"Town {seed}"), autoPlay: true, townSeed: seed, townDiagonals: diag);
+                    };
                     // A SAVED generated island: open the map that is on disk, do NOT regenerate. Re-rolling the
                     // seed would rebuild the terrain and then load the saved props on top of it, which is two of
                     // everything the moment the generator changes -- the same trap the "NewMap" name once sprang.
@@ -6781,7 +6786,8 @@ namespace UnturnedGodot
         /// frozen menu instead, which is exactly what generating an island did.
         /// ⚠ Callers do not await it (it is fire-and-forget from _Ready and from the menu buttons), so the
         /// --shot harness is gated on _worldReady instead -- the same flag the objects/peidrive path uses.</summary>
-        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false, bool genLakes = false, int? townSeed = null)
+        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false, bool genLakes = false, int? townSeed = null,
+                                  bool townDiagonals = true)
         {
             mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
             // ⚠ A GENERATED ISLAND REOPENED IS NOT A BLANK CUSTOM MAP, and treating it as one is what
@@ -7193,7 +7199,7 @@ namespace UnturnedGodot
                     await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
                 }
                 var townWatch = System.Diagnostics.Stopwatch.StartNew();
-                BuildTownGrid(rf, terr, editor, townSeed);
+                BuildTownGrid(rf, terr, editor, townSeed, townDiagonals);
                 if (townCover != null)
                 {
                     townCover.SetStatus("Ready");
@@ -10698,7 +10704,8 @@ namespace UnturnedGodot
         /// say nothing about the one the game ships.</summary>
         /// <param name="playSeed">The menu's Generate Town: build THIS seed's town, every plot built on, with player spawns on its
         /// pavements -- a town to play rather than to render (the UG_TOWN* switches still apply over it).</param>
-        void BuildTownGrid(RoadField rf, Terrain terrain, Editor editor, int? playSeed = null)
+        /// <param name="diagonals">The menu's "Diagonals" box: false lays no 45-degree avenue at all.</param>
+        void BuildTownGrid(RoadField rf, Terrain terrain, Editor editor, int? playSeed = null, bool diagonals = true)
         {
             if (rf == null || terrain == null) return;
             if (playSeed.HasValue && string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_TOWNBUILDINGS")))
@@ -10733,7 +10740,8 @@ namespace UnturnedGodot
             if (playSeed.HasValue) town.Seed = playSeed.Value;
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
             // UG_TOWNDIAG=0 takes the 45-degree avenue back out (strawberry 2026-10-12: "work on 45° intersections").
-            town.Diagonal = System.Environment.GetEnvironmentVariable("UG_TOWNDIAG") != "0";
+            // (and the menu's "Diagonals" box: strawberry 2026-10-19, "make diagonals fully optional for towngen")
+            town.Diagonal = diagonals && System.Environment.GetEnvironmentVariable("UG_TOWNDIAG") != "0";
             // which junctions are crossed (strawberry 2026-10-19: "support for junctions to not have crossings (but keeping stop
             // lines)"): a main street's always, a side street's sometimes. UG_TOWNCROSSINGS=all|none|auto.
             town.CrossingsAt = (System.Environment.GetEnvironmentVariable("UG_TOWNCROSSINGS") ?? "auto").ToLowerInvariant() switch

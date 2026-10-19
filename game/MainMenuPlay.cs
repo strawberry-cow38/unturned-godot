@@ -53,6 +53,9 @@ namespace UnturnedGodot
         /// toggle ends up applying to the previous island.</summary>
         public System.Action<int, bool> OnGenerateMap;
         CheckBox _genLakes;
+        CheckBox _genDiagonals;
+        /// <summary>Generate Town's "Diagonals" box: whether the town may lay 45-degree avenues.</summary>
+        public bool TownDiagonals => _genDiagonals == null || _genDiagonals.ButtonPressed;
         const string GenerateMapName = "Generate Island";
         const string GenerateMapDesc = "A procedurally generated island: coastline, hills, and a network of towns, military bases and construction sites joined by roads, trails and rail. The same seed always builds the same island.";
         // the Steam Maps/<folder> name for the selected map -- Main reads this to point the world at the right map.
@@ -429,6 +432,12 @@ namespace UnturnedGodot
             _genLakes = new CheckBox { Text = "Lakes", ButtonPressed = false, TooltipText = "Cut inland ponds into low ground" };
             _genLakes.AddThemeFontSizeOverride("font_size", 14);
             row.AddChild(_genLakes);
+            // Generate Town's own option, in the same row for the same reason (strawberry 2026-10-19: "make diagonals fully
+            // optional for towngen"): ticked, the seed decides whether a town gets 45-degree avenues and where; unticked, none
+            _genDiagonals = new CheckBox { Text = "Diagonals", ButtonPressed = true, Visible = false,
+                                           TooltipText = "45-degree avenues across the town (the seed decides where). Off: none" };
+            _genDiagonals.AddThemeFontSizeOverride("font_size", 14);
+            row.AddChild(_genDiagonals);
             _genRow = row;
             return row;
         }
@@ -440,6 +449,7 @@ namespace UnturnedGodot
             _playgroundSelected = false;
             _infiniteSelected = false;
             if (_genLakes != null) _genLakes.Visible = true;
+            if (_genDiagonals != null) _genDiagonals.Visible = false;
             _selectedMap = GenerateMapName;
             _selectedPlayable = true;
             if (_previewName != null) _previewName.Text = GenerateMapName;
@@ -464,6 +474,7 @@ namespace UnturnedGodot
             if (_previewImage != null) _previewImage.Texture = null;
             if (_genRow != null) _genRow.Visible = true;
             if (_genLakes != null) _genLakes.Visible = false;
+            if (_genDiagonals != null) _genDiagonals.Visible = true;
             DisarmReset();
         }
 
@@ -482,6 +493,7 @@ namespace UnturnedGodot
             if (_previewImage != null) _previewImage.Texture = null;
             if (_genRow != null) _genRow.Visible = true;
             if (_genLakes != null) _genLakes.Visible = false;
+            if (_genDiagonals != null) _genDiagonals.Visible = false;
             DisarmReset();
         }
 
