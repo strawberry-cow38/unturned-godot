@@ -140,8 +140,6 @@ namespace UnturnedGodot
         // the viewmodel camera's local position. Stiffness/damping are Inspector-serialized on the Player
         // prefab in the original (not in the scripts) -> tuned here; the motion + amplitudes are source-exact.
         Rk4Spring2 _bobSpring = new Rk4Spring2(900f, 60f);   // tracks the Sin(speed*t) target cleanly + eases stop
-        Rk4Spring2 _swayTilt = new Rk4Spring2(120f, 22f);    // movement-driven viewmodel TILT (PlayerAnimator sway): softer/slower than the bob so the tilt trails the walk
-        Godot.Vector2 _moveInput;                            // last move axes from the player (x=strafe, y=forward) -> the sway tilt direction
         Rk4Spring3 _shakeSpring = new Rk4Spring3(550f, 40f); // positional kick, settles ~0.2s (slight overshoot)
         Rk4Spring3 _recoilRotSpring = new Rk4Spring3(550f, 40f); // per-shot gun tilt (pitch/yaw/roll deg), springs back
         bool _moving;                       // player has movement input this frame (drives bob on/off)
@@ -1167,12 +1165,11 @@ namespace UnturnedGodot
 
         // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the
         // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
-        public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false, float moveX = 0f, float moveZ = 0f)
+        public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false)
         {
             static bool HandsOff(EPlayerStance st) => st == EPlayerStance.SWIM || st == EPlayerStance.CLIMB;
             bool wasOff = HandsOff(_stance), nowOff = HandsOff(stance);
             _moving = moving; _stance = stance; _safe = safe;
-            _moveInput = new Vector2(moveX, moveZ);   // x=strafe, y=forward -> the movement sway tilt
             if (_arms == null) return;
             // 1p arms swim / climb: retail's PlayerAnimator.updateState plays Idle_Swim/Move_Swim and Idle_Climb/Move_Climb on
             // the FIRST-PERSON animator too (not just 3p), and PlayerEquipment.simulate_MustDequip puts the item AWAY for both
@@ -2287,38 +2284,11 @@ namespace UnturnedGodot
             // sways is the CAMERA". Adding it in both places would double the amplitude and put the reticle back
             // in motion, which is the behaviour being removed.
             var armRot = _inputRoll.CurrentPosition;
-            // MOVEMENT SWAY TILT (PlayerAnimator.cs:1449-1458, tinyclaw). While moving, the gun tilts by the move
-            // direction x a per-stance TILT, plus a slow "roll" oscillation -- the walk wiggle -- eased through a spring.
-            // swayMul = the same viewmodelSwayMultiplier the bob uses (1 hip -> 0.1 aim), so ADS keeps a small residual
-            // sway (misalignmentScale defaults 1.0 -- vanilla ADS does NOT zero the sway, it's a server knob; a magnifying
-            // SCOPE zeroes it, handled by the ScopeZoom gate below). tilt = TILT x (1 - swayMul/2). 1:1 SOURCE QUIRK: the
-            // y (strafe) term omits swayMul while the x (fwd/back) term keeps it -- reads like a slip but it's retail's,
-            // so it's copied verbatim rather than "fixed". Scopes kill sway entirely (UseableOptic sets the mult to 0).
-            float TILT = _stance switch { EPlayerStance.SPRINT => 5f, EPlayerStance.CROUCH => 2f, EPlayerStance.PRONE => 1f, EPlayerStance.SWIM => 10f, _ => 3f };
-            float swayMul = (_aiming && ScopeZoom > 1f) ? 0f : _blendedSway;   // a magnifying optic zeroes the sway outright
-            float tiltAmt = TILT * (1f - swayMul * 0.5f);
-            float wiggle = Mathf.Sin(TILT * (float)_t * 0.25f) * TILT;   // the slow movement oscillation
-            Vector2 swayTarget = _moving
-                ? new Vector2(_moveInput.Y * tiltAmt * swayMul + wiggle * swayMul,   // x <- fwd/back, WITH swayMul
-                              _moveInput.X * tiltAmt          + wiggle * swayMul)     // y <- strafe, NO swayMul on the move term (source quirk)
-                : Vector2.Zero;
-            _swayTilt.TargetPosition = swayTarget;
-            _swayTilt.Update((float)delta);
-            // AXIS per source (PlayerAnimator.cs:1466-1468, tinyclaw): spring.x -> PITCH (x), spring.y -> ROLL (z),
-            // both POSITIVE, yaw HARD-ZEROED. So fwd/back PITCHES the gun and strafe ROLLS it (NOT yaws -- that was the
-            // "inverted" feel master caught). The negative signs I nearly copied belong to rotationInputViewmodelRoll,
-            // a SEPARATE +='d system -- don't inherit them.
-            // SIGN: the source values are Unity Euler degrees (+X = nose DOWN, +Z = clockwise on screen); Godot's are the
-            // opposite on both axes (+X = nose UP, +Z = counter-clockwise). Applied raw they pitched the muzzle UP toward the
-            // face while walking forward and rolled the ADS picture against the strafe (master 2026-09-03).
-            armRot.X -= _swayTilt.CurrentPosition.X;   // fwd/back sway -> PITCH
-            // SIGN FLIPPED AGAIN, and deliberately only this one (strawberry 2026-09-09: "when ads-ing and moving
-            // left or right, the direction my gun sways is inverted"). The fwd/back term above is untouched
-            // because the report was specifically left/right. Why it reads as an ADS bug when the maths has no
-            // ADS branch: the strafe term is the one the source quirk leaves WITHOUT swayMul, so aiming shrinks
-            // the fwd/back sway to a tenth and leaves this one at full size -- ADS is simply where it becomes
-            // legible, not where it starts.
-            armRot.Z += _swayTilt.CurrentPosition.Y;   // strafe sway -> ROLL (source :1468, NOT yaw)
+            // NO MOVEMENT SWAY TILT, on purpose. Retail tilts the gun with the move keys (PlayerAnimator.cs:1449-1468:
+            // fwd/back pitches it, strafe rolls it, plus a slow wiggle), and the strafe roll skips the ADS damping, so
+            // it stays full size through the sights. strawberry had it removed (2026-10-19: "remove the weapon
+            // viewmodel sway when walking, as well as the ads'd sway when pressing a/d"). This is a deliberate break
+            // from the source, so don't restore it from there. The walk bob (vmOffset above) is separate and stays.
             if (Driving && _wheelKnown && _wheelAxisCam.LengthSquared() > 0.5f)
             {
                 // hands turn WITH the wheel: rotate the arm pair about the wheel pivot, around the wheel's own axis, by the steer angle
