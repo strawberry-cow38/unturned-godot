@@ -1166,7 +1166,7 @@ namespace UnturnedSim
                         var (what, pieces) = r.BusinessOf(g) switch
                         {
                             Business.Laundromat => ("washers", new[] { "Washer_0" }),
-                            Business.Video => ("shelves", new[] { "Shelf_2", "Shelf_3" }),
+                            Business.Video => ("shelves", new[] { "Shelf_2" }),
                             Business.Liquor => ("coolers", new[] { "Cooler_0" }),
                             Business.Lawyer or Business.Accountant or Business.Office => ("desk", new[] { "Table_Wood_2" }),
                             Business.Pizza => ("tables", new[] { "Table_Wood" }),

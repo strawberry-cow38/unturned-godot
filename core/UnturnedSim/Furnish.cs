@@ -644,7 +644,7 @@ namespace UnturnedSim
                     case RoomKind.Kitchen: Kitchen(); break;
                     case RoomKind.Bathroom: Bathroom(); break;
                     case RoomKind.Office: Office(); break;
-                    case RoomKind.Closet: AlongWalls(new[] { "Wardrobe_1", "Shelf_3" }, 2); break;
+                    case RoomKind.Closet: AlongWalls(new[] { "Wardrobe_1", "Shelf_2" }, 2); break;
                     case RoomKind.Storage: Storage(); break;
                     case RoomKind.Garage: Garage(); break;
                     case RoomKind.Warehouse: Warehouse(); break;
@@ -2394,13 +2394,14 @@ namespace UnturnedSim
             /// <summary>The most washers, and dryers, a laundromat's wall takes.</summary>
             const int LaundryMachines = 8;
 
-            /// <summary>A video store: the counter by the door, shelves of tapes round the walls (bookcases), racks in rows down
-            /// the floor (Gondolas, of the low rack).</summary>
+            /// <summary>A video store: the counter by the door, shelves of tapes round the walls and in rows down the floor
+            /// (bookcases, back to back). Not Shelf_3: that is the red steel GARAGE shelf (strawberry 2026-10-19: "the shelf
+            /// props u keep using are the red garage shelves lol") -- it belongs in garages, cellars, utility and stock rooms.</summary>
             void VideoStore()
             {
                 Till();
                 AlongWalls(new[] { "Shelf_2" }, 10);
-                Gondolas("Shelf_3");
+                Gondolas("Shelf_2");
             }
 
             /// <summary>A liquor store: the counter by the door, drink coolers along the walls -- as many as a back wall takes --
@@ -2409,7 +2410,7 @@ namespace UnturnedSim
             {
                 Till();
                 for (int k = 0; k < 6; k++) if (Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z)) == null) break;
-                AlongWalls(new[] { "Shelf_3" }, 4, Side.Left);
+                AlongWalls(new[] { "Shelf_0" }, 4, Side.Left);   // the open rack, not the red garage shelf (VideoStore)
                 Gondolas();
             }
 
