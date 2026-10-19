@@ -7870,6 +7870,9 @@ namespace UnturnedGodot
         /// <summary>The share of streets with no bays, and with bays down one side only; the rest have them down
         /// both.</summary>
         public float BayNoneShare = 0.3f, BayOneSideShare = 0.4f;
+        /// <summary>The share of downtown streets (density 1) with NO street parking: far fewer than the edge's BayNoneShare,
+        /// because on-street parking is where a dense core parks (strawberry 2026-10-19). Lerped by density per street.</summary>
+        public float BayNoneDowntown = 0.05f;
         /// <summary>The paint: the width of the solid line across each end of a space (and the length of a dot and its
         /// gap, unused since the bays went solid).</summary>
         public float BayLine = 0.2875f, BayDot = 0.5f, BayDotGap = 0.5f;     // as thick as the roads' own lines (strawberry: "match the center lines")
@@ -8005,13 +8008,20 @@ namespace UnturnedGodot
                 if (ProfileOf(r) == StreetProfile.KerbOnly) continue;      // no footway to step out onto (a verge is paved along one: TownVerges)
                 ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)r ^ 0xBA75EDUL));
                 float u = Unit(h, 0);
-                if (u < BayNoneShare) continue;
+                // ⭐ MORE ON-STREET PARKING DOWNTOWN (strawberry 2026-10-19: "less parking lots downtown, more onstreet
+                // parking"). Where land is dear the kerb is where you park, so a downtown street almost always takes bays and
+                // leans to BOTH sides; the cheap edge, where the surface lots are, leaves more streets with none.
+                float dens = ClassAware && roads.EvaluateAlong(r, roads.RoadLength(r) * 0.5f, out var rm, out _, snapTerrain: false)
+                             ? Density(new Vector3(rm.X, 0f, rm.Z)) : 0f;
+                float noneShare = Mathf.Lerp(BayNoneShare, BayNoneDowntown, dens);       // dens 0 -> edge default, 1 -> few none
+                if (u < noneShare) continue;
                 // angled ends, or cut square (strawberry 2026-10-15: "add support for square cut versions of the street parking
                 // bays") -- the same down the whole line, both sides
                 float taper = SquareBays(roads, r) ? SquareTaper : BayTaper;
                 float inset = InsetFor(taper);
-                // then one side, the other, or both
-                float mid = BayNoneShare + BayOneSideShare * 0.5f, both = BayNoneShare + BayOneSideShare;
+                // then one side, the other, or both -- downtown pushes the split toward BOTH
+                float oneSide = BayOneSideShare * (1f - dens * 0.7f);   // downtown: the one-side band shrinks, so more streets take BOTH
+                float mid = noneShare + oneSide * 0.5f, both = noneShare + oneSide;
                 bool right = u < mid || u >= both, left = u >= mid;
                 float L = roads.RoadLength(r);
                 float lo = NoParkingFromEnd(roads, r, false), hi = L - NoParkingFromEnd(roads, r, true);

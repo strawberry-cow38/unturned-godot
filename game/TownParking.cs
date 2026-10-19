@@ -108,14 +108,22 @@ namespace UnturnedGodot
         {
             if (pl == null || pl.Kind == PlotKind.Parking || pl.Outline != null) return 0;
             if (ParkingWanted != null) return Math.Max(0, ParkingWanted(pl));
-            if (pl.Kind == PlotKind.Apartments) return ApartmentParking;
+            // ⭐ FEWER SURFACE LOTS DOWNTOWN (strawberry 2026-10-19: "less parking lots downtown, more onstreet parking. we'll
+            // do underground parking as an option later"). Land is dear where density is high, so a downtown shop or block
+            // relies on the street (and, later, on going under); out on the cheap edge a surface lot is fine. Scales the spaces
+            // asked by (1 - suppress x density), so a prime-downtown plot asks for none and the edge asks for the full count.
+            float keep = ClassAware ? Mathf.Clamp(1f - LotDensitySuppress * Density(pl.Front), 0f, 1f) : 1f;
+            if (pl.Kind == PlotKind.Apartments) return Mathf.RoundToInt(ApartmentParking * keep);
             if (pl.Kind == PlotKind.Shop)
             {
                 ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)pl.Road << 20) ^ (ulong)(uint)Mathf.RoundToInt(pl.Arc * 10f) ^ 0x5A0BUL));
-                return Unit(h, 8) < ShopParkingChance ? ShopParking : 0;
+                return Unit(h, 8) < ShopParkingChance * keep ? Mathf.Max(1, Mathf.RoundToInt(ShopParking * keep)) : 0;
             }
             return 0;
         }
+        /// <summary>How hard high density cuts surface parking LOTS: 0 keeps them everywhere, ~1.1 leaves a prime-downtown
+        /// plot asking for none (it parks on the street). Only when class-aware.</summary>
+        public float LotDensitySuppress = 1.1f;
 
         /// <summary>A parking lot: the plot it is laid on (kind Parking), the plot whose building asked for it, the spaces asked
         /// and laid, its plan, and its layout -- each stall (its middle, the way across it, the way in from its aisle to its
