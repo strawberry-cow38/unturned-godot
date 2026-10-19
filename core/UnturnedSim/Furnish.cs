@@ -369,7 +369,8 @@ namespace UnturnedSim
                 if (f < 0 && !res.HasBasement) continue;
                 var fp = new FloorPlan(res, f) { Start = res.Furniture.Count };
                 var done = new List<Furnisher>();
-                foreach (var room in res.Layout.Where(r => r.Floor == f))
+                // (a shaft is a void: nothing stands in it, and nothing is hung or wired in it -- RoomKind.Shaft)
+                foreach (var room in res.Layout.Where(r => r.Floor == f && r.Kind != RoomKind.Shaft))
                 {
                     var own = f < 0 ? cellar : rng;
                     var fu = new Furnisher(res, fp, room, own) { Seed = seed, MayGalley = galley };
@@ -692,6 +693,14 @@ namespace UnturnedSim
                 bool top = f == _res.Floors - 1;
                 float Ceil(float x, float z)
                 {
+                    // (a tall room's, or a traced building's -- a tower's, whose storeys step back: the slab of whatever stands over
+                    // the spot on the storey over its top, else the roof on its wall heads -- GenRoom.Span, BuildingGenResult.Traced)
+                    if (_room.Span > 1 || _res.Traced)
+                    {
+                        int over = f + _room.Span;
+                        bool slab = _res.Layout.Any(r => r.Floor <= over && over < r.Floor + r.Span && r.Holds(x, z));
+                        return slab || _res.Roof != RoofKind.Flat ? over * Storey - Slab : over * Storey;
+                    }
                     // the floor above's underside, or under a pitched roof the ceiling's, the same (BuildWalls); a flat roof's
                     // slab sits on the wall heads
                     if (!top || _res.Roof != RoofKind.Flat) return (f + 1) * Storey - Slab;
@@ -2225,6 +2234,10 @@ namespace UnturnedSim
             void Office()
             {
                 Desk();
+                // (a tower's open office -- a typing pool, an open-plan floor, past a cellular office's cap: TowerCap -- has a desk to
+                // about every TowerDeskArea of floor, round its walls, up to TowerDesks)
+                if (_res.Kind == BuildingKind.Tower && _room.Cells > CapCells(RoomKind.Office, BuildingKind.Commercial))
+                    for (int k = 1; k < Math.Min(TowerDesks, (int)(_area / TowerDeskArea)); k++) if (!Desk()) break;
                 Put("Files_0", Against("Files_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
                 if (_area >= 18f) Put("Shelf_2", Against("Shelf_2", Side.Back), (x, z, yaw) => NearestDoor(x, z));
             }
@@ -2433,7 +2446,10 @@ namespace UnturnedSim
             {
                 Till(desk: true);
                 for (int k = 0; k < 4; k++) Put("Chair_Wood_1", Against("Chair_Wood_1", Side.Back), (x, z, yaw) => -NearestDoor(x, z));
-                for (int k = 0; k < (b == Business.Lawyer ? 2 : 4); k++) if (!Desk()) break;
+                // (a tower's banking hall, many times a strip's office: a desk to about every TowerDeskArea, up to TowerDesks)
+                int desks = b == Business.Lawyer ? 2 : 4;
+                if (_res.Kind == BuildingKind.Tower) desks = Math.Clamp((int)(_area / TowerDeskArea), desks, TowerDesks);
+                for (int k = 0; k < desks; k++) if (!Desk()) break;
                 AlongWalls(new[] { "Files_0" }, b == Business.Accountant ? 4 : 2);
                 if (b == Business.Lawyer) AlongWalls(new[] { "Shelf_2" }, 3);
             }

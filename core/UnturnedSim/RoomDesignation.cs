@@ -14,8 +14,12 @@ namespace UnturnedSim
     /// by NAME, but nothing should renumber.
     ///
     /// Strip: a strip mall, a one-storey row of shops each its own tenant (strawberry, 2026-10-19, on the strip research:
-    /// "and yes keep working on this") -- BuildingGenStrip.cs.</summary>
-    public enum BuildingKind { Residential, Commercial, Industrial, Misc, Apartment, Strip }
+    /// "and yes keep working on this") -- BuildingGenStrip.cs.
+    ///
+    /// Tower: a tall office building on one of a few researched plans -- a main-street office block, a setback skyscraper, an
+    /// International Style slab -- at its full height (strawberry, 2026-10-19: "go for the full height. go for main street office,
+    /// setback, and international for now") -- BuildingGenTower.cs.</summary>
+    public enum BuildingKind { Residential, Commercial, Industrial, Misc, Apartment, Strip, Tower }
 
     /// <summary>What one ROOM is for. Extending this is a one-line change and safe: designations persist by
     /// NAME, never by ordinal, so adding or reordering members cannot silently re-label existing saves.
@@ -32,6 +36,10 @@ namespace UnturnedSim
         Office, Shop, Warehouse,
         // (new kinds go on the END: saves hold names, but nothing should renumber)
         BreakRoom,
+        // a vertical void through the storeys it stands in (GenRoom.Span): a lift's, open onto its lift hall on each storey it
+        // serves (strawberry, 2026-10-19: "leave elevator shafts as empty shafts for now"), or a pipe chase's, sealed. Nothing
+        // is furnished in one and nothing floors it but its pit; you can fall down it.
+        Shaft,
     }
 
     /// <summary>A room designation as it is STORED: a kind plus a point inside the room it labels.

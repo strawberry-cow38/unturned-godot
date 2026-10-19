@@ -7823,7 +7823,9 @@ namespace UnturnedGodot
                 // (sides as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
                 // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...; basement Y/N, its style U/S/F/W -- bare, store,
                 // finished, workshop -- and its way down S/H, stairs or hatch; strip a Strip kind's plan, Convenience/PostWar/MiniMall/
-                // Taxpayer or the research's L6/L3/L5/L1, anything else seeded; wealth the town's, P poor / A affluent / else working)
+                // Taxpayer or the research's L6/L3/L5/L1, anything else seeded -- and, the same field, a Tower kind's: MainStreet/Setback/
+                // Slab or MS/SB/IS (a kind has one plan field: a fixed plan's name, read as the kind it is for, ignored by the others);
+                // wealth the town's, P poor / A affluent / else working)
                 // generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
@@ -7880,6 +7882,11 @@ namespace UnturnedGodot
                             "L1" => UnturnedSim.StripStyle.Taxpayer,
                             _ => System.Enum.TryParse<UnturnedSim.StripStyle>(g[18], true, out var strip) ? strip : UnturnedSim.StripStyle.Auto,
                         } : UnturnedSim.StripStyle.Auto,
+                        Tower = g.Length > 18 ? g[18].ToUpperInvariant() switch
+                        {
+                            "MS" or "MAIN" => UnturnedSim.TowerStyle.MainStreet, "SB" => UnturnedSim.TowerStyle.Setback, "IS" or "INTL" => UnturnedSim.TowerStyle.Slab,
+                            _ => System.Enum.TryParse<UnturnedSim.TowerStyle>(g[18], true, out var tower) ? tower : UnturnedSim.TowerStyle.Auto,
+                        } : UnturnedSim.TowerStyle.Auto,
                         Wealth = g.Length > 19 ? g[19].ToUpperInvariant() switch
                         {
                             "P" => UnturnedSim.TownWealth.Poor, "A" => UnturnedSim.TownWealth.Affluent, _ => UnturnedSim.TownWealth.Working,
