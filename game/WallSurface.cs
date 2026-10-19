@@ -70,6 +70,22 @@ namespace UnturnedGodot
         /// special case through Solids, the collider and every test that leans on them.</summary>
         public float GableRise;
 
+        /// <summary>A stair tread drawn as a STEP rather than a flat plate, when this is above zero: the rise of one step
+        /// (strawberry 2026-10-19: "add a handrail, as well as giving actual risers, and painting the tread the floor
+        /// color. and have the underside be a slope instead of step shaped"). The tread's top stays where the plate's was;
+        /// below it the step is a solid down to the line under the whole flight -- a riser the height of a step at its
+        /// nose, a soffit parallel to the noses, Thickness under them square to the pitch -- so a flight of them reads as
+        /// one stair with a smooth sloped underside, each tread meeting the next with no seam showing. The top is painted
+        /// the front colour (Texel: the floor's), the rest the back colour when the surface is TwoSided. 0 = the flat plate,
+        /// which a landing still is. Stairs only; see AddStepBlock.</summary>
+        public float StepRise;
+        /// <summary>Handrail sides of a stepped tread: 1 its U = 0 edge, 2 its U = Length edge (BuildingGen.RailStairs picks
+        /// the open ones). A rail on a post per tread, at RailHeight over the line of the noses, in the trim colour.</summary>
+        public int Rails;
+        /// <summary>How high a handrail stands over the line of the noses (BuildingGen.RailHeight).</summary>
+        public const float RailHeight = BuildingGen.RailHeight;
+        bool Stepped => Kind == SurfaceKind.Stairs && StepRise > WallOpenings.Eps && Openings.Count == 0;
+
         /// <summary>Trapezoid edges: how far this surface is set in from its left and right sides, at the
         /// BASE (…0) and at the TOP (…1), straight-line between. All zero -- the default, and every wall,
         /// floor and rectangular roof -- takes the plain box path below untouched.
@@ -164,16 +180,23 @@ namespace UnturnedGodot
             var plumb = PlumbShift(out float psu, out float psv) ? new List<Vector3[]>() : null;
             if (plumb != null)
                 foreach (var s in solids) plumb.Add(PlumbSolid(s, t, psu, psv));
-            for (int i = 0; i < solids.Count; i++)
-                if (plumb != null) AddHull(st, plumb[i], back);
-                else if (Tapered) AddTaperedSolid(st, solids[i], t, back);
-                else AddWallBox(st, solids[i], solids, t, back);
+            if (Stepped) AddHexa(st, back ?? st, StepPoints(t));
+            else if (Kind == SurfaceKind.Railing) { }   // posts and a rail, all trim: see AddGuard
+            else
+                for (int i = 0; i < solids.Count; i++)
+                    if (plumb != null) AddHull(st, plumb[i], back);
+                    else if (Tapered) AddTaperedSolid(st, solids[i], t, back);
+                    else AddWallBox(st, solids[i], solids, t, back);
             // GenerateNormals BEFORE Index: indexing welds vertices, and welding before normals exist lights
             // the mesh as one smooth blob instead of crisp box faces.
             if (GableRise > WallOpenings.Eps) AddGableCap(st, t);
-            st.GenerateNormals();
-            st.Index();
-            _mesh.Mesh = st.Commit();
+            if (Kind == SurfaceKind.Railing) _mesh.Mesh = null;
+            else
+            {
+                st.GenerateNormals();
+                st.Index();
+                _mesh.Mesh = st.Commit();
+            }
             _mat ??= new StandardMaterial3D { Roughness = 0.95f };
             _mat.AlbedoColor = Tint;
             _mesh.MaterialOverride = _mat;
@@ -189,7 +212,7 @@ namespace UnturnedGodot
             }
             else _backMesh.Mesh = null;
 
-            if (Framed && Openings.Count > 0)
+            if (Framed && Openings.Count > 0 || Stepped && Rails != 0 || Kind == SurfaceKind.Railing)
             {
                 var tt = new SurfaceTool();
                 tt.Begin(Mesh.PrimitiveType.Triangles);
@@ -199,6 +222,8 @@ namespace UnturnedGodot
                 // survives a shadows-off render, which is what rules out the obvious suspect.
                 tt.SetSmoothGroup(uint.MaxValue);
                 foreach (var o in Openings) AddTrim(tt, o);
+                if (Stepped) AddRails(tt, t);
+                if (Kind == SurfaceKind.Railing) AddGuard(tt);
                 tt.GenerateNormals();
                 tt.Index();
                 _trimMesh.Mesh = tt.Commit();
@@ -229,6 +254,13 @@ namespace UnturnedGodot
             for (int i = 0; i < solids.Count; i++)
             {
                 var s = solids[i];
+                if (Stepped)
+                {
+                    // the step's own solid: a ray, a bullet or a body meets the stair it can see, riser and soffit too
+                    SetHull(_shapes[i], StepPoints(t));
+                    _shapes[i].Position = Vector3.Zero;
+                    continue;
+                }
                 if (plumb != null)
                 {
                     // the same points the mesh was hulled from
@@ -647,6 +679,102 @@ namespace UnturnedGodot
             // no bottom face: it sits flush on the wall head and would z-fight the wall's own top
         }
 
+        /// <summary>A stepped tread's eight corners (see StepRise), in Rebuild's frame: U along X, the going along +Y from the
+        /// nose (V = 0) back, up the +Z face. Index bits: 1 = far U, 2 = back of the going, 4 = top. The top is where the
+        /// flat plate's top was; the nose drops a step and a waist to the soffit, the back a waist -- the waist being the
+        /// plate's Thickness measured square to the pitch, so the soffit lines of neighbouring treads are one line.</summary>
+        Vector3[] StepPoints(float t)
+        {
+            float g = Height, r = StepRise, slope = r / Mathf.Max(g, 0.01f);
+            float waist = Thickness * Mathf.Sqrt(1f + slope * slope);
+            float top = t, noseLow = top - r - waist, backLow = top - waist;
+            var p = new Vector3[8];
+            for (int i = 0; i < 8; i++)
+            {
+                float u = (i & 1) != 0 ? Length : 0f, v = (i & 2) != 0 ? g : 0f;
+                float z = (i & 4) != 0 ? top : (i & 2) != 0 ? backLow : noseLow;
+                p[i] = new Vector3(u, v, z);
+            }
+            return p;
+        }
+
+        /// <summary>A rail on a post along each railed edge of a stepped tread: the rail follows the line of the noses at
+        /// RailHeight over it, from this nose to the next, so a flight's rails join end to end; the post stands in the middle
+        /// of the tread.</summary>
+        void AddRails(SurfaceTool st, float t)
+        {
+            const float Inset = 0.12f, Bar = 0.14f, Post = 0.09f;
+            float g = Height, slope = StepRise / Mathf.Max(g, 0.01f);
+            float Nose(float v) => t + v * slope + RailHeight;   // the rail's centre line
+            for (int side = 0; side < 2; side++)
+            {
+                if ((Rails & (1 << side)) == 0) continue;
+                float uc = side == 0 ? Inset : Length - Inset;
+                var rail = new Vector3[8];
+                var post = new Vector3[8];
+                for (int i = 0; i < 8; i++)
+                {
+                    float du = (i & 1) != 0 ? 0.5f : -0.5f;
+                    bool far = (i & 2) != 0, up = (i & 4) != 0;
+                    float v = far ? g : 0f;
+                    rail[i] = new Vector3(uc + du * Bar, v, Nose(v) + (up ? 0.5f : -0.5f) * Bar);
+                    float pv = g * 0.5f + (far ? 0.5f : -0.5f) * Post;
+                    post[i] = new Vector3(uc + du * Post, pv, up ? Nose(g * 0.5f) - 0.5f * Bar : t);
+                }
+                AddHexa(st, st, rail);
+                AddHexa(st, st, post);
+            }
+        }
+
+        /// <summary>A guard rail (SurfaceKind.Railing): a rail along the top of its run at Height, on posts no more than a metre
+        /// apart from end to end -- the same bar and post as a flight's handrail. Its collider is the whole box, Length by
+        /// Height by Thickness: a guard you can see through but not walk through, which is what a guard is for.</summary>
+        void AddGuard(SurfaceTool st)
+        {
+            const float Bar = 0.14f, Post = 0.09f, Spacing = 1.0f;
+            float h = Height, half = Mathf.Min(Thickness, Bar) * 0.5f;
+            static Vector3[] Box(float u0, float u1, float y0, float y1, float z0, float z1)
+            {
+                var p = new Vector3[8];
+                for (int i = 0; i < 8; i++)
+                    p[i] = new Vector3((i & 1) != 0 ? u1 : u0, (i & 2) != 0 ? y1 : y0, (i & 4) != 0 ? z1 : z0);
+                return p;
+            }
+            // (the box's index bits run X, Y, Z here, so its "top" face is the +Z side: no matter, both go to the trim)
+            AddHexa(st, st, Box(0f, Length, h - Bar, h, -half, half));
+            int n = Mathf.Max(2, Mathf.CeilToInt((Length - Post) / Spacing) + 1);
+            for (int k = 0; k < n; k++)
+            {
+                float u = Post * 0.5f + (Length - Post) * k / (n - 1);
+                AddHexa(st, st, Box(u - Post * 0.5f, u + Post * 0.5f, 0f, h - Bar, -Post * 0.5f, Post * 0.5f));
+            }
+        }
+
+        /// <summary>A convex six-faced solid from its eight corners (index bits 1 = +X, 2 = +Y, 4 = +Z): the +Z face into
+        /// `top`, the other five into `rest`. Each face is wound to be drawn from OUTSIDE, decided against the solid's own
+        /// centre rather than by a hand-kept vertex order -- the gable cap was the face order that got that wrong.</summary>
+        static void AddHexa(SurfaceTool top, SurfaceTool rest, Vector3[] p)
+        {
+            var c = Vector3.Zero;
+            foreach (var q in p) c += q;
+            c /= 8f;
+            Face(rest, c, p[0], p[2], p[6], p[4]);   // -X
+            Face(rest, c, p[1], p[3], p[7], p[5]);   // +X
+            Face(rest, c, p[0], p[1], p[5], p[4]);   // -Y
+            Face(rest, c, p[2], p[3], p[7], p[6]);   // +Y
+            Face(rest, c, p[0], p[1], p[3], p[2]);   // -Z
+            Face(top, c, p[4], p[5], p[7], p[6]);    // +Z
+        }
+
+        /// <summary>One planar convex quad, wound CLOCKWISE as seen from outside a convex solid centred at `centre` (Godot's
+        /// front face: the emitted right-hand normal points in, as AddBoxFaces emits).</summary>
+        static void Face(SurfaceTool st, Vector3 centre, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        {
+            var mid = (a + b + c + d) * 0.25f;
+            if ((b - a).Cross(c - a).Dot(mid - centre) > 0f) { (b, d) = (d, b); }
+            Quad(st, a, b, c, d);
+        }
+
         static void Tri(SurfaceTool st, Vector3 a, Vector3 b, Vector3 c)
         { st.AddVertex(a); st.AddVertex(b); st.AddVertex(c); }
 
@@ -871,7 +999,7 @@ namespace UnturnedGodot
 
         void RebuildOccluder(List<WallSolid> solids, bool plumb)
         {
-            if (!Occlusion.Wanted || Kind == SurfaceKind.Stairs)
+            if (!Occlusion.Wanted || Kind == SurfaceKind.Stairs || Kind == SurfaceKind.Railing)
             {
                 if (_occluder != null) _occluder.Occluder = null;
                 return;

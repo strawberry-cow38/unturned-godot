@@ -25,14 +25,14 @@ namespace UnturnedGodot
                                           float pitchDeg = 0f, SurfaceKind kind = SurfaceKind.Wall, float gableRise = 0f,
                                           int texel = -1, float insetL0 = 0f, float insetL1 = 0f,
                                           float insetR0 = 0f, float insetR1 = 0f,
-                                          int materialBack = -1, int texelBack = -1)
+                                          int materialBack = -1, int texelBack = -1, float stepRise = 0f, int rails = 0)
         {
             var w = new WallSurface
             {
                 Length = Mathf.Max(0.01f, length), Height = height, Thickness = thickness, MaterialId = material, Kind = kind,
                 GableRise = gableRise, Texel = texel,
                 InsetL0 = insetL0, InsetL1 = insetL1, InsetR0 = insetR0, InsetR1 = insetR1,
-                MaterialIdBack = materialBack, TexelBack = texelBack,
+                MaterialIdBack = materialBack, TexelBack = texelBack, StepRise = stepRise, Rails = rails,
                 Position = origin, RotationDegrees = new Vector3(pitchDeg, yawDeg, 0f),
             };
             parent.AddChild(w);
@@ -195,6 +195,25 @@ namespace UnturnedGodot
             w.Openings.Add(new WallOpening(u0, v0, u1 - u0, v1 - v0));
             w.Rebuild();
             return true;
+        }
+
+        /// <summary>How a flight is painted (strawberry 2026-10-19: "painting the tread the floor color"): the tops of its treads
+        /// in the palette's floor colour -- concrete for a cast flight -- and the rest of each step (WallSurface.StepRise) in the
+        /// wall colour, or concrete. Texel -1 is "the palette's default", as everywhere.</summary>
+        public static (int Top, int Body) StairTexels(int material, bool concrete)
+        {
+            string pal = material >= 0 && material < WallMaterials.Count ? WallMaterials.At(material).Name : null;
+            if (concrete && pal != null && BuildingGen.FloorTexels.TryGetValue(pal, out var ft)) return (ft.Concrete, ft.Concrete);
+            return (BuildingGen.FloorTexelFor(pal, RoomKind.Hall), -1);
+        }
+
+        /// <summary>How a planned surface of a generated building is painted: its own texels, a roof the palette's roof texel,
+        /// and a stair LANDING as a tread is (StairTexels) -- floor to walk on, its top the floor colour and its underside the
+        /// wall colour.</summary>
+        public static (int Texel, int MatBack, int TexelBack) PlanPaint(WallPlan pl, int mat, int roofTexel)
+        {
+            if (pl.Kind == SurfaceKind.Stairs && pl.StepRise <= 0f) return (StairTexels(mat, false).Top, mat, -1);
+            return (pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel, pl.TexelBack >= 0 ? mat : -1, pl.TexelBack);
         }
 
         /// <summary>The wall material a palette names (WallMaterials), or `fallback`.</summary>
@@ -548,9 +567,10 @@ namespace UnturnedGodot
             {
                 PartyFit(pl, wx, dz, party, out var o, out float len, out float hgt, out var ops, ref clipped);
                 if (len < 0.02f || hgt < 0.02f) continue;      // clipped away entirely (a porch post standing past the line)
+                var paint = PlanPaint(pl, mat, roofTexel);
                 NewWall(below != null && InBasement(res, pl) ? below : root, walls, o, pl.Yaw, len, pl.Thickness, mat, ops,
-                        hgt, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
-                        pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.TexelBack >= 0 ? mat : -1, pl.TexelBack);
+                        hgt, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
+                        pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
             }
             LastClipped = clipped;
             foreach (var s in res.Stairs)
@@ -558,11 +578,12 @@ namespace UnturnedGodot
                 var o = new Vector3(s.X, s.Y, s.Z);
                 float rise = s.Rise > 0f ? s.Rise : EditorBuildings.StoreyHeight;
                 int steps = WallOpenings.StairSteps(rise);
-                int treads = s.Concrete && BuildingGen.FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Concrete : -1;
+                var (top, body) = StairTexels(mat, s.Concrete);
                 // the stair room's flight down is the basement's; the hatch's, in a well open to the sky, is the outside's
                 var treadParent = below != null && s.Floor == -1 && !InWell(res, s.X, s.Z) ? below : root;
                 foreach (var p in EditorBuildings.StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
-                    NewWall(treadParent, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f, treads);
+                    NewWall(treadParent, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
+                            top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise), rails: s.Rails);
                 StairRamp(root, o, s.Yaw, s.Run, s.Width, rise);
                 // a switchback's half flights: the generator cut their floor's hole itself (it covers the landing too)
                 if (rise >= EditorBuildings.StoreyHeight - 0.01f) CutStairHole(walls, o, s.Yaw, s.Run, s.Width, rise, Punch);

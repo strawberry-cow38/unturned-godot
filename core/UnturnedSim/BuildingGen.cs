@@ -189,6 +189,9 @@ namespace UnturnedSim
         /// <summary>Cast concrete (a basement hatch's, outdoors), its treads the palette's concrete texel; else the building's
         /// own colour, as every flight was.</summary>
         public bool Concrete;
+        /// <summary>Which sides carry a handrail (WallPlan.Rails): 1 the side its width starts from, 2 the far side. A side
+        /// with a wall along it has none (BuildingGen.RailStairs).</summary>
+        public int Rails;
         /// <summary>Unit vectors in plan: the way it climbs, and the way its width runs (AddStairs' back and right).</summary>
         public (float X, float Z) Back { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
         public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
@@ -708,6 +711,184 @@ namespace UnturnedSim
                 RoomKind.Garage or RoomKind.Workshop or RoomKind.Warehouse or RoomKind.Storage => t.Concrete,
                 _ => t.Floor,
             };
+        }
+
+        /// <summary>How far out from a flight's edge a wall's centre line may stand and still be the wall that side runs
+        /// along: the straight flight's own gap to the south wall (half an outside wall plus the hole's margin) and some.</summary>
+        public const float RailWallGap = 0.75f;
+        /// <summary>How high a handrail or a guard rail stands over what it rails: a real one is 0.86-0.97 m against a 2.03 m
+        /// door, so this kit's door (DoorHeight 4.25) puts it at about 0.45 of that.</summary>
+        public const float RailHeight = 0.45f * WallOpenings.DoorHeight;
+        /// <summary>A guard rail's thickness, and how far in from the edge it guards its centre line stands.</summary>
+        public const float GuardThickness = 0.14f, GuardInset = 0.1f;
+        /// <summary>A guard shorter than this is not drawn: the leftover either side of a flight's top, say.</summary>
+        public const float GuardMin = 0.4f;
+
+        /// <summary>Guard rails where a floor drops away (strawberry 2026-10-19: "make sure the halfway landing has railings on
+        /// sides with no adjascent wall. as well as the top landing having railings around the hole (again, where there isnt a
+        /// wall/leaving a gap for the top of the stairs)"). Every edge of a landing, and of every stairwell hole in a floor --
+        /// the generator's own for a compound flight, the one a straight flight's full rise cuts (EditorBuildings.
+        /// FitStairsToStructure, the same footprint grown by StairHoleMargin) -- gets a Railing plan along it, standing on the
+        /// floor side, except where a wall runs along the edge (parallel, its centre line within RailWallGap of it, on that
+        /// level), and except across a flight's end where it meets the edge: the top of a flight arriving, and on a landing
+        /// the foot of the flight leaving it too.</summary>
+        internal static void GuardStairs(BuildingGenResult res)
+        {
+            const float Lv = 0.05f;
+            // the flights' plan footprints, with the level they climb from and to
+            var flights = res.Stairs.Select(s =>
+            {
+                float rise = s.Rise > 0f ? s.Rise : Storey;
+                var (bx, bz) = s.Back; var (rx, rz) = s.Right;
+                float cx = s.X + bx * s.Run + rx * s.Width, cz = s.Z + bz * s.Run + rz * s.Width;
+                return (Lo: s.Y, Hi: s.Y + rise, X0: MathF.Min(s.X, cx), Z0: MathF.Min(s.Z, cz), X1: MathF.Max(s.X, cx), Z1: MathF.Max(s.Z, cz));
+            }).ToList();
+            var drops = new List<(float Y, float X0, float Z0, float X1, float Z1, bool Hole)>();
+            foreach (var w in res.Walls)
+            {
+                if (MathF.Abs(w.Pitch + 90f) > 0.5f || MathF.Abs(w.Yaw) > 0.5f) continue;
+                float top = w.Y + w.Thickness * 0.5f;
+                if (w.Kind == SurfaceKind.Stairs && w.StepRise <= 0f)
+                    drops.Add((top, w.X, w.Z - w.Height, w.X + w.Length, w.Z, false));     // a landing
+                else if (w.Kind == SurfaceKind.Floor)
+                    foreach (var o in w.Openings)
+                    {
+                        float hx0 = w.X + o.U, hz1 = w.Z - o.V, hx1 = hx0 + o.Width, hz0 = hz1 - o.Height;
+                        // a stairwell: over a flight of the storey below (a slab has other notches -- thresholds, a chimney)
+                        if (flights.Any(f => f.Lo < top - Lv && f.Lo >= top - Storey - Lv
+                                             && f.X0 < hx1 - Lv && f.X1 > hx0 + Lv && f.Z0 < hz1 - Lv && f.Z1 > hz0 + Lv))
+                            drops.Add((top, hx0, hz0, hx1, hz1, true));
+                    }
+            }
+            var holes = drops.Where(d => d.Hole).ToList();
+            var upright = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && MathF.Abs(w.Pitch) <= 1f).ToList();
+            foreach (var (y, x0, z0, x1, z1, hole) in drops)
+            {
+                // the four edges, each with its run and the way in to the floor beside it
+                var edges = new (float X, float Z, float DX, float DZ, float Len, float NX, float NZ)[]
+                {
+                    (x0, z0, 1f, 0f, x1 - x0, 0f, hole ? -1f : 1f),    // south edge, running east
+                    (x0, z1, 1f, 0f, x1 - x0, 0f, hole ? 1f : -1f),    // north edge
+                    (x0, z0, 0f, 1f, z1 - z0, hole ? -1f : 1f, 0f),    // west edge, running north
+                    (x1, z0, 0f, 1f, z1 - z0, hole ? 1f : -1f, 0f),    // east edge
+                };
+                foreach (var e in edges)
+                {
+                    var keep = new List<(float A, float B)> { (0f, e.Len) };
+                    void Cut(float a, float b)
+                    {
+                        for (int k = keep.Count - 1; k >= 0; k--)
+                        {
+                            var (ka, kb) = keep[k];
+                            if (b <= ka || a >= kb) continue;
+                            keep.RemoveAt(k);
+                            if (a > ka) keep.Add((ka, a));
+                            if (b < kb) keep.Add((b, kb));
+                        }
+                    }
+                    // Along(px, pz): where a point falls along the edge; Off: how far it stands off the edge's line
+                    float Along(float px, float pz) => (px - e.X) * e.DX + (pz - e.Z) * e.DZ;
+                    float Off(float px, float pz) => MathF.Abs((px - e.X) * e.DZ - (pz - e.Z) * e.DX);
+                    bool Parallel(float dx, float dz) => MathF.Abs(dx * e.DZ - dz * e.DX) < 0.05f;
+                    foreach (var w in upright)
+                    {
+                        if (w.Y > y + 0.5f || w.Y + w.Height < y + 1f) continue;          // not standing on this level
+                        var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                        if (!Parallel(c, -sn) || Off(w.X, w.Z) > RailWallGap) continue;
+                        float a = Along(w.X, w.Z), b = Along(w.X + c * w.Length, w.Z - sn * w.Length);
+                        Cut(MathF.Min(a, b) - 0.1f, MathF.Max(a, b) + 0.1f);
+                    }
+                    // a hole's edge shared with another hole on the level is not an edge: the two are one stairwell
+                    if (hole)
+                        foreach (var h in holes)
+                        {
+                            if (MathF.Abs(h.Y - y) > Lv || (h.X0 == x0 && h.Z0 == z0 && h.X1 == x1 && h.Z1 == z1)) continue;
+                            float px = e.X + e.NX * 0.05f, pz = e.Z + e.NZ * 0.05f;     // just over the edge, floor side
+                            if (e.DX != 0f ? pz <= h.Z0 || pz >= h.Z1 : px <= h.X0 || px >= h.X1) continue;
+                            float a = e.DX != 0f ? h.X0 - e.X : h.Z0 - e.Z, b = e.DX != 0f ? h.X1 - e.X : h.Z1 - e.Z;
+                            Cut(a, b);
+                        }
+                    foreach (var s in res.Stairs)
+                    {
+                        float rise = s.Rise > 0f ? s.Rise : Storey;
+                        var (bx, bz) = s.Back; var (rx, rz) = s.Right;
+                        // a flight's end lying along this edge: its top arriving here; on a landing, its foot leaving too
+                        var ends = new List<(float X, float Z)>();
+                        if (MathF.Abs(s.Y + rise - y) < Lv) ends.Add((s.X + bx * s.Run, s.Z + bz * s.Run));
+                        if (!hole && MathF.Abs(s.Y - y) < Lv) ends.Add((s.X, s.Z));
+                        foreach (var (px, pz) in ends)
+                        {
+                            if (!Parallel(rx, rz) || Off(px, pz) > WallOpenings.StairHoleMargin + 0.15f) continue;
+                            float a = Along(px, pz), b = Along(px + rx * s.Width, pz + rz * s.Width);
+                            Cut(MathF.Min(a, b) - 0.05f, MathF.Max(a, b) + 0.05f);
+                        }
+                    }
+                    // and nothing inside a wall: a hole's notch running under one
+                    bool InWall(float px, float pz) => upright.Any(w =>
+                    {
+                        if (w.Y > y + 0.5f || w.Y + w.Height < y + 1f) return false;
+                        var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                        float along = (px - w.X) * c + (pz - w.Z) * -sn, off = MathF.Abs((px - w.X) * -sn - (pz - w.Z) * c);
+                        return along > -0.05f && along < w.Length + 0.05f && off < w.Thickness * 0.5f + 0.05f;
+                    });
+                    foreach (var (a, b) in keep)
+                    {
+                        if (b - a < GuardMin) continue;
+                        float sx = e.X + e.DX * a + e.NX * GuardInset, sz = e.Z + e.DZ * a + e.NZ * GuardInset;
+                        if (InWall(sx + e.DX * (b - a) * 0.5f, sz + e.DZ * (b - a) * 0.5f)) continue;
+                        res.Walls.Add(new WallPlan
+                        {
+                            X = sx, Y = y, Z = sz, Yaw = MathF.Atan2(-e.DZ, e.DX) * 180f / MathF.PI, Length = b - a,
+                            Height = RailHeight, Thickness = GuardThickness, Kind = SurfaceKind.Railing,
+                        });
+                    }
+                }
+            }
+        }
+
+        /// <summary>Which sides of each flight carry a handrail (strawberry 2026-10-19: "with the stairs, add a handrail"):
+        /// every side with no wall along it. A side is walled when an upright wall on the flight's storeys runs parallel to
+        /// it, its centre line within RailWallGap outward of the edge, for at least half the run -- the south wall a
+        /// straight flight stands against, a hatch's well. The open side -- toward the bay's step-off row, or the other
+        /// half of a switchback -- is railed.</summary>
+        internal static void RailStairs(BuildingGenResult res)
+        {
+            for (int i = 0; i < res.Stairs.Count; i++)
+            {
+                var s = res.Stairs[i];
+                float rise = s.Rise > 0f ? s.Rise : Storey;
+                var (bx, bz) = s.Back;
+                var (rx, rz) = s.Right;
+                int rails = 0;
+                for (int side = 0; side < 2; side++)
+                {
+                    // the side's edge: from the foot corner (the far side, a width across) along the climb; outward is away
+                    // from the flight
+                    float ox = s.X + rx * s.Width * side, oz = s.Z + rz * s.Width * side;
+                    float nx = side == 0 ? -rx : rx, nz = side == 0 ? -rz : rz;
+                    if (!Walled(ox, oz, nx, nz)) rails |= 1 << side;
+                }
+                s.Rails = rails;
+                res.Stairs[i] = s;
+
+                bool Walled(float ox, float oz, float nx, float nz)
+                {
+                    foreach (var w in res.Walls)
+                    {
+                        if (w.Kind != SurfaceKind.Wall || Math.Abs(w.Pitch) > 1f) continue;
+                        if (w.Y >= s.Y + rise - 0.2f || w.Y + w.Height <= s.Y + 0.2f) continue;     // not on the flight's storeys
+                        var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                        float dx = c, dz = -sn;                                                       // the way the wall runs
+                        if (Math.Abs(dx * bz - dz * bx) > 0.05f) continue;                            // not parallel to the climb
+                        float d = (w.X - ox) * nx + (w.Z - oz) * nz;
+                        if (d < -0.05f || d > RailWallGap) continue;
+                        float a0 = (w.X - ox) * bx + (w.Z - oz) * bz, a1 = a0 + w.Length * (dx * bx + dz * bz);
+                        float lap = Math.Min(Math.Max(a0, a1), s.Run) - Math.Max(Math.Min(a0, a1), 0f);
+                        if (lap >= 0.5f * s.Run) return true;
+                    }
+                    return false;
+                }
+            }
         }
 
         /// <summary>A small, stable RNG (xorshift64*): the same seed builds the same building on every machine and runtime,
@@ -1472,6 +1653,8 @@ namespace UnturnedSim
             SolveCorners(res.Walls, RoofShapes.AddParapets(res.Walls).Contains);
             // and then which of two surfaces sharing a plane is drawn there (SettleShared), on the plan as built
             SettleShared(res);
+            RailStairs(res);
+            GuardStairs(res);
             if (turn) TurnHalf(res);
             return res;
 

@@ -829,12 +829,12 @@ namespace UnturnedGodot
                               float pitchDeg = 0f, SurfaceKind kind = SurfaceKind.Wall, float gableRise = 0f,
                               int texel = -1, float insetL0 = 0f, float insetL1 = 0f,
                               float insetR0 = 0f, float insetR1 = 0f,
-                              int materialBack = -1, int texelBack = -1)
+                              int materialBack = -1, int texelBack = -1, float stepRise = 0f, int rails = 0)
         {
             // NO SNAPPING HERE (Load() and ImportRetail() come through this; a length rounded on the way in made loading lossy --
             // see BuildingRuntime.NewWall). The surface itself is the shared runtime builder's; the pick map is the stage's.
             var w = BuildingRuntime.NewWall(this, _walls, origin, yawDeg, length, thickness, material, openings, height, pitchDeg, kind,
-                                            gableRise, texel, insetL0, insetL1, insetR0, insetR1, materialBack, texelBack);
+                                            gableRise, texel, insetL0, insetL1, insetR0, insetR1, materialBack, texelBack, stepRise, rails);
             _pickToWall[w.BodyRid] = w;
             return w;
         }
@@ -860,6 +860,7 @@ namespace UnturnedGodot
             int texel = w.Texel, texelBack = w.TexelBack;
             int matBack = w.MaterialIdBack;
             float iL0 = w.InsetL0, iL1 = w.InsetL1, iR0 = w.InsetR0, iR1 = w.InsetR1;
+            float stepRise = w.StepRise; int rails = w.Rails;
             RemoveWall(w);
             _editor?.PushUndo("wall delete", () =>
             {
@@ -867,6 +868,7 @@ namespace UnturnedGodot
                 if (nw == null) return;
                 nw.Texel = texel; nw.TexelBack = texelBack; nw.MaterialIdBack = matBack;
                 nw.InsetL0 = iL0; nw.InsetL1 = iL1; nw.InsetR0 = iR0; nw.InsetR1 = iR1;
+                nw.StepRise = stepRise; nw.Rails = rails;
                 nw.Rebuild();
             });
         }
@@ -1746,7 +1748,7 @@ namespace UnturnedGodot
                 made.Add(SpawnWall(new Vector3(pl.X, pl.Y + dy, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                                    pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise,
                                    pl.Texel, pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1,
-                                   pl.MaterialBack, pl.TexelBack));
+                                   pl.MaterialBack, pl.TexelBack, pl.StepRise, pl.Rails));
             _editor?.PushUndo("paste floor", () => { foreach (var w in made) RemoveWall(w); });
             return made.Count;
         }
@@ -1788,7 +1790,7 @@ namespace UnturnedGodot
                 Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
                 Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
                 InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
-                MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
+                MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack, StepRise = w.StepRise, Rails = w.Rails,
                 Thickness = w.Thickness, Material = w.MaterialId,
             };
             pl.Openings.AddRange(w.Openings);
@@ -1811,7 +1813,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
                           pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack, pl.StepRise, pl.Rails);
             _selWall = null; _selOpening = -1;
             PositionHandles();
         }
@@ -2178,7 +2180,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
                           pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack, pl.StepRise, pl.Rails);
             Log.Print($"[editor-buildings] loaded {plans.Count} walls");
             return plans.Count;
         }
@@ -2595,7 +2597,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y + GroundClearance, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack, pl.StepRise, pl.Rails);
             // Corner solving runs on imports again, now that it is safe to.
             //
             // The first attempt at this grew a 0.30 m pilaster on every corner, because the old rule added a
@@ -2775,9 +2777,12 @@ namespace UnturnedGodot
 
             // (a back face of its own where the plan gives one: a basement's outside walls, concrete inside)
             foreach (var pl in res.Walls)
+            {
+                var paint = BuildingRuntime.PlanPaint(pl, mat, roofTexel);
                 SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
-                          pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.TexelBack >= 0 ? mat : -1, pl.TexelBack);
+                          pl.Height, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
+            }
             // the stage's ground opened over a basement and its hatch's well, so they can be seen and walked down to
             var holesBefore = _stageHoles;
             var holes = new List<Rect2>();
@@ -2791,9 +2796,10 @@ namespace UnturnedGodot
                 float rise = s.Rise > 0f ? s.Rise : StoreyHeight;
                 int steps = WallOpenings.StairSteps(rise);
                 // (a basement hatch's flight is concrete: the palette's concrete texel)
-                int treads = s.Concrete && BuildingGen.FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Concrete : -1;
+                var (top, body) = BuildingRuntime.StairTexels(mat, s.Concrete);
                 foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
-                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f, treads);
+                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
+                              top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise), rails: s.Rails);
                 FitStairsToStructure(o, s.Yaw, s.Run, s.Width, rise, cutFloor: rise >= StoreyHeight - 0.01f);
             }
             var solved = SolveCorners();
@@ -3338,9 +3344,13 @@ namespace UnturnedGodot
             var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));   // local -Z in world space
 
             var made = new List<WallSurface>();
+            // a drawn flight stands where it was put, walls or none, so it is railed both sides (a generated one is railed
+            // on its open sides only: BuildingGen.RailStairs)
+            var (top, body) = BuildingRuntime.StairTexels(ActiveMaterial, false);
             foreach (var p in StairTreadOrigins(origin, yawDeg, run, width))
                 made.Add(SpawnWall(p, yawDeg, width, tread, ActiveMaterial, null,
-                                   going, -90f, SurfaceKind.Stairs));
+                                   going, -90f, SurfaceKind.Stairs, 0f, top, materialBack: ActiveMaterial, texelBack: body,
+                                   stepRise: stepRise, rails: 3));
             int rampsBefore = _stairRamps.Count;
             FitStairsToStructure(origin, yawDeg, run, width);
             var mine = _stairRamps.GetRange(rampsBefore, _stairRamps.Count - rampsBefore);

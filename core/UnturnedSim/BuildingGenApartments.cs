@@ -590,6 +590,8 @@ namespace UnturnedSim
                 if (at >= 0) res.Notes[at] += $", but short of {string.Join(", ", miss.Select(x => x.What).Distinct())}";
             }
             SettleShared(res);   // (which of two surfaces sharing a plane is drawn there, as BuildingGen's: see there)
+            RailStairs(res);
+            GuardStairs(res);
             if (turn) TurnHalf(res);
             return res;
         }
