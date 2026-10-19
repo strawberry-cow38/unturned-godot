@@ -886,7 +886,11 @@ namespace UnturnedSim
                         var (bx, bz) = s.Back; var (rx, rz) = s.Right;
                         var ends = new List<(float X, float Z)>();
                         if (MathF.Abs(s.Y + rise - y) < Lv) ends.Add((s.X + bx * s.Run, s.Z + bz * s.Run));
-                        if (!hole && MathF.Abs(s.Y - y) < Lv) ends.Add((s.X, s.Z));
+                        // (and its foot leaving from a hole's edge, above the ground storey: the next flight of a stack starts on
+                        // the edge the one below arrives over, so a guard across its foot blocked the way up -- every three-storey
+                        // house's and a third of the blocks of flats'. A hole in the ground floor is a basement's, whose edge no
+                        // flight up leaves from.)
+                        if ((!hole || y > Storey * 0.5f) && MathF.Abs(s.Y - y) < Lv) ends.Add((s.X, s.Z));
                         foreach (var (px, pz) in ends)
                         {
                             if (!Parallel(rx, rz) || Off(px, pz) > WallOpenings.StairHoleMargin + 0.15f) continue;
