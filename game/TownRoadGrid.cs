@@ -3237,6 +3237,8 @@ namespace UnturnedGodot
         /// <summary>How far outside the kerb's tangent point -- where the corner's curve begins -- a signal
         /// stands. Small: the mast belongs at the intersection, not up the street.</summary>
         public float SignalBeforeCurve = 1f;
+        /// <summary>How far behind a stop line with no crossing its sign or mast stands.</summary>
+        public float SignBehindStop = 0.3f;
         /// <summary>⚠ THE SAME OFFSET THE PAVEMENT USES, not a third copy of it. Props stand on the kerb, so
         /// if this and EditorSidewalk.RoadGap disagree they stand off the edge of it.</summary>
         float RoadGapForLights => PavementGap;
@@ -3257,7 +3259,7 @@ namespace UnturnedGodot
             if (!Crossings || roads == null) return 0;
             var mat = roads.MaterialOfMaterial(MainMaterial);
             var uvWhite = new Vector2(0.2363f, 0.0664f);
-            int made = 0, slanted = 0;
+            int made = 0, slanted = 0, bare = 0;
             var plans = new Dictionary<(int road, bool atEnd), CrossingLayout>();
             for (int j = 0; j < roads.JunctionCount; j++)
             {
@@ -3320,7 +3322,8 @@ namespace UnturnedGodot
                     st.Begin(Mesh.PrimitiveType.Triangles);
                     // the bars, across the crossing (the apron goes round them)
                     var painted = new List<(float l0, float l1)>();
-                    if (Zebra)
+                    if (cl.D1 - cl.D0 < 0.01f) { if (bare++ == 0) FirstBareJunction = cl.Node; }   // no crossing here: its stop line alone
+                    else if (Zebra)
                     {
                         float pitch = CrossingBar + CrossingGap;
                         int n = Mathf.Max(1, Mathf.FloorToInt((2f * half - CrossingGap) / pitch));
@@ -3436,7 +3439,8 @@ namespace UnturnedGodot
                     _builtCrossings.Add((road, atEnd));
                 }
             }
-            Log.Print($"[towngrid] crossings: {made} laid ({slanted} slanted parallel to the road they cross into), "
+            Log.Print($"[towngrid] crossings: {made - bare} laid ({slanted} slanted parallel to the road they cross into), "
+                    + $"{bare} approaches with a stop line and no crossing ({CrossingsAt}{(bare > 0 ? $", the first at ({FirstBareJunction.X:0.0}, {FirstBareJunction.Z:0.0})" : "")}), "
                     + $"{dropped} left off where a short road could not hold them");
             return made;
         }
@@ -3556,7 +3560,7 @@ namespace UnturnedGodot
             float curve = ApproachClear(roads, junction, road, atEnd, crossed);
             float d0 = curve + CrossingInset, d1 = d0 + CrossingWidth;
             float sd0 = d1 + StopGap, sd1 = sd0 + StopLineWidth;
-            float shear = 0f;
+            float shear = 0f, stretch = 1f;      // (metres along the arm per metre square to it: 1/sin of a slanted band)
             if (_crossAlong.TryGetValue((road, atEnd), out var along))
             {
                 var outw = new Vector3(-fwd.X, 0f, -fwd.Z).Normalized();
@@ -3572,10 +3576,21 @@ namespace UnturnedGodot
                     // LaySidewalkCorners), so 1.2 m into it is a third of its whole curve -- 61 cm off straight at 45
                     // degrees, measured. The same fraction of ITS radius keeps it as square as a right angle's.
                     float pull = CrossingInset < 0f ? CrossingInset * sinT / (1f + cosT) : CrossingInset;
-                    d0 = (crossed + CornerKerbRadius * sinT + pull) / sinT;
+                    curve = (crossed + CornerKerbRadius * sinT) / sinT;
+                    d0 = curve + pull / sinT;
                     d1 = d0 + CrossingWidth / sinT;
                     sd0 = d1 + StopGap / sinT; sd1 = sd0 + StopLineWidth / sinT;
+                    stretch = 1f / sinT;
                 }
+            }
+            // ⭐ NO CROSSING, STILL A STOP LINE (strawberry 2026-10-19: "support for junctions to not have crossings (but keeping
+            // stop lines)"). The band collapses to nothing where the kerb straightens out, and the stop line comes forward to
+            // just past it -- so everything measured off D1 and SD1 (the lane lines, a median's nose, the stop sign) follows
+            // it in instead of stopping short of a crossing that is not there.
+            if (!HasCrossings(roads, junction))
+            {
+                sd0 = curve + BareStopPast * stretch; sd1 = sd0 + StopLineWidth * stretch;
+                d0 = d1 = sd0;
             }
             c = new CrossingLayout
             {
@@ -4019,6 +4034,27 @@ namespace UnturnedGodot
         }
 
         public bool Crossings = true;
+        /// <summary>Which junctions get crossings (strawberry 2026-10-19: "support for junctions to not have crossings (but keeping
+        /// stop lines)"). All: every one. None: none, stop lines only. Auto: a junction with a main street on it always (it has
+        /// signals, and the people), one of side streets only by SideCrossingShare -- the four-way stop with no zebra is
+        /// most of a real suburb. The class keeps All, the game asks for Auto (Main); UG_TOWNCROSSINGS=all|none|auto.</summary>
+        public enum CrossingRule { All, Auto, None }
+        public CrossingRule CrossingsAt = CrossingRule.All;
+        public float SideCrossingShare = 0.4f;
+        /// <summary>Where a stop line with no crossing goes: this far past where the kerb straightens (so it meets the kerbs square).</summary>
+        public float BareStopPast = 0.3f;
+        /// <summary>A junction the last BuildCrossings left without crossings, for a camera.</summary>
+        public Vector3 FirstBareJunction;
+        /// <summary>Does this junction get crossings? Deterministic per junction (its position and the seed).</summary>
+        public bool HasCrossings(RoadField roads, int junction)
+        {
+            if (CrossingsAt == CrossingRule.All) return true;
+            if (CrossingsAt == CrossingRule.None) return false;
+            foreach (var (r, _) in roads.JunctionEdges(junction)) if (IsMain(roads, r)) return true;
+            var p = roads.JunctionPos(junction);
+            ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)Mathf.RoundToInt(p.X * 10f) << 24) ^ (uint)Mathf.RoundToInt(p.Z * 10f) ^ 0xC305UL));
+            return Unit(h, 0) < SideCrossingShare;
+        }
         /// <summary>Zebra bars, or just the two outlines of the walkway.</summary>
         public bool Zebra = true;
         /// <summary>How far the crossing sits outside the carriageway's own edge, and how deep it is.</summary>
@@ -4165,8 +4201,12 @@ namespace UnturnedGodot
         /// crossing at the mast's own offset. Square everywhere else, and then the old number bit for bit.</summary>
         public float SignalBack(RoadField roads, int junction, int road, bool atEnd, float widest, float lat)
         {
-            if (LayCrossing(roads, junction, road, atEnd, out var cl) && cl.Shear != 0f)
-                return cl.D0 + lat * cl.Shear - (CrossingInset - SignalBeforeCurve);
+            if (LayCrossing(roads, junction, road, atEnd, out var cl))
+            {
+                // no crossing: just behind its stop line, which is where a driver stops to read it
+                if (cl.D1 - cl.D0 < 0.01f) return cl.SD1 + lat * cl.Shear + SignBehindStop;
+                if (cl.Shear != 0f) return cl.D0 + lat * cl.Shear - (CrossingInset - SignalBeforeCurve);
+            }
             return ApproachClear(roads, junction, road, atEnd, widest) + SignalBeforeCurve;
         }
 

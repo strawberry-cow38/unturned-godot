@@ -10795,6 +10795,14 @@ namespace UnturnedGodot
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
             // UG_TOWNDIAG=0 takes the 45-degree avenue back out (strawberry 2026-10-12: "work on 45° intersections").
             town.Diagonal = System.Environment.GetEnvironmentVariable("UG_TOWNDIAG") != "0";
+            // which junctions are crossed (strawberry 2026-10-19: "support for junctions to not have crossings (but keeping stop
+            // lines)"): a main street's always, a side street's sometimes. UG_TOWNCROSSINGS=all|none|auto.
+            town.CrossingsAt = (System.Environment.GetEnvironmentVariable("UG_TOWNCROSSINGS") ?? "auto").ToLowerInvariant() switch
+            {
+                "all" => TownRoadGrid.CrossingRule.All,
+                "none" => TownRoadGrid.CrossingRule.None,
+                _ => TownRoadGrid.CrossingRule.Auto,
+            };
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
                     System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tex) && tex > 50f) town.Extent = tex;
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSPACING"),
