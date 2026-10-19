@@ -2200,6 +2200,15 @@ namespace UnturnedSim
             /// a monitor on it; a filing cabinet and a bookcase along the walls.</summary>
             void Office()
             {
+                Desk();
+                Put("Files_0", Against("Files_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                if (_area >= 18f) Put("Shelf_2", Against("Shelf_2", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+            }
+
+            /// <summary>A desk and its chair, the chair's back to a wall, best facing the door; a monitor and a desk lamp on it.
+            /// Whether one went in.</summary>
+            bool Desk()
+            {
                 var cs = FurnitureCatalog.Sizes["Chair_Wood_1"]; var ds = FurnitureCatalog.Sizes["Table_Wood_2"];
                 // where the chair can stand with its back to a wall, best facing the door
                 foreach (var (x, z, yaw) in Rank(Against("Chair_Wood_1", Side.Back), DeskScore).Take(60))
@@ -2212,10 +2221,9 @@ namespace UnturnedSim
                     if (chair == null) { Remove(desk); continue; }
                     On(desk, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);   // its screen to the chair
                     On(desk, "Lamp_0", 0.55f, -0.45f, (yaw + 180f) % 360f);    // a desk lamp at the chair's right hand
-                    break;
+                    return true;
                 }
-                Put("Files_0", Against("Files_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
-                if (_area >= 18f) Put("Shelf_2", Against("Shelf_2", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                return false;
             }
 
             double DeskScore(float x, float z, float yaw)
@@ -2328,8 +2336,20 @@ namespace UnturnedSim
             /// back wall; gondolas in rows with aisles you can pass in.</summary>
             void Shop()
             {
-                var front = _res.Front;
+                Till();
+                for (int k = 0; k < 2; k++) Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                Gondolas();
+            }
+
+            /// <summary>The checkout by the room's own street door, facing it 2.5-6 m in, the till on it -- or, with `desk`, a
+            /// reception desk there (Table_Wood_2) with its chair behind it and a screen on it. Null where the room has no street
+            /// door or no spot takes it.</summary>
+            FurniturePlan Till(bool desk = false)
+            {
+                // (its own street door: a building with more than one has the first first)
+                var front = _res.Doors.FirstOrDefault(d => d.Role == DoorRole.Front && d.A == _room) ?? _res.Front;
                 var doors = Doors();
+                FurniturePlan co = null;
                 if (front != null && front.A == _room && doors.Count > 0)
                 {
                     var (fdx, fdz) = front.Middle;
@@ -2346,19 +2366,36 @@ namespace UnturnedSim
                                 if (((dcx - x) * fx + (dcz - z) * fz) / d < 0.6f) continue;
                                 cands.Add((x, z, yaw));
                             }
-                    var co = Put("Checkout_0", cands, (x, z, yaw) => -MathF.Abs(MathF.Sqrt((x - dcx) * (x - dcx) + (z - dcz) * (z - dcz)) - 3.5f));
-                    if (co != null) On(co, "Register_0", -0.5f, 0f, (co.Yaw + 180f) % 360f);
+                    double Score(float x, float z, float yaw) => -MathF.Abs(MathF.Sqrt((x - dcx) * (x - dcx) + (z - dcz) * (z - dcz)) - 3.5f);
+                    if (!desk)
+                    {
+                        co = Put("Checkout_0", cands, Score);
+                        if (co != null) On(co, "Register_0", -0.5f, 0f, (co.Yaw + 180f) % 360f);
+                    }
+                    else
+                        // the desk faces the door; its chair behind it, back to the room
+                        foreach (var (x, z, yaw) in Rank(cands, Score).Take(40))
+                        {
+                            var d = Put("Table_Wood_2", new[] { (x, z, yaw) });
+                            if (d == null) continue;
+                            var (fx, fz) = FrontOf(yaw);
+                            float back = FurnitureCatalog.Sizes["Table_Wood_2"].Y0 - 0.05f - FurnitureCatalog.Sizes["Chair_Wood_1"].Y1;
+                            if (Put("Chair_Wood_1", new[] { (x + fx * back, z + fz * back, yaw) }) == null) { Remove(d); continue; }
+                            On(d, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);   // its screen to the chair, as an office desk's
+                            co = d;
+                            break;
+                        }
                 }
-                for (int k = 0; k < 2; k++) Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
-                Gondolas();
+                return co;
             }
 
             /// <summary>Gondolas in rows down the shop's length, every row starting from the same line and every gondola
             /// end to end with the next, two to a run before a cross aisle (strawberry: "store shelves should try to align
-            /// to other shelves"): aisles of 1.8 m between rows and a walk of 1.6 m round the room's edge.</summary>
-            void Gondolas()
+            /// to other shelves"): aisles of 1.8 m between rows and a walk of 1.6 m round the room's edge. (`shelf`: another
+            /// piece in the gondolas' place.)</summary>
+            void Gondolas(string shelf = "Shelf_1")
             {
-                var gs = FurnitureCatalog.Sizes["Shelf_1"];
+                var gs = FurnitureCatalog.Sizes[shelf];
                 float len = gs.X1 - gs.X0, deep = gs.Y1 - gs.Y0;
                 const float Aisle = 1.8f, Edge = 1.6f;
                 var r = _room.Rects.OrderByDescending(q => (q.X1 - q.X0) * (q.Z1 - q.Z0)).First();
@@ -2371,7 +2408,7 @@ namespace UnturnedSim
                     float a = a0 + Edge + len * 0.5f;
                     for (int k = 0; a + len * 0.5f <= a1 - Edge + 1e-3f; k++)
                     {
-                        Put("Shelf_1", new[] { longX ? (a, b, yaw) : (b, a, yaw) });
+                        Put(shelf, new[] { longX ? (a, b, yaw) : (b, a, yaw) });
                         a += len + (k % 2 == 1 ? Aisle : 0f);
                     }
                 }
@@ -2380,13 +2417,13 @@ namespace UnturnedSim
                 // their swings taking both rows that start from the edge and leaving the middle clear: there, fewer rows,
                 // centred across the shop -- one, down its middle, at the least.
                 int fit = (int)((b1 - b0 - 2 * Edge + Aisle) / (deep + Aisle));
-                for (int n = fit; n >= 1 && !_mine.Any(m => m.Name == "Shelf_1"); n--)
+                for (int n = fit; n >= 1 && !_mine.Any(m => m.Name == shelf); n--)
                 {
                     float span = n * deep + (n - 1) * Aisle, mid = (b0 + b1) * 0.5f;
                     for (int q = 0; q < n; q++) Row(mid - span * 0.5f + deep * 0.5f + q * (deep + Aisle));
                 }
                 // one with no partner in another row (its neighbours would not fit) is taken back out: the columns line up
-                var all = _mine.Where(m => m.Name == "Shelf_1").ToList();
+                var all = _mine.Where(m => m.Name == shelf).ToList();
                 float Along(FurniturePlan g) => longX ? g.X : g.Z; float Across(FurniturePlan g) => longX ? g.Z : g.X;
                 if (all.Select(Across).Distinct().Count() > 1)
                 {
