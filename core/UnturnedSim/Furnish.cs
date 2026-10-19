@@ -2272,6 +2272,12 @@ namespace UnturnedSim
                 var cs = FurnitureCatalog.Sizes["Chair_Wood_1"]; var ds = FurnitureCatalog.Sizes["Table_Wood_2"];
                 float d = cs.Y1 + 0.05f - ds.Y0, deep = d + ds.Y1 - cs.Y0, wide = ds.X1 - ds.X0;
                 int want = Math.Max(1, Math.Min(TowerDesks, (int)(_area / TowerDeskArea))), have = 0;
+                // Every row's every desk spot, then the spots cut into pods of OpenPod side by side along their row; the pods
+                // taken are spread evenly through the floor's list of them (a few desks to a work group, the groups over the
+                // whole floor -- taking the first `want` spots filled one row at one end of a 1250 m2 floor and left the rest
+                // bare). A pod spot Put refuses (a doorway, a window's zone, the stairs) is skipped, and if the spread pods come
+                // up short the rest are tried in order.
+                var pods = new List<List<(float X, float Z, float Yaw)>>();
                 foreach (var q in _room.Rects.OrderByDescending(q => (q.X1 - q.X0) * (q.Z1 - q.Z0)))
                 {
                     if (Math.Min(q.X1 - q.X0, q.Z1 - q.Z0) < 2) continue;
@@ -2280,23 +2286,36 @@ namespace UnturnedSim
                     float b0 = (alongX ? q.Z0 : q.X0) * Cell + OpenMargin, b1 = (alongX ? q.Z1 : q.X1) * Cell - OpenMargin;
                     // the chairs' fronts toward +across: yaw 180 faces +Z, 270 faces +X
                     float yaw = alongX ? 180f : 270f;
-                    for (float b = b0 - cs.Y0; b + d + ds.Y1 <= b1 + 1e-3f && have < want; b += deep + OpenAisle)
-                        for (float a = a0 + wide * 0.5f; a + wide * 0.5f <= a1 + 1e-3f && have < want; a += wide + OpenGap)
-                        {
-                            var (cx, cz) = alongX ? (a, b) : (b, a);
-                            var (fx, fz) = FrontOf(yaw);
-                            var desk = Put("Table_Wood_2", new[] { (cx + fx * d, cz + fz * d, yaw) });
-                            if (desk == null) continue;
-                            if (Put("Chair_Wood_1", new[] { (cx, cz, yaw) }) == null) { Remove(desk); continue; }
-                            On(desk, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);
-                            On(desk, "Lamp_0", 0.55f, -0.45f, (yaw + 180f) % 360f);
-                            have++;
-                        }
+                    for (float b = b0 - cs.Y0; b + d + ds.Y1 <= b1 + 1e-3f; b += deep + OpenAisle)
+                    {
+                        var row = new List<(float, float, float)>();
+                        for (float a = a0 + wide * 0.5f; a + wide * 0.5f <= a1 + 1e-3f; a += wide + OpenGap) row.Add(alongX ? (a, b, yaw) : (b, a, yaw));
+                        for (int i = 0; i < row.Count; i += OpenPod) pods.Add(row.GetRange(i, Math.Min(OpenPod, row.Count - i)));
+                    }
+                }
+                int nPods = Math.Min(pods.Count, (want + OpenPod - 1) / OpenPod);
+                var order = Enumerable.Range(0, nPods).Select(k => (int)((k + 0.5) * pods.Count / nPods))
+                                      .Concat(Enumerable.Range(0, pods.Count)).Distinct();
+                foreach (int p in order)
+                {
+                    if (have >= want) break;
+                    foreach (var (cx, cz, yaw) in pods[p])
+                    {
+                        if (have >= want) break;
+                        var (fx, fz) = FrontOf(yaw);
+                        var desk = Put("Table_Wood_2", new[] { (cx + fx * d, cz + fz * d, yaw) });
+                        if (desk == null) continue;
+                        if (Put("Chair_Wood_1", new[] { (cx, cz, yaw) }) == null) { Remove(desk); continue; }
+                        On(desk, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);
+                        On(desk, "Lamp_0", 0.55f, -0.45f, (yaw + 180f) % 360f);
+                        have++;
+                    }
                 }
             }
             /// <summary>An open office's rows: the walk between one row's chairs and the next row's desks, the gap between two desks of
-            /// a row, and the floor kept clear along the walls.</summary>
+            /// a row, the floor kept clear along the walls, and the desks to a pod (a work group side by side in its row).</summary>
             const float OpenAisle = 1.6f, OpenGap = 0.9f, OpenMargin = 1.0f;
+            const int OpenPod = 3;
 
             double DeskScore(float x, float z, float yaw)
             {
