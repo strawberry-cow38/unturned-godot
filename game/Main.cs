@@ -10948,6 +10948,21 @@ namespace UnturnedGodot
             // the parking lots' street lights, and blocks if they have any (strawberry 2026-10-14: "add streetlight support for
             // parking lots too")
             if (!noWalk) town.PlaceParkingProps(editor.Objects);
+            // ⭐ THE TOWN'S TREES AND BUSHES, AS FOLIAGE (strawberry 2026-10-19: "make sure the trees and bushes found in towngen use
+            // the actual FOLIAGE versions. instead of custom props"): everything above planted into town.Foliage, not the scene.
+            // Baked into a resource map of its own and loaded the way a generated island's is, so each one is the world's own
+            // resource -- swaying, trunk collider, chop, regrow. UG_TOWNTREEPROPS=1 plants props instead (the control).
+            if (!TownRoadGrid.FoliageAsProps && town.Foliage.Count > 0)
+            {
+                string townRes = ProcIslandFoliage.BakeResourceList(town.Foliage, "town");
+                if (townRes != null)
+                {
+                    ResourceField.MapDir = townRes;
+                    var townTrees = new ResourceField();
+                    AddChild(townTrees);
+                    townTrees.LoadResources("NONE");
+                }
+            }
             // ...and no meter left under anything put up after the meters were (strawberry 2026-10-15: "prevent street lights or
             // hydrants being placed on top of parking meters")
             if (!noWalk) town.ClearMeterClashes(editor.Objects);

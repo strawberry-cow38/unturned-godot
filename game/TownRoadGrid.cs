@@ -1237,7 +1237,7 @@ namespace UnturnedGodot
             var rep = new Report();
             _heightAt = heightAt;
             Built.Clear(); _profiles.Clear(); Marks.Clear(); _throughEnds.Clear(); _crossAlong.Clear(); _clips.Clear(); DiagonalRoads.Clear();
-            _wideTrimRoads = null;
+            _wideTrimRoads = null; Foliage.Clear();
             if (Vary) ChooseLayout();          // (once per town: Main asks first, to size the site it looks for)
             if (roads == null || heightAt == null || Spacing < 4f || Extent < Spacing) return rep;
             // the kerb return follows the road's width, so everything measured off it does too
@@ -8105,6 +8105,26 @@ namespace UnturnedGodot
         public float MedianTreeSpacing = 15f, MedianTreeScale = 0.6f, MedianTreeClear = 2f;
         public string HedgeProp = "Hedge_0";
         public string[] MedianTrees = { "Maple_0", "Maple_1", "Birch_0", "Birch_1" };
+
+        /// <summary>The town's trees and bushes as FOLIAGE: the world's own harvestable resources, not props (strawberry
+        /// 2026-10-19: "make sure the trees and bushes found in towngen use the actual FOLIAGE versions. instead of custom props or
+        /// w/e you did"). The planters, verges, medians, parks and parking lots all plant into this list; Main bakes it into a
+        /// resource map (ProcIslandFoliage.BakeResourceList) and loads a ResourceField over it, as a generated island does. So
+        /// a town tree sways, has a trunk you collide with, can be chopped for its logs and regrows, and a bush drags a car,
+        /// like every other one in the world. The names are the resource species (resources.txt) the props were named after.
+        /// UG_TOWNTREEPROPS=1: the old props, the control.</summary>
+        public readonly List<(string name, Vector3 at, float yawDeg, float scale)> Foliage = new();
+        public static bool FoliageAsProps = System.Environment.GetEnvironmentVariable("UG_TOWNTREEPROPS") == "1";
+        /// <summary>Plant a tree or a bush with its foot at `ground` -- NOT sunk: ResourceField lets every tree into the ground
+        /// itself (TreeSink), which is what SeatedTree imitated for the props. Returns the prop under the control, else null.</summary>
+        Node3D PlantFoliage(EditorObjects objs, string name, Vector3 ground, float yawRad, float scale)
+        {
+            if (FoliageAsProps)
+                return objs?.Place(name, ResourceField.IsTree(name) ? SeatedTree(ground, scale) : ground,
+                                   new Basis(Vector3.Up, yawRad).Scaled(Vector3.One * scale));
+            Foliage.Add((name, ground, Mathf.RadToDeg(yawRad), scale));
+            return null;
+        }
         /// <summary>What the last PlantMedians planted, for the tests: prop, where, and which median.</summary>
         public readonly List<(string prop, Vector3 at, int road)> MedianPlants = new();
 
@@ -8144,8 +8164,10 @@ namespace UnturnedGodot
                 {
                     if (!At(treeAt[k], out var at, out _)) continue;
                     string tree = MedianTrees[(int)(Unit(Mix(h ^ ((ulong)(uint)k * 0x9E37UL)), 0) * MedianTrees.Length) % MedianTrees.Length];
-                    var turn = new Basis(Vector3.Up, Unit(Mix(h ^ ((ulong)(uint)k * 0x51UL) ^ 0xA5UL), 0) * Mathf.Tau);
-                    Plant(tree, SeatedTree(at, MedianTreeScale), turn.Scaled(Vector3.One * MedianTreeScale));     // let into the turf as the world's trees are
+                    // (foliage, not a prop: PlantFoliage)
+                    var tnode = PlantFoliage(objs, tree, at, Unit(Mix(h ^ ((ulong)(uint)k * 0x51UL) ^ 0xA5UL), 0) * Mathf.Tau, MedianTreeScale);
+                    if (tnode != null) into?.Add(tnode);
+                    if (!(FoliageAsProps && objs != null && tnode == null)) { MedianPlants.Add((tree, at, md.Road)); made++; }
                     if (k + 1 >= treeAt.Count) continue;
                     // a hedge between this tree and the next, its pieces butted core to core along the median (PiecesAlong: the
                     // greens' edge-to-edge rule) and stood the way retail stands a hedge (HedgeBasis: it is a Z-up mesh)

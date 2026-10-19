@@ -277,6 +277,56 @@ namespace UnturnedGodot
             return types > 0 ? dirName : null;
         }
 
+        /// <summary>Bake a GIVEN list of resources -- each a resource name, its foot, its yaw (degrees) and scale -- into
+        /// content/resources_&lt;mapKey&gt;/: a generated town's trees and bushes, planted where its planters, verges, medians,
+        /// parks and lots put them rather than scattered (strawberry 2026-10-19: "make sure the trees and bushes found in towngen
+        /// use the actual FOLIAGE versions").
+        /// The same layout and the same manifest rule as BakeResources above: resources.txt COPIED VERBATIM, because its row
+        /// order is the wire index; only .bin files are written beside it. A name the manifest does not have is skipped and
+        /// counted, never appended -- a new row would renumber nothing here, but it would be a manifest only this map has.
+        /// ⚠ ONE DIRECTORY, rewritten each build: a town is never saved (its seed rebuilds it), so a folder per seed would be
+        /// 4 MB of copied meshes per town ever generated, kept for nothing.</summary>
+        public static string BakeResourceList(IEnumerable<(string name, Vector3 at, float yawDeg, float scale)> items, string mapKey)
+        {
+            string src = ProjectSettings.GlobalizePath("res://content/resources/");
+            string manifest = Path.Combine(src, "resources.txt");
+            if (!File.Exists(manifest)) { Log.Print("[town-res] no resources.txt in the source -- skipping"); return null; }
+            string dirName = "resources_" + mapKey;
+            string dst = ProjectSettings.GlobalizePath($"res://content/{dirName}/");
+            try
+            {
+                Directory.CreateDirectory(dst);
+                foreach (var stale in Directory.GetFiles(dst, "*.bin")) { try { File.Delete(stale); } catch { } }
+                foreach (string f in Directory.GetFiles(src))
+                {
+                    string nm = Path.GetFileName(f);
+                    if (nm.EndsWith(".bin")) continue;   // ⚠ PEI's tree POSITIONS -- never copied
+                    var to = Path.Combine(dst, nm);
+                    var fi = new FileInfo(f); var ti = new FileInfo(to);
+                    if (!ti.Exists || ti.Length != fi.Length || ti.LastWriteTimeUtc < fi.LastWriteTimeUtc) File.Copy(f, to, overwrite: true);
+                }
+            }
+            catch (System.Exception ex) { Log.Err($"[town-res] could not prepare {dirName}: {ex.Message}"); return null; }
+            var known = new HashSet<string>();
+            foreach (string line in File.ReadAllLines(manifest))
+            {
+                var sp = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (sp.Length >= 2) known.Add(sp[0]);
+            }
+            var byName = new Dictionary<string, List<(Vector3 Pos, float Yaw, float Scale)>>();
+            int skipped = 0, total = 0;
+            foreach (var (name, at, yaw, scale) in items)
+            {
+                if (!known.Contains(name)) { skipped++; continue; }
+                if (!byName.TryGetValue(name, out var l)) byName[name] = l = new List<(Vector3, float, float)>();
+                l.Add((at, yaw, scale)); total++;
+            }
+            foreach (var (name, recs) in byName) WriteResourceBin(Path.Combine(dst, name + ".bin"), recs);
+            Log.Print($"[town-res] baked {total} resource(s) across {byName.Count} type(s) -> content/{dirName}/"
+                    + (skipped > 0 ? $"; {skipped} skipped, not in the manifest" : ""));
+            return byName.Count > 0 ? dirName : null;
+        }
+
         static bool Near(float ax, float bx, float az, float bz, float r)
         {
             float dx = ax - bx, dz = az - bz;

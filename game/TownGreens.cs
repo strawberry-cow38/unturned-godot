@@ -1055,14 +1055,20 @@ namespace UnturnedGodot
                 var at = t; at.Y = terr != null ? terr.SampleHeight(t.X, t.Z) : t.Y;
                 string tree = ParkTrees[(int)(h % (ulong)ParkTrees.Length)];
                 float ts = scale * (0.85f + 0.3f * Unit(h, 32));
-                Put(tree, SeatedTree(at, ts), new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * ts));     // let into the ground as the world's trees are
+                // (foliage, not a prop: PlantFoliage -- let into the ground by the resource field, as the world's trees are)
+                var tn = PlantFoliage(objs, tree, at, Unit(h, 16) * Mathf.Tau, ts);
+                if (tn != null) into?.Add(tn);
+                if (tn != null || !FoliageAsProps) made++;
             }
             // the bushes: Y-up meshes, like the trees (retail's resource bushes stand at ~0 about X)
             foreach (var (bq, prop, scale) in Bushes)
             {
                 h = Mix(h + 0xB05EUL);
                 var at = bq; at.Y = terr != null ? terr.SampleHeight(bq.X, bq.Z) : bq.Y;
-                Put(prop, at, Tilt(at) * new Basis(Vector3.Up, Unit(h, 8) * Mathf.Tau).Scaled(Vector3.One * scale));
+                // (foliage too: the world's Bush_0/Bush_1 resources, which stand upright and drag a car driven through them)
+                var bn = PlantFoliage(objs, prop, at, Unit(h, 8) * Mathf.Tau, scale);
+                if (bn != null) into?.Add(bn);
+                if (bn != null || !FoliageAsProps) made++;
             }
             foreach (var pk in PocketParks)
                 foreach (var (bq, faces) in pk.Benches)

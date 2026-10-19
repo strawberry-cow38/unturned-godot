@@ -382,10 +382,9 @@ void fragment() {
             void Tree(Vector3 at, ulong h, bool planter, int road)
             {
                 string tree = MedianTrees[(int)(Unit(h, 0) * MedianTrees.Length) % MedianTrees.Length];
-                var turn = new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau);
                 float sc = planter ? PlanterTreeScale : StreetTreeScale;
-                var node = objs.Place(tree, SeatedTree(at, sc), turn.Scaled(Vector3.One * sc));
-                if (node == null) return;
+                // (foliage, not a prop: PlantFoliage)
+                if (PlantFoliage(objs, tree, at, Unit(h, 16) * Mathf.Tau, sc) == null && FoliageAsProps) return;
                 StreetTrees.Add((at, planter, road));
                 standing.Add(at);
             }

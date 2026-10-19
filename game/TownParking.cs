@@ -1573,9 +1573,10 @@ namespace UnturnedGodot
                         at.Y = LotSurfaceY(lot, at.X, at.Z, Ground(at.X, at.Z)) + _lotKerbH + 0.04f;
                         ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)Mathf.RoundToInt(at.X * 8f) ^ ((ulong)(uint)Mathf.RoundToInt(at.Z * 8f) << 24) ^ 0x1077EEUL));
                         string tree = MedianTrees[(int)(Unit(h, 0) * MedianTrees.Length) % MedianTrees.Length];
-                        var node = objs.Place(tree, SeatedTree(at, PlanterTreeScale), new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * PlanterTreeScale));
-                        if (node == null) continue;
-                        into?.Add(node); LotTrees++;
+                        var node = PlantFoliage(objs, tree, at, Unit(h, 16) * Mathf.Tau, PlanterTreeScale);     // (foliage, not a prop)
+                        if (node == null && FoliageAsProps) continue;
+                        if (node != null) into?.Add(node);
+                        LotTrees++;
                     }
                 }
                 // ...and down its turfed sides and back (BuildParkingLots), about LotEdgeTreeSpacing apart on the turf's middle line,
@@ -1611,9 +1612,10 @@ namespace UnturnedGodot
                         at.Y = LotSurfaceY(lot, at.X, at.Z, Ground(at.X, at.Z)) + _lotKerbH + 0.04f;
                         ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)Mathf.RoundToInt(at.X * 8f) ^ ((ulong)(uint)Mathf.RoundToInt(at.Z * 8f) << 24) ^ 0xED6E7EUL));
                         string tree = MedianTrees[(int)(Unit(h, 0) * MedianTrees.Length) % MedianTrees.Length];
-                        var node = objs.Place(tree, SeatedTree(at, PlanterTreeScale), new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * PlanterTreeScale));
-                        if (node == null) continue;
-                        into?.Add(node); LotTrees++;
+                        var node = PlantFoliage(objs, tree, at, Unit(h, 16) * Mathf.Tau, PlanterTreeScale);     // (foliage, not a prop)
+                        if (node == null && FoliageAsProps) continue;
+                        if (node != null) into?.Add(node);
+                        LotTrees++;
                     }
                 }
             }
