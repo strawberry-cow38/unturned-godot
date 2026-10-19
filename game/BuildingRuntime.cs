@@ -568,7 +568,8 @@ namespace UnturnedGodot
                 PartyFit(pl, wx, dz, party, out var o, out float len, out float hgt, out var ops, ref clipped);
                 if (len < 0.02f || hgt < 0.02f) continue;      // clipped away entirely (a porch post standing past the line)
                 var paint = PlanPaint(pl, mat, roofTexel);
-                NewWall(below != null && InBasement(res, pl) ? below : root, walls, o, pl.Yaw, len, pl.Thickness, mat, ops,
+                // (a surface with a palette of its own -- a strip tenant's floor -- wears that one: WallPlan.Palette)
+                NewWall(below != null && InBasement(res, pl) ? below : root, walls, o, pl.Yaw, len, pl.Thickness, pl.Palette != null ? MaterialFor(pl.Palette, mat) : mat, ops,
                         hgt, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
                         pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
             }

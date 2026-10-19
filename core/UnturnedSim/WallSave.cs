@@ -45,6 +45,10 @@ namespace UnturnedSim
         public float StepRise;
         /// <summary>Which sides of a stair tread carry a handrail: 1 its start edge (U = 0), 2 its far edge (U = Length).</summary>
         public int Rails;
+        /// <summary>A generated surface's own palette, by NAME (content/wall_palettes.tsv), where it is not its building's: a strip
+        /// mall's tenant's floor (BuildingGenResult.PaletteOf). Null for the building's -- every other surface. The plan's
+        /// input only: the editor and the runtime builder resolve it to the surface's Material as they lay it.</summary>
+        public string Palette;
         public readonly List<WallOpening> Openings = new();
     }
 

@@ -2779,7 +2779,8 @@ namespace UnturnedGodot
             foreach (var pl in res.Walls)
             {
                 var paint = BuildingRuntime.PlanPaint(pl, mat, roofTexel);
-                SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
+                // (a surface with a palette of its own -- a strip tenant's floor -- wears that one: WallPlan.Palette)
+                SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Palette != null ? BuildingRuntime.MaterialFor(pl.Palette, mat) : mat, pl.Openings,
                           pl.Height, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
                           pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
             }
