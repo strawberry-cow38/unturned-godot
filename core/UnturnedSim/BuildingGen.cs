@@ -2205,7 +2205,8 @@ namespace UnturnedSim
                     crowdedOut = second != null;
                     return second;
                 }
-                List<GenRoom> Next(GenRoom a) => runs.Where(r => r.A == a || r.B == a).Select(r => r.A == a ? r.B : r.A).Where(b => b != null && MayJoin(a, b)).Distinct().ToList();
+                // (never into a tall room's void on a storey above its own floor: GenRoom.Span -- its doors are on its floor)
+                List<GenRoom> Next(GenRoom a) => runs.Where(r => r.A == a || r.B == a).Select(r => r.A == a ? r.B : r.A).Where(b => b != null && MayJoin(a, b) && !b.Above(f)).Distinct().ToList();
                 bool Doored(GenRoom a, GenRoom b) => doors.Any(d => (d.A == a && d.B == b) || (d.A == b && d.B == a));
 
                 if (root == null)

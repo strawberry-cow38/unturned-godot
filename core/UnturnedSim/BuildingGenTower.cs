@@ -107,6 +107,9 @@ namespace UnturnedSim
         /// <summary>The plans, built on first use (never in a static initialiser: a slip in one would take every building down).</summary>
         static TowerPlan[] TowerPlans => _towerPlans ??= new[] { MainStreetPlan(), SetbackPlan(), SlabPlan() };
 
+        /// <summary>A plan's name with its article: "a setback skyscraper", "an International Style slab".</summary>
+        static string A(string name) => ("aeiouAEIOU".IndexOf(name[0]) >= 0 ? "an " : "a ") + name;
+
         static TowerDoor Door(int r, int c, char face, int count = 1, bool back = false) => new TowerDoor { R = r, C = c, Face = face, Count = count, Back = back };
 
         /// <summary>The main-street office block (Concord-type, 1890s-1930s), 19 x 10 cells, six storeys as real: on the ground a 15-ft
@@ -276,14 +279,14 @@ namespace UnturnedSim
                 plan = best.Plan; front = best.Front;
                 var (bx, bz) = Size(plan, front);
                 res.Notes.Add(Over(best) > 0 ? $"could not fit the {spec.Width}x{spec.Depth} plot: {bx}x{bz} is the closest of {cands.Count} towers"
-                                             : $"fitted the {spec.Width}x{spec.Depth} plot as {bx}x{bz}" + (best.i > 0 ? $": a {plan.Name}, not a {TowerPlans.First(p => p.Style == order[0]).Name}" : ""));
+                                             : $"fitted the {spec.Width}x{spec.Depth} plot as {bx}x{bz}" + (best.i > 0 ? $": {A(plan.Name)}, not {A(TowerPlans.First(p => p.Style == order[0]).Name)}" : ""));
             }
             else
             {
                 plan = TowerPlans.First(p => p.Style == order[0]);
                 int len = front is Sides.North or Sides.South ? plan.Cols : plan.Rows, deep = front is Sides.North or Sides.South ? plan.Rows : plan.Cols;
                 if (spec.Width > 0 && spec.Width != (front is Sides.North or Sides.South ? len : deep) || spec.Depth > 0 && spec.Depth != (front is Sides.North or Sides.South ? deep : len))
-                    res.Notes.Add($"a {plan.Name} is {(front is Sides.North or Sides.South ? $"{len}x{deep}" : $"{deep}x{len}")} cells, as its plan is: not the {spec.Width}x{spec.Depth} asked for");
+                    res.Notes.Add($"{A(plan.Name)} is {(front is Sides.North or Sides.South ? $"{len}x{deep}" : $"{deep}x{len}")} cells, as its plan is: not the {spec.Width}x{spec.Depth} asked for");
             }
             if (spec.Basement == BasementChoice.Require) res.Notes.Add("a tower has no basement here");
             if (spec.BackSide != Sides.None && (spec.BackSide & Turned(front)) == 0) res.Notes.Add($"a tower's service doors are on its alley, opposite its front: not {spec.BackSide}");
@@ -408,10 +411,10 @@ namespace UnturnedSim
                 var (x0, z0, x1, z1) = key;
                 bool alongX = x1 - x0 > z1 - z0;
                 if ((alongX ? x1 - x0 : z1 - z0) != 4 || (alongX ? z1 - z0 : x1 - x0) != 2)
-                    throw new InvalidOperationException($"BuildingGen: a {plan.Name}'s stair room is not 2 x 4 cells: {x1 - x0} x {z1 - z0}");
+                    throw new InvalidOperationException($"BuildingGen: {A(plan.Name)}'s stair room is not 2 x 4 cells: {x1 - x0} x {z1 - z0}");
                 st.Sort((a, b) => a.Floor.CompareTo(b.Floor));
                 for (int i = 1; i < st.Count; i++)
-                    if (st[i].Floor != st[i - 1].Floor + 1) throw new InvalidOperationException($"BuildingGen: a {plan.Name}'s stair at {key} skips a storey");
+                    if (st[i].Floor != st[i - 1].Floor + 1) throw new InvalidOperationException($"BuildingGen: {A(plan.Name)}'s stair at {key} skips a storey");
                 List<(int X, int Z)> FreeCells(bool low) => alongX ? new List<(int, int)> { (low ? x0 : x1 - 1, z0), (low ? x0 : x1 - 1, z0 + 1) }
                                                                    : new List<(int, int)> { (x0, low ? z0 : z1 - 1), (x0 + 1, low ? z0 : z1 - 1) };
                 IEnumerable<(int X, int Z)> Around((int X, int Z) c) => new[] { (c.X + 1, c.Z), (c.X - 1, c.Z), (c.X, c.Z + 1), (c.X, c.Z - 1) };
@@ -516,7 +519,7 @@ namespace UnturnedSim
             foreach (var pd in plan.Doors)
             {
                 var room = At(0, pd.R, pd.C);
-                if (room == null) throw new InvalidOperationException($"BuildingGen: a {plan.Name}'s street door at r{pd.R}c{pd.C} is in no room");
+                if (room == null) throw new InvalidOperationException($"BuildingGen: {A(plan.Name)}'s street door at r{pd.R}c{pd.C} is in no room");
                 var face = Face(pd.Face);
                 var role = pd.Back ? DoorRole.Back : DoorRole.Front;
                 if (room.Kind == RoomKind.Stairwell)
