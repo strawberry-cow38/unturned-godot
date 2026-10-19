@@ -50,7 +50,7 @@ namespace UnturnedSim
     public static partial class BuildingGen
     {
         /// <summary>A tower's open office has a desk to about every TowerDeskArea m2, up to TowerDesks (Furnish's Office, OfficeFloor).</summary>
-        const int TowerDesks = 16;
+        const int TowerDesks = 12;
         const float TowerDeskArea = 45f;
 
         /// <summary>The rooms a tower's plans hold past the house caps (CapCells), gated to the tower as the strip's dining room is: an

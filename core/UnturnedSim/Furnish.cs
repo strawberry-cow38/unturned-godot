@@ -669,7 +669,8 @@ namespace UnturnedSim
                 // (testing only: what a later recipe might also ask for, put the way any piece is)
                 if (FurnishAlso != null) foreach (var n in FurnishAlso(_room)) Put(n, Against(n, Side.Back));
                 Coats();
-                Jitter();
+                // (an open office's rows stand square, as a typing pool's do -- and a big room's every nudge is a walk of its floor)
+                if (!(_res.Kind == BuildingKind.Tower && _room.Kind == RoomKind.Office && _room.Cells > CapCells(RoomKind.Office, BuildingKind.Commercial))) Jitter();
                 // (every room's windows over what now stands in front of them, where each piece finally is)
                 WindowsOverPieces();
                 CeilingLights();
@@ -2233,11 +2234,9 @@ namespace UnturnedSim
             /// a monitor on it; a filing cabinet and a bookcase along the walls.</summary>
             void Office()
             {
-                Desk();
-                // (a tower's open office -- a typing pool, an open-plan floor, past a cellular office's cap: TowerCap -- has a desk to
-                // about every TowerDeskArea of floor, round its walls, up to TowerDesks)
-                if (_res.Kind == BuildingKind.Tower && _room.Cells > CapCells(RoomKind.Office, BuildingKind.Commercial))
-                    for (int k = 1; k < Math.Min(TowerDesks, (int)(_area / TowerDeskArea)); k++) if (!Desk()) break;
+                // (a tower's open office -- a typing pool, an open-plan floor, past a cellular office's cap: TowerCap -- its desks in rows)
+                if (_res.Kind == BuildingKind.Tower && _room.Cells > CapCells(RoomKind.Office, BuildingKind.Commercial)) OpenOffice();
+                else Desk();
                 Put("Files_0", Against("Files_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
                 if (_area >= 18f) Put("Shelf_2", Against("Shelf_2", Side.Back), (x, z, yaw) => NearestDoor(x, z));
             }
@@ -2262,6 +2261,42 @@ namespace UnturnedSim
                 }
                 return false;
             }
+
+            /// <summary>An open office's desks (a tower's typing pool, an open-plan floor): in rows down each of its rectangles two cells
+            /// or more across, every desk with its chair behind it and its screen on it, all facing one way, OpenAisle between a
+            /// row's chairs and the desks behind, OpenGap between desks along a row, OpenMargin clear of the walls -- to about one
+            /// every TowerDeskArea of floor, TowerDesks at the most. Each goes in through Put on its one spot (a doorway, a window's
+            /// zone or the stairs there and it is left out), so a big floor costs a desk a try, not a wall's every spot a desk.</summary>
+            void OpenOffice()
+            {
+                var cs = FurnitureCatalog.Sizes["Chair_Wood_1"]; var ds = FurnitureCatalog.Sizes["Table_Wood_2"];
+                float d = cs.Y1 + 0.05f - ds.Y0, deep = d + ds.Y1 - cs.Y0, wide = ds.X1 - ds.X0;
+                int want = Math.Max(1, Math.Min(TowerDesks, (int)(_area / TowerDeskArea))), have = 0;
+                foreach (var q in _room.Rects.OrderByDescending(q => (q.X1 - q.X0) * (q.Z1 - q.Z0)))
+                {
+                    if (Math.Min(q.X1 - q.X0, q.Z1 - q.Z0) < 2) continue;
+                    bool alongX = q.X1 - q.X0 >= q.Z1 - q.Z0;
+                    float a0 = (alongX ? q.X0 : q.Z0) * Cell + OpenMargin, a1 = (alongX ? q.X1 : q.Z1) * Cell - OpenMargin;
+                    float b0 = (alongX ? q.Z0 : q.X0) * Cell + OpenMargin, b1 = (alongX ? q.Z1 : q.X1) * Cell - OpenMargin;
+                    // the chairs' fronts toward +across: yaw 180 faces +Z, 270 faces +X
+                    float yaw = alongX ? 180f : 270f;
+                    for (float b = b0 - cs.Y0; b + d + ds.Y1 <= b1 + 1e-3f && have < want; b += deep + OpenAisle)
+                        for (float a = a0 + wide * 0.5f; a + wide * 0.5f <= a1 + 1e-3f && have < want; a += wide + OpenGap)
+                        {
+                            var (cx, cz) = alongX ? (a, b) : (b, a);
+                            var (fx, fz) = FrontOf(yaw);
+                            var desk = Put("Table_Wood_2", new[] { (cx + fx * d, cz + fz * d, yaw) });
+                            if (desk == null) continue;
+                            if (Put("Chair_Wood_1", new[] { (cx, cz, yaw) }) == null) { Remove(desk); continue; }
+                            On(desk, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);
+                            On(desk, "Lamp_0", 0.55f, -0.45f, (yaw + 180f) % 360f);
+                            have++;
+                        }
+                }
+            }
+            /// <summary>An open office's rows: the walk between one row's chairs and the next row's desks, the gap between two desks of
+            /// a row, and the floor kept clear along the walls.</summary>
+            const float OpenAisle = 1.6f, OpenGap = 0.9f, OpenMargin = 1.0f;
 
             double DeskScore(float x, float z, float yaw)
             {
