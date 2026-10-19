@@ -404,6 +404,22 @@ namespace UnturnedSim
                 }
                 if (sales[u] == null) throw new InvalidOperationException($"BuildingGen: tenant {u} of the {layout.Name} has no room for a street door");
             }
+            // ---- an end cap's side door: the end unit's sales floor, glazed round the corner (BuildWalls), has a door on its end
+            // wall too -- the research's "end caps also a side door" (L6), the corner grocer's "side/corner door" (L1), the
+            // dry cleaner's "also on its S side wall" (L3) -- in its longest run of end wall, where it clears the doors so far;
+            // never on a side asked to have no windows (a party wall in a row: the same frame BuildWalls reads, laid)
+            var blind = front == Sides.South ? Turned(spec.NoWindows) : spec.NoWindows;
+            for (int u = 0; u < units; u++)
+            {
+                var alley = Turned(frontSide[u]);
+                var end = runs.Where(q => q.B == null && q.A.Unit == u && q.A.Kind is RoomKind.Shop or RoomKind.DiningRoom && !Street(q)
+                                          && g.Out(q.AlongX, q.Line, q.S0) is var sd && sd != frontSide[u] && sd != alley && (sd & blind) == 0)
+                              .OrderByDescending(q => q.S1 - q.S0).FirstOrDefault();
+                if (end.A == null) continue;
+                var (d, crowded) = OutDoor(g, end, doors, DoorRole.Front);
+                if (d == null || crowded) continue;
+                doors.Add(d); outsideDoors.Add(d);
+            }
             // ---- and its back door: onto the alley (the side its street door's is not), out of its rear vestibule where it has
             // one, else its stock room, else whatever reaches the alley (BackDoorOrder) -- clear of every corner a door is by
             var backOrder = BackDoorOrder(BuildingKind.Strip);
