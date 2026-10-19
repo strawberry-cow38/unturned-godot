@@ -385,6 +385,10 @@ namespace UnturnedSim
             }
             var doors = new List<GenDoor>();
             var outsideDoors = new List<GenDoor>();
+            // (a storefront's door is plate glass -- strawberry: "plate glass doors (that fit/match the current style)", its
+            // pane the windows' breakable glass -- bronze-framed on the 1920s taxpayer row, the era's storefront metal,
+            // aluminium on the post-war strips; a back door stays the plain one)
+            string glassDoor = layout.Style == StripStyle.Taxpayer ? StorefrontDoorBronze : StorefrontDoor;
             var sales = new GenRoom[units];
             var frontSide = new Sides[units];
             for (int u = 0; u < units; u++)
@@ -400,6 +404,7 @@ namespace UnturnedSim
                     var (d, _) = OutDoor(g, sr, doors, DoorRole.Front);
                     if (d == null) { res.Notes.Add($"tenant {u}'s {sr.A.Kind} has no room for a street door"); continue; }
                     if (sales[u] == null) { sales[u] = sr.A; frontSide[u] = g.Out(sr.AlongX, sr.Line, sr.S0); }
+                    d.DoorProp = glassDoor;
                     doors.Add(d); outsideDoors.Add(d);
                 }
                 if (sales[u] == null) throw new InvalidOperationException($"BuildingGen: tenant {u} of the {layout.Name} has no room for a street door");
@@ -418,6 +423,7 @@ namespace UnturnedSim
                 if (end.A == null) continue;
                 var (d, crowded) = OutDoor(g, end, doors, DoorRole.Front);
                 if (d == null || crowded) continue;
+                d.DoorProp = glassDoor;
                 doors.Add(d); outsideDoors.Add(d);
             }
             // ---- and its back door: onto the alley (the side its street door's is not), out of its rear vestibule where it has
@@ -645,6 +651,10 @@ namespace UnturnedSim
             var fs = g.Out(own.AlongX, own.Line, (int)MathF.Floor(own.At / Cell));
             return sd == fs ? Face.Front : sd == Turned(fs) ? Face.Back : Face.Side;
         }
+
+        /// <summary>The storefront doors' leaves (astraclaw's, game/ObjectDoor.PlateGlass.cs): aluminium-framed, and the
+        /// bronze-framed one. Each carries its own swinging, breakable pane, so the opening is the plain door archetype.</summary>
+        public const string StorefrontDoor = "Door_PlateGlass", StorefrontDoorBronze = "Door_PlateGlass_Bronze";
 
         /// <summary>Canopy posts stand no further apart than this along the walk: a tenant's frontage is split in an odd number of
         /// spans (so its door, in the middle, is between two posts) no longer than it.</summary>
