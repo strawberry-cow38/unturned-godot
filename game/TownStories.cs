@@ -167,7 +167,7 @@ namespace UnturnedGodot
                 {
                     // barriers + a spike strip across, a sign, and an APC or humvee pulled up beside
                     BarrierLine(objs, terr, at, along, right, half, side, h);
-                    PlaceProp(objs, terr, Spikes, at - along * 2.5f, ProcIsland.YawForDir(right.X, right.Z));
+                    PlaceProp(objs, terr, Spikes, at - along * 2.5f, ProcIsland.YawForDir(right.X, -right.Z));
                     PlaceProp(objs, terr, MilSign, at + right * (side * (half + 1.5f)) + along * 3f, ProcIsland.YawForDir(-along.X, -along.Z));
                     PlaceVehicle(world, terr, Unit(h, 26) < 0.5f ? "apc" : "humvee", Var(h), at - along * 9f - right * (side * (half + 1.5f)),
                                  ProcIsland.YawForDir(along.X, along.Z) + 20f, play);
@@ -181,7 +181,10 @@ namespace UnturnedGodot
         /// <summary>A line of concrete barriers across the carriageway, leaving a gap on `side` -- a chicane, not a wall.</summary>
         void BarrierLine(EditorObjects objs, Terrain terr, Vector3 at, Vector3 along, Vector3 right, float half, int side, ulong h)
         {
-            float yaw = ProcIsland.YawForDir(right.X, right.Z);     // barriers stand ACROSS the road
+            // ⚠ barriers SPAN the road: their 3 m length runs along `right` (across the carriageway), not along it. Same
+            // convention as EditorBlockRoad -- YawForDir(d.X, -d.Z) orients a Block_Road_0's length along d -- fed the ACROSS
+            // direction. My first cut dropped the -Z and the blocks ran WITH the road line (strawberry 2026-10-19).
+            float yaw = ProcIsland.YawForDir(right.X, -right.Z);
             float gap = 3.2f;                                       // one lane left open
             float from = -half + 0.5f, to = half - 0.5f - gap;      // leave the gap on the +side end
             if (side < 0) { from = -half + 0.5f + gap; to = half - 0.5f; }
