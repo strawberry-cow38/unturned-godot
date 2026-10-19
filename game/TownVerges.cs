@@ -403,7 +403,11 @@ void fragment() {
                 {
                     float a = run.A + EndLanding(run.JunctionA, walk.DipRamp) + PlanterSize, b = run.B - EndLanding(run.JunctionB, walk.DipRamp) - PlanterSize;
                     if (b - a < 0.5f) continue;
-                    int n = Mathf.Max(1, Mathf.FloorToInt((b - a) / StreetTreeSpacing) + 1);
+                    // ⭐ WEALTH SETS HOW MANY (strawberry 2026-10-19): a poor town plants trees far apart or not at all,
+                    // a rich one lines the street. StreetTreeEvery scales the spacing (0.2 = 5x the gap); ~0 plants none.
+                    if (StreetTreeEvery < 0.03f) continue;
+                    float spacing = StreetTreeSpacing / Mathf.Clamp(StreetTreeEvery, 0.03f, 1f);
+                    int n = Mathf.Max(1, Mathf.FloorToInt((b - a) / spacing) + 1);
                     float step = n > 1 ? (b - a) / (n - 1) : 0f;
                     for (int k = 0; k < n; k++)
                     {

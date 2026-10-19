@@ -10756,16 +10756,33 @@ namespace UnturnedGodot
             // (metres across), UG_TOWNEXTENT asks for one (a half-width, as it always was), UG_TOWNSPACING fixes the block.
             town.Vary = System.Environment.GetEnvironmentVariable("UG_TOWNVARY") != "0";
             var icT = System.Globalization.CultureInfo.InvariantCulture;
-            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSIZEMIN"), System.Globalization.NumberStyles.Float, icT, out float tmin) && tmin > 50f) town.SizeMin = tmin;
-            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSIZEMAX"), System.Globalization.NumberStyles.Float, icT, out float tmax) && tmax > 50f) town.SizeMax = tmax;
+            // ⭐ CLASS + WEALTH (strawberry 2026-10-19): the seed rolls both; UG_TOWNCLASS / UG_TOWNWEALTH force one,
+            // UG_TOWNNOCLASS=1 is the plain Vary town (no class tuning).
+            town.ClassAware = System.Environment.GetEnvironmentVariable("UG_TOWNNOCLASS") != "1";
+            switch ((System.Environment.GetEnvironmentVariable("UG_TOWNCLASS") ?? "").ToLowerInvariant())
+            {
+                case "hamlet":    town.Size = TownRoadGrid.SettlementSize.Hamlet; town.ClassForced = true; break;
+                case "smalltown": town.Size = TownRoadGrid.SettlementSize.SmallTown; town.ClassForced = true; break;
+                case "town":      town.Size = TownRoadGrid.SettlementSize.Town; town.ClassForced = true; break;
+                case "city":      town.Size = TownRoadGrid.SettlementSize.City; town.ClassForced = true; break;
+            }
+            switch ((System.Environment.GetEnvironmentVariable("UG_TOWNWEALTH") ?? "").ToLowerInvariant())
+            {
+                case "poor":     town.Money = TownRoadGrid.Wealth.Poor; town.WealthForced = true; break;
+                case "working":  town.Money = TownRoadGrid.Wealth.Working; town.WealthForced = true; break;
+                case "affluent": town.Money = TownRoadGrid.Wealth.Affluent; town.WealthForced = true; break;
+            }
+            // explicit size/spacing overrides win over the class defaults (ApplyClassAndWealth skips those when forced)
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSIZEMIN"), System.Globalization.NumberStyles.Float, icT, out float tmin) && tmin > 50f) { town.SizeMin = tmin; town.SizeForced = true; }
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSIZEMAX"), System.Globalization.NumberStyles.Float, icT, out float tmax) && tmax > 50f) { town.SizeMax = tmax; town.SizeForced = true; }
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
                     System.Globalization.NumberStyles.Float, icT, out float tex) && tex > 50f) { town.Extent = tex; town.RequestedSize = 2f * tex; }
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSPACING"),
-                    System.Globalization.NumberStyles.Float, icT, out float tsp) && tsp > 10f) { town.Spacing = tsp; town.SpacingMin = town.SpacingMax = tsp; }
+                    System.Globalization.NumberStyles.Float, icT, out float tsp) && tsp > 10f) { town.Spacing = tsp; town.SpacingMin = town.SpacingMax = tsp; town.SpacingForced = true; }
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNBEARING"), System.Globalization.NumberStyles.Float, icT, out float tbr))
             { town.Bearing = Mathf.DegToRad(tbr); town.KeepBearing = true; }
             town.ChooseLayout();
-            if (town.Vary) Log.Print($"[towngrid] layout {town.LayoutSummary}");
+            if (town.Vary) { Log.Print($"[towngrid] class {town.ClassSummary}"); Log.Print($"[towngrid] layout {town.LayoutSummary}"); }
             // ⚠ SITE THE TOWN ON THE FLATTEST DRY GROUND, by scanning -- not at the origin, and not at
             // "wherever road 0 happens to be". A town dropped on a hillside is mostly refused nodes, and
             // the render would then be of the gates working rather than of a grid. The scan is over the
@@ -10939,6 +10956,8 @@ namespace UnturnedGodot
             // the dead space the plots left, filled (strawberry 2026-10-14: "procedural filling for dead space / empty lots /
             // parks. using hedges as splines"): hedgerows down the strips, pocket parks in the bigger pieces
             if (!noWalk) town.PlantGreens(rf, editor.Objects);
+            // a poor town's dead space is bare dirt, not grass (strawberry 2026-10-19: "dirt patches -> nice parks")
+            if (!noWalk && town.DirtDeadSpace) town.PaintDeadSpaceDirt(terrain);
             Lap("greens");
             // the yard fences PlanPlots designated, laid as fences (strawberry 2026-10-14: "work on getting fences as splines")
             if (!noWalk) town.BuildFences(editor, editor.Objects);

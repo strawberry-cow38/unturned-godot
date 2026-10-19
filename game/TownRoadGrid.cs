@@ -907,6 +907,118 @@ namespace UnturnedGodot
         /// <summary>Per interior side-street span, the chance it is left out and the two blocks either side become one.</summary>
         public float SuperblockChance = 0.12f;
 
+        // ================== SETTLEMENT CLASS + WEALTH (strawberry 2026-10-19) ==================
+        // "give towngen awareness of the differences between a small town, vs bigger towns, vs cities. as well as the wealth,
+        // since a poorer town may not have all of the nice boulevards, sidewalks, or pedestrian infrastructure" + "town wealth
+        // may also effect the buildings, businesses, as well as what appears in dead space. dirt patches -> nice parks".
+        //
+        // Two axes, each rolled per seed (or forced). They do NOT add new machinery -- they TUNE the dials the rest of the
+        // generator already reads, before ChooseLayout runs: size, block, main-street frequency and the plot-kind MIX (class);
+        // boulevards, street profiles, pavement width, street trees, crossings and the parks (wealth). ApplyClassAndWealth is
+        // the one place the two axes become numbers, so a render of "a poor city" vs "an affluent hamlet" is a set of knobs,
+        // not a special case scattered through the file.
+
+        /// <summary>How big the place is. Hamlet: a few blocks, nearly all houses. City: wide, small blocks, shops and flats.</summary>
+        public enum SettlementSize { Hamlet, SmallTown, Town, City }
+        /// <summary>How well-off it is. Matches tinyclaw's BuildingGenSpec.Wealth 1:1 so SpecFor can pass it straight through.</summary>
+        public enum Wealth { Poor, Working, Affluent }
+        /// <summary>This town's class and wealth. ApplyClassAndWealth sets them from the seed unless forced (ClassForced /
+        /// WealthForced, or the env/menu). Read by SpecFor (buildings), the greens (parks) and the strip tenant mix.</summary>
+        public SettlementSize Size = SettlementSize.Town;
+        public Wealth Money = Wealth.Working;
+        public bool ClassForced, WealthForced, SizeForced, SpacingForced;
+        /// <summary>Whether a varied town tunes its dials to its class and wealth. Off = the plain Vary town (every test's).</summary>
+        public bool ClassAware = true;
+        /// <summary>One line naming the class and wealth and what they set, for the log.</summary>
+        public string ClassSummary = "";
+
+        /// <summary>Turn the two axes into the dials ChooseLayout and the builders read. Called once, at the top of ChooseLayout,
+        /// BEFORE it reads SizeMin/Spacing/MainEvery. Deterministic from the seed; a forced axis is left as set.</summary>
+        void ApplyClassAndWealth()
+        {
+            if (!ClassAware) return;
+            ulong hc = Mix(((ulong)(uint)Seed << 32) ^ 0xC1A55UL), hw = Mix(hc ^ 0x3EA17UL);
+            // ---- which class: hamlets and towns common, cities rare (a map is mostly small places with one city)
+            if (!ClassForced)
+            {
+                float u = Unit(hc, 0);
+                Size = u < 0.30f ? SettlementSize.Hamlet : u < 0.62f ? SettlementSize.SmallTown : u < 0.88f ? SettlementSize.Town : SettlementSize.City;
+            }
+            // ---- which wealth: working common, poor and affluent the tails
+            if (!WealthForced)
+            {
+                float u = Unit(hw, 0);
+                Money = u < 0.33f ? Wealth.Poor : u < 0.78f ? Wealth.Working : Wealth.Affluent;
+            }
+
+            // ---- SIZE DIALS (the footprint, the block, how often a main street) ----
+            // ⚠ an explicit UG_TOWNSIZE*/SPACING override wins -- those set *Forced and this leaves them.
+            var (szMin, szMax, spMin, spMax, me) = Size switch
+            {
+                SettlementSize.Hamlet    => (140f, 260f, 110f, 135f, 5),   // a cluster, big rural blocks, a main through it
+                SettlementSize.SmallTown => (260f, 430f, 105f, 125f, 4),
+                SettlementSize.Town      => (420f, 650f, 100f, 120f, 3),
+                SettlementSize.City      => (640f, 920f,  92f, 108f, 2),   // wide, tight blocks, a main every other line
+                _                        => (SizeMin, SizeMax, SpacingMin, SpacingMax, MainEvery),
+            };
+            if (!SizeForced) { SizeMin = szMin; SizeMax = szMax; }
+            if (!SpacingForced) { SpacingMin = spMin; SpacingMax = spMax; }
+            MainEvery = me;
+            // ⚠ THE MIX IS NOT SET HERE -- it comes from DENSITY, per block (strawberry 2026-10-19: "a separate density heatmap.
+            // ie the downtown isnt magically giant plots, space is still a premium downtown"). Class shapes the density FIELD
+            // (a city has a broad dense core, a hamlet almost none, Density()); KindsFor reads the density where each plot sits
+            // and picks flats/shops/small lots downtown, roomy houses on the cheap edge -- the same for a poor or a rich town.
+
+            // ---- WEALTH DIALS (the nice stuff: boulevards, pavements, trees, crossings, parks) ----
+            // A boulevard is a well-off flourish: never in a poor town, a city always, the middle only if it is affluent.
+            Boulevards = Money != Wealth.Poor && (Size == SettlementSize.City || Money == Wealth.Affluent)
+                         && System.Environment.GetEnvironmentVariable("UG_TOWNNOBOULEVARD") != "1";
+            // street profiles: poor = mostly kerb-only or no pavement at all, no verges; affluent = wide paved walks and grass
+            // verges; working in between. (shares of the NON-main, non-business streets; a main is always paved.)
+            (VergeShare, KerbOnlyShare, NoPavementShare, PavementWidth) = Money switch
+            {
+                Wealth.Poor     => (0.00f, 0.82f, 0.00f, 2.0f),   // kerbs and weedy grass, almost no footway
+                Wealth.Working  => (0.35f, 0.25f, 0.00f, 3.0f),
+                Wealth.Affluent => (0.60f, 0.05f, 0.00f, 4.5f),   // verges and broad walks
+                _               => (VergeShare, KerbOnlyShare, NoPavementShare, PavementWidth),
+            };
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNWALK"), System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float tw) && tw > 0.5f) PavementWidth = tw;
+            // pedestrian crossings: a poor town has few, an affluent one has them at most side junctions
+            SideCrossingShare = Money switch { Wealth.Poor => 0.08f, Wealth.Working => 0.40f, Wealth.Affluent => 0.75f, _ => SideCrossingShare };
+            // street trees: poor plants almost none (sparse + small), affluent lines the streets
+            (StreetTreeEvery, GreenRichness) = Money switch
+            {
+                Wealth.Poor     => (0.20f, 0.15f),
+                Wealth.Working  => (0.75f, 0.55f),
+                Wealth.Affluent => (1.00f, 1.00f),
+                _               => (StreetTreeEvery, GreenRichness),
+            };
+            // ⭐ DEAD SPACE: a poor town's is bare dirt and weeds, a rich town's is a hedged park with benches (strawberry: "dirt
+            // patches -> nice parks"). GreenRichness scales the thresholds the greens read -- a high ParkMinArea means few dead
+            // patches are big enough to become a park, a high BenchMinParkArea means none get benches. DirtDeadSpace paints the
+            // rest as dirt. (The knobs live in TownGreens, this partial class, so setting them here is enough.)
+            float gr = Mathf.Clamp(GreenRichness, 0.05f, 1f);
+            ParkMinArea = 250f / gr;                 // poor (0.15): parks need ~1670 m2, so almost none form
+            BenchMinParkArea = 600f / gr;            // and essentially no benches
+            ParkOpenChance = Mathf.Lerp(0.15f, 0.45f, gr);
+            RowHedgeChance = Mathf.Lerp(0.10f, 0.70f, gr);   // poor: strips are bushes/weeds, not clipped hedgerows
+            DirtDeadSpace = GreenRichness < 0.35f;   // the leftover dead space is painted dirt, not left as grass
+            BushScale = Mathf.Lerp(0.35f, 0.5f, gr);
+
+            ClassSummary = $"{Size} / {Money}: {SizeMin:0}-{SizeMax:0} m, blocks {SpacingMin:0}-{SpacingMax:0}, a main every {MainEvery}, "
+                         + $"boulevard {(Boulevards ? "yes" : "no")}, walks {PavementWidth:0.0} m (verge {VergeShare:0.00}/kerb {KerbOnlyShare:0.00}/"
+                         + $"none {NoPavementShare:0.00}), crossings {SideCrossingShare:0.00}, trees x{StreetTreeEvery:0.00}, greens x{GreenRichness:0.00}";
+        }
+        /// <summary>Share of non-main streets with NO kerb and NO pavement at all -- just the road and grass to the plots
+        /// (a poor or rural street). The remainder after VergeShare + KerbOnlyShare that is not plain pavement.</summary>
+        public float NoPavementShare = 0.0f;
+        /// <summary>How much of the normal street-tree run a town plants (0 = none, 1 = the full spacing). Wealth sets it.</summary>
+        public float StreetTreeEvery = 1.0f;
+        /// <summary>How nice the dead space is: 0 = bare dirt and weeds (a poor town), 1 = full hedged parks with benches and
+        /// trees. Scales park frequency, benches and planting in TownGreens.</summary>
+        public float GreenRichness = 1.0f;
+
         // ---- the rules ----
         /// <summary>No two junctions closer than this, metres. A diagonal's crossing has to stand this far from both ends of the
         /// street it crosses, or the avenue is not built across that street.</summary>
@@ -941,6 +1053,7 @@ namespace UnturnedGodot
         {
             if (!Vary || _layoutChosen) return;
             _layoutChosen = true;
+            ApplyClassAndWealth();          // ⭐ class + wealth set the dials below BEFORE the seed reads them
             ulong h0 = Mix(((ulong)(uint)Seed << 32) ^ 0x7A40C5UL), h1 = Mix(h0 ^ 0x51DE5UL), h2 = Mix(h1 ^ 0xD1A6UL);
             if (!KeepBearing) Bearing = Unit(h0, 0) * Mathf.Pi * 0.5f;
             Spacing = Mathf.Lerp(Mathf.Min(SpacingMin, SpacingMax), Mathf.Max(SpacingMin, SpacingMax), Unit(h0, 16));
@@ -987,7 +1100,9 @@ namespace UnturnedGodot
             // would meet ON a lattice line -- a six-way -- whichever offsets they had)
             _diagonals.Clear();
             float pick = Unit(h1, 32);
-            int count = Diagonal ? (pick < 0.3f ? 0 : pick < 0.8f ? 1 : 2) : 0;
+            // ⭐ a 45-degree AVENUE is a grand gesture: a poor town never gets one, a hamlet rarely, a city can have two.
+            int maxDiag = !ClassAware ? 2 : Money == Wealth.Poor ? 0 : Size switch { SettlementSize.Hamlet => 1, SettlementSize.City => 2, _ => (Money == Wealth.Affluent ? 2 : 1) };
+            int count = !Diagonal ? 0 : Mathf.Min(maxDiag, pick < 0.3f ? 0 : pick < 0.8f ? 1 : 2);
             int slope = Unit(h2, 16) < 0.5f ? 1 : -1;
             int k1 = -n + (int)(Unit(h2, 32) * (2 * n));
             for (int d = 0; d < count; d++)
@@ -4749,11 +4864,66 @@ namespace UnturnedGodot
 
         /// <summary>The plots the last MarkPlots laid.</summary>
         public readonly List<Plot> Plots = new();
-        /// <summary>What fronts a main, and what fronts a street.</summary>
-        static readonly PlotKind[] MainPlotKinds = { PlotKind.Shop, PlotKind.Apartments, PlotKind.HouseLarge };
-        static readonly PlotKind[] StreetPlotKinds = { PlotKind.HouseSmall, PlotKind.HouseMedium, PlotKind.HouseLarge };
+        /// <summary>What fronts a main, and what fronts a street. The DEFAULTS; ApplyClassAndWealth swaps the instance
+        /// fields below per class (a city fronts its mains with flats, a hamlet with houses). A town with ClassAware off keeps
+        /// these.</summary>
+        static readonly PlotKind[] DefaultMainKinds = { PlotKind.Shop, PlotKind.Apartments, PlotKind.HouseLarge };
+        static readonly PlotKind[] DefaultStreetKinds = { PlotKind.HouseSmall, PlotKind.HouseMedium, PlotKind.HouseLarge };
+        public PlotKind[] MainKinds = DefaultMainKinds;
+        public PlotKind[] StreetKinds = DefaultStreetKinds;
         /// <summary>The kinds a main's frontage is offered, or a street's.</summary>
-        public static IReadOnlyList<PlotKind> FrontageKinds(bool main) => main ? MainPlotKinds : StreetPlotKinds;
+        public IReadOnlyList<PlotKind> FrontageKinds(bool main) => main ? MainKinds : StreetKinds;
+
+        /// <summary>⭐ LAND VALUE at a world point, 0 (cheap edge) .. 1 (prime downtown) -- the DENSITY heatmap (strawberry
+        /// 2026-10-19: "a separate density heatmap. ie the downtown isnt magically giant plots, space is still a premium
+        /// downtown ... poorer places can still have big motels, strip malls, parking lots. where land is cheap").
+        ///
+        /// A radial falloff from the town centre, its peak and reach set by the CLASS (a city has a broad high core, a hamlet
+        /// almost none), plus a little per-block noise so the core is not a perfect disc. It is NOT wealth: a poor downtown is
+        /// still dense and a rich town still has cheap roomy edges. Drives the plot MIX (KindsFor) and is read by the buildings
+        /// (tall where it is high). Flat 0.5 when the town is not class-aware, so nothing changes for the plain Vary town.</summary>
+        public float Density(Vector3 world)
+        {
+            if (!ClassAware) return 0.5f;
+            float c = Mathf.Cos(Bearing), s = Mathf.Sin(Bearing);
+            float dx = world.X - Centre.X, dz = world.Z - Centre.Z;
+            float u = dx * c + dz * s, v = -dx * s + dz * c;
+            float span = Mathf.Max(1f, Mathf.Max(_nU == int.MaxValue ? 2 : _nU, _nV == int.MaxValue ? 2 : _nV) * Spacing);
+            float r = Mathf.Max(Mathf.Abs(u), Mathf.Abs(v)) / span;            // 0 at the centre, ~1 at the outer streets
+            (float peak, float coreR, float edgeR) = Size switch
+            {
+                SettlementSize.City      => (1.00f, 0.22f, 0.95f),
+                SettlementSize.Town      => (0.80f, 0.14f, 0.82f),
+                SettlementSize.SmallTown => (0.55f, 0.08f, 0.72f),
+                SettlementSize.Hamlet    => (0.32f, 0.00f, 0.60f),
+                _                        => (0.65f, 0.12f, 0.82f),
+            };
+            float d = peak * (1f - Mathf.SmoothStep(coreR, edgeR, r));
+            // a little block-scale noise (deterministic), so the downtown edge is ragged, not a circle
+            ulong hn = Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)(Mathf.RoundToInt(u / Spacing) + 128) << 10) ^ (uint)(Mathf.RoundToInt(v / Spacing) + 128) ^ 0xDE5A7UL));
+            d += (Unit(hn, 0) - 0.5f) * 0.18f;
+            return Mathf.Clamp(d, 0f, 1f);
+        }
+
+        /// <summary>The plot kinds a street's frontage is offered, by the DENSITY where it runs -- flats and shops and small
+        /// lots downtown, roomy houses on the cheap edge. A main frontage carries the bigger/commercial kinds; a side street
+        /// the homes. The plain (not class-aware) town keeps the flat MainKinds/StreetKinds.</summary>
+        PlotKind[] KindsFor(RoadField roads, int r)
+        {
+            bool main = IsMain(roads, r);
+            if (!ClassAware) return main ? MainKinds : StreetKinds;
+            float L = roads.RoadLength(r);
+            float d = roads.EvaluateAlong(r, L * 0.5f, out var mid, out _, snapTerrain: false) ? Density(new Vector3(mid.X, 0f, mid.Z)) : 0.4f;
+            if (main)
+                return d >= 0.70f ? new[] { PlotKind.Apartments, PlotKind.Shop, PlotKind.Apartments }
+                     : d >= 0.45f ? new[] { PlotKind.Shop, PlotKind.Apartments, PlotKind.HouseLarge }
+                     : d >= 0.22f ? new[] { PlotKind.Shop, PlotKind.HouseLarge, PlotKind.HouseMedium }
+                     :              new[] { PlotKind.HouseLarge, PlotKind.HouseMedium, PlotKind.Shop };   // cheap edge main: roomy + a shop
+            return d >= 0.70f ? new[] { PlotKind.HouseSmall, PlotKind.HouseSmall, PlotKind.Apartments }    // terraces + the odd block
+                 : d >= 0.45f ? new[] { PlotKind.HouseSmall, PlotKind.HouseMedium }
+                 : d >= 0.22f ? new[] { PlotKind.HouseMedium, PlotKind.HouseLarge }
+                 :              new[] { PlotKind.HouseLarge, PlotKind.HouseMedium };                       // cheap edge: room to spread
+        }
 
         /// <summary>A back lane through a block, from the pavement of one street to the pavement of the next.</summary>
         public sealed class Alley
@@ -5088,7 +5258,7 @@ namespace UnturnedGodot
                         }
                         return at;
                     }
-                    PlotKind[] KindsOn(int axis, int line) => MainLine(axis, line - _lineN) ? MainPlotKinds : StreetPlotKinds;
+                    PlotKind[] KindsOn(int axis, int line) => MainLine(axis, line - _lineN) ? MainKinds : StreetKinds;
                     for (int gi = 0; gi + 1 < wl; gi++)
                         for (int gj = 0; gj + 1 < wl; gj++)
                         {
@@ -5114,12 +5284,12 @@ namespace UnturnedGodot
                             bool alongV = rowsMain == colsMain ? Unit(ch, 0) < 0.5f : colsMain;
                             if (alongV)
                             {
-                                float at = BestLane(uLo, uHi, row0 || row1 ? MainPlotKinds : StreetPlotKinds, ch);
+                                float at = BestLane(uLo, uHi, row0 || row1 ? MainKinds : StreetKinds, ch);
                                 Lane(ToWorld(at, _lineV[gj], 0f), ToWorld(at, _lineV[gj + 1], 0f));
                             }
                             else
                             {
-                                float at = BestLane(vLo, vHi, col0 || col1 ? MainPlotKinds : StreetPlotKinds, ch);
+                                float at = BestLane(vLo, vHi, col0 || col1 ? MainKinds : StreetKinds, ch);
                                 Lane(ToWorld(_lineU[gi], at, 0f), ToWorld(_lineU[gi + 1], at, 0f));
                             }
                         }
@@ -5171,7 +5341,6 @@ namespace UnturnedGodot
                 // ---- frontages: mains first, then streets, each side walked from end to end
                 var order = new List<int>(Built);
                 order.Sort((x, y) => { int mx = IsMain(roads, x) ? 0 : 1, my = IsMain(roads, y) ? 0 : 1; return mx != my ? mx.CompareTo(my) : x.CompareTo(y); });
-                var mainKinds = MainPlotKinds; var streetKinds = StreetPlotKinds;
                 Plot PlotAt(int r, int side, float off, float mid, float w, float d, PlotKind kind, Vector3? runDir = null)
                 {
                     if (!roads.EvaluateAlong(r, mid, out var pos, out var tan, snapTerrain: false)) return null;
@@ -5200,7 +5369,7 @@ namespace UnturnedGodot
                 foreach (int r in order)
                 {
                     var ds = new List<float>();
-                    foreach (var k in IsMain(roads, r) ? mainKinds : streetKinds) if (!ds.Contains(SizeOf(k).Depth)) ds.Add(SizeOf(k).Depth);
+                    foreach (var k in KindsFor(roads, r)) if (!ds.Contains(SizeOf(k).Depth)) ds.Add(SizeOf(k).Depth);
                     ds.Sort((x, y) => y.CompareTo(x));
                     if (!FillShallower) ds.RemoveRange(1, ds.Count - 1);
                     depthsOf[r] = ds; passes = Mathf.Max(passes, ds.Count);
@@ -5212,7 +5381,7 @@ namespace UnturnedGodot
                     if (pass >= depthsOf[r].Count) continue;
                     float depth = depthsOf[r][pass];
                     var fitting = new List<PlotKind>();
-                    foreach (var k in IsMain(roads, r) ? mainKinds : streetKinds) if (SizeOf(k).Depth <= depth + 1e-3f) fitting.Add(k);
+                    foreach (var k in KindsFor(roads, r)) if (SizeOf(k).Depth <= depth + 1e-3f) fitting.Add(k);
                     var kinds = fitting.ToArray();
                     float L = roads.RoadLength(r), off = Front(r);
                     for (int side = -1; side <= 1; side += 2)

@@ -46,6 +46,12 @@ namespace UnturnedGodot
         public int DeadSpace, DeadSpacePieces, DeadSpaceGreened;
         /// <summary>(UG_TOWNPROBES=1) the dead space, a metre square at a time: drawn magenta over the plots.</summary>
         public readonly List<Vector3> DeadSpaceCells = new();
+        /// <summary>A poor town's leftover dead space is painted DIRT, not left as grass (strawberry 2026-10-19: "dirt patches ->
+        /// nice parks"). Set from GreenRichness in ApplyClassAndWealth; PaintDeadSpaceDirt does the painting.</summary>
+        public bool DirtDeadSpace;
+        /// <summary>Every dead-space cell's world position rounded to the metre, for PaintDeadSpaceDirt. Always gathered (cheap),
+        /// unlike DeadSpaceCells which is a probe aid.</summary>
+        readonly HashSet<(int, int)> _deadCells = new();
         /// <summary>A piece of dead space this big (m2) and this wide somewhere (half-width, m) is a park; a strip this wide
         /// (m) and a run this long (m) gets a hedgerow; a park's hedge stands this far in from its edge (m), its trees this
         /// far apart (m) and this far in (m).</summary>
@@ -89,7 +95,7 @@ namespace UnturnedGodot
         /// frontage strip, each lane's reach, each slab's margin, each bay's front, each lot and alley.</summary>
         void PlanGreens(RoadField roads)
         {
-            HedgeRuns.Clear(); HedgePieces.Clear(); PocketParks.Clear(); DeadSpaceCells.Clear(); LoneTrees.Clear(); Bushes.Clear();
+            HedgeRuns.Clear(); HedgePieces.Clear(); PocketParks.Clear(); DeadSpaceCells.Clear(); LoneTrees.Clear(); Bushes.Clear(); _deadCells.Clear();
             DeadSpace = DeadSpacePieces = DeadSpaceGreened = 0;
             if (!Greens || roads == null || _frameU1 <= _frameU0 || _frameV1 <= _frameV0) return;
             var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -265,7 +271,7 @@ namespace UnturnedGodot
                             }
                     }
                     DeadSpace += cells.Count;
-                    if (ProbeEverything) foreach (var (i, j) in cells) DeadSpaceCells.Add(W(i, j));
+                    foreach (var (i, j) in cells) { var wc = W(i, j); _deadCells.Add((Mathf.RoundToInt(wc.X), Mathf.RoundToInt(wc.Z))); if (ProbeEverything) DeadSpaceCells.Add(wc); }
                     if (cells.Count < 6) continue;
                     DeadSpacePieces++;
                     // the piece on its own grid, a cell of border round it
@@ -1018,6 +1024,26 @@ namespace UnturnedGodot
 
         /// <summary>Plant what the last PlanGreens laid: each hedge piece (the hedge prop stretched to its length and depth,
         /// stood on the ground's slope up to 8 degrees) and each park's trees. Returns the props placed.</summary>
+        /// <summary>Paint the town's dead space DIRT (layer 0) -- a poor town's weedy, unkept gaps (strawberry 2026-10-19). Over
+        /// the town's footprint, a splat texel takes dirt when a dead-space cell sits within ~2.5 m of it. Call after PlantGreens
+        /// (its cells are gathered there) and after PaintFootprints (so the roads' own dirt is already down and this adds to it).</summary>
+        public int PaintDeadSpaceDirt(Terrain terr)
+        {
+            if (terr == null || _deadCells.Count == 0) return 0;
+            bool Dead(float x, float z)
+            {
+                int cx = Mathf.RoundToInt(x), cz = Mathf.RoundToInt(z);
+                for (int dx = -2; dx <= 2; dx++)
+                    for (int dz = -2; dz <= 2; dz++)
+                        if (_deadCells.Contains((cx + dx, cz + dz))) return true;
+                return false;
+            }
+            float r = HalfSpan + 20f;
+            int n = terr.PaintWhere(Centre.X - r, Centre.Z - r, Centre.X + r, Centre.Z + r, Dead, 0);
+            Log.Print($"[towngrid] dead-space dirt: {n} texels painted over {_deadCells.Count} cells (poor town)");
+            return n;
+        }
+
         public int PlantGreens(RoadField roads, EditorObjects objs, List<Node3D> into = null)
         {
             if (objs == null) return 0;

@@ -503,7 +503,7 @@ namespace UnturnedGodot.Testing
                         foreach (int r in gD.Built)
                         {
                             float wMin = float.MaxValue, dMin = float.MaxValue;
-                            foreach (var k in TownRoadGrid.FrontageKinds(gD.IsMain(rfD, r)))
+                            foreach (var k in gD.FrontageKinds(gD.IsMain(rfD, r)))
                             { var ps = TownRoadGrid.SizeOf(k); wMin = Mathf.Min(wMin, ps.Width); dMin = Mathf.Min(dMin, ps.Depth); }
                             float win = wMin + 0.5f, L = rfD.RoadLength(r), front = rfD.RoadHalfWidth(r) + walkD.RoadGap + walkW + gD.PlotSetback;
                             foreach (int side in new[] { -1, 1 })
