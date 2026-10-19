@@ -72,6 +72,11 @@ namespace UnturnedGodot
             var now = (has ? w : null, has ? i : -1, glazed, ind, door, canDoor, broken, canBreak, barr);
             if (now == _glassShown) return;
             _glassShown = now;
+            if (_glaze != null)
+            {
+                _glaze.Disabled = DoorDeploy.IsPlateGlass(door);
+                _glaze.TooltipText = _glaze.Disabled ? "plate-glass doors carry their pane; smash or repair it below" : "fill this opening with window glass";
+            }
             if (_doorDrop != null)
             {
                 _doorDrop.Disabled = !canDoor;
@@ -123,6 +128,8 @@ namespace UnturnedGodot
             var list = new System.Collections.Generic.List<(string, string)> { ("— no door (open hole)", null) };
             foreach (var d in DeployableDef.WoodDoors)
                 if (d.DoorProp != null && d.DoorProp.StartsWith("Door_")) list.Add((d.Name, d.DoorProp));
+            list.Add(("plate glass — aluminium", DoorDeploy.PlateGlass));
+            list.Add(("plate glass — bronze", DoorDeploy.PlateGlassBronze));
             return list.ToArray();
         }
 

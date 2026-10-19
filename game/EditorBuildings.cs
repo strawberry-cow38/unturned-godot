@@ -925,7 +925,8 @@ namespace UnturnedGodot
             o.GlassTint = ActiveGlassTint;
             o.GlassHp = ActiveGlassHp;
             o.GlassIndestructible = ActiveGlassIndestructible;
-            if (a.FloorPinned) o.DoorProp = ActiveDoorProp;   // door/garage/porch can carry one; a window cannot
+            if (a.FloorPinned) o.DoorProp = ActiveDoorProp;
+            if (DoorDeploy.IsPlateGlass(o.DoorProp)) o.Glazed = true;   // door/garage/porch can carry one; a window cannot
             o.Barricade = ActiveBarricade;                    // any opening can start pre-barricaded (master 2026-09-01)
             return WallOpenings.Clamp(o, w.Length, w.Height, w.Openings);
         }
@@ -951,7 +952,7 @@ namespace UnturnedGodot
             if (w == null || !IsInstanceValid(w) || index < 0 || index >= w.Openings.Count) return;
             var before = w.Openings.ToArray();
             var o = w.Openings[index];
-            if (glazed.HasValue) o.Glazed = glazed.Value;
+            if (glazed.HasValue) o.Glazed = DoorDeploy.IsPlateGlass(o.DoorProp) || glazed.Value;
             if (tint.HasValue) o.GlassTint = tint.Value;
             if (hp.HasValue) o.GlassHp = hp.Value;
             if (indestructible.HasValue) o.GlassIndestructible = indestructible.Value;
@@ -980,7 +981,9 @@ namespace UnturnedGodot
             var before = w.Openings.ToArray();
             var o = w.Openings[index];
             if (o.DoorProp == prop) return;                 // no-op: an undo step here makes Ctrl+Z look broken
+            if (DoorDeploy.IsPlateGlass(o.DoorProp) && !DoorDeploy.IsPlateGlass(prop)) { o.Glazed = false; o.GlassBroken = false; }
             o.DoorProp = prop;
+            if (DoorDeploy.IsPlateGlass(prop)) { o.Glazed = true; o.GlassBroken = false; }
             if (prop == null) o.DoorOpen = false;           // a hole cannot be ajar; leaving it set re-opens the next door hung here
             w.Openings[index] = o;
             w.Rebuild();

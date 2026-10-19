@@ -334,6 +334,7 @@ namespace UnturnedGodot
                 }
             }
 
+            InstallPlateGlassFrame();
             if (_initialOpen) SetInitialState(true);
         }
 
@@ -432,6 +433,7 @@ namespace UnturnedGodot
                 float f = t * t * (3f - 2f * t);
                 _pivot.Basis = Basis.Identity;
                 _pivot.Position = _pivotLocal + _slide * f;
+                if (HasPlateGlassFrame) { MovePlateColliders(Basis.Identity, _slide * f, t <= .001f || t >= .999f); return; }
                 if (_leafCollider != null)
                 {
                     _leafCollider.Transform = new Transform3D(Basis.Identity, _leafColliderCenter + _slide * f);
@@ -443,6 +445,7 @@ namespace UnturnedGodot
             float frac = SampleEasing(t);
             var swing = new Basis(_axis, Mathf.DegToRad(_angleDeg) * _swingSign * frac);
             _pivot.Basis = swing;
+            if (HasPlateGlassFrame) { MovePlateColliders(swing, Vector3.Zero, t <= .001f || t >= .999f); return; }
             // Track the leaf with the look-ray/solidity hitbox: it's a DIRECT child of this body (can't parent to
             // _pivot, see the ctor), so rotate its transform by the SAME hinge swing. A leaf point rotates about
             // the hinge _pivotLocal, so the collider (rest-centred at _leafColliderCenter) maps to
@@ -463,6 +466,7 @@ namespace UnturnedGodot
         // while you're standing in it", the harmless direction.
         void TrySolidify()
         {
+            if (HasPlateGlassFrame) { UpdatePlateSolidity(true); return; }
             if (_leafCollider == null) return;
             bool clear = ColliderClear();
             _leafCollider.Disabled = !clear;
