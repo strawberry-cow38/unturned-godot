@@ -38,8 +38,18 @@ namespace UnturnedGodot.Testing
         }
 
         /// <summary>Main's town build, in Main's order, on its own terrain. <paramref name="oldCover"/>: grade with the
-        /// conform's old ceiling reach (the island road's 9.2 m for every line) -- the control for the ground probe.</summary>
+        /// conform's old ceiling reach (the island road's 9.2 m for every line) -- the control for the ground probe.
+        /// ⚠ UNDER THE OLD GRADING (TownRoadGrid.OldGrade): the old reach was a defect of the corridor conform that cut the
+        /// ground under the streets, and the streets are now cut under by CeilCarriageways instead, which the reach does not
+        /// touch -- so without it the control has no defect left to show.</summary>
         HillTown Build(float amp, bool oldCover = false)
+        {
+            bool wasOld = TownRoadGrid.OldGrade;
+            if (oldCover) TownRoadGrid.OldGrade = true;
+            try { return BuildTown(amp, oldCover); }
+            finally { TownRoadGrid.OldGrade = wasOld; }
+        }
+        HillTown BuildTown(float amp, bool oldCover)
         {
             var t = new HillTown();
             t.Terr = Terrain.CreateFlat(3, 3);

@@ -1657,13 +1657,14 @@ namespace UnturnedGodot.Testing
                         foreach (int mat in new[] { 0, 1, 6 }) rfL.DebugSetMaterialDepth(mat, 0.22f);
                         // ...and as the game's town is: its streets holding their own profile, the ground then cut 0.12 m
                         // below them (GradeTerrain) before anything else is laid -- a sampler that drops once they are in
+                        // (below the streets as LAID, which is StreetSink under the ground they were profiled off)
                         float groundL = 40f;
                         Func<float, float, float> liveL = (x, z) => groundL;
                         var gL = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
                                                     Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, FollowTerrain = false,
                                                     AlleysOnRequest = false };
                         gL.Generate(rfL, liveL);
-                        groundL = 40f - gL.GradeDrop;
+                        groundL = 40f - gL.StreetSink - gL.GradeDrop;
                         var hostL = new Node3D(); World.AddChild(hostL);
                         var wL = new EditorSidewalk(); hostL.AddChild(wL);
                         gL.LaySidewalkCornersOn(rfL, hostL, wL, out _);

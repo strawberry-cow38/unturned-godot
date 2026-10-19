@@ -850,6 +850,21 @@ namespace UnturnedGodot
         /// number -- a heightmap approximates a sloping segment rather than reproducing it, and that error
         /// alone is enough to poke ground back through the road.</summary>
         public float GradeDrop = 0.12f;
+        /// <summary>How far the pavement's top stands over the lawn behind it on a graded town (strawberry 2026-10-19: "move the
+        /// road height (and sidewalk height) lower, and thus the grassy sides too"). UG_TOWNPROUD=<metres> overrides it.
+        ///
+        /// ⭐ THE STREETS USED TO STAND ON A BANK. Each street was profiled off the ground at its own level, the asphalt rode
+        /// 0.22 m over that, the pavement 0.4 m, and the grading then cut the ground 0.12 m BELOW the street for a whole cell
+        /// past the kerb -- so every pavement stood half a metre over the lawn behind it, and a kerb-only street's grass fell
+        /// all the way down from the kerb stone. Now the street is laid StreetSink below the ground it was profiled off, the
+        /// ground beside it is graded to the pavement's level less this, and only the carriageway's own ground is cut down
+        /// (CeilCarriageways). UG_TOWNOLDGRADE=1 is the control: no sink, the old corridor cut.</summary>
+        public float PavementProud = float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNPROUD"), System.Globalization.NumberStyles.Float,
+                                                    System.Globalization.CultureInfo.InvariantCulture, out float tproud) ? tproud : 0.05f;
+        public static bool OldGrade = System.Environment.GetEnvironmentVariable("UG_TOWNOLDGRADE") == "1";
+        /// <summary>How far below the ground it was profiled off a street is laid: the pavement's height less PavementProud.
+        /// None on a draped town (its streets ride the ground) or under the control.</summary>
+        public float StreetSink => OldGrade || FollowTerrain ? 0f : Mathf.Max(0f, PavementKerb - PavementProud);
 
         /// <summary>Lay the grid into <paramref name="roads"/>. <paramref name="heightAt"/> is the ground
         /// sampler (Terrain.Active.SampleHeight in game; a lambda in a test, which is the only way to test the
@@ -885,7 +900,8 @@ namespace UnturnedGodot
                     float v = j * Spacing + (Unit(LineHash(0, j), 0) - 0.5f) * Jitter * Spacing;
                     var flat = ToWorld(u, v, 0f);
                     float y = heightAt(flat.X, flat.Z);
-                    var node = new Node { P = new Vector3(flat.X, y, flat.Z), Junction = -1 };
+                    // (laid StreetSink under the ground, as every point of its spans is; the gates below read the ground itself)
+                    var node = new Node { P = new Vector3(flat.X, y - StreetSink, flat.Z), Junction = -1 };
 
                     bool dry = y > SeaLevel + SeaMargin;
                     // Local steepness from four probes. One probe pair cannot see a ridge running diagonally.
@@ -1221,15 +1237,17 @@ namespace UnturnedGodot
             int steps = Mathf.Max(1, Mathf.RoundToInt(len / Mathf.Max(2f, PointStep)));
             var ys = new float[steps + 1];
             var pts = new List<Vector3>(steps + 1);
+            float sink = StreetSink;      // the nodes it is pinned to are laid this far under the ground too
             for (int i = 0; i <= steps; i++)
             {
                 float t = (float)i / steps;
                 float x = Mathf.Lerp(a.X, b.X, t), z = Mathf.Lerp(a.Z, b.Z, t);
-                ys[i] = heightAt(x, z);
+                float ground = heightAt(x, z);
+                ys[i] = ground - sink;
                 // ⚠ THE WATER GATE BELONGS ON THE SPAN, NOT ONLY ON ITS ENDS. Two nodes on dry ground either
                 // side of a creek both pass, and the street between them runs along the creek bed. Checking
                 // the ends is the cheap test that looks like the real one.
-                if (ys[i] <= SeaLevel + SeaMargin) return null;
+                if (ground <= SeaLevel + SeaMargin) return null;
                 pts.Add(new Vector3(x, 0f, z));
             }
             // Grade it, then PIN BOTH ENDS BACK. A smoothing pass that moved an end would pull the road off
@@ -2187,11 +2205,16 @@ namespace UnturnedGodot
             // edge is interpolated from points up to a cell's diagonal outside it. UG_TOWNOLDCOVER=1 is the control.
             float cell = Terrain.GridUnit * 1.42f;
             var covers = new List<float>(_profiles.Count + Patches.Count);
+            // ⭐ TO THE PAVEMENT'S LEVEL, NOT UNDER THE STREET (strawberry 2026-10-19: "move the road height (and sidewalk height)
+            // lower, and thus the grassy sides too"). The corridor used to be cut GradeDrop under the street out to GradeReach
+            // past the widest carriageway, which left every pavement standing on a bank half a metre over the lawn. Now the
+            // corridor is graded to just under the pavement's top, and CeilCarriageways cuts only what the asphalt needs.
+            float lift = OldGrade ? -GradeDrop : PavementKerb - PavementProud;
             for (int li = 0; li < _profiles.Count; li++)
             {
                 var line = _profiles[li];
                 var one = new List<Vector3>(line.Count);
-                foreach (var q in line) one.Add(new Vector3(q.X, q.Y - GradeDrop, q.Z));
+                foreach (var q in line) one.Add(new Vector3(q.X, q.Y + lift, q.Z));
                 sunk.Add(one);
                 covers.Add((li < Built.Count ? roads.RoadHalfWidth(Built[li]) : widest) + cell);
             }
@@ -2205,6 +2228,8 @@ namespace UnturnedGodot
             // The boundary loops are already in the patch: Skirts is exactly the list of its open edges.
             float fallbackLift = roads.RoadSurfaceOffsetOfMaterial(MainMaterial);
             var pfit = FitShifts(roads, fallbackLift);
+            // (the junctions' slabs are carriageway: CeilCarriageways cuts under them now, not the corridor's conform)
+            if (OldGrade)
             foreach (var pp in Patches)
             {
                 if (pp?.Skirts == null || pp.X == null) continue;
@@ -2245,7 +2270,8 @@ namespace UnturnedGodot
                 foreach (var lp in LanePlans)
                 {
                     var one = new List<Vector3>(lp.Pts.Count);
-                    foreach (var q in lp.Pts) one.Add(new Vector3(q.X, q.Y - GradeDrop, q.Z));
+                    // (to its pavements' level as the streets are; its carriageway is cut under in CeilCarriageways)
+                    foreach (var q in lp.Pts) one.Add(new Vector3(q.X, q.Y + lift, q.Z));
                     float h = lp.Half > 0f ? lp.Half : LaneHalf;
                     if (!byHalf.TryGetValue(h, out var lanes)) byHalf[h] = lanes = new List<List<Vector3>>();
                     lanes.Add(one);
@@ -2254,7 +2280,229 @@ namespace UnturnedGodot
             }
             // ...and under each parking lot, one smooth surface (TownParking)
             GradeLots(terr, roads);
+            if (!OldGrade) CeilCarriageways(terr, roads);
             return true;
+        }
+
+        /// <summary>Cut the ground down under everything a car drives on -- the streets (and their parking bays), the
+        /// junctions' slabs and the corners between their arms, the back lanes -- to CarriagewayClear under the asphalt,
+        /// and nowhere else. ⭐ The corridor around it was graded to the pavement's level first; this cuts only
+        /// as far as each piece of asphalt needs (Terrain.CeilTo), so the ground behind a pavement stays up at the lawn's
+        /// level instead of in the road's trench.</summary>
+        void CeilCarriageways(Terrain terr, RoadField roads)
+        {
+            var samples = new List<Vector3>(1 << 20);
+            // (half a metre apart, so a ground point can be called under the asphalt from samples within 0.36 m of it: see CeilTo)
+            const float Step = 0.5f;
+            // a road's carriageway, a little past each edge (the kerb laps it)
+            void Strip(int r, float half)
+            {
+                float L = roads.RoadLength(r), top = roads.RoadSurfaceOffset(r) - CarriagewayClear;
+                int n = Mathf.Max(1, Mathf.CeilToInt(L / Step));
+                for (int i = 0; i <= n; i++)
+                {
+                    float d = L * i / n;
+                    if (!roads.EvaluateAlong(r, d, out var p, out var t, snapTerrain: false)) continue;
+                    var right = new Vector3(t.Z, 0f, -t.X).Normalized();
+                    for (int side = -1; side <= 1; side += 2)
+                    {
+                        // round a parking bay the asphalt reaches a bay's depth further out
+                        float edge = half + BayExtra(r, side, d) + CeilPastEdge;
+                        int m = Mathf.Max(1, Mathf.CeilToInt(edge / Step));
+                        for (int k = 0; k <= m; k++)
+                        {
+                            var q = p + right * (side * edge * k / m);
+                            samples.Add(new Vector3(q.X, p.Y + top, q.Z));
+                        }
+                        // ⚠ NOT THE PAVEMENTS. They were sampled here too (held a few cm under their tops), and a sample marks
+                        // the ground points round it as under-the-road, the ones Terrain.CeilTo cuts first -- so the points along
+                        // each pavement's BACK edge were cut like carriageway and the lawn behind it stayed 26 cm down (median,
+                        // measured). The corridor's own grade already holds them PavementProud under the top.
+                    }
+                }
+            }
+            foreach (int r in Built) Strip(r, roads.RoadHalfWidth(r));
+            // the junctions' slabs, inside and a metre past every edge (the corner asphalt fills out to the kerb's curve)
+            float fallbackLift = roads.RoadSurfaceOffsetOfMaterial(MainMaterial);
+            var pfit = FitShifts(roads, fallbackLift);
+            foreach (var pp in Patches)
+            {
+                if (pp?.Tris == null || pp.X == null) continue;
+                float shift = pfit.TryGetValue(pp, out float pf) ? pf : fallbackLift;
+                for (int t = 0; t + 2 < pp.Tris.Length; t += 3)
+                {
+                    int ia = pp.Tris[t], ib = pp.Tris[t + 1], ic = pp.Tris[t + 2];
+                    if (ia >= pp.X.Length || ib >= pp.X.Length || ic >= pp.X.Length) continue;
+                    var A = new Vector3((float)pp.X[ia], pp.Y[ia] + shift - CarriagewayClear, -(float)pp.Z[ia]);
+                    var B = new Vector3((float)pp.X[ib], pp.Y[ib] + shift - CarriagewayClear, -(float)pp.Z[ib]);
+                    var C = new Vector3((float)pp.X[ic], pp.Y[ic] + shift - CarriagewayClear, -(float)pp.Z[ic]);
+                    int n = Mathf.Max(1, Mathf.CeilToInt(Mathf.Max(Flat(A, B), Mathf.Max(Flat(B, C), Flat(C, A))) / Step));
+                    for (int i = 0; i <= n; i++)
+                        for (int k = 0; i + k <= n; k++)
+                        {
+                            float u = (float)i / n, v = (float)k / n;
+                            samples.Add(A + (B - A) * u + (C - A) * v);
+                        }
+                }
+                if (pp.Skirts == null) continue;
+                foreach (var ids in pp.Skirts)
+                {
+                    if (ids == null || ids.Length < 2) continue;
+                    // its centre, to push each edge point out from
+                    double sx = 0, sz = 0; int cnt = 0;
+                    foreach (int ix in ids) if (ix >= 0 && ix < pp.X.Length) { sx += pp.X[ix]; sz += pp.Z[ix]; cnt++; }
+                    if (cnt == 0) continue;
+                    var mid = new Vector3((float)(sx / cnt), 0f, -(float)(sz / cnt));
+                    foreach (int ix in ids)
+                    {
+                        if (ix < 0 || ix >= pp.X.Length) continue;
+                        var e = new Vector3((float)pp.X[ix], pp.Y[ix] + shift - CarriagewayClear, -(float)pp.Z[ix]);
+                        var outw = new Vector3(e.X - mid.X, 0f, e.Z - mid.Z);
+                        if (outw.LengthSquared() < 1e-6f) continue;
+                        outw = outw.Normalized();
+                        for (float o = 0.5f; o <= SlabCeilReach + 1e-3f; o += 0.5f) samples.Add(e + outw * o);
+                    }
+                }
+            }
+            // the back lanes and the ways into the parking lots, and a little round each end (its kerb returns' asphalt)
+            foreach (var lp in LanePlans)
+            {
+                if (lp.Pts == null || lp.Pts.Count < 2) continue;
+                float h = (lp.Half > 0f ? lp.Half : LaneHalf) + CeilPastEdge;
+                float top = roads.RoadSurfaceOffsetOfMaterial(lp.Material >= 0 ? lp.Material : LaneMaterial >= 0 ? LaneMaterial : StreetMaterial) - CarriagewayClear;
+                for (int i = 0; i + 1 < lp.Pts.Count; i++)
+                {
+                    var a = lp.Pts[i]; var b = lp.Pts[i + 1];
+                    float len = Flat(a, b);
+                    if (len < 1e-3f) continue;
+                    var dir = new Vector3(b.X - a.X, 0f, b.Z - a.Z) / len;
+                    var right = new Vector3(dir.Z, 0f, -dir.X);
+                    int n = Mathf.Max(1, Mathf.CeilToInt(len / Step)), m = Mathf.Max(1, Mathf.CeilToInt(2f * h / Step));
+                    for (int s = 0; s <= n; s++)
+                    {
+                        var p = a.Lerp(b, (float)s / n);
+                        for (int k = 0; k <= m; k++)
+                        {
+                            var q = p + right * (-h + 2f * h * k / m);
+                            samples.Add(new Vector3(q.X, p.Y + top, q.Z));
+                        }
+                    }
+                }
+                for (int e = 0; e < 2; e++)
+                {
+                    // only where it opens onto a street (the kerb returns' asphalt) or turns a hard corner (the knee's
+                    // square); a closed end stops at its kerb, and a lot's end is the lot's own grading
+                    var end = e == 0 ? lp.Pts[0] : lp.Pts[^1];
+                    bool mouth = e == 0 ? lp.A != null : lp.B != null, knee = e == 0 ? lp.KneeA : lp.KneeB;
+                    if (!mouth && !knee) continue;
+                    float rr = mouth ? h + LaneKerbRadius : h * 1.5f;
+                    for (float x = -rr; x <= rr; x += Step)
+                        for (float z = -rr; z <= rr; z += Step)
+                            if (x * x + z * z <= rr * rr) samples.Add(new Vector3(end.X + x, end.Y + top, end.Z + z));
+                }
+            }
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            int moved = terr.CeilTo(samples, out float left, out float deepest, underReach: Step * 0.72f);
+            Log.Print($"[towngrid] carriageway cut: {samples.Count} samples, {moved} ground points lowered (deepest {deepest:0.00} m), "
+                    + $"{left * 100f:0.0} cm still over after the passes, {watch.Elapsed.TotalSeconds:0.00} s");
+            if (Probes) ReportPavementBacks(terr, roads);
+        }
+        /// <summary>How far past a carriageway's edge its ground is held down (the kerb laps the asphalt by 3 cm), and how far past
+        /// a junction slab's outline (the corner asphalt fills out to the kerb's curve).</summary>
+        public float CeilPastEdge = 0.1f, SlabCeilReach = 1.5f;
+        /// <summary>How far under the asphalt's own surface CeilCarriageways holds the ground. ⚠ NOT GradeDrop's 0.34 m (0.12 under a
+        /// spline that is itself 0.22 under its asphalt). That margin was a conform's: one target for a whole 4 m cell, guessing at
+        /// what the triangles would do between points. CeilTo checks the rendered triangles at every sample, a metre apart, so a
+        /// few centimetres is the real margin -- and every centimetre of it is ground that has to climb back up behind the kerb
+        /// within one grid cell. A 1 m lane walk could not get it back at 0.34.</summary>
+        public float CarriagewayClear = 0.06f;
+        /// <summary>Where the last ReportPavementBacks found a pavement standing highest over the ground behind it.</summary>
+        public Vector3 WorstPavementBackAt;
+
+        /// <summary>⭐ THE NUMBER THE CHANGE IS FOR: how far each pavement's top stands over the ground just behind it, read off
+        /// every street side every 4 m. Before the sink it was the whole bank (~0.5 m); it should now be about PavementProud.</summary>
+        void ReportPavementBacks(Terrain terr, RoadField roads)
+        {
+            var drops = new List<float>();
+            float worst = float.MinValue; Vector3 worstAt = Vector3.Zero; int deep = 0;
+            foreach (int r in Built)
+            {
+                float L = roads.RoadLength(r), half = roads.RoadHalfWidth(r);
+                for (float d = 6f; d <= L - 6f; d += 4f)
+                {
+                    if (!roads.EvaluateAlong(r, d, out var p, out var t, snapTerrain: false)) continue;
+                    var right = new Vector3(t.Z, 0f, -t.X).Normalized();
+                    for (int side = -1; side <= 1; side += 2)
+                    {
+                        if (BayExtra(r, side, d) > 0.01f) continue;
+                        var q = p + right * (side * (half + PavementGap + _walkWidth + 0.3f));
+                        // (behind a pavement means LAWN: near a junction the point lands on the other road's asphalt, where the
+                        // ground is meant to be cut deep -- that read as a 2 m drop the first time)
+                        if (!ClearOfRoads(roads, q, 0.5f) || NearLanePlan(q, LaneHalf + LaneWalkWidth + 0.5f)) continue;
+                        float drop = p.Y + PavementKerb - terr.SampleHeight(q.X, q.Z);
+                        drops.Add(drop);
+                        if (drop > 0.3f) deep++;
+                        if (drop > worst) { worst = drop; worstAt = new Vector3(q.X, p.Y + PavementKerb, q.Z); }
+                    }
+                }
+            }
+            if (drops.Count == 0) return;
+            drops.Sort();
+            float mean = 0f; foreach (float v in drops) mean += v; mean /= drops.Count;
+            WorstPavementBackAt = worstAt;
+            Log.Print($"[towngrid] pavement over the ground behind it: mean {mean * 100f:0} cm, median {drops[drops.Count / 2] * 100f:0} cm, "
+                    + $"90% {drops[(int)(drops.Count * 0.9f)] * 100f:0} cm, {deep} over 30 cm, worst {worst * 100f:0} cm at "
+                    + $"({worstAt.X:0.0}, {worstAt.Y:0.00}, {worstAt.Z:0.0}), over {drops.Count} points");
+            // ...and the back lanes' walks, a metre wide: the narrowest climb the ground has to make
+            var lane = new List<float>();
+            float lworst = float.MinValue; Vector3 lworstAt = Vector3.Zero;
+            foreach (var lp in LanePlans)
+            {
+                if (lp.OpenB || lp.Pts == null || lp.Pts.Count < 2) continue;
+                float h = lp.Half > 0f ? lp.Half : LaneHalf, run = 0f, total = PolyLen(lp.Pts);
+                for (int i = 0; i + 1 < lp.Pts.Count; i++)
+                {
+                    var a = lp.Pts[i]; var b = lp.Pts[i + 1];
+                    float len = Flat(a, b);
+                    if (len < 1e-3f) continue;
+                    var right = new Vector3(b.Z - a.Z, 0f, -(b.X - a.X)) / len;
+                    for (float t = 2f; t < len; t += 4f)
+                    {
+                        if (run + t < 6f || run + t > total - 6f) continue;     // clear of the mouths
+                        var p = a.Lerp(b, t / len);
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            var q = p + right * (side * (h + PavementGap + LaneWalkWidth + 0.3f));
+                            if (!ClearOfRoads(roads, q, 0.5f)) continue;
+                            float drop = p.Y + PavementKerb - terr.SampleHeight(q.X, q.Z);
+                            lane.Add(drop);
+                            if (drop > lworst) { lworst = drop; lworstAt = new Vector3(q.X, p.Y + PavementKerb, q.Z); }
+                        }
+                    }
+                    run += len;
+                }
+            }
+            if (lane.Count == 0) return;
+            lane.Sort();
+            Log.Print($"[towngrid] lane walk over the ground behind it: median {lane[lane.Count / 2] * 100f:0} cm, 90% "
+                    + $"{lane[(int)(lane.Count * 0.9f)] * 100f:0} cm, worst {lworst * 100f:0} cm at ({lworstAt.X:0.0}, {lworstAt.Z:0.0}), over {lane.Count} points");
+        }
+        /// <summary>Is this point within `reach` of a planned back lane's centreline? (The lanes are built after the grading, so
+        /// the road field cannot be asked yet.)</summary>
+        bool NearLanePlan(Vector3 q, float reach)
+        {
+            foreach (var lp in LanePlans)
+            {
+                if (lp.Pts == null) continue;
+                for (int i = 0; i + 1 < lp.Pts.Count; i++)
+                {
+                    var a = lp.Pts[i]; var b = lp.Pts[i + 1];
+                    var ab = new Vector2(b.X - a.X, b.Z - a.Z); float l2 = ab.LengthSquared();
+                    float t = l2 < 1e-8f ? 0f : Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / l2, 0f, 1f);
+                    if (new Vector2(a.X + ab.X * t - q.X, a.Z + ab.Y * t - q.Z).Length() < reach) return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>Pavement down both sides of every street the grid just built, held back from the junctions.
@@ -2744,7 +2992,7 @@ namespace UnturnedGodot
                         if (!roads.EvaluateAlong(bay.Road, d, out var pos, out var tan, snapTerrain: false)) continue;
                         var outw = new Vector3(tan.Z, 0f, -tan.X).Normalized() * bay.Side;     // from the road out to this pavement
                         var at = pos + outw * (roads.RoadHalfWidth(bay.Road) + BayExtra(bay.Road, bay.Side, d) + RoadGapForLights + MeterSetback);
-                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
+                        at.Y = PavementTopAt(pos, at, terr);
                         meters.Add((at, outw));
                     }
                 }
@@ -2772,7 +3020,7 @@ namespace UnturnedGodot
                         // ...on the pavement wherever it is, which round a parking bay is a bay's depth further out
                         at = pos + right * (side * (half + BayExtra(r, side, d) + RoadGapForLights + LampSetback));
                         if (!PushClear(roads, ref at, right * side)) return false;
-                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
+                        at.Y = PavementTopAt(pos, at, terr);
                         return true;
                     }
                     for (int k = 0; k <= n; k++)
@@ -2800,7 +3048,7 @@ namespace UnturnedGodot
                         }
                         // the arm has to reach OVER the carriageway, so the lamp faces across the road
                         float yaw = ProcIsland.YawForDir(-right.X * side, right.Z * side);
-                        var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
+                        var basis = SplineTiling.SeatedBasis(PavementGround(terr), at, yaw, 6f, out _);
                         var node = objs.Place(StreetLightProp, at, basis);
                         if (node != null) { into?.Add(node); made++; standing.Add(at); }
                     }
@@ -2849,8 +3097,8 @@ namespace UnturnedGodot
                                 bool crowd = !oldRule && NearMeter(at);
                                 if (!oldRule) foreach (var q in standing) if (Flat(q, at) < MeterClear) { crowd = true; break; }
                                 if (crowd) continue;
-                                at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
-                                var hb = SplineTiling.SeatedBasis(terr, at, Unit(h, 32) * 360f, 6f, out _);
+                                at.Y = PavementTopAt(pos, at, terr);
+                                var hb = SplineTiling.SeatedBasis(PavementGround(terr), at, Unit(h, 32) * 360f, 6f, out _);
                                 var hn = objs.Place(HydrantProp, at, hb);
                                 if (hn != null) { into?.Add(hn); made++; standing.Add(at); }
                                 if (slide > 0f || side != side0)
@@ -2868,7 +3116,7 @@ namespace UnturnedGodot
             foreach (var (at, outw) in meters)
             {
                 // facing its space: like the lamps' arms, back over the road (its front is local +Y, Z-up as they are)
-                var mb = SplineTiling.SeatedBasis(terr, at, ProcIsland.YawForDir(-outw.X, outw.Z), 6f, out _);
+                var mb = SplineTiling.SeatedBasis(PavementGround(terr), at, ProcIsland.YawForDir(-outw.X, outw.Z), 6f, out _);
                 var mn = objs.Place(ParkingMeterProp, at, mb);
                 if (mn != null) { into?.Add(mn); made++; if (MetersPlaced++ == 0) FirstMeterAt = at; }
             }
@@ -2916,7 +3164,7 @@ namespace UnturnedGodot
                         // left over the lanes the drivers approaching here are in.
                         var at = node0 - fwd * back + right * (half + RoadGapForLights + 0.6f);
                         if (!PushClear(roads, ref at, right)) continue;      // never stand it in a carriageway
-                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
+                        at.Y = PavementTopAt(pos, at, terr);
                         // ⚠ THE MAST REACHES ACROSS THE ROAD, NOT BACK ALONG IT. Measured off the props:
                         // both run their POLE along local +Z and their ARM along local +Y, which the 270
                         // degree stand turns into world -Z -- so the yaw is choosing where the ARM points.
@@ -2924,7 +3172,7 @@ namespace UnturnedGodot
                         // on. It belongs perpendicular, over the lanes the approaching driver is in.
                         var armDir = -right;                                   // to the driver's left
                         float yaw = ProcIsland.YawForDir(armDir.X, -armDir.Z);
-                        var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
+                        var basis = SplineTiling.SeatedBasis(PavementGround(terr), at, yaw, 6f, out _);
                         if (mode == Control.StopSigns)
                         {
                             // ⚠ A SIGN FACES THE DRIVER, so its face looks back ALONG the approach -- the
@@ -2933,9 +3181,9 @@ namespace UnturnedGodot
                             float signBack = SignalBack(roads, j, road, atEnd, widest, half + RoadGapForLights + 0.7f) - 0.5f;
                             var signAt = node0 - fwd * signBack + right * (half + RoadGapForLights + 0.7f);
                             if (!PushClear(roads, ref signAt, right)) continue;
-                            signAt.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(signAt.X, signAt.Z) : pos.Y) + PavementKerb;
+                            signAt.Y = PavementTopAt(pos, signAt, terr);
                             float syaw = ProcIsland.YawForDir(-fwd.X, fwd.Z);
-                            var sb = SplineTiling.SeatedBasis(terr, signAt, syaw, 6f, out _);
+                            var sb = SplineTiling.SeatedBasis(PavementGround(terr), signAt, syaw, 6f, out _);
                             var sn = objs.Place(StopSignProp, signAt, sb);
                             if (sn != null) { into?.Add(sn); made++; }
                             continue;
@@ -3630,6 +3878,17 @@ namespace UnturnedGodot
         /// masts stand on the same pavement and had the same error; their poles are tall enough that nobody
         /// had noticed yet.</summary>
         public float PavementKerb = 0.4f;
+        /// <summary>The top of the pavement at `at`, beside the street point `pos`: what a lamp, a meter, a sign or a mast stands on.
+        /// ⚠ NOT max(street, ground) + kerb ON A GRADED TOWN. The ground beside a street is graded up to just under the pavement's
+        /// top now (PavementProud), so under a pavement's back half it can be within centimetres of it, and every prop seated on
+        /// the higher of the two stood up to 35 cm over its slab. A draped town's street rides the ground, so there the ground
+        /// can still be the higher and wins.</summary>
+        float PavementTopAt(Vector3 pos, Vector3 at, Terrain terr) =>
+            (FollowTerrain && terr != null ? Mathf.Max(pos.Y, terr.SampleHeight(at.X, at.Z)) : pos.Y) + PavementKerb;
+        /// <summary>The ground a pavement prop leans with, or null to stand it plumb. ⚠ PLUMB ON A GRADED TOWN: the ground under a
+        /// pavement now climbs from the carriageway's cut up to the lawn's level across the pavement's width, so a lamp tilted to
+        /// the terrain's normal there leaned out over the road by up to the 6 degree cap. The slab it stands on is level across.</summary>
+        Terrain PavementGround(Terrain terr) => FollowTerrain ? terr : null;
         /// <summary>How wide the town's pavements are, straight runs and corners alike -- one number, read from one
         /// place, so the corners always meet the streets they join. UG_TOWNWALK=<metres> overrides it.
         /// ⚠ 4 m (strawberry 2026-10-12: "add support for wider sidewalks ... just make them twice as wide

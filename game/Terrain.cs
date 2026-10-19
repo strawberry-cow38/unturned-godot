@@ -1024,6 +1024,125 @@ void fragment() {
             RebuildChunksIn(minX, maxX, minY, maxY, withCollider: true);
         }
 
+        /// <summary>Lower the ground until the surface clears every sample: each sample is a world (x, z) and the
+        /// highest the ground may be there (y). Only ever LOWERS, and only the grid points under a sample that is
+        /// above its ceiling, each by its share of the excess (least squares over the triangle's three corners),
+        /// repeated until nothing is left over.
+        ///
+        /// ⭐ WHY NOT A CONFORM. A conform sets every grid point within a radius to one target, so making the ground
+        /// clear a carriageway meant pulling it down a whole grid cell (4 m) past the kerb as well -- the ground
+        /// under each corner is interpolated from points up to a cell's diagonal away. That cell is exactly the
+        /// pavement's width, so the ground behind every pavement was left in the road's trench and the pavement
+        /// stood on a bank (strawberry 2026-10-19: "move the road height (and sidewalk height) lower, and thus the
+        /// grassy sides too"). This lowers the corner points only as far as the samples need, so the ground can
+        /// stay at pavement level behind the pavement and still be clear under the road.
+        /// ⚠ BOTH DIAGONALS. The render mesh splits a quad 01-10; a heightfield collider is free to split it 00-11,
+        /// and ground the car can touch but the player cannot see is still ground in the road.
+        /// Returns how many grid points moved; worstLeft is the largest excess still left (0 when it converged).</summary>
+        public int CeilTo(System.Collections.Generic.IReadOnlyList<Vector3> samples, out float worstLeft, out float deepest,
+                          float underReach = 0.75f, int maxPasses = 32)
+        {
+            const float DeepestCut = 1f;
+            worstLeft = 0f; deepest = 0f;
+            if (_grid == null || samples == null || samples.Count == 0) return 0;
+            var before = new System.Collections.Generic.Dictionary<(int, int), float>();
+            int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
+            float World(int x, int y) => _grid[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutAt(x, y);
+            // ⚠⚠ LOWER THE POINTS UNDER THE SAMPLES, NOT THEIR NEIGHBOURS. An even least-squares share lowered all three
+            // corners of a triangle alike -- including the one out past the pavement, a cell from the kerb -- so the ground
+            // behind each pavement still came down by a third of the cut (measured: pavement 26 cm over the lawn, median).
+            // A corner with a sample within reach of it is UNDER the asphalt and takes the cut; one without is someone's
+            // lawn and only gives way when nothing else under the sample can. The reach must cover the samples' own spacing
+            // (half its diagonal) and no more: past that it reaches out under the kerb, and a lane's walk is only a metre.
+            var under = new System.Collections.Generic.HashSet<(int, int)>();
+            foreach (var s in samples)
+            {
+                float fx = (s.X - _bx) / UNIT, fy = (-s.Z - _bz) / UNIT;
+                int nx = Mathf.RoundToInt(fx), ny = Mathf.RoundToInt(fy);
+                if ((fx - nx) * (fx - nx) + (fy - ny) * (fy - ny) <= (underReach / UNIT) * (underReach / UNIT)) under.Add((nx, ny));
+            }
+            // ⚠ AND NO DEEPER THAN A METRE UNDER THE LOWEST CEILING ROUND IT. Weighted to the points under the asphalt, the cut
+            // piles onto them -- 3.4 m deep at worst, measured -- which is invisible under a road and a pit under any gap in
+            // one. A point that reaches its floor stops taking a share, and its neighbours take the rest.
+            var floor = new System.Collections.Generic.Dictionary<(int, int), float>();
+            foreach (var s in samples)
+            {
+                float fx = (s.X - _bx) / UNIT, fy = (-s.Z - _bz) / UNIT;
+                int gx = Mathf.FloorToInt(fx), gy = Mathf.FloorToInt(fy);
+                for (int ox = 0; ox <= 1; ox++)
+                    for (int oy = 0; oy <= 1; oy++)
+                    {
+                        var k = (gx + ox, gy + oy);
+                        float f = s.Y - DeepestCut;
+                        if (!floor.TryGetValue(k, out float was) || f < was) floor[k] = f;
+                    }
+            }
+            var spent = new System.Collections.Generic.HashSet<(int, int)>();
+            float Cost(int x, int y) => spent.Contains((x, y)) ? 1e-4f : under.Contains((x, y)) ? 1f : 0.02f;
+            var cx = new int[3]; var cy = new int[3]; var w = new float[3];
+            // the three corners of the triangle under (tx, ty) in quad (gx, gy), split one way or the other
+            void Corners(int gx, int gy, float tx, float ty, int diag)
+            {
+                if (diag == 0)
+                {   // the render mesh: 00-01-10 / 10-01-11
+                    if (tx + ty <= 1f) { Set(0, gx, gy, 1f - tx - ty); Set(1, gx + 1, gy, tx); Set(2, gx, gy + 1, ty); }
+                    else { Set(0, gx + 1, gy + 1, tx + ty - 1f); Set(1, gx, gy + 1, 1f - tx); Set(2, gx + 1, gy, 1f - ty); }
+                }
+                else
+                {   // the other split: 00-10-11 / 00-11-01
+                    if (tx >= ty) { Set(0, gx, gy, 1f - tx); Set(1, gx + 1, gy, tx - ty); Set(2, gx + 1, gy + 1, ty); }
+                    else { Set(0, gx, gy, 1f - ty); Set(1, gx, gy + 1, ty - tx); Set(2, gx + 1, gy + 1, tx); }
+                }
+            }
+            void Set(int k, int x, int y, float wt) { cx[k] = x; cy[k] = y; w[k] = wt; }
+            float Excess(Vector3 s, bool fix)
+            {
+                float fx = (s.X - _bx) / UNIT, fy = (-s.Z - _bz) / UNIT;   // world Z is negated
+                int gx = Mathf.FloorToInt(fx), gy = Mathf.FloorToInt(fy);
+                if (gx < 0 || gy < 0 || gx + 1 >= _gw || gy + 1 >= _gh) return 0f;
+                float tx = fx - gx, ty = fy - gy, most = 0f;
+                for (int diag = 0; diag < 2; diag++)
+                {
+                    Corners(gx, gy, tx, ty, diag);
+                    float h = 0f, w2 = 0f;
+                    for (int k = 0; k < 3; k++) { h += w[k] * World(cx[k], cy[k]); w2 += w[k] * w[k] * Cost(cx[k], cy[k]); }
+                    float over = h - s.Y;
+                    if (over <= 0f) continue;
+                    most = Mathf.Max(most, over);
+                    if (!fix || w2 < 1e-9f) continue;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        if (w[k] <= 0f) continue;
+                        var key = (cx[k], cy[k]);
+                        if (!before.ContainsKey(key)) before[key] = _grid[cx[k], cy[k]];
+                        JournalH(cx[k], cy[k]);
+                        // (a hair past the excess, so float rounding cannot leave it a hundredth of a millimetre proud; the
+                        // share is weighted by Cost, and the weighted sum of the drops is still exactly the excess)
+                        float want = World(cx[k], cy[k]) - (over + 1e-4f) * w[k] * Cost(cx[k], cy[k]) / w2;
+                        if (floor.TryGetValue(key, out float fl) && want <= fl) { want = fl; spent.Add(key); }
+                        _grid[cx[k], cy[k]] = Mathf.Clamp(_grid[cx[k], cy[k]] + (want - World(cx[k], cy[k])) / TILE_HEIGHT, 0f, 1f);
+                        if (cx[k] < minX) minX = cx[k]; if (cx[k] > maxX) maxX = cx[k];
+                        if (cy[k] < minY) minY = cy[k]; if (cy[k] > maxY) maxY = cy[k];
+                    }
+                }
+                return most;
+            }
+            for (int pass = 0; pass < maxPasses; pass++)
+            {
+                float worst = 0f;
+                foreach (var s in samples) worst = Mathf.Max(worst, Excess(s, true));
+                if (worst <= 0.001f) break;
+            }
+            foreach (var s in samples) worstLeft = Mathf.Max(worstLeft, Excess(s, false));
+            foreach (var kv in before) deepest = Mathf.Max(deepest, (kv.Value - _grid[kv.Key.Item1, kv.Key.Item2]) * TILE_HEIGHT);
+            if (before.Count > 0)
+            {
+                _dirty = true;
+                RebuildChunksIn(minX, maxX, minY, maxY, withCollider: true);
+            }
+            return before.Count;
+        }
+
         /// <summary>A/B: at equal weight, does a contested cell take the LOWER road (default) or the HIGHER?
         /// Lower keeps ground out of the low road's tarmac and leaves the high one floating; higher does the
         /// reverse. Which is worse is a measurement, not an opinion, and both signs are now counted.</summary>

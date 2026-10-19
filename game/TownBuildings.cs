@@ -433,7 +433,7 @@ namespace UnturnedGodot
                 if (MouthAt(r, side, d - 3f, d + 3f) != null || EntranceAt(r, side, d - 3f, d + 3f) != null) side = -side;
                 // a metre in from the back of the pavement: on the footway behind a verge, clear of a planter or a lamp at the kerb
                 var at = pos + right * (side * (roads.RoadHalfWidth(r) + BayExtra(r, side, d) + PavementGap + PavementWidth - 1f));
-                at.Y = (terr != null ? Mathf.Max(terr.SampleHeight(at.X, at.Z), pos.Y) : pos.Y) + PavementKerb + 0.1f;
+                at.Y = PavementTopAt(pos, at, terr) + 0.1f;
                 // facing along the street (the spawn's yaw: 0 looks down +Z, 180 down -Z -- MapShowcase's)
                 spawns.AddSpawn(at, Mathf.RadToDeg(Mathf.Atan2(tan.X, tan.Z)));
                 n++;
