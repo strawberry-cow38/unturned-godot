@@ -117,7 +117,7 @@ namespace UnturnedSim
                 var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
                 foreach (var (i, j) in _p.Cells(fp)) if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
                 if (_p.StairRects.Concat(_p.TileRects).Concat(_p.LeafRects).Concat(_p.WallRects).Any(r => Overlaps(fp, r))) return false;
-                if (_res.Furniture.Any(o => o.Floor == _room.Floor && o.On == null && !o.Mounted && !o.Ceiling && Overlaps(Grow(fp, 0.05f), o.Footprint))) return false;
+                if (Here().Any(o => o.Floor == _room.Floor && o.On == null && !o.Mounted && !o.Ceiling && Overlaps(Grow(fp, 0.05f), o.Footprint))) return false;
                 return !_res.RuntimeDecor.Concat(_res.HvacVents).Any(o => o.Floor == _room.Floor && !o.Mounted && Overlaps(fp, o.Footprint));
             }
 

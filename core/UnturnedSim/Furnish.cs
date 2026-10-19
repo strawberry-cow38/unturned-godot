@@ -367,7 +367,7 @@ namespace UnturnedSim
             foreach (int f in Enumerable.Range(0, res.Floors).Append(-1))
             {
                 if (f < 0 && !res.HasBasement) continue;
-                var fp = new FloorPlan(res, f);
+                var fp = new FloorPlan(res, f) { Start = res.Furniture.Count };
                 var done = new List<Furnisher>();
                 foreach (var room in res.Layout.Where(r => r.Floor == f))
                 {
@@ -416,6 +416,11 @@ namespace UnturnedSim
             public readonly byte[,] State;
             public readonly bool[,] KeepDoor, KeepTall;
             public readonly List<(float X, float Z, GenRoom Room)> Targets = new();
+            /// <summary>Where this storey's pieces begin in Furniture: every one of them is at or past it (Furnisher.Here).</summary>
+            public int Start;
+            /// <summary>This storey's walls, full height, in the plan's order (nothing furnishing does adds or takes one): what a
+            /// room's own walls are found among (RoomWalls) without a scan of the whole building's for every spot tried.</summary>
+            public List<WallPlan> Walls;
             /// <summary>The stairs, landings and holes on this floor, exactly.</summary>
             public readonly List<(float X0, float Z0, float X1, float Z1)> StairRects = new();
             /// <summary>The walls' exact footprints: the grid is 0.1 m, and where a wall's line steps in thickness -- an L's
@@ -437,7 +442,7 @@ namespace UnturnedSim
                 WinZones = new int[Nx, Nz]; Sight = new bool[Nx, Nz];
                 const float M = WallOpenings.StairHoleMargin;
                 int FloorOf(float y) => (int)MathF.Round(y / Storey);
-                var walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w.Y) == f && w.Height > Storey - 0.01f).ToList();
+                var walls = Walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w.Y) == f && w.Height > Storey - 0.01f).ToList();
                 // (a wall left out between two rooms that share one space -- open plan's cut, BuildingGen.OpenPlan -- is floor
                 // there, not wall: nothing stands with its back to it, and you walk across it; its piers and beam stay wall)
                 foreach (var w in walls) foreach (var b in Solid(w)) { Fill(b, Wall); WallRects.Add(b); }
@@ -623,6 +628,13 @@ namespace UnturnedSim
             }
             bool InRoom(int i, int j) => i >= _i0 && j >= _j0 && i < _i0 + _ni && j < _j0 + _nj && _inRoom[i - _i0, j - _j0];
 
+            /// <summary>This storey's pieces, in Furniture's order: the list from where the storey's furnishing began (FloorPlan.Start)
+            /// -- every piece of the storey is there, with only later storeys' after it (a storey's pieces are all added while it is
+            /// furnished, after every earlier storey's, and nothing removes an earlier one's), so a test of a storey's pieces gets the
+            /// answer it got off the whole list. Scanning the whole list for every spot a piece was tried at made a tall building's
+            /// furnishing quadratic in its size: a thirty-storey tower's floor doodads alone took minutes.</summary>
+            IEnumerable<FurniturePlan> Here() { var l = _res.Furniture; for (int i = _p.Start; i < l.Count; i++) yield return l[i]; }
+
             static readonly (int X, int Z)[] Fronts = { (0, -1), (-1, 0), (0, 1), (1, 0) };   // yaw 0, 90, 180, 270
             static (int X, int Z) FrontOf(float yaw) => Fronts[((int)MathF.Round(yaw / 90f) % 4 + 4) % 4];
             static (int X, int Z) RightOf(float yaw) { var (fx, fz) = FrontOf(yaw); return (-fz, fx); }
@@ -724,7 +736,7 @@ namespace UnturnedSim
             {
                 foreach (var m in _mine.ToList())
                 {
-                    if (m.On != null || m.Mounted || _res.Furniture.Any(t => t.On == m)) continue;
+                    if (m.On != null || m.Mounted || Here().Any(t => t.On == m)) continue;
                     float turn = m.Name.StartsWith("Chair") ? 8f : m.Name.StartsWith("Table") ? 4f : m.Name.StartsWith("Couch") ? 2.5f : 0f;
                     if (turn == 0f) continue;
                     var s = FurnitureCatalog.Sizes[m.Name];
@@ -2261,7 +2273,7 @@ namespace UnturnedSim
                     foreach (var b in held.Select(c => c.Item2 - _j0).Where(b => b >= 0 && b < _nj).Distinct()) Recount(b);
                 }
                 _mustReach.Remove(m);
-                foreach (var top in _res.Furniture.Where(t => t.On == m).ToList()) _res.Furniture.Remove(top);
+                foreach (var top in Here().Where(t => t.On == m).ToList()) _res.Furniture.Remove(top);
                 _mine.Remove(m); _res.Furniture.Remove(m);
                 Recount(m.Footprint);
             }
@@ -2571,7 +2583,7 @@ namespace UnturnedSim
             /// counter, never on the last bare one: somewhere is left to work.</summary>
             void CounterTops()
             {
-                var tops = _mine.Where(m => m.Name == "Counter_0" && m.On == null && !_res.Furniture.Any(t => t.On == m)).ToList();
+                var tops = _mine.Where(m => m.Name == "Counter_0" && m.On == null && !Here().Any(t => t.On == m)).ToList();
                 // the one at the sink or stove is the cook's: the others first
                 tops = tops.OrderBy(c => _mine.Any(h => h.Name is "Counter_1" or "Oven_0" && Beside(c, h)) ? 1 : 0).ToList();
                 var small = new[] { "Microwave_0", _rng.Chance(50) ? "Coffee_0" : "Toaster_0" };

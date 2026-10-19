@@ -135,10 +135,11 @@ namespace UnturnedSim
             /// it was laid with, and the view from the couch to its set), and the windows as they stand now (Windows) --
             /// across the opening and PlantWindowGap either side, 0.7 m into the room -- but for a vent or a bathroom's slit,
             /// over the tallest plant's head.</summary>
-            bool BlocksWindow((float X0, float Z0, float X1, float Z1) fp)
+            /// (`wins`: the room's windows, Windows(), where a caller trying many spots has them already)
+            bool BlocksWindow((float X0, float Z0, float X1, float Z1) fp, List<(WallPlan W, WallOpening O, int Side)> wins = null)
             {
                 if (_p.Cells(fp).Any(c => _p.KeepTall[c.I, c.J])) return true;
-                foreach (var (w, o, side) in Windows())
+                foreach (var (w, o, side) in wins ?? Windows())
                 {
                     if (o.V >= 2.5f) continue;
                     var (dx, dz) = PlanTrig.CosSin(w.Yaw); dz = -dz;
@@ -154,8 +155,9 @@ namespace UnturnedSim
             /// <summary>Is anything hung on this floor (the television, a clock) within PlantClear of a plant standing to
             /// `top` over the floor, and lower than that top and PlantClear -- or hanging from the ceiling (a light: a tall plant
             /// twice its drawn size, 3.4 m, reaches a flush mount's 3.47 m under a storey's ceiling)?</summary>
-            bool UnderHung((float X0, float Z0, float X1, float Z1) fp, float top)
-                => _res.Furniture.Any(o => o.Floor == _room.Floor && Overlaps(Grow(fp, PlantClear), o.Footprint)
+            /// (`pieces`: the storey's pieces, Here(), where a caller trying many spots has them already)
+            bool UnderHung((float X0, float Z0, float X1, float Z1) fp, float top, IEnumerable<FurniturePlan> pieces = null)
+                => (pieces ?? Here()).Any(o => o.Floor == _room.Floor && Overlaps(Grow(fp, PlantClear), o.Footprint)
                                            && (o.Mounted ? o.Y - FurnitureCatalog.Sizes[o.Name].H : o.Ceiling ? o.Y - (o.Name.Contains("Pendant") ? PendantDrop : 0.28f) : float.MaxValue)
                                               < _room.Floor * Storey + top + PlantClear);
 
@@ -178,7 +180,7 @@ namespace UnturnedSim
                 bool Table(FurniturePlan m) => m.Name is "Table_Wood_0" or "Table_Wood_1" or "Table_Wood_3";
                 if (_room.Kind == RoomKind.Kitchen)
                 {
-                    var bare = _mine.Where(m => m.Name == "Counter_0" && m.On == null && !_res.Furniture.Any(t => t.On == m))
+                    var bare = _mine.Where(m => m.Name == "Counter_0" && m.On == null && !Here().Any(t => t.On == m))
                                     .OrderBy(c => _mine.Any(h => h.Name is "Counter_1" or "Oven_0" && Beside(c, h)) ? 1 : 0).ToList();
                     int side = rng.Int(2) * 2 - 1;
                     foreach (var c in bare)
@@ -186,7 +188,7 @@ namespace UnturnedSim
                             spots.Add((c, sg, float.NaN, either));
                 }
                 if (_room.Kind is RoomKind.Kitchen or RoomKind.DiningRoom)
-                    foreach (var t in _mine.Where(m => Table(m) && m.On == null && !_res.Furniture.Any(o => o.On == m)))
+                    foreach (var t in _mine.Where(m => Table(m) && m.On == null && !Here().Any(o => o.On == m)))
                         spots.Add((t, 0f, 0f, rng.Int(100) < 70 ? new[] { TopPlants[1], TopPlants[0] } : new[] { TopPlants[0], TopPlants[1] }));
                 foreach (var (host, along0, back0, names) in spots)
                     foreach (var name in names)
@@ -218,7 +220,7 @@ namespace UnturnedSim
                 else if (x0 < hs.X0 + PlantInset || x1 > hs.X1 - PlantInset || y0 < hs.Y0 + PlantInset || y1 > hs.Y1 - PlantInset) return false;
                 // off what else is on it, in the host's frame
                 var (fx, fz) = host.Front; var (rx, rz) = host.Right;
-                foreach (var t in _res.Furniture.Where(t => t.On == host))
+                foreach (var t in Here().Where(t => t.On == host))
                 {
                     var ts = FurnitureCatalog.Sizes[t.Name];
                     float ta = (t.X - host.X) * rx + (t.Z - host.Z) * rz, tb = (t.X - host.X) * fx + (t.Z - host.Z) * fz;
