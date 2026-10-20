@@ -43,7 +43,10 @@ namespace UnturnedGodot
     /// stops casting; it still draws. What that can change on screen is a piece's shadow inside a patch of sun through a
     /// window of a building 40 m off -- and no lamp's: a town's lamps are out past 40 m (BuildingRuntime.LampFadeBegin +
     /// LampFadeLength), and a lamp lights only its own room. UG_NOSHADOWGATE=1 is the control (every piece casts as it always
-    /// did); ForceShadows the in-process one.</summary>
+    /// did); ForceShadows the in-process one.
+    ///
+    /// ⭐ AND A ROOM'S FURNITURE IS DRAWN ONLY NEAR THE ROOM (strawberry 2026-10-20: "have furniture in rooms cull past a certain
+    /// distance from the room"): the room gate, below.</summary>
     public partial class BuildingCull : Node
     {
         public static readonly bool Disabled = System.Environment.GetEnvironmentVariable("UG_NOBASEMENTGATE") == "1";
@@ -199,6 +202,7 @@ namespace UnturnedGodot
                 for (int k = 0; k < c.Pieces.Length; k++)
                     if (IsInstanceValid(c.Pieces[k])) c.Pieces[k].CastShadow = on ? c.Cast[k] : GeometryInstance3D.ShadowCastingSetting.Off;
             }
+            if (_rooms.Count > 0) EvaluateRooms(cam);
         }
 
         /// <summary>How far the camera is from a building's plan, in plan (0 over it).</summary>
@@ -207,6 +211,159 @@ namespace UnturnedGodot
             var l = c.Building.GlobalTransform.AffineInverse() * cam;
             float dx = Mathf.Max(0f, Mathf.Max(-l.X, l.X - c.Wx)), dz = Mathf.Max(0f, Mathf.Max(-l.Z, l.Z - c.Dz));
             return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
+        // ---- the room gate ----------------------------------------------------------------------------------------------------
+
+        /// <summary>UG_NOROOMGATE=1: the control -- Build groups nothing by room (every piece flat under its building, as before)
+        /// and nothing is hidden by it.</summary>
+        public static readonly bool RoomGateDisabled = System.Environment.GetEnvironmentVariable("UG_NOROOMGATE") == "1";
+        /// <summary>Draw every gated room regardless (the in-process control, CullProbe's "roomgate").</summary>
+        public static bool ForceRooms;
+        /// <summary>A room's furniture is drawn while the camera is within this of the room's box, metres: the lamp fade's end
+        /// (BuildingRuntime.LampFadeBegin + LampFadeLength). Past it the room's own lamp is out, so what is left of its inside
+        /// through a window is lit by the sky alone -- and a lamp, inside the box, is never hidden while its light is on.
+        /// (A field, not a constant, only so the culling probe can measure another radius in the same process.)</summary>
+        public const float DefaultRoomRadius = BuildingRuntime.LampFadeBegin + BuildingRuntime.LampFadeLength;
+        public static float RoomRadius = DefaultRoomRadius;
+        /// <summary>...and hidden again only past RoomRadius plus this, so a camera standing at the threshold -- a head bob, a car
+        /// idling -- cannot flicker a room in and out.</summary>
+        public const float RoomHysteresis = 2f;
+
+        /// <summary>A box in a building's frame.</summary>
+        struct Box
+        {
+            public float X0, Y0, Z0, X1, Y1, Z1;
+            public float DistanceSq(Vector3 p)
+            {
+                float dx = Mathf.Max(0f, Mathf.Max(X0 - p.X, p.X - X1)), dy = Mathf.Max(0f, Mathf.Max(Y0 - p.Y, p.Y - Y1));
+                float dz = Mathf.Max(0f, Mathf.Max(Z0 - p.Z, p.Z - Z1));
+                return dx * dx + dy * dy + dz * dz;
+            }
+            public static Box Union(Box a, Box b) => new Box { X0 = Mathf.Min(a.X0, b.X0), Y0 = Mathf.Min(a.Y0, b.Y0), Z0 = Mathf.Min(a.Z0, b.Z0),
+                                                               X1 = Mathf.Max(a.X1, b.X1), Y1 = Mathf.Max(a.Y1, b.Y1), Z1 = Mathf.Max(a.Z1, b.Z1) };
+        }
+
+        sealed class GatedRoom { public Node3D Node; public Box[] Boxes; public bool Shown = true; }
+        sealed class GatedStorey { public Node3D Node; public Box Box; public GatedRoom[] Rooms; public bool Shown = true; }
+        sealed class RoomGate
+        {
+            public Node3D Building;
+            public Box Box;                  // every gated room's, together: the broad phase
+            public GatedStorey[] Storeys;
+            public bool AllHidden;           // every storey hidden by the broad phase (so a far building costs one test a frame)
+        }
+        static readonly List<RoomGate> _rooms = new();
+
+        /// <summary>Buildings with gated rooms; their rooms; how many are drawn right now.</summary>
+        public static int RoomBuildings => _rooms.Count;
+        /// <summary>...and of those, how many the broad phase let through on the last evaluation (the rest cost one test each).</summary>
+        public static int RoomBuildingsNear { get { int n = 0; foreach (var b in _rooms) if (!b.AllHidden) n++; return n; } }
+        public static int RoomCount { get { int n = 0; foreach (var b in _rooms) foreach (var s in b.Storeys) n += s.Rooms.Length; return n; } }
+        public static int RoomsShown
+        {
+            get
+            {
+                int n = 0;
+                foreach (var b in _rooms) foreach (var s in b.Storeys) foreach (var r in s.Rooms) if (IsInstanceValid(r.Node) && r.Node.IsVisibleInTree()) n++;
+                return n;
+            }
+        }
+        /// <summary>The room gate's own cost, for the probe: stopwatch ticks spent evaluating it, over how many evaluations, and
+        /// how many room or storey nodes it has switched.</summary>
+        public static long RoomTicks;
+        public static int RoomEvals, RoomToggles;
+
+        /// <summary>Gate each room's furniture (BuildingRuntime.GroupRooms' nodes) on the camera's distance to the room's box: its plan
+        /// cells by the storeys it stands through, in the building's frame. A storey is tested first (the box round its rooms), and
+        /// the building first of all, so a far building costs one test a frame and a far storey one more.
+        ///
+        /// MEASURED on the setback (CullProbe, UG_CULLGEN; gate on against ForceRooms, one process, same camera): at the street 30 m
+        /// off its front the frame changed by 1 pixel while the visible pass went 1,936 -> 1,547 objects and the shadow pass
+        /// 11,455 -> 8,659 -- the rooms lit by their own lamps (inside RoomRadius) are the ones a passer-by sees into, and those stay;
+        /// in its rooms, 0 pixels; at 150 m, 0 pixels and the visible pass 7,581 -> 3,197. What it DOES change: 80 m up and 120 m
+        /// off, 1,274 pixels (0.25%) -- desks and shelves seen from above through the glass of rooms 120 m away, which their own
+        /// range (PropCull: the LOD table's, longer than the size rule's 64 m) still drew; the visible pass there 9,804 -> 4,008.
+        /// At 64 m (PropCull's SMALL) instead of 40 the gate kept almost everything it now takes (street: 1,951 visible, 11,097
+        /// shadow) for no fewer changed pixels.</summary>
+        public static void AddRooms(Node3D building, BuildingRuntime.RoomGroups groups)
+        {
+            if (RoomGateDisabled || building == null || groups == null || groups.Storeys.Count == 0 || !building.IsInsideTree()) return;
+            float c = BuildingGen.Cell, h = BuildingGen.Storey;
+            var gate = new RoomGate { Building = building, Storeys = new GatedStorey[groups.Storeys.Count] };
+            bool first = true;
+            for (int i = 0; i < groups.Storeys.Count; i++)
+            {
+                var st = groups.Storeys[i];
+                var rooms = new GatedRoom[st.Rooms.Count];
+                Box sb = default; bool sFirst = true;
+                for (int k = 0; k < st.Rooms.Count; k++)
+                {
+                    var (room, node) = st.Rooms[k];
+                    var boxes = new List<Box>();
+                    foreach (var (x0, z0, x1, z1) in room.Rects)
+                    {
+                        var b = new Box { X0 = x0 * c, Z0 = z0 * c, X1 = x1 * c, Z1 = z1 * c, Y0 = room.Floor * h, Y1 = (room.Floor + room.Span) * h };
+                        boxes.Add(b);
+                        sb = sFirst ? b : Box.Union(sb, b); sFirst = false;
+                    }
+                    rooms[k] = new GatedRoom { Node = node, Boxes = boxes.ToArray() };
+                }
+                gate.Storeys[i] = new GatedStorey { Node = st.Node, Box = sb, Rooms = rooms };
+                gate.Box = first ? sb : Box.Union(gate.Box, sb); first = false;
+            }
+            _rooms.Add(gate);
+            Hub(building).Evaluate();
+        }
+
+        /// <summary>Show or hide one gated node on its distance (squared) to the camera, with the hysteresis; true if it is shown.</summary>
+        static bool GateNode(Node3D node, ref bool shown, float d2, bool force)
+        {
+            float r = shown ? RoomRadius + RoomHysteresis : RoomRadius;
+            bool want = force || d2 <= r * r;
+            if (want != shown)
+            {
+                shown = want;
+                node.Visible = want;
+                RoomToggles++;
+            }
+            return want;
+        }
+
+        void EvaluateRooms(Camera3D cam)
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool force = ForceRooms || cam == null;
+            float far = RoomRadius + RoomHysteresis;
+            for (int i = _rooms.Count - 1; i >= 0; i--)
+            {
+                var g = _rooms[i];
+                if (!IsInstanceValid(g.Building)) { _rooms.RemoveAt(i); continue; }
+                var l = force ? Vector3.Zero : g.Building.GlobalTransform.AffineInverse() * cam.GlobalPosition;
+                if (!force && g.Box.DistanceSq(l) > far * far)
+                {
+                    // the broad phase: nothing of it is near, every storey off -- once
+                    if (g.AllHidden) continue;
+                    foreach (var s in g.Storeys) if (s.Shown && IsInstanceValid(s.Node)) { s.Shown = false; s.Node.Visible = false; RoomToggles++; }
+                    g.AllHidden = true;
+                    continue;
+                }
+                g.AllHidden = false;
+                foreach (var s in g.Storeys)
+                {
+                    if (!IsInstanceValid(s.Node)) continue;
+                    if (!GateNode(s.Node, ref s.Shown, force ? 0f : s.Box.DistanceSq(l), force)) continue;
+                    foreach (var r in s.Rooms)
+                    {
+                        if (!IsInstanceValid(r.Node)) continue;
+                        float d2 = float.MaxValue;
+                        if (!force) foreach (var b in r.Boxes) d2 = Mathf.Min(d2, b.DistanceSq(l));
+                        GateNode(r.Node, ref r.Shown, d2, force);
+                    }
+                }
+            }
+            RoomTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            RoomEvals++;
         }
 
         /// <summary>Re-evaluate now (after ForceShow changes, or a camera jump that must not be drawn a frame late).</summary>
