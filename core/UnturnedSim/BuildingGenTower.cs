@@ -88,8 +88,27 @@ namespace UnturnedSim
         /// sides as drawn -- Count of them along that wall; Back for a service door. Into a stair room, in its free cell.</summary>
         sealed class TowerDoor { public int R, C, Count = 1; public char Face; public bool Back; }
 
+        /// <summary>A band of a plan's grid it may lose to fit a plot (TowerCut): N columns from column At, as drawn -- Rows: N rows
+        /// from row At.</summary>
+        sealed class TowerBay
+        {
+            public bool Rows;
+            public int At, N;
+            public override string ToString() => Join(new[] { this });
+            /// <summary>The bands' lines as runs: "columns 17-19 and 26-31", "rows 0-15".</summary>
+            public static string Join(IEnumerable<TowerBay> bays)
+            {
+                var runs = new List<(int A, int B)>();
+                foreach (int i in bays.SelectMany(b => Enumerable.Range(b.At, b.N)).OrderBy(i => i))
+                    if (runs.Count > 0 && runs[^1].B == i - 1) runs[^1] = (runs[^1].A, i); else runs.Add((i, i));
+                var at = runs.Select(r => $"{r.A}-{r.B}").ToList();
+                return $"{(bays.First().Rows ? "rows" : "columns")} {(at.Count == 1 ? at[0] : string.Join(", ", at.Take(at.Count - 1)) + " and " + at[^1])}";
+            }
+        }
+
         /// <summary>One tower plan: its grid's size, its storeys (each the rectangles standing on it), which lifts open on which
-        /// storeys, its facade's window, its street and service doors, and the bends it makes from the research.</summary>
+        /// storeys, its facade's window, its street and service doors, and the bends it makes from the research -- and the bays it
+        /// may lose to fit a town's plot, in the order it loses them, and how many of them it has lost (TowerShrunk).</summary>
         sealed class TowerPlan
         {
             public TowerStyle Style;
@@ -101,6 +120,8 @@ namespace UnturnedSim
             public int FacadeArch = ArchWindow;
             public float FacadeMax = float.MaxValue;
             public List<TowerDoor> Doors = new List<TowerDoor>();
+            public List<TowerBay> Bays = new List<TowerBay>();
+            public int Lost;
         }
 
         static TowerPlan[] _towerPlans;
@@ -111,13 +132,122 @@ namespace UnturnedSim
         static string A(string name) => ("aeiouAEIOU".IndexOf(name[0]) >= 0 ? "an " : "a ") + name;
 
         static TowerDoor Door(int r, int c, char face, int count = 1, bool back = false) => new TowerDoor { R = r, C = c, Face = face, Count = count, Back = back };
+        static TowerBay ColBay(int at, int n) => new TowerBay { At = at, N = n };
+        static TowerBay RowBay(int at, int n) => new TowerBay { Rows = true, At = at, N = n };
+
+        /// <summary>What a cut may never take any of (TowerCut), wholly or in part: a stair room, a lift shaft, a pipe chase -- the
+        /// core's stacks, storey on storey -- any lobby (the entrance's, a lift lobby, the arcade), and a hall of the core: one named
+        /// for a lift, a stair or the core (a lift hall, a stair landing or passage, the core's corridors and links).</summary>
+        static bool TowerUncut(TowerRect q) => q.Code is "ST" or "EL" or "LB" || q.Code == "MC" && TowerKind(q) == RoomKind.Shaft
+                                              || q.Code == "HL" && (q.Label.Contains("lift") || q.Label.Contains("stair") || q.Label.Contains("core"));
+
+        /// <summary>What a cut may take whole but never cut through (TowerCut): a restroom, a closet (a boiler room, a janitor's).</summary>
+        static bool TowerWhole(TowerRect q) => q.Code is "BA" or "MC";
+
+        /// <summary>The plan with bands of its grid taken out (TowerBay, all columns or all rows, where the plan drew them) on every
+        /// storey as built -- a setback's stepped-in storeys and its crown moving with the rest: a rectangle wholly inside them gone,
+        /// one across them shorter by its part in them, one past them moved back, the street doors with them (a door whose cell a
+        /// band takes to the nearest cell its room keeps: a service door at the end of a corridor cut shorter). A room cut to one cell
+        /// along them gives it to the room beyond it of its code and its width (the setback's side-street shop over the U's last row,
+        /// to the one in front of it). Null, and why, should a band take any of what must never be cut (TowerUncut), cut through a
+        /// restroom or closet (TowerWhole), leave a one-cell room nothing takes, a tenant's rooms with no shop (its stock room an
+        /// orphan), or a street door with no room.</summary>
+        static TowerPlan TowerCut(TowerPlan p, IList<TowerBay> bays, out string why)
+        {
+            why = null;
+            bool rows = bays[0].Rows;
+            int size = rows ? p.Rows : p.Cols;
+            var gone = new bool[size];
+            foreach (var b in bays)
+            {
+                if (b.Rows != rows || b.N < 1 || b.At < 0 || b.At + b.N > size) { why = $"no {b} in {size}"; return null; }
+                for (int i = b.At; i < b.At + b.N; i++) { if (gone[i]) { why = $"{b} overlaps another band"; return null; } gone[i] = true; }
+            }
+            // (where each line lands: the lines before it that stay)
+            var to = new int[size + 1];
+            for (int i = 0; i < size; i++) to[i + 1] = to[i] + (gone[i] ? 0 : 1);
+            if (to[size] == 0) { why = "nothing would stay"; return null; }
+            (int Lo, int Len) Along(TowerRect q) => rows ? (q.R, q.H) : (q.C, q.W);
+            (int Lo, int Len) Across(TowerRect q) => rows ? (q.C, q.W) : (q.R, q.H);
+            void Set(TowerRect q, int lo, int len) { if (rows) { q.R = lo; q.H = len; } else { q.C = lo; q.W = len; } }
+            var storeys = new List<TowerRect>[p.Storeys.Length];
+            for (int f = 0; f < storeys.Length; f++)
+            {
+                var kept = storeys[f] = new List<TowerRect>();
+                var slivers = new List<(TowerRect Q, bool GoneBelow)>();
+                foreach (var q in p.Storeys[f])
+                {
+                    var (lo, len) = Along(q);
+                    int keep = to[lo + len] - to[lo];
+                    if (keep < len && TowerUncut(q)) { why = $"storey {f}'s {q} is not to be cut"; return null; }
+                    if (keep == 0) continue;
+                    if (keep < len && TowerWhole(q)) { why = $"storey {f}'s {q} would be cut through"; return null; }
+                    var c = q.Copy();
+                    Set(c, to[lo], keep);
+                    kept.Add(c);
+                    if (keep < len && keep < 2) slivers.Add((c, gone[lo]));
+                }
+                foreach (var (c, goneBelow) in slivers)
+                {
+                    // (the room beyond it, the side away from what was cut first)
+                    var (lo, _) = Along(c);
+                    var mates = kept.Where(o => o != c && o.Code == c.Code && o.Span == c.Span && Across(o) == Across(c)).ToList();
+                    var above = mates.FirstOrDefault(o => Along(o).Lo == lo + 1);
+                    var below = mates.FirstOrDefault(o => Along(o).Lo + Along(o).Len == lo);
+                    var mate = goneBelow ? above ?? below : below ?? above;
+                    if (mate == null) { why = $"storey {f}'s {c} would be one cell, and nothing beside it of its kind to take it"; return null; }
+                    var (mlo, mlen) = Along(mate);
+                    Set(mate, Math.Min(mlo, lo), mlen + 1);
+                    kept.Remove(c);
+                }
+            }
+            var left = storeys.SelectMany(s => s).ToList();
+            foreach (var t in left.Select(q => q.Tenant).Where(t => t != '.').Distinct())
+                if (!left.Any(q => q.Tenant == t && q.Code == "SH")) { why = $"tenant {t}'s rooms would have no shop"; return null; }
+            var doors = new List<TowerDoor>();
+            foreach (var d in p.Doors)
+            {
+                int pos = rows ? d.R : d.C;
+                if (gone[pos])
+                {
+                    var room = p.Storeys[0].FirstOrDefault(q => q.Has(d.R, d.C));
+                    var cells = room == null ? new List<int>() : Enumerable.Range(Along(room).Lo, Along(room).Len).Where(i => !gone[i]).ToList();
+                    if (cells.Count == 0) { why = $"the street door at r{d.R}c{d.C} would have no room"; return null; }
+                    pos = cells.OrderBy(i => Math.Abs(i - pos)).First();
+                }
+                doors.Add(new TowerDoor { R = rows ? to[pos] : d.R, C = rows ? d.C : to[pos], Face = d.Face, Count = d.Count, Back = d.Back });
+            }
+            return new TowerPlan
+            {
+                Style = p.Style, Name = p.Name, Rows = rows ? to[size] : p.Rows, Cols = rows ? p.Cols : to[size], Storeys = storeys,
+                Opens = p.Opens, FacadeArch = p.FacadeArch, FacadeMax = p.FacadeMax, Doors = doors, Bays = p.Bays, Lost = p.Lost,
+            };
+        }
+
+        /// <summary>The plan less the first k of its bays (TowerPlan.Bays), cut together -- the plan itself for none.</summary>
+        static TowerPlan TowerShrunk(TowerPlan p, int k)
+        {
+            if (k == 0) return p;
+            var q = TowerCut(p, p.Bays.Take(k).ToList(), out var why)
+                    ?? throw new InvalidOperationException($"BuildingGen: {A(p.Name)} cannot lose its {TowerBay.Join(p.Bays.Take(k))}: {why}");
+            q.Lost = k;
+            return q;
+        }
+
+        /// <summary>"one bay", "two bays".</summary>
+        static string TowerBays(int k) => (k < 6 ? new[] { "no", "one", "two", "three", "four", "five" }[k] : k.ToString()) + (k == 1 ? " bay" : " bays");
 
         /// <summary>The main-street office block (Concord-type, 1890s-1930s), 19 x 10 cells, six storeys as real: on the ground a 15-ft
         /// entry bay from the street to the lift lobby, a shop either side -- the corner one a banking room (Concord's 1891 tenant:
         /// a bank, its back hall, vault, staff WC and two offices behind) -- and two rear offices off a service hall; one lift with
         /// its stair wrapped round it behind; above, cellular offices either side of a double-loaded corridor, the restrooms lit by a
         /// rear light well. Its punched windows a masonry front's (FacadeMax). Its back door the stair's, onto the alley ("deliveries
-        /// via the rear alley door"), and the bank's corner door. As the research drew it.</summary>
+        /// via the rear alley door"), and the bank's corner door. As the research drew it.
+        /// To fit a narrower plot it loses a bay of three columns a side (TowerCut), the right first -- cols 16-18: the bank's back
+        /// office and the offices over it, front and back, gone, the bank and the back row's c14-16 office narrower -- then the left
+        /// -- cols 0-2: a rear office, the shop's stockroom and the offices over them gone, the shop narrower, and the light well
+        /// open onto the side then, a notch in the back corner. Nowhere else: the stair, lift and closet stand mid-plan, the
+        /// restrooms beside them, the entry lobby between the shops. 19 x 10 cells, 16 x 10, at its least 13 x 10.</summary>
         static TowerPlan MainStreetPlan()
         {
             var ground = TowerRects("ST[stair wraps lift]@r0c7:2x4 HL[stair landing]@r2c7:3x1 EL[lift 1]@r2c8:2x2 MC[janitor/riser]@r2c10:2x1 LB[entry+lift lobby]@r4c8:6x3 "
@@ -135,6 +265,7 @@ namespace UnturnedSim
                 Style = TowerStyle.MainStreet, Name = "main-street office block", Rows = 10, Cols = 19, Storeys = storeys,
                 FacadeArch = ArchWindow, FacadeMax = 1.9f,
                 Doors = { Door(4, 8, 'F'), Door(5, 11, 'R'), Door(0, 7, 'B', back: true) },
+                Bays = { ColBay(16, 3), ColBay(0, 3) },
             };
         }
 
@@ -155,7 +286,17 @@ namespace UnturnedSim
         /// beacon: "not occupied"), the stairs topping out into it and the high bank's shafts capped by its floor; the research's
         /// crown (cols 9-20) is the core's width less the stairs, cols 8-21, so both stairs reach it. (3) The two stores at the back
         /// corners are the corner side-street shops' stock rooms: off the boiler room, the only room beside them, nothing could
-        /// reach them.</summary>
+        /// reach them.
+        /// To fit a shallower plot it loses the U's legs (rows 0-15), a bay at a time (TowerCut), down to the front bar and the tower
+        /// over it (rows 16-27), which never change: rows 6-8, then 9-11 -- a leg office out of each leg on every storey 2-13, the
+        /// leg and service corridors, the light court and the banking hall under it three rows shorter, on the ground the side-street
+        /// shops in rows 2-6 and 7-11 shorter, then the latter gone whole --; then the back, rows 0-3 -- the loading dock, the stores,
+        /// the boilers, the rear service hall and the inner legs' back offices gone, the service doors moving to the corridors' new
+        /// ends -- and 4-5, the last of the back shops with them (the banking hall at its least then, four rows, 12 m); then the
+        /// rest, 12-15: the banking hall and the light court go, the side-street shops over the U's last row giving it to the shops
+        /// in front of them, and what stands is the base block thirteen storeys high, 30 x 12 cells, and the tower stepping in over
+        /// it -- still a setback. (No bay of three rows past row 12: the inner legs' offices stand in bays of two there, the outer
+        /// legs' in three.) 30 x 28 cells, 25, 22, 18, 16, at its least 30 x 12, 36 m deep.</summary>
         static TowerPlan SetbackPlan()
         {
             const string core = "ST[stair A]@r16c6:4x2 ST[stair B]@r16c22:4x2 MC[janitor]@r20c6:2x2 MC[electric]@r20c22:2x2 MC[pipe/vent shaft]@r16c8:6x1 MC[pipe/vent shaft]@r16c21:6x1 "
@@ -195,6 +336,7 @@ namespace UnturnedSim
                 Opens = (label, f) => !label.StartsWith("high") || f == 0 || f >= 13,
                 FacadeArch = ArchWindow, FacadeMax = 1.9f,
                 Doors = { Door(23, 12, 'F', 2), Door(22, 0, 'L'), Door(22, 29, 'R'), Door(0, 5, 'B', back: true), Door(0, 24, 'B', back: true) },
+                Bays = { RowBay(6, 3), RowBay(9, 3), RowBay(0, 4), RowBay(4, 2), RowBay(12, 4) },
             };
         }
 
@@ -208,7 +350,13 @@ namespace UnturnedSim
         /// penthouse, stair B to the top office storey.
         /// Bends from the research, and why: the open office's four rectangles are one open-plan room a storey (an open office is
         /// one space, and as four Private rooms the back one had no door); the penthouse -- "2-3 storey", over the core end -- is cols
-        /// 0-11, two storeys, one plant room through both, beside stair A.</summary>
+        /// 0-11, two storeys, one plant room through both, beside stair A.
+        /// To fit a narrower plot it loses office bays of three columns along the back (TowerCut) -- the private office in each, on
+        /// every office storey, and the open offices, the typing pool and the spine corridor in front of them three columns shorter
+        /// -- the far end's first (cols 29-31), then the one before stair B (17-19), then the far end's next (26-28): stair B stays
+        /// about mid-slab, between the core and the end. Nowhere else: the end core (cols 0-7), the glass lobby and the loading bay
+        /// and store beside it (8-15: a bay there cuts the lobby or leaves the store a cell wide), stair B (20-23), or the end
+        /// offices, two columns each. 36 x 12 cells, 33, 30, at its least 27 x 12.</summary>
         static TowerPlan SlabPlan()
         {
             const string core = "ST[stair A (core)]@r0c0:2x4 BA[M]@r0c4:2x2 BA[M]@r0c6:2x2 HL[core back corridor]@r2c0:1x8 EL[lift]@r3c1:2x2 EL[lift]@r7c1:2x2 EL[lift]@r3c3:2x2 EL[lift]@r7c3:2x2 "
@@ -228,6 +376,7 @@ namespace UnturnedSim
                 Style = TowerStyle.Slab, Name = "International Style slab", Rows = 12, Cols = 36, Storeys = storeys,
                 FacadeArch = ArchTallWindow,
                 Doors = { Door(2, 8, 'F'), Door(2, 15, 'R'), Door(6, 20, 'F') },
+                Bays = { ColBay(29, 3), ColBay(17, 3), ColBay(26, 3) },
             };
         }
 
@@ -257,7 +406,8 @@ namespace UnturnedSim
             // ---- the plan: the one asked for, else a seeded one -- the main-street block most often (the commonest by far in a
             // town), the setback and the slab after it -- each faced any way asked (its street on the side asked, south when none
             // was; laid out with its street on the north, east or west, and a south front turned half round last), and now and
-            // then mirror-wise. On a town's plot (FitPlot), the first that fits it in that order, else the closest, said so.
+            // then mirror-wise. On a town's plot (FitPlot), the first that fits it in that order -- as drawn, else shrunk by as few of
+            // its bays as fit it (TowerShrunk: the same tower narrower or shallower, never shorter) -- else the closest, said so.
             var order = new List<TowerStyle>();
             if (spec.Tower != TowerStyle.Auto) order.Add(spec.Tower);
             else
@@ -272,14 +422,20 @@ namespace UnturnedSim
             TowerPlan plan = null; Sides front = fronts[0];
             if (spec.FitPlot && spec.Width > 0 && spec.Depth > 0)
             {
-                var cands = order.Select((st, i) => (Plan: TowerPlans.First(p => p.Style == st), i)).SelectMany(p => fronts.Select(fs => (p.Plan, p.i, Front: fs))).ToList();
                 (int X, int Z) Size(TowerPlan p, Sides fs) => fs is Sides.North or Sides.South ? (p.Cols, p.Rows) : (p.Rows, p.Cols);
-                int Over((TowerPlan Plan, int i, Sides Front) c) { var (x, z) = Size(c.Plan, c.Front); return Math.Max(0, x - spec.Width) + Math.Max(0, z - spec.Depth); }
-                var best = cands.OrderBy(Over).ThenBy(c => c.i).ThenBy(c => fronts.IndexOf(c.Front)).First();
+                int Over(TowerPlan p, Sides fs) { var (x, z) = Size(p, fs); return Math.Max(0, x - spec.Width) + Math.Max(0, z - spec.Depth); }
+                // (each style as drawn and less one bay, two... -- and faced each way, the fewest bays that fit it, else the fewest
+                // that come closest; the first style that fits wins, then the fewest bays lost, then the front)
+                var cands = order.Select((st, i) => (Plan: TowerPlans.First(p => p.Style == st), i))
+                                 .Select(p => (Plans: Enumerable.Range(0, p.Plan.Bays.Count + 1).Select(k => TowerShrunk(p.Plan, k)).ToList(), p.i))
+                                 .SelectMany(p => fronts.Select(fs => (Plan: p.Plans.OrderBy(q => Over(q, fs)).First(), p.i, Front: fs))).ToList();
+                var best = cands.OrderBy(c => Over(c.Plan, c.Front)).ThenBy(c => c.i).ThenBy(c => c.Plan.Lost).ThenBy(c => fronts.IndexOf(c.Front)).First();
                 plan = best.Plan; front = best.Front;
                 var (bx, bz) = Size(plan, front);
-                res.Notes.Add(Over(best) > 0 ? $"could not fit the {spec.Width}x{spec.Depth} plot: {bx}x{bz} is the closest of {cands.Count} towers"
-                                             : $"fitted the {spec.Width}x{spec.Depth} plot as {bx}x{bz}" + (best.i > 0 ? $": {A(plan.Name)}, not {A(TowerPlans.First(p => p.Style == order[0]).Name)}" : ""));
+                string shrunk = plan.Lost == 0 ? null : $"{A(plan.Name)}, {TowerBays(plan.Lost)} shorter (its {TowerBay.Join(plan.Bays.Take(plan.Lost))} out)";
+                res.Notes.Add(Over(plan, front) > 0 ? $"could not fit the {spec.Width}x{spec.Depth} plot: {bx}x{bz} is the closest of {cands.Count} towers" + (shrunk != null ? $", {shrunk}" : "")
+                                                    : $"fitted the {spec.Width}x{spec.Depth} plot as {bx}x{bz}" + (best.i > 0 || shrunk != null ? $": {shrunk ?? A(plan.Name)}" : "")
+                                                      + (best.i > 0 ? $", not {A(TowerPlans.First(p => p.Style == order[0]).Name)}" : ""));
             }
             else
             {
@@ -662,7 +818,7 @@ namespace UnturnedSim
             // (each room within its kind's cap, a tower's own past the house's: TowerCap -- a note should one not be)
             foreach (var r in rooms.Where(r => r.Cells > CapCells(r.Kind, BuildingKind.Tower)))
                 res.Notes.Add($"{r.Kind} on storey {r.Floor} is {r.Cells} cells, past a tower's {CapCells(r.Kind, BuildingKind.Tower)}");
-            res.Plan = $"tower, {plan.Name}{(mirror ? " mirrored" : "")} fronting {front}: {F} storeys" + (tenants.Count > 0 ? $", {string.Join(", ", res.UnitBusiness)}" : "");
+            res.Plan = $"tower, {plan.Name}{(plan.Lost > 0 ? $" ({TowerBays(plan.Lost)} shorter)" : "")}{(mirror ? " mirrored" : "")} fronting {front}: {F} storeys" + (tenants.Count > 0 ? $", {string.Join(", ", res.UnitBusiness)}" : "");
             res.StreetSide = front; res.AlleySide = Turned(front);
             res.Layout.AddRange(rooms);
             res.Doors.AddRange(doors);
