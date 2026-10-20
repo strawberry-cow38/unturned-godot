@@ -354,9 +354,10 @@ namespace UnturnedSim
         /// To fit a narrower plot it loses office bays of three columns along the back (TowerCut) -- the private office in each, on
         /// every office storey, and the open offices, the typing pool and the spine corridor in front of them three columns shorter
         /// -- the far end's first (cols 29-31), then the one before stair B (17-19), then the far end's next (26-28): stair B stays
-        /// about mid-slab, between the core and the end. Nowhere else: the end core (cols 0-7), the glass lobby and the loading bay
-        /// and store beside it (8-15: a bay there cuts the lobby or leaves the store a cell wide), stair B (20-23), or the end
-        /// offices, two columns each. 36 x 12 cells, 33, 30, at its least 27 x 12.</summary>
+        /// about mid-slab, between the core and the end -- and last the end office, two columns (34-35; the one beside it, as
+        /// wide, ends the slab then), for a downtown plot of about 78 m. Nowhere else: the end core (cols 0-7), the glass lobby and
+        /// the loading bay and store beside it (8-15: a bay there cuts the lobby or leaves the store a cell wide), or stair B
+        /// (20-23). 36 x 12 cells, 33, 30, 27, at its least 25 x 12.</summary>
         static TowerPlan SlabPlan()
         {
             const string core = "ST[stair A (core)]@r0c0:2x4 BA[M]@r0c4:2x2 BA[M]@r0c6:2x2 HL[core back corridor]@r2c0:1x8 EL[lift]@r3c1:2x2 EL[lift]@r7c1:2x2 EL[lift]@r3c3:2x2 EL[lift]@r7c3:2x2 "
@@ -376,7 +377,7 @@ namespace UnturnedSim
                 Style = TowerStyle.Slab, Name = "International Style slab", Rows = 12, Cols = 36, Storeys = storeys,
                 FacadeArch = ArchTallWindow,
                 Doors = { Door(2, 8, 'F'), Door(2, 15, 'R'), Door(6, 20, 'F') },
-                Bays = { ColBay(29, 3), ColBay(17, 3), ColBay(26, 3) },
+                Bays = { ColBay(29, 3), ColBay(17, 3), ColBay(26, 3), ColBay(34, 2) },
             };
         }
 
