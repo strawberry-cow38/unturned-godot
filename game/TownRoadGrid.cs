@@ -4769,7 +4769,7 @@ namespace UnturnedGodot
         // ==============================================================================================
 
         /// <summary>What a plot is for.</summary>
-        public enum PlotKind { HouseSmall, HouseMedium, HouseLarge, Corner, Shop, Apartments, Triangle, Parking }
+        public enum PlotKind { HouseSmall, HouseMedium, HouseLarge, Corner, Shop, Apartments, Triangle, Parking, Tower }
 
         /// <summary>One entry of the plot catalogue: a kind, its frontage and depth, its yards, and the colour it is
         /// marked in. The building stands in what the yards leave: (Width - 2 SideYard) x (Depth - FrontYard -
@@ -4810,6 +4810,13 @@ namespace UnturnedGodot
             // (a parking lot: solved to what its building asked for -- TownParking -- so this size is only a nominal one; no
             // catalogue fill offers it)
             new(PlotKind.Parking,     17f, 20f, 0f, 0f, 0f,   new Color(0.55f, 0.55f, 0.58f)),
+            // ⭐ DOWNTOWN TOWERS (strawberry 2026-10-20: "wire into the town scenes ... scale towers footprint to fit smaller
+            // plots, and just downtown plots are bigger"): the dense core reserves the WHOLE block-face as one big tower plot
+            // (PlaceTowers), with NO yards -- a tower stands to its street, its plaza drawn inside the plan -- and tinyclaw's
+            // generator SCALES to it, dropping the largest of its researched plans that fits (main-street block 19x10 cells / 6
+            // storeys on a short face, the 36x12 slab or 30x28 setback where the face is long + deep). This size is only the cap
+            // (the biggest plan's bounding box, 108 x 84 m); PlaceTowers passes each face's actual room.
+            new(PlotKind.Tower,       108f, 84f, 0f, 0f, 0f,  new Color(0.28f, 0.38f, 0.56f)),
         };
         public static PlotSize SizeOf(PlotKind k) { foreach (var p in PlotSizes) if (p.Kind == k) return p; return PlotSizes[0]; }
 
@@ -4874,6 +4881,10 @@ namespace UnturnedGodot
         /// <summary>The kinds a main's frontage is offered, or a street's.</summary>
         public IReadOnlyList<PlotKind> FrontageKinds(bool main) => main ? MainKinds : StreetKinds;
 
+        /// <summary>⭐ The land value at or above which a main frontage is given a TOWER (PlaceTowers), 0..1. City cores reach
+        /// 1.0, towns ~0.80, small towns/hamlets never -- so towers cluster in a city's downtown and taper off below it.</summary>
+        public float TowerCoreDensity = 0.80f;
+
         /// <summary>⭐ LAND VALUE at a world point, 0 (cheap edge) .. 1 (prime downtown) -- the DENSITY heatmap (strawberry
         /// 2026-10-19: "a separate density heatmap. ie the downtown isnt magically giant plots, space is still a premium
         /// downtown ... poorer places can still have big motels, strip malls, parking lots. where land is cheap").
@@ -4915,7 +4926,7 @@ namespace UnturnedGodot
             float L = roads.RoadLength(r);
             float d = roads.EvaluateAlong(r, L * 0.5f, out var mid, out _, snapTerrain: false) ? Density(new Vector3(mid.X, 0f, mid.Z)) : 0.4f;
             if (main)
-                return d >= 0.70f ? new[] { PlotKind.Apartments, PlotKind.Shop, PlotKind.Apartments }
+                return d >= 0.70f ? new[] { PlotKind.Apartments, PlotKind.Shop, PlotKind.Apartments }   // (the dense core's TOWERS are laid first by PlaceTowers; this mix fills the frontage round them)
                      : d >= 0.45f ? new[] { PlotKind.Shop, PlotKind.Apartments, PlotKind.HouseLarge }
                      : d >= 0.22f ? new[] { PlotKind.Shop, PlotKind.HouseLarge, PlotKind.HouseMedium }
                      :              new[] { PlotKind.HouseLarge, PlotKind.HouseMedium, PlotKind.Shop };   // cheap edge main: roomy + a shop
@@ -5294,6 +5305,57 @@ namespace UnturnedGodot
                             }
                         }
                 }
+
+                // ---- ⭐ DOWNTOWN TOWERS (strawberry 2026-10-20: "scale towers footprint to fit smaller plots, and just downtown
+                // plots are bigger"): laid BEFORE the corners and frontages so a tower claims its core block-face WHOLE -- that is
+                // the "bigger downtown plot" -- and the corner lots and smaller plots then fill round it (PlotFits keeps two from
+                // overlapping). Only a MAIN frontage in the dense core gets one. We reserve the biggest plot the face can hold (as
+                // wide as the run, as deep as fits), and tinyclaw's generator SCALES to it: it drops the largest of its researched
+                // plans that fits that plot -- a 6-storey main-street block on a short face, the 24-storey slab or 30-storey setback
+                // where the face is long + deep. So the footprint scales to the plot, and a bigger downtown plot gets a bigger tower.
+                void PlaceTowers()
+                {
+                    if (!ClassAware) return;
+                    const float MinTowerW = 57f, MinTowerD = 30f, MaxTowerW = 108f, MaxTowerD = 84f;   // the main-street block .. the slab's width / the setback's depth
+                    foreach (int r in Built)
+                    {
+                        if (!IsMain(roads, r)) continue;
+                        float L = roads.RoadLength(r);
+                        if (!roads.EvaluateAlong(r, L * 0.5f, out var mid, out _, snapTerrain: false)) continue;
+                        if (Density(new Vector3(mid.X, 0f, mid.Z)) < TowerCoreDensity) continue;
+                        float off = Front(r);
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            // the buildable runs of this frontage, probed as deep as the shallowest tower
+                            var runs = new List<(float a, float b)>();
+                            float runA = -1f;
+                            for (float s = 0f; s + 1f <= L; s += 1f)
+                            {
+                                var pr = PlotAt(r, side, off, s + 0.5f, 1f, MinTowerD, PlotKind.Tower);
+                                bool ok = pr != null && PlotFits(roads, pr);
+                                if (ok && runA < 0f) runA = s;
+                                if (!ok && runA >= 0f) { runs.Add((runA, s)); runA = -1f; }
+                            }
+                            if (runA >= 0f) runs.Add((runA, Mathf.Floor(L)));
+                            // one big tower plot per face, centred: as wide as the face (capped at the slab's width), as deep as
+                            // fits (down from the setback's depth) -- the generator picks the largest plan that fits this plot
+                            foreach (var (a, b) in runs)
+                            {
+                                float runLen = b - a;
+                                if (runLen < MinTowerW - 0.01f) continue;
+                                float w = Mathf.Min(runLen - 1f, MaxTowerW);
+                                if (w < MinTowerW - 0.01f) continue;
+                                float centre = a + runLen * 0.5f;
+                                for (float d = MaxTowerD; d >= MinTowerD - 0.01f; d -= 3f)
+                                {
+                                    var pl = PlotAt(r, side, off, centre, w, d, PlotKind.Tower);
+                                    if (pl != null && PlotFits(roads, pl)) { Plots.Add(pl); break; }
+                                }
+                            }
+                        }
+                    }
+                }
+                PlaceTowers();
 
                 // ---- corner lots: at every square corner of every junction
                 var corner = SizeOf(PlotKind.Corner);

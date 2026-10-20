@@ -157,6 +157,11 @@ namespace UnturnedGodot
                 case PlotKind.Apartments:
                     spec.Kind = BuildingKind.Apartment; spec.MinFloors = 2; spec.MaxFloors = 4;
                     break;
+                // ⭐ DOWNTOWN TOWERS (strawberry 2026-10-20: "scale towers footprint to fit smaller plots"): a dense-core plot is a
+                // big one PlaceTowers reserved (the whole block-face). Hand the generator its size (FitPlot is on, Width/Depth are
+                // set above from the plot) with Tower=Auto and let it pick + scale the largest plan that fits; its facade fronts the
+                // street (South). (tinyclaw owns the shrink-to-fit of the plans in BuildingGenTower.cs; this is the plot side.)
+                case PlotKind.Tower: spec.Kind = BuildingKind.Tower; spec.Tower = TowerStyle.Auto; spec.FrontSide = Sides.South; break;
                 default:
                     spec.Kind = BuildingKind.Residential; spec.MinFloors = 1;
                     spec.MaxFloors = pl.Kind == PlotKind.HouseSmall ? 1 : 2;
