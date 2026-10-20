@@ -27,6 +27,8 @@ namespace UnturnedGodot
             public bool TurnedRound;
             /// <summary>The sides of its plan another building's footprint meets: party walls, butted by the runtime builder.</summary>
             public Sides Party;
+            /// <summary>Its root once BuildBuildings has put it up (null before, or if it failed to build).</summary>
+            public Node3D Node;
         }
         /// <summary>What the last PlanBuildings generated.</summary>
         public readonly List<TownBuilding> Buildings = new();
@@ -120,8 +122,9 @@ namespace UnturnedGodot
                 FitPlot = true,
                 FrontSide = Sides.South,
                 // ⚠ NO BASEMENTS YET: a town's ground is not cut under one until the terrain bending lands (tinyclaw's), and a
-                // basement in uncut ground is a stair room whose flight runs into the earth
-                Basement = BasementChoice.Forbid,
+                // basement in uncut ground is a stair room whose flight runs into the earth (UG_TOWNBASEMENTS=1: the generator's own
+                // odds, and BuildBuildings cuts each out of the ground -- the culling probe's town, not yet the game's)
+                Basement = TownBasements ? BasementChoice.Auto : BasementChoice.Forbid,
                 // ⚠ A PORCH STANDS OUTSIDE THE FOOTPRINT (bitvox 2026-10-15: "one building there in the small triangle piece of land
                 // is extending onto the sidewalk"): a front porch or a shop's canopy reaches PorchRoom past the plan, and a lot
                 // with less front yard than that -- a triangle lot's zone is 1.5 m off its line -- put it over the pavement
@@ -442,6 +445,11 @@ namespace UnturnedGodot
             return n;
         }
 
+        /// <summary>UG_TOWNBASEMENTS=1: plots may roll a basement (BuildingGen's own odds), and each one's Dig is cut out of the
+        /// terrain once it is built (Terrain.AddBasementCut, as UG_TERRAINBASEMENT cuts the stage's). Off by default: towns have
+        /// no basements yet.</summary>
+        public static bool TownBasements = System.Environment.GetEnvironmentVariable("UG_TOWNBASEMENTS") == "1";
+
         /// <summary>UG_TOWNMASSING=1: the buildings as their massing (a box per floor cell, a red post at the front door) -- the
         /// check on the town's half alone.</summary>
         public static bool ShowMassing = System.Environment.GetEnvironmentVariable("UG_TOWNMASSING") == "1";
@@ -454,7 +462,8 @@ namespace UnturnedGodot
             if (parent == null || Buildings.Count == 0) return 0;
             if (ShowMassing) return BuildBuildingMassing(parent);
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            int made = 0, failed = 0, walls = 0, props = 0, clipped = 0;
+            int made = 0, failed = 0, walls = 0, props = 0, clipped = 0, basements = 0;
+            var live = new BuildingRuntime.Furnished();
             foreach (var b in Buildings)
             {
                 if (b.Result == null) continue;
@@ -462,11 +471,57 @@ namespace UnturnedGodot
                 try { node = BuildingRuntime.Build(b.Result, b.Frame, parent, objs, $"Building_{b.Plot.Kind}_{made}", b.Party); }
                 catch (System.Exception e) { if (failed++ == 0) Log.Err($"[towngrid] building on a {b.Plot.Kind} plot failed to build: {e.Message}\n{e.StackTrace}"); }
                 if (node == null) continue;
+                b.Node = node;
+                if (TownBasements && b.Result.HasBasement && Terrain.Active != null)
+                {
+                    // its Dig, those under the building first (the hatch's well, open to the sky, last), as world x/z corners
+                    var quads = new List<Vector2[]>(); int covered = 0;
+                    foreach (var (x0, z0, x1, z1) in b.Result.Dig)
+                    {
+                        if ((x0, z0, x1, z1) != b.Result.HatchWell) covered++;
+                        var c = new Vector2[4]; int i = 0;
+                        foreach (var (x, z) in new[] { (x0, z0), (x1, z0), (x1, z1), (x0, z1) }) { var q = b.Frame * new Vector3(x, 0f, z); c[i++] = new Vector2(q.X, q.Z); }
+                        quads.Add(c);
+                    }
+                    Terrain.Active.AddBasementCut(1000 + made, quads, covered);
+                    basements++;
+                }
                 made++; walls += BuildingRuntime.LastWalls; props += BuildingRuntime.LastProps; clipped += BuildingRuntime.LastClipped;
+                live.Add(BuildingRuntime.LastFurnished);
             }
+            int ceiling = 0; foreach (var l in live.CeilingLights) if (l != null) ceiling++;
             Log.Print($"[towngrid] buildings built: {made} in {clock.ElapsedMilliseconds} ms ({clock.ElapsedMilliseconds / Mathf.Max(1, made)} ms a building), "
-                    + $"{walls} surfaces ({clipped} fitted to a party line), {props} pieces of furniture{(failed > 0 ? $", {failed} FAILED" : "")}");
+                    + $"{walls} surfaces ({clipped} fitted to a party line), {props} pieces of furniture{(failed > 0 ? $", {failed} FAILED" : "")} -- "
+                    + $"{live.Colliders} with a collider, {live.Containers} containers, {live.Lamps.Count} lamps ({ceiling} ceiling lights), "
+                    + $"{live.Switches.Count} light switches, {live.Outlets.Count} outlets; furnishing: {live.Timings}");
+            LogLampDensity(live.Lamps);
+            if (TownBasements) Log.Print($"[towngrid] basements: {basements} cut out of the ground ({Terrain.Active?.CutReport})");
             return made;
+        }
+
+        /// <summary>How many of the town's lamps a camera can have in range at once: the most lamps within `r` of any one lamp
+        /// (a camera standing at the densest spot), at the fade-out distance the lamps actually have (BuildingRuntime.LampFadeBegin
+        /// + LampFadeLength) and at 100 m, which is roughly what a view down a street would hold without the fade.</summary>
+        static void LogLampDensity(List<LampLight> lamps)
+        {
+            if (lamps.Count == 0) return;
+            var pos = new List<Vector3>(lamps.Count);
+            foreach (var l in lamps) if (GodotObject.IsInstanceValid(l) && l.IsInsideTree()) pos.Add(l.GlobalPosition);
+            float fade = BuildingRuntime.LampFadeBegin + BuildingRuntime.LampFadeLength;
+            int worstFade = 0, worst100 = 0;
+            foreach (var a in pos)
+            {
+                int nf = 0, n100 = 0;
+                foreach (var b in pos)
+                {
+                    float d2 = a.DistanceSquaredTo(b);
+                    if (d2 <= fade * fade) nf++;
+                    if (d2 <= 100f * 100f) n100++;
+                }
+                worstFade = Mathf.Max(worstFade, nf); worst100 = Mathf.Max(worst100, n100);
+            }
+            Log.Print($"[towngrid] lamps: {pos.Count} lights in the town; at the densest spot {worstFade} within {fade:0} m (drawn: they fade out past that) "
+                    + $"and {worst100} within 100 m -- against Forward+'s 512 clustered elements a view");
         }
 
         /// <summary>Until the runtime builder lands: each generated building as its MASSING -- one translucent box per floor

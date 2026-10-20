@@ -6856,7 +6856,17 @@ namespace UnturnedGodot
                 BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.53f, 0.67f, 0.86f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.92f, 0.92f, 0.94f), AmbientLightEnergy = 1.15f,
             };
-            AddChild(new WorldEnvironment { Environment = env });
+            // ⚠⚠ THE GRAPHICS OPTIONS NEVER REACHED A CUSTOM MAP (strawberry 2026-10-15, of a generated town: "the buildings dont
+            // have lighting or AO"). Ambient occlusion, bloom, SSR and sun shafts are applied to the WorldEnvironments in the
+            // "world_env" group (GraphicsOptions.ApplyEnvironment, at load and from the settings panel) -- and only WorldBuilder's
+            // environment, PEI's, ever joined it. So on a generated island, a generated town or any map made in the editor, the
+            // Ambient occlusion row did nothing at all, at load or when flipped mid-game: retail's buildings had AO and the
+            // town's could not, while neither carries any baked AO of its own (no vertex colour on a retail building's LOD0, a
+            // 4x2 palette texture). Joined here exactly as WorldBuilder joins it, so the same switch drives both.
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); AddChild(we); }
+            // ...and the point-light shadow budget, which a custom map never had either: the nearest few lamps cast, as on PEI
+            // (LightShadowBudget), instead of every room's lamp lighting the next room through the wall between them.
+            AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f, VisualsEnabled = false };
             AddChild(dayNight);
             var editor = new Editor();
@@ -7815,10 +7825,14 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
-                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop[,basement[,style[,way]]]]]]]]]]]]
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop[,basement[,style[,way[,strip[,wealth]]]]]]]]]]]]]]
                 // (sides as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
                 // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...; basement Y/N, its style U/S/F/W -- bare, store,
-                // finished, workshop -- and its way down S/H, stairs or hatch) generates a building from a seed instead
+                // finished, workshop -- and its way down S/H, stairs or hatch; strip a Strip kind's plan, Convenience/PostWar/MiniMall/
+                // Taxpayer or the research's L6/L3/L5/L1, anything else seeded -- and, the same field, a Tower kind's: MainStreet/Setback/
+                // Slab or MS/SB/IS (a kind has one plan field: a fixed plan's name, read as the kind it is for, ignored by the others);
+                // wealth the town's, P poor / A affluent / else working)
+                // generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
@@ -7868,6 +7882,21 @@ namespace UnturnedGodot
                         {
                             "S" => UnturnedSim.BasementAccess.Stairs, "H" => UnturnedSim.BasementAccess.Hatch, _ => UnturnedSim.BasementAccess.Auto,
                         } : UnturnedSim.BasementAccess.Auto,
+                        Strip = g.Length > 18 ? g[18].ToUpperInvariant() switch
+                        {
+                            "L6" => UnturnedSim.StripStyle.Convenience, "L3" => UnturnedSim.StripStyle.PostWar, "L5" => UnturnedSim.StripStyle.MiniMall,
+                            "L1" => UnturnedSim.StripStyle.Taxpayer,
+                            _ => System.Enum.TryParse<UnturnedSim.StripStyle>(g[18], true, out var strip) ? strip : UnturnedSim.StripStyle.Auto,
+                        } : UnturnedSim.StripStyle.Auto,
+                        Tower = g.Length > 18 ? g[18].ToUpperInvariant() switch
+                        {
+                            "MS" or "MAIN" => UnturnedSim.TowerStyle.MainStreet, "SB" => UnturnedSim.TowerStyle.Setback, "IS" or "INTL" => UnturnedSim.TowerStyle.Slab,
+                            _ => System.Enum.TryParse<UnturnedSim.TowerStyle>(g[18], true, out var tower) ? tower : UnturnedSim.TowerStyle.Auto,
+                        } : UnturnedSim.TowerStyle.Auto,
+                        Wealth = g.Length > 19 ? g[19].ToUpperInvariant() switch
+                        {
+                            "P" => UnturnedSim.TownWealth.Poor, "A" => UnturnedSim.TownWealth.Affluent, _ => UnturnedSim.TownWealth.Working,
+                        } : UnturnedSim.TownWealth.Working,
                     });
                     // UG_TERRAINBASEMENT=x,z,yaw cuts the generated building's basement (BuildingGenResult.Dig) out of the MAP's
                     // terrain (Terrain.AddBasementCut: the ground bent to the outline, the inside dug), as if the building stood at
@@ -10869,7 +10898,8 @@ namespace UnturnedGodot
             bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
             // the measurements (coverage, kerbs, ground under the paving -- a minute and more of a whole town) are for the
             // renders; a town to PLAY skips them unless UG_TOWNPROBES=1 asks
-            bool probes = !playSeed.HasValue || TownRoadGrid.ProbeEverything;
+            // (UG_TOWNPROBES=0: none for a render either -- a run that is only after the buildings, the culling probe's, skips minutes)
+            bool probes = (!playSeed.HasValue || TownRoadGrid.ProbeEverything) && System.Environment.GetEnvironmentVariable("UG_TOWNPROBES") != "0";
             town.Probes = probes;
             // (UG_TOWNLOTMARKS=0: the renders without them too -- to see the ground as a player does)
             if (playSeed.HasValue || System.Environment.GetEnvironmentVariable("UG_TOWNLOTMARKS") == "0") town.MarkLots = false;
@@ -11125,6 +11155,9 @@ namespace UnturnedGodot
             // UG_TOWNCLOSE=1 frames the busiest junction; UG_TOWNCLOSE=3 frames a THREE-way one, because a
             // tee is a different shape and its through-side pavement cannot be checked on a crossroads.
             var closeEnv = System.Environment.GetEnvironmentVariable("UG_TOWNCLOSE");
+            // UG_TOWNCLOSE=cull: the culling probe takes the camera and the capture over (CullProbe) -- five stops in and round
+            // one building, the renderer's own counters read at each, and its own pictures
+            if (closeEnv == "cull" && CullProbe.Begin(this, town, tcam, _shotPath)) { _shotPath = null; _shotRequested = null; goto noTown; }
             int wantArms = closeEnv == "3" ? 3 : 0;
             var busiest = Vector3.Zero; int bestDeg = 0;
             foreach (var (jp, ends) in rf.Junctions())

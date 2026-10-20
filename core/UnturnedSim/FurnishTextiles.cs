@@ -165,7 +165,7 @@ namespace UnturnedSim
                     if (d1 <= 0.005f || d0 >= depth + CurtainClear || a1 <= u0 - reach || a0 >= u1 + reach) return;
                     obs.Add((a0, a1, h0, h1, what, stands));
                 }
-                foreach (var m in _res.Furniture.Where(m => m.Floor == _room.Floor))
+                foreach (var m in Here().Where(m => m.Floor == _room.Floor))
                 {
                     var sz = FurnitureCatalog.Sizes[m.Name];
                     float y = m.Y - floorY;
@@ -296,7 +296,7 @@ namespace UnturnedSim
                 foreach (var (i, j) in _p.Cells(Grow(r, RugWallGap)))
                     if (!InRoom(i, j) || _p.State[i, j] == FloorPlan.Wall || _p.State[i, j] == FloorPlan.Stair) return false;
                 if (_p.StairRects.Concat(_p.TileRects).Concat(_p.LeafRects).Any(q => Overlaps(r, q))) return false;
-                return !_res.Furniture.Any(o => o.Floor == _room.Floor && !o.Mounted && !o.Ceiling && o.On == null && !under.Contains(o) && Overlaps(r, o.Footprint));
+                return !Here().Any(o => o.Floor == _room.Floor && !o.Mounted && !o.Ceiling && o.On == null && !under.Contains(o) && Overlaps(r, o.Footprint));
             }
         }
     }

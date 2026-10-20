@@ -40,7 +40,7 @@ namespace UnturnedGodot
         /// <summary>Layer by size. SMALL and MEDIUM overlap heavily in retail's own table (both median ~2-3m),
         /// so this cannot be exact; LARGE is the separable one (min 5.09, p25 12). It matters less than it
         /// looks: for most props the per-height cull binds before the layer cap does.</summary>
-        static string LayerFor(float size) => size >= 12f ? "LARGE" : size >= 4f ? "MEDIUM" : "SMALL";
+        public static string LayerFor(float size) => size >= 12f ? "LARGE" : size >= 4f ? "MEDIUM" : "SMALL";
 
         public static void BakeAll(string dir, bool dryRun)
         {

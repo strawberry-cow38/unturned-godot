@@ -23,8 +23,20 @@ namespace UnturnedSim
     /// <summary>What a shop sells (strawberry: "shops should use the pallette of the shop they are, ie donuts, hardware etc
     /// etc"): one of the retail shops, whose palettes it wears (BuildingGen.ShopPalettes). None: not a shop -- or, asked of
     /// a Commercial spec, any of them, a seeded draw. A doughnut shop is a Cafe (strawberry: "so if its not doughnuts its a
-    /// cafe pallette"): no retail building is a donut shop, so there is no palette of its own to wear.</summary>
-    public enum Business { None, Cafe, Clothes, Diner, Grocer, Guns, Hardware, Botanist }
+    /// cafe pallette"): no retail building is a donut shop, so there is no palette of its own to wear.
+    ///
+    /// The strip mall's tenants added (strawberry, 2026-10-19), on the END since a kind is saved by name: Pizza ("'diner' is a
+    /// category with several different food places within it in the vanilla editor": a food place of the diner family, its
+    /// palettes); Laundromat, Video (a video rental), Liquor; and cheap offices -- Lawyer, Accountant, and Office, plain office
+    /// space. None of them is drawn for a single shop (Shops): they are a strip's (BuildingGenStrip.cs), furnished by
+    /// Furnish's ShopFloor.</summary>
+    public enum Business { None, Cafe, Clothes, Diner, Grocer, Guns, Hardware, Botanist, Pizza, Laundromat, Video, Liquor, Lawyer, Accountant, Office }
+
+    /// <summary>How well off a town is (the town generator sets it per town, TownBuildings.SpecFor): Working, the default --
+    /// first, so a spec nobody set is Working and nothing changes for any caller -- Poor, Affluent. A strip's tenants lean by it
+    /// (BuildingGenStrip.cs: a poor town's to liquor, laundromats, pizza, video and cheap offices; an affluent one's to lawyers,
+    /// accountants, cafes, clothes and botanists). Houses do not read it yet.</summary>
+    public enum TownWealth { Working, Poor, Affluent }
 
     /// <summary>Whether a building has a basement (strawberry: "anything can get a basement, they can be specificially asked
     /// for by the building plot, or specifically rejected, if neither specified, its just a random chance for one"): Auto
@@ -95,6 +107,12 @@ namespace UnturnedSim
         public BasementChoice Basement;
         public BasementStyle BasementStyle;
         public BasementAccess BasementAccess;
+        /// <summary>A strip mall's plan (BuildingKind.Strip, BuildingGenStrip.cs): one of the fixed styles, Auto for a seeded one.</summary>
+        public StripStyle Strip;
+        /// <summary>A tower's plan (BuildingKind.Tower, BuildingGenTower.cs): one of the researched styles, Auto for a seeded one.</summary>
+        public TowerStyle Tower;
+        /// <summary>How well off its town is (TownWealth): a strip's tenants lean by it. Working unless the town says.</summary>
+        public TownWealth Wealth = TownWealth.Working;
 
         internal BuildingGenSpec Copy()
         {
@@ -110,6 +128,15 @@ namespace UnturnedSim
     {
         public RoomKind Kind;
         public int Floor, X0, Z0, X1, Z1;
+        /// <summary>How many storeys the room stands through, from Floor up (strawberry, 2026-10-19: "add support for rooms being
+        /// more than 1 floor in height (as many as it wants)"): 1 for every room but a tall one -- a two-storey banking hall, a lift
+        /// shaft. Its cells are its own on every one of those storeys (each storey's grid has them, so its walls run the full
+        /// height and its outside walls take windows storey by storey), but it is floored only on Floor: the slabs of the storeys
+        /// above stop at its walls (BuildWalls), its doors are all on Floor but for a shaft's openings (laid on each storey it
+        /// serves), its furniture stands on Floor and its ceiling lights hang from the slab or roof over its top storey (Furnish).</summary>
+        public int Span = 1;
+        /// <summary>Is this room's void on storey f: a storey it stands through above its own floor?</summary>
+        public bool Above(int f) => f > Floor && f < Floor + Span;
         /// <summary>The flat it belongs to in an apartment block, numbered across the whole building; -1 for shared space
         /// (the corridor, the stairwell) and for every room of any other kind of building.</summary>
         public int Unit = -1;
@@ -131,7 +158,8 @@ namespace UnturnedSim
         /// <summary>Is this plan point (metres) in the room? Half-open, so a point is in at most one room.</summary>
         public bool Holds(float x, float z) => Rects.Any(r => x >= r.X0 * BuildingGen.Cell && x < r.X1 * BuildingGen.Cell
                                                             && z >= r.Z0 * BuildingGen.Cell && z < r.Z1 * BuildingGen.Cell);
-        public override string ToString() => $"{Kind}@{Floor} [{X0},{Z0}..{X1},{Z1}]" + (More.Count > 0 ? $"+{More.Count}" : "") + (Unit >= 0 ? $" flat {Unit}" : "");
+        public override string ToString() => $"{Kind}@{Floor} [{X0},{Z0}..{X1},{Z1}]" + (More.Count > 0 ? $"+{More.Count}" : "") + (Unit >= 0 ? $" flat {Unit}" : "")
+                                             + (Span > 1 ? $" x{Span} storeys" : "");
     }
 
     /// <summary>A door the generator decided on: between two rooms (B null: to outside), cut in the wall on a lattice
@@ -189,6 +217,9 @@ namespace UnturnedSim
         /// <summary>Cast concrete (a basement hatch's, outdoors), its treads the palette's concrete texel; else the building's
         /// own colour, as every flight was.</summary>
         public bool Concrete;
+        /// <summary>Which sides carry a handrail (WallPlan.Rails): 1 the side its width starts from, 2 the far side. A side
+        /// with a wall along it has none (BuildingGen.RailStairs).</summary>
+        public int Rails;
         /// <summary>Unit vectors in plan: the way it climbs, and the way its width runs (AddStairs' back and right).</summary>
         public (float X, float Z) Back { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
         public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
@@ -207,6 +238,23 @@ namespace UnturnedSim
         public string Palette;
         /// <summary>What a Commercial building sells, which chose its palette (BuildingGen.ShopPalettes); None for every other kind.</summary>
         public Business Business;
+        /// <summary>A strip mall's tenants, by GenRoom.Unit: what each sells (UnitBusiness) and the palette of its shop it wears
+        /// (UnitPalette -- its floors; the walls are the strip's one Palette, as a strip has one landlord's front). Empty for
+        /// every other kind of building, which has one Business and one Palette for the lot.</summary>
+        public List<Business> UnitBusiness = new List<Business>();
+        public List<string> UnitPalette = new List<string>();
+        /// <summary>What the room's tenant sells: a strip's unit's own, else the building's.</summary>
+        public Business BusinessOf(GenRoom g) => g != null && g.Unit >= 0 && g.Unit < UnitBusiness.Count ? UnitBusiness[g.Unit] : Business;
+        /// <summary>The palette the room's floor wears: a strip's tenant's own, else the building's.</summary>
+        public string PaletteOf(GenRoom g) => g != null && g.Unit >= 0 && g.Unit < UnitPalette.Count ? UnitPalette[g.Unit] : Palette;
+        /// <summary>A strip's canopy over the walk in front of its shops (BuildingGenStrip.cs): each run of it as cells outside
+        /// one outside wall -- along the lattice line Line (of constant z when AlongX), cells [S0, S1) along it, standing out
+        /// on its E side (+1 north or east, -1 south or west). Laid by AddPorches, in a strip's place of a porch.</summary>
+        internal List<(bool AlongX, int Line, int S0, int S1, int E)> StripCanopy = new List<(bool, int, int, int, int)>();
+        /// <summary>A strip's street side -- its shop fronts, their doors and its canopy face it, toward the town's parking -- and
+        /// its alley side, its back doors', as built (after any turn). The canopy over the walk (Porches) stands one cell and its
+        /// overhang out past CellsX x CellsZ on StreetSide. None for every other kind of building.</summary>
+        public Sides StreetSide, AlleySide;
         public RoofKind Roof;
         public float RoofPitch;
         /// <summary>Walls with their openings, footings, a floor per storey and the roofs, in building-local metres: the
@@ -317,6 +365,20 @@ namespace UnturnedSim
         internal BuildingGen.StairStrip? BasementFlight;
         internal BuildingGen.HatchSpot? Hatch;
         internal (float X0, float Z0, float X1, float Z1) HatchLeafRect;
+        /// <summary>Stair cores (a tower's, BuildingGenTower.cs): each a switchback stacked straight up through its storeys in the
+        /// same cells, anywhere in the plan and either way along it -- laid by BuildWalls in the single Bay's place. Empty for every
+        /// other building, whose one bay is Bay.</summary>
+        internal List<BuildingGen.StairCore> Cores = new List<BuildingGen.StairCore>();
+        /// <summary>Its floors are not their footprints' rectangles -- a storey can be any shape on the lattice, overhang the one
+        /// below (a slab over a colonnade), or step back from it on any side (a setback, a light well) -- so BuildWalls traces
+        /// every storey's floor slabs and every roof over what the storey above leaves uncovered from the storeys' own grids. A
+        /// tower's (BuildingGenTower.cs); false for every other building, which keeps its rectangle (or L, or T) of slab.</summary>
+        internal bool Traced;
+        /// <summary>A tower's facade (BuildWalls): the window every cell of its office walls takes -- a masonry block's punched
+        /// ArchWindow, a slab's curtain-wall ArchTallWindow -- and how wide one may be at most (a masonry pier's worth of wall left
+        /// between two). Unread for every other building.</summary>
+        internal int FacadeArch = BuildingGen.ArchWindow;
+        internal float FacadeMaxWindow = float.MaxValue;
     }
 
     /// <summary>
@@ -486,7 +548,10 @@ namespace UnturnedSim
             RoomKind.Bathroom => new Trait(5, 2, FloorPref.Any, ArchSlit),          // a high slit of glass, not a view
             RoomKind.Kitchen => new Trait(9, 3, FloorPref.Ground, ArchWindow),
             RoomKind.LivingRoom => new Trait(12, 3, FloorPref.Ground, ArchWindow),
-            RoomKind.DiningRoom => new Trait(9, 3, FloorPref.Ground, ArchWindow),
+            // (a strip's restaurant's dining room is its sales floor -- the tables the shop's gondolas are -- and fronts the
+            // street as the shops beside it do: a shop floor's size and tall windows, not a house's dining room's. Gated on
+            // the strip, so no house's or shop's room moves)
+            RoomKind.DiningRoom => b == BuildingKind.Strip ? new Trait(20, 4, FloorPref.GroundOnly, ArchTallWindow) : new Trait(9, 3, FloorPref.Ground, ArchWindow),
             RoomKind.Closet => new Trait(4, 2, FloorPref.Upper, -1),
             RoomKind.Garage => new Trait(GarageWide * GarageDeep, 2, FloorPref.GroundOnly, ArchGarage),   // 2 x 3 cells: see MaxCells
             RoomKind.Workshop => new Trait(16, 4, FloorPref.GroundOnly, ArchWindow),
@@ -496,6 +561,8 @@ namespace UnturnedSim
             RoomKind.Warehouse => new Trait(32, 6, FloorPref.GroundOnly, ArchGarage),
             // a business's staff room, where a house has its kitchen: a table, a counter with a sink, a fridge
             RoomKind.BreakRoom => new Trait(9, 3, FloorPref.Any, ArchWindow),
+            // a lift's or a pipe chase's void: walls round it and nothing in them (BuildingGenTower.cs)
+            RoomKind.Shaft => new Trait(4, 1, FloorPref.Any, -1),
             _ => new Trait(6, 2, FloorPref.Any, ArchWindow),
         };
 
@@ -556,6 +623,8 @@ namespace UnturnedSim
             BuildingKind.Residential => new[] { RoomKind.Hall, RoomKind.LivingRoom },
             // a block of flats: its lobby -- the stairwell, on the ground floor -- or the corridor, never a flat
             BuildingKind.Apartment => new[] { RoomKind.Stairwell, RoomKind.Hall },
+            // a strip: each tenant's sales floor, a restaurant's dining room (one front door a tenant: BuildingGenStrip.cs)
+            BuildingKind.Strip => new[] { RoomKind.Shop, RoomKind.DiningRoom },
             _ => new[] { RoomKind.Hall },
         };
 
@@ -568,6 +637,11 @@ namespace UnturnedSim
             BuildingKind.Residential => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.DiningRoom },
             // a block of flats: out of the end of its corridor (a flat has no door of its own to outside)
             BuildingKind.Apartment => new[] { RoomKind.Hall },
+            // a strip's tenant: out of its rear vestibule where it has one, else its stock room, onto the alley (the research:
+            // "rear door per unit to the service drive out of the SR (S5, S8: out of the HLa vestibule)")
+            BuildingKind.Strip => new[] { RoomKind.Hall, RoomKind.Storage, RoomKind.Kitchen, RoomKind.Workshop, RoomKind.Office },
+            // a tower: none of Connect's -- its plan has its service doors, which BuildingGenTower lays itself
+            BuildingKind.Tower => Array.Empty<RoomKind>(),
             _ => new[] { RoomKind.Hall, RoomKind.Storage, RoomKind.BreakRoom },
         };
 
@@ -606,6 +680,8 @@ namespace UnturnedSim
             // (a house drew from these too until a block of flats was a kind of its own: see Generate)
             BuildingKind.Apartment => ApartmentPalettes(),
             BuildingKind.Commercial => Shops.SelectMany(ShopPalettes).ToArray(),
+            // (a strip wears one of its own tenants' shops' palettes: BuildingGenStrip.cs draws which)
+            BuildingKind.Strip => Shops.SelectMany(ShopPalettes).ToArray(),
             BuildingKind.Industrial => ApartmentPalettes(),
             _ => new[] { "Office_0", "Office_1", "Office_2", "Office_3" },
         };
@@ -624,6 +700,14 @@ namespace UnturnedSim
             Business.Guns => new[] { "Guns_0" },
             Business.Hardware => new[] { "Hardware_0" },
             Business.Botanist => new[] { "Botanist_0" },
+            // the strip's tenants, with no retail building of their own to measure (BuildingGenStrip.cs): a pizzeria a diner's
+            // (strawberry: a food place "within" the diner category), a liquor store a grocer's, offices an office's ("office
+            // should use office pallette"); a laundromat the clean grey and teal of Clothes_1, a video store Cafe_0's brown and red
+            Business.Pizza => new[] { "Diner_0", "Diner_1", "Diner_2" },
+            Business.Liquor => new[] { "Grocer_0" },
+            Business.Laundromat => new[] { "Clothes_1" },
+            Business.Video => new[] { "Cafe_0" },
+            Business.Lawyer or Business.Accountant or Business.Office => new[] { "Office_0", "Office_1", "Office_2", "Office_3" },
             _ => Array.Empty<string>(),
         };
         /// <summary>The apartment block's palettes: a block of flats', and an industrial building's (PalettesFor). Each call
@@ -710,6 +794,246 @@ namespace UnturnedSim
             };
         }
 
+        /// <summary>How far out from a flight's edge a wall's centre line may stand and still be the wall that side runs
+        /// along: the straight flight's own gap to the south wall (half an outside wall plus the hole's margin) and some.</summary>
+        public const float RailWallGap = 0.75f;
+        /// <summary>How high a handrail or a guard rail stands over what it rails: a real one is 0.86-0.97 m against a 2.03 m
+        /// door, so this kit's door (DoorHeight 4.25) puts it at about 0.45 of that.</summary>
+        public const float RailHeight = 0.45f * WallOpenings.DoorHeight;
+        /// <summary>A guard rail's thickness, and how far in from the edge it guards its centre line stands.</summary>
+        public const float GuardThickness = 0.14f, GuardInset = 0.1f;
+        /// <summary>A guard shorter than this is not drawn: a sliver left between a flight's handrail and a corner.</summary>
+        public const float GuardMin = 0.15f;
+        /// <summary>A guard piece shorter than this is a JOIN -- a handrail's end to a guard, a corner -- drawn as rail alone,
+        /// the posts of what it joins carrying it.</summary>
+        public const float GuardJoin = 0.4f;
+        /// <summary>How far in from a flight's edge its handrail's centre line runs (WallSurface.AddRails).</summary>
+        public const float RailInset = 0.12f;
+
+        /// <summary>Guard rails where a floor drops away (strawberry 2026-10-19: "make sure the halfway landing has railings on
+        /// sides with no adjascent wall. as well as the top landing having railings around the hole (again, where there isnt a
+        /// wall/leaving a gap for the top of the stairs)"). Every edge of a landing, and of every stairwell hole in a floor --
+        /// the generator's own for a compound flight, the one a straight flight's full rise cuts (EditorBuildings.
+        /// FitStairsToStructure, the same footprint grown by StairHoleMargin) -- gets a Railing plan along it, standing on the
+        /// floor side, except where a wall runs along the edge (parallel, its centre line within RailWallGap of it, on that
+        /// level), and except across a flight's end where it meets the edge: the top of a flight arriving, and on a landing
+        /// the foot of the flight leaving it too.</summary>
+        internal static void GuardStairs(BuildingGenResult res)
+        {
+            const float Lv = 0.05f;
+            // the flights' plan footprints, with the level they climb from and to
+            var flights = res.Stairs.Select(s =>
+            {
+                float rise = s.Rise > 0f ? s.Rise : Storey;
+                var (bx, bz) = s.Back; var (rx, rz) = s.Right;
+                float cx = s.X + bx * s.Run + rx * s.Width, cz = s.Z + bz * s.Run + rz * s.Width;
+                return (Lo: s.Y, Hi: s.Y + rise, X0: MathF.Min(s.X, cx), Z0: MathF.Min(s.Z, cz), X1: MathF.Max(s.X, cx), Z1: MathF.Max(s.Z, cz));
+            }).ToList();
+            var drops = new List<(float Y, float X0, float Z0, float X1, float Z1, bool Hole)>();
+            foreach (var w in res.Walls)
+            {
+                if (MathF.Abs(w.Pitch + 90f) > 0.5f || MathF.Abs(w.Yaw) > 0.5f) continue;
+                float top = w.Y + w.Thickness * 0.5f;
+                if (w.Kind == SurfaceKind.Stairs && w.StepRise <= 0f)
+                    drops.Add((top, w.X, w.Z - w.Height, w.X + w.Length, w.Z, false));     // a landing
+                else if (w.Kind == SurfaceKind.Floor)
+                    foreach (var o in w.Openings)
+                    {
+                        float hx0 = w.X + o.U, hz1 = w.Z - o.V, hx1 = hx0 + o.Width, hz0 = hz1 - o.Height;
+                        // a stairwell: over a flight of the storey below (a slab has other notches -- thresholds, a chimney)
+                        if (flights.Any(f => f.Lo < top - Lv && f.Lo >= top - Storey - Lv
+                                             && f.X0 < hx1 - Lv && f.X1 > hx0 + Lv && f.Z0 < hz1 - Lv && f.Z1 > hz0 + Lv))
+                            drops.Add((top, hx0, hz0, hx1, hz1, true));
+                    }
+            }
+            var holes = drops.Where(d => d.Hole).ToList();
+            var upright = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && MathF.Abs(w.Pitch) <= 1f).ToList();
+            foreach (var (y, x0, z0, x1, z1, hole) in drops)
+            {
+                // nothing inside a wall: a hole's notch running under one
+                bool InWall(float px, float pz, float slack = 0.05f) => upright.Any(w =>
+                {
+                    if (w.Y > y + 0.5f || w.Y + w.Height < y + 1f) return false;
+                    var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                    float along = (px - w.X) * c + (pz - w.Z) * -sn, off = MathF.Abs((px - w.X) * -sn - (pz - w.Z) * c);
+                    return along > -slack && along < w.Length + slack && off < w.Thickness * 0.5f + slack;
+                });
+                // the four edges, each with its run and the way in to the floor beside it
+                var edges = new (float X, float Z, float DX, float DZ, float Len, float NX, float NZ)[]
+                {
+                    (x0, z0, 1f, 0f, x1 - x0, 0f, hole ? -1f : 1f),    // south edge, running east
+                    (x0, z1, 1f, 0f, x1 - x0, 0f, hole ? 1f : -1f),    // north edge
+                    (x0, z0, 0f, 1f, z1 - z0, hole ? -1f : 1f, 0f),    // west edge, running north
+                    (x1, z0, 0f, 1f, z1 - z0, hole ? 1f : -1f, 0f),    // east edge
+                };
+                foreach (var e in edges)
+                {
+                    var keep = new List<(float A, float B)> { (0f, e.Len) };
+                    var walled = new List<(float A, float B)>();
+                    void Cut(float a, float b)
+                    {
+                        for (int k = keep.Count - 1; k >= 0; k--)
+                        {
+                            var (ka, kb) = keep[k];
+                            if (b <= ka || a >= kb) continue;
+                            keep.RemoveAt(k);
+                            if (a > ka) keep.Add((ka, a));
+                            if (b < kb) keep.Add((b, kb));
+                        }
+                    }
+                    // Along(px, pz): where a point falls along the edge; Off: how far it stands off the edge's line
+                    float Along(float px, float pz) => (px - e.X) * e.DX + (pz - e.Z) * e.DZ;
+                    float Off(float px, float pz) => MathF.Abs((px - e.X) * e.DZ - (pz - e.Z) * e.DX);
+                    bool Parallel(float dx, float dz) => MathF.Abs(dx * e.DZ - dz * e.DX) < 0.05f;
+                    foreach (var w in upright)
+                    {
+                        if (w.Y > y + 0.5f || w.Y + w.Height < y + 1f) continue;          // not standing on this level
+                        var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                        if (!Parallel(c, -sn) || Off(w.X, w.Z) > RailWallGap) continue;
+                        float a = Along(w.X, w.Z), b = Along(w.X + c * w.Length, w.Z - sn * w.Length);
+                        Cut(MathF.Min(a, b) - 0.1f, MathF.Max(a, b) + 0.1f);
+                        walled.Add((MathF.Min(a, b) - 0.1f, MathF.Max(a, b) + 0.1f));
+                    }
+                    // a hole's edge shared with another hole on the level is not an edge: the two are one stairwell
+                    if (hole)
+                        foreach (var h in holes)
+                        {
+                            if (MathF.Abs(h.Y - y) > Lv || (h.X0 == x0 && h.Z0 == z0 && h.X1 == x1 && h.Z1 == z1)) continue;
+                            float px = e.X + e.NX * 0.05f, pz = e.Z + e.NZ * 0.05f;     // just over the edge, floor side
+                            if (e.DX != 0f ? pz <= h.Z0 || pz >= h.Z1 : px <= h.X0 || px >= h.X1) continue;
+                            float a = e.DX != 0f ? h.X0 - e.X : h.Z0 - e.Z, b = e.DX != 0f ? h.X1 - e.X : h.Z1 - e.Z;
+                            Cut(a, b);
+                        }
+                    // a flight's end lying along this edge -- its top arriving here; on a landing, its foot leaving too --
+                    // leaves a gap its width. A railed side's gap ends ON that side's handrail, and a short level piece runs
+                    // from the handrail's end out to this edge's guard, so the two are one rail (strawberry: "make sure
+                    // the railings connect seamlessly"); an unrailed side's gap runs just past the flight.
+                    var fixedEnds = new List<float>();
+                    var joins = new List<(float X, float Z, float Pos)>();
+                    foreach (var s in res.Stairs)
+                    {
+                        float rise = s.Rise > 0f ? s.Rise : Storey;
+                        var (bx, bz) = s.Back; var (rx, rz) = s.Right;
+                        var ends = new List<(float X, float Z)>();
+                        if (MathF.Abs(s.Y + rise - y) < Lv) ends.Add((s.X + bx * s.Run, s.Z + bz * s.Run));
+                        // (and its foot leaving from a hole's edge, above the ground storey: the next flight of a stack starts on
+                        // the edge the one below arrives over, so a guard across its foot blocked the way up -- every three-storey
+                        // house's and a third of the blocks of flats'. A hole in the ground floor is a basement's, whose edge no
+                        // flight up leaves from.)
+                        if ((!hole || y > Storey * 0.5f) && MathF.Abs(s.Y - y) < Lv) ends.Add((s.X, s.Z));
+                        foreach (var (px, pz) in ends)
+                        {
+                            if (!Parallel(rx, rz) || Off(px, pz) > WallOpenings.StairHoleMargin + 0.15f) continue;
+                            float a0 = Along(px, pz), a1 = Along(px + rx * s.Width, pz + rz * s.Width);
+                            float inward = a1 > a0 ? 1f : -1f;                     // from side 0 toward side 1, along the edge
+                            float r0 = (s.Rails & 1) != 0 ? a0 + inward * RailInset : a0 - inward * 0.05f;
+                            float r1 = (s.Rails & 2) != 0 ? a1 - inward * RailInset : a1 + inward * 0.05f;
+                            Cut(MathF.Min(r0, r1), MathF.Max(r0, r1));
+                            for (int side = 0; side < 2; side++)
+                            {
+                                if ((s.Rails & (1 << side)) == 0) continue;
+                                float off = side == 0 ? RailInset : s.Width - RailInset;
+                                float pos = side == 0 ? r0 : r1;
+                                fixedEnds.Add(pos);
+                                joins.Add((px + rx * off, pz + rz * off, pos));
+                            }
+                        }
+                    }
+                    bool InHole(float px, float pz) => holes.Any(h => MathF.Abs(h.Y - y) < Lv && px > h.X0 && px < h.X1 && pz > h.Z0 && pz < h.Z1);
+                    // the guard's line, and its ends fitted to the guards it meets: at a corner of the rectangle a hole's guard
+                    // runs on out to the next edge's guard line (they cross in the corner); a landing's, inside its rectangle,
+                    // stops short at it; where the next stretch of floor beyond the end is stairwell (an inside corner of a
+                    // stairwell two rectangles make), it stops short too. An end on a flight's handrail stays where it is.
+                    float Fit(float pos, float dir)
+                    {
+                        if (fixedEnds.Any(f => MathF.Abs(f - pos) < 0.01f)) return pos;
+                        float gx = e.X + e.DX * pos + e.NX * GuardInset, gz = e.Z + e.DZ * pos + e.NZ * GuardInset;
+                        float qx = gx + e.DX * dir * (GuardInset + 0.02f), qz = gz + e.DZ * dir * (GuardInset + 0.02f);
+                        if (hole && InHole(qx, qz)) return pos - dir * GuardInset;
+                        bool corner = MathF.Abs(pos) < 0.01f || MathF.Abs(pos - e.Len) < 0.01f;
+                        if (!corner) return pos;
+                        if (hole) return pos + dir * GuardInset;
+                        // a landing's corner: stop short at the next edge's guard -- or, where a wall stands across the end
+                        // instead, run on to its face
+                        return InWall(gx + e.DX * dir * 0.1f, gz + e.DZ * dir * 0.1f, 0.15f) ? pos : pos - dir * GuardInset;
+                    }
+                    float yaw = MathF.Atan2(-e.DZ, e.DX) * 180f / MathF.PI;
+                    foreach (var (ka, kb) in keep)
+                    {
+                        float a = Fit(ka, -1f), b = Fit(kb, 1f);
+                        if (b - a < GuardMin) continue;
+                        // a short piece that meets no handrail is a sliver left beside a flight, not a join
+                        if (b - a < GuardJoin && !fixedEnds.Any(f => MathF.Abs(f - ka) < 0.01f || MathF.Abs(f - kb) < 0.01f)) continue;
+                        float sx = e.X + e.DX * a + e.NX * GuardInset, sz = e.Z + e.DZ * a + e.NZ * GuardInset;
+                        if (InWall(sx + e.DX * (b - a) * 0.5f, sz + e.DZ * (b - a) * 0.5f)) continue;
+                        res.Walls.Add(new WallPlan
+                        {
+                            X = sx, Y = y, Z = sz, Yaw = yaw, Length = b - a,
+                            Height = RailHeight, Thickness = GuardThickness, Kind = SurfaceKind.Railing,
+                        });
+                    }
+                    // the joins: from a handrail's end, square to the edge, out to the guard's line
+                    foreach (var (jx, jz, pos) in joins)
+                    {
+                        if (walled.Any(w => pos > w.A && pos < w.B)) continue;           // a wall there, no guard to meet
+                        float d = (jx - e.X) * e.NX + (jz - e.Z) * e.NZ;                // how far the end stands floor-side of the edge
+                        float len = GuardInset - d;
+                        if (len < 0.02f) continue;
+                        res.Walls.Add(new WallPlan
+                        {
+                            X = jx, Y = y, Z = jz, Yaw = MathF.Atan2(-e.NZ, e.NX) * 180f / MathF.PI, Length = len,
+                            Height = RailHeight, Thickness = GuardThickness, Kind = SurfaceKind.Railing,
+                        });
+                    }
+                }
+            }
+        }
+
+        /// <summary>Which sides of each flight carry a handrail (strawberry 2026-10-19: "with the stairs, add a handrail"):
+        /// every side with no wall along it. A side is walled when an upright wall on the flight's storeys runs parallel to
+        /// it, its centre line within RailWallGap outward of the edge, for at least half the run -- the south wall a
+        /// straight flight stands against, a hatch's well. The open side -- toward the bay's step-off row, or the other
+        /// half of a switchback -- is railed.</summary>
+        internal static void RailStairs(BuildingGenResult res)
+        {
+            for (int i = 0; i < res.Stairs.Count; i++)
+            {
+                var s = res.Stairs[i];
+                float rise = s.Rise > 0f ? s.Rise : Storey;
+                var (bx, bz) = s.Back;
+                var (rx, rz) = s.Right;
+                int rails = 0;
+                for (int side = 0; side < 2; side++)
+                {
+                    // the side's edge: from the foot corner (the far side, a width across) along the climb; outward is away
+                    // from the flight
+                    float ox = s.X + rx * s.Width * side, oz = s.Z + rz * s.Width * side;
+                    float nx = side == 0 ? -rx : rx, nz = side == 0 ? -rz : rz;
+                    if (!Walled(ox, oz, nx, nz)) rails |= 1 << side;
+                }
+                s.Rails = rails;
+                res.Stairs[i] = s;
+
+                bool Walled(float ox, float oz, float nx, float nz)
+                {
+                    foreach (var w in res.Walls)
+                    {
+                        if (w.Kind != SurfaceKind.Wall || Math.Abs(w.Pitch) > 1f) continue;
+                        if (w.Y >= s.Y + rise - 0.2f || w.Y + w.Height <= s.Y + 0.2f) continue;     // not on the flight's storeys
+                        var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                        float dx = c, dz = -sn;                                                       // the way the wall runs
+                        if (Math.Abs(dx * bz - dz * bx) > 0.05f) continue;                            // not parallel to the climb
+                        float d = (w.X - ox) * nx + (w.Z - oz) * nz;
+                        if (d < -0.05f || d > RailWallGap) continue;
+                        float a0 = (w.X - ox) * bx + (w.Z - oz) * bz, a1 = a0 + w.Length * (dx * bx + dz * bz);
+                        float lap = Math.Min(Math.Max(a0, a1), s.Run) - Math.Max(Math.Min(a0, a1), 0f);
+                        if (lap >= 0.5f * s.Run) return true;
+                    }
+                    return false;
+                }
+            }
+        }
+
         /// <summary>A small, stable RNG (xorshift64*): the same seed builds the same building on every machine and runtime,
         /// which System.Random does not promise.</summary>
         sealed class Rng
@@ -763,8 +1087,9 @@ namespace UnturnedSim
         /// plan is built, said so.</summary>
         public static BuildingGenResult Generate(BuildingGenSpec spec)
         {
-            // (a block of flats fits itself -- corridor, stairwell and whole flats, not rooms a floor: BuildingGenApartments)
-            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0 || spec.Kind == BuildingKind.Apartment) return GenerateOnce(spec);
+            // (a block of flats fits itself -- corridor, stairwell and whole flats, not rooms a floor: BuildingGenApartments -- a
+            // strip by whole bays: BuildingGenStrip -- and a tower by its plans: BuildingGenTower)
+            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0 || spec.Kind is BuildingKind.Apartment or BuildingKind.Strip or BuildingKind.Tower) return GenerateOnce(spec);
             int maxF = Math.Max(1, spec.MaxFloors), minF = Math.Clamp(spec.MinFloors, 1, maxF);
             // stairs need a bay two rows deep (on a narrow plot; three elsewhere), a hall and two rows north of it: a
             // shallower plot is one storey
@@ -870,7 +1195,20 @@ namespace UnturnedSim
                     case RoomKind.Bathroom: Need(g, "tub or sink", Has(g, "Tub", "Counter_1")); break;
                     case RoomKind.Office: Need(g, "desk", Has(g, "Table_Wood_2")); break;
                     case RoomKind.BreakRoom: Need(g, "table", Has(g, "Table"), 1); Need(g, "sink", Has(g, "Counter_1")); Need(g, "fridge", Has(g, "Fridge")); break;
-                    case RoomKind.Shop: Need(g, "shelves", Has(g, "Shelf_1"), 1); break;
+                    case RoomKind.Shop:
+                        // (by its tenant's business: a shop's gondolas; a strip's own tenants' their own pieces -- ShopFloor)
+                        var (what, pieces) = r.BusinessOf(g) switch
+                        {
+                            Business.Laundromat => ("washers", new[] { "Washer_0" }),
+                            Business.Video => ("shelves", new[] { "Shelf_2" }),
+                            Business.Liquor => ("coolers", new[] { "Cooler_0" }),
+                            Business.Lawyer or Business.Accountant or Business.Office => ("desk", new[] { "Table_Wood_2" }),
+                            Business.Pizza => ("tables", new[] { "Table_Wood" }),
+                            Business.Diner or Business.Cafe when r.Kind == BuildingKind.Strip => ("tables", new[] { "Table_Wood" }),
+                            _ => ("shelves", new[] { "Shelf_1" }),
+                        };
+                        Need(g, what, Has(g, pieces), 1);
+                        break;
                     case RoomKind.Warehouse: case RoomKind.Storage: Need(g, "racks", Has(g, "Shelf"), 1); break;
                 }
             // what each outside wall's openings let into: the room a metre in from the middle of each
@@ -882,7 +1220,8 @@ namespace UnturnedSim
                 foreach (var o in w.Openings)
                 {
                     float u = o.U + o.Width * 0.5f, cx = w.X + dx * u - nx, cz = w.Z + dz * u - nz;
-                    var g = r.Layout.FirstOrDefault(q => q.Floor == f && q.Holds(cx, cz));
+                    // (a tall room is lit by a window on any storey it stands through: GenRoom.Span)
+                    var g = r.Layout.FirstOrDefault(q => q.Floor <= f && f < q.Floor + q.Span && q.Holds(cx, cz));
                     if (g == null) continue;
                     if (o.Glazed) lit.Add(g);
                     if (o.Archetype == ArchGarage) vehicle.Add(g);
@@ -941,6 +1280,10 @@ namespace UnturnedSim
             // a block of flats is laid out its own way (BuildingGenApartments.cs) -- corridor, stairwell, flats -- and joins
             // this one for its doors (Connect, which keeps every door inside a flat or at its way in), walls, roof, furniture
             if (kind == BuildingKind.Apartment) return Apartments(spec, res, rng, Connect);
+            // a strip mall too (BuildingGenStrip.cs): its tenants' rooms off a fixed plan, each doored by Connect on its own
+            if (kind == BuildingKind.Strip) return Strip(spec, res, rng, Connect);
+            // and a tower (BuildingGenTower.cs): its storeys' rooms off a fixed plan, doored by Connect storey by storey
+            if (kind == BuildingKind.Tower) return Tower(spec, res, rng, Connect);
             int maxFloors = Math.Max(1, spec.MaxFloors), minFloors = Math.Clamp(spec.MinFloors, 1, maxFloors);
             int perFloor = Math.Max(1, spec.MaxRoomsPerFloor), capacity = maxFloors * perFloor;
             // a kitchen with the dining table in it is a size up (see `diner` below)
@@ -1470,6 +1813,10 @@ namespace UnturnedSim
             // last: a parapet on each flat roof as built, after everything that reads the walls -- joined where it meets a
             // taller part, as the editor's corner pass would join it
             SolveCorners(res.Walls, RoofShapes.AddParapets(res.Walls).Contains);
+            // and then which of two surfaces sharing a plane is drawn there (SettleShared), on the plan as built
+            SettleShared(res);
+            RailStairs(res);
+            GuardStairs(res);
             if (turn) TurnHalf(res);
             return res;
 
@@ -1858,7 +2205,8 @@ namespace UnturnedSim
                     crowdedOut = second != null;
                     return second;
                 }
-                List<GenRoom> Next(GenRoom a) => runs.Where(r => r.A == a || r.B == a).Select(r => r.A == a ? r.B : r.A).Where(b => b != null && MayJoin(a, b)).Distinct().ToList();
+                // (never into a tall room's void on a storey above its own floor: GenRoom.Span -- its doors are on its floor)
+                List<GenRoom> Next(GenRoom a) => runs.Where(r => r.A == a || r.B == a).Select(r => r.A == a ? r.B : r.A).Where(b => b != null && MayJoin(a, b) && !b.Above(f)).Distinct().ToList();
                 bool Doored(GenRoom a, GenRoom b) => doors.Any(d => (d.A == a && d.B == b) || (d.A == b && d.B == a));
 
                 if (root == null)
@@ -1921,7 +2269,10 @@ namespace UnturnedSim
                     progress = false;
                     foreach (var r in left.ToList())
                     {
-                        var parents = Next(r).Where(p => reached.Contains(p) && MayOpenOff(r.Kind, p.Kind) && (r.Unit < 0 || OffInAFlat(r.Kind, p.Kind))).ToList();
+                        // (a flat's rooms as a flat's are -- OffInAFlat; a strip's tenant is a shop, whose toilet may open off its
+                        // sales floor: the research's small shops have it straight behind -- and so is a tower's)
+                        var parents = Next(r).Where(p => reached.Contains(p) && MayOpenOff(r.Kind, p.Kind)
+                                                         && (r.Unit < 0 || kind is BuildingKind.Strip or BuildingKind.Tower || OffInAFlat(r.Kind, p.Kind))).ToList();
                         if (parents.Count == 0) continue;
                         // a closet (or a bathroom that rolls an en-suite) off a bedroom or office first; then the
                         // hall, since a bathroom off the hall beats one off the kitchen; then whatever it faces
@@ -1998,7 +2349,8 @@ namespace UnturnedSim
         public const int GarageWide = 2, GarageDeep = 3;
         /// <summary>The most cells any room of a kind should have: a small room's MaxCells, else twice its kind's size (a
         /// living room 24, a bedroom 18).</summary>
-        public static int CapCells(RoomKind k, BuildingKind b) => MaxCells(k) < int.MaxValue ? MaxCells(k) : k == RoomKind.Hall || k == RoomKind.Stairwell ? int.MaxValue : 2 * TraitOf(k, b).Cells;
+        public static int CapCells(RoomKind k, BuildingKind b) => MaxCells(k) < int.MaxValue ? MaxCells(k) : k == RoomKind.Hall || k == RoomKind.Stairwell ? int.MaxValue
+            : b == BuildingKind.Tower && TowerCap(k) is int t ? t : 2 * TraitOf(k, b).Cells;
 
         /// <summary>A small room deeper than its kind allows -- it spans its row's whole depth, three to five cells, so a
         /// bathroom two cells wide was 54 m2 and up -- keeps the INNER part of the row, beside the hall or the rooms it opens
@@ -2686,7 +3038,7 @@ namespace UnturnedSim
                 }
 
                 // what each room has in its outside walls
-                bool business = res.Kind == BuildingKind.Commercial || res.Kind == BuildingKind.Misc;
+                bool business = res.Kind is BuildingKind.Commercial or BuildingKind.Misc or BuildingKind.Strip;
                 var fr = res.Front;
                 var frSide = fr == null ? Sides.None : grids[0].Out(fr.AlongX, fr.Line, (int)MathF.Floor(fr.At / Cell));
                 Face Facing(Sides sd) => fr == null ? Face.Side : sd == frSide ? Face.Front : sd == Turned(frSide) ? Face.Back : Face.Side;
@@ -2749,7 +3101,8 @@ namespace UnturnedSim
                     // the stairs stand against solid wall on every floor they reach (strawberry: "stairs need solid walls (no
                     // windows) along their sides (all sides of 90 and 180 degree cases)"): no window in an outside wall the
                     // bay touches -- its south side, and an end wall it reaches
-                    if (floors > 1)
+                    // (a tower's stair cores, not the Bay, hold its stairs: their rooms take no windows at all)
+                    if (floors > 1 && res.Cores.Count == 0)
                     {
                         if (run.AlongX && run.Line == 0) cuts.Add((bay.X0 * Cell - 0.3f, bay.X1 * Cell + 0.3f));
                         if (!run.AlongX && (run.Line == bay.X0 || run.Line == bay.X1)) cuts.Add((bay.Z0 * Cell - 0.3f, bay.Z1 * Cell + 0.3f));
@@ -2841,8 +3194,34 @@ namespace UnturnedSim
                     // windows on the front and less or none on the sides"): its front wall more and wider windows, a shop
                     // none on its sides and anything else one a stretch there
                     var face = Facing(runSide);
+                    // (a strip's every tenant fronts its own street door -- an L's two legs face two ways: StripFacing)
+                    if (res.Kind == BuildingKind.Strip) face = StripFacing(res, g, room, runSide);
                     bool shopFront = business && face == Face.Front, side = business && face == Face.Side;
+                    // and an end unit's sales floor is glazed round the corner, on its end wall as on its front (the research:
+                    // "end caps get glazing on their side wall too")
+                    if (res.Kind == BuildingKind.Strip && side && room.Kind is RoomKind.Shop or RoomKind.DiningRoom) { shopFront = true; side = false; }
                     if (side && room.Kind == RoomKind.Shop) win = -1;
+                    // A tower's faces (BuildingGenTower.cs) are all streets' -- no side of it goes blind: a shop is glazed as a
+                    // strip's front is, on every outside wall it has; everything else takes a window to every cell of wall, one
+                    // steady rhythm up the whole height (the brief: "offices get regular windows in a steady rhythm"), in its
+                    // style's glass (FacadeArch: a slab's as much glass as a cell takes, a masonry block's punched, no wider than
+                    // FacadeMaxWindow) -- its ground-floor lobby's tall glass -- and so does a tall room on the storeys above its
+                    // floor (a banking hall's clerestory); its stairs stand against solid wall, and a plant room is louvred.
+                    bool towerCells = false; float towerMax = float.MaxValue;
+                    if (res.Kind == BuildingKind.Tower && (runSide & res.NoWindowSides) == 0)
+                    {
+                        bool above = f > room.Floor;
+                        if (room.Kind is RoomKind.Stairwell or RoomKind.Warehouse) win = -1;   // (a loading dock: its vehicle door)
+                        else if (room.Kind == RoomKind.Shop && !above) { shopFront = true; side = false; win = ArchTallWindow; }
+                        else if (room.Kind == RoomKind.Workshop) { win = ArchVent; towerCells = true; }
+                        else if (win >= 0 && win != ArchSlit)
+                        {
+                            bool lobby = room.Kind == RoomKind.Hall && f == 0;
+                            win = lobby ? ArchTallWindow : res.FacadeArch;
+                            towerCells = true;
+                            if (!lobby) towerMax = res.FacadeMaxWindow;
+                        }
+                    }
                     // (and each window's share of its stretch -- its slot, half Spread's gap in from either end -- where a
                     // room's layout may later slide it: Furnish. Spread lays a window anywhere in its slot as readily as at
                     // its middle, so anywhere in it is a place BuildWalls itself might have put it.)
@@ -2850,10 +3229,12 @@ namespace UnturnedSim
                     if (win >= 0)
                         foreach (var (s0, s1) in free)
                         {
-                            int n = win == ArchVent || win == ArchSlit || room.Circulation ? 1
+                            int n = towerCells ? Math.Max(1, (int)MathF.Round((s1 - s0) / Cell))
+                                  : win == ArchVent || win == ArchSlit || room.Circulation ? 1
                                   : shopFront ? Math.Max(1, (int)((s1 - s0) / (1.6f * Cell)))
                                   : side ? 1 : Math.Max(1, (int)((s1 - s0) / (2 * Cell)));
                             var spread = Spread(s0, s1, Enumerable.Repeat(win, n).ToList(), shopFront ? StoreWindow : 0f);
+                            if (towerMax < float.MaxValue) spread = spread.Select(q => (q.Arch, q.At, MathF.Min(q.Width, towerMax))).ToList();
                             float share = (s1 - s0) / n, half = n > 1 ? 0.15f : 0f;
                             foreach (var (_, at, _) in spread)
                             {
@@ -2892,17 +3273,26 @@ namespace UnturnedSim
                 int baseTexel = FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Floor : -1;
                 foreach (var room in res.Layout.Where(r => r.Floor == f))
                 {
-                    int tx = FloorTexelFor(res.Palette, room.Kind);
-                    if (tx < 0 || tx == baseTexel) continue;
+                    // (a strip's tenant's floor is its own shop's palette's, a cover over all of it: BuildingGenResult.PaletteOf --
+                    // every other building's room's palette is the building's)
+                    string pal = res.PaletteOf(room);
+                    bool own = pal != res.Palette;
+                    int tx = FloorTexelFor(pal, room.Kind);
+                    if (tx < 0 || (tx == baseTexel && !own)) continue;
                     foreach (var q in room.Rects)
                     {
                         var cover = SlabPlan(q.X0 * Cell, q.X1 * Cell, q.Z0 * Cell, q.Z1 * Cell, y + 0.02f, SurfaceKind.Floor);
                         cover.Thickness = 0.04f; cover.Y = y + 0.02f - 0.02f; cover.Texel = tx;
+                        if (own) cover.Palette = pal;
                         res.Walls.Add(cover);
                     }
                 }
+                // a traced storey's floor is traced from its grid (BuildingGenResult.Traced: a tower's): every cell of it that is
+                // not a tall room's void, out to its outside walls' faces, its stair cores' holes cut
+                if (res.Traced)
+                    foreach (var sl in TracedSlabs(res, grids, f)) { sl.Texel = baseTexel; res.Walls.Add(sl); }
                 // an L's or a T's ground floor is its two slabs (the floors above stand on the main block: rectangles)
-                if (f == 0 && res.Shape != FootprintShape.Rect)
+                else if (f == 0 && res.Shape != FootprintShape.Rect)
                     foreach (var sl in Slabs(res, y, SurfaceKind.Floor)) { sl.Texel = baseTexel; res.Walls.Add(sl); }
                 else
                 {
@@ -2912,12 +3302,17 @@ namespace UnturnedSim
                     if (f > 0 && res.StairShape != StairShape.Straight)
                         foreach (var (hx0, hz0, hx1, hz1) in res.Switchback ? new[] { SwitchbackHole(bay, res.LandingWest) } : QuarterHole(bay, res.LandingWest))
                             floorSlab.Openings.Add(new WallOpening(hx0 - floorSlab.X, floorSlab.Z - hz1, hx1 - hx0, hz1 - hz0));
+                    // (a tall room's storeys above its own are its void: no floor there -- GenRoom.Span)
+                    foreach (var v in SpanVoids(res, f)) Cut(floorSlab, v);
                     res.Walls.Add(floorSlab);
                 }
+                // a traced storey's roof: over whatever of it the storey above leaves uncovered, on its wall heads (TracedRoofs)
+                if (res.Traced)
+                    foreach (var rf in TracedRoofs(grids, f)) { rf.TexelBack = ceilingTexel; res.Walls.Add(rf); }
                 // a roof on whatever of this floor the one above leaves uncovered: flat on a business; on a house a shed of
                 // its own leaning on the wall of the floor above (Lower). Over an L's or a T's ground floor that is the
                 // full-length row's arm(s) past the main block, only that row deep.
-                if (f + 1 < floors)
+                else if (f + 1 < floors)
                 {
                     var (a0, a1) = res.Footprints[f + 1];
                     float wallHead = (f + 1) * Storey, zN = f == 0 && res.Shape != FootprintShape.Rect ? res.Wing.Z0 * Cell : Dm;
@@ -2932,7 +3327,8 @@ namespace UnturnedSim
             // one-storey L or T, whose house roof is a cross gable
             var (t0, t1) = res.Footprints[floors - 1];
             float head = floors * Storey;
-            if (res.Shape != FootprintShape.Rect && floors == 1)
+            if (res.Traced) { }   // (a traced building's top roof went on with its top storey: TracedRoofs)
+            else if (res.Shape != FootprintShape.Rect && floors == 1)
             {
                 if (res.Roof == RoofKind.Flat) foreach (var sl in Slabs(res, head + Slab, SurfaceKind.Roof)) { sl.TexelBack = ceilingTexel; res.Walls.Add(sl); }
                 else
@@ -2971,6 +3367,8 @@ namespace UnturnedSim
                 res.Walls.Add(flat);
             }
 
+            // ---- a tower's stair cores, in the Bay's place: each a switchback stacked straight up through its storeys
+            if (res.Cores.Count > 0) { LayCores(res); return; }
             // ---- the stairs: k1 flight rows against the south wall, centred along the bay. One flight climbs east up row
             // 0; with alternating rows, odd floors climb west up row 1, so each lands beside the next one's foot.
             if (floors < 2) return;
@@ -3054,6 +3452,140 @@ namespace UnturnedSim
             var (wx0, zj, wx1, wz1) = res.Wing;
             yield return SlabPlan(-he + i, res.CellsX * Cell + he - i, -he + i, zj * Cell + he - i, top, kind);
             yield return SlabPlan(wx0 * Cell - he + i, wx1 * Cell + he - i, zj * Cell + he - i, wz1 * Cell + he - i, top, kind);
+        }
+
+        /// <summary>The storeys a tall room stands through above its own floor have no floor of their own in its cells (GenRoom.Span):
+        /// its rectangles on storey f, where it is one, in plan metres -- at its cell lines, which are its walls' centre lines, so a
+        /// slab's edge there is hidden inside the wall that stands on it (and the storey's wall over it covers the top of the wall
+        /// under it, which the slab does not wholly cover and so leaves its full height: SettleShared).</summary>
+        static IEnumerable<(float X0, float Z0, float X1, float Z1)> SpanVoids(BuildingGenResult res, int f)
+            => res.Layout.Where(r => r.Above(f)).SelectMany(r => r.Rects).Select(q => (q.X0 * Cell, q.Z0 * Cell, q.X1 * Cell, q.Z1 * Cell));
+
+        /// <summary>A traced storey's floor slabs (BuildingGenResult.Traced): every cell of its grid but a tall room's void above its
+        /// own floor (SpanVoids), at the cell lines inside -- a slab rectangle meets the next at a line, and stops at a void's wall's
+        /// centre line -- and out to SlabInset short of the outside walls' outer faces round the storey's outline (whatever its shape,
+        /// however many pieces: a stair standing alone in a colonnade); its stair cores' holes cut, over the flights and the landing
+        /// climbing to it from the storey below (CoreHole).</summary>
+        static List<WallPlan> TracedSlabs(BuildingGenResult res, List<Grid> grids, int f)
+        {
+            var g = grids[f];
+            bool Floored(int x, int z) => g.At(x, z) is GenRoom r && !r.Above(f);
+            var slabs = TraceRects(g.Cell.GetLength(0), g.D, Ext * 0.5f - SlabInset, Floored, (x, z) => g.At(x, z) == null, (x, z) => false)
+                        .Select(q => SlabPlan(q.X0, q.X1, q.Z0, q.Z1, f * Storey, SurfaceKind.Floor)).ToList();
+            foreach (var c in res.Cores.Where(c => f > c.F0 && f <= c.F1))
+                foreach (var s in slabs) Cut(s, CoreHole(c));
+            return slabs;
+        }
+
+        /// <summary>A traced storey's flat roof: over whatever of it the storey above leaves uncovered (a setback's terrace, a light
+        /// well's floor, the top storey whole), sitting on its walls' heads -- its top Slab over them, as every flat roof's -- out to
+        /// their outer faces round the outline, where AddParapets stands its parapets, and up to the outer faces of the storey
+        /// above's walls, which run on down past it (and round that storey's outside corners as its walls do).</summary>
+        static List<WallPlan> TracedRoofs(List<Grid> grids, int f)
+        {
+            var g = grids[f];
+            var up = f + 1 < grids.Count ? grids[f + 1] : null;
+            bool Covered(int x, int z) => up != null && up.At(x, z) != null;
+            return TraceRects(g.Cell.GetLength(0), g.D, Ext * 0.5f, (x, z) => g.At(x, z) != null && !Covered(x, z), (x, z) => g.At(x, z) == null, Covered)
+                   .Select(q => SlabPlan(q.X0, q.X1, q.Z0, q.Z1, (f + 1) * Storey + Slab, SurfaceKind.Roof)).ToList();
+        }
+
+        /// <summary>A surface traced off a storey's cells, as rectangles in plan metres: the cells it `own`s, at their lines; and, in
+        /// the cells `open` to the outside next to them, a rim `e` deep along their outside walls (round a convex corner the corner's
+        /// square too, once: the walls there run on past the corner) -- but never within `e` of a cell it must `keepOff` (whose walls
+        /// stand there: a storey above, which a roof stops at the outer face of). Worked on the lattice's lines and the lines `e` either
+        /// side of each, so every one of those cases is a whole cell of that finer grid, and run together into rectangles.</summary>
+        static List<(float X0, float Z0, float X1, float Z1)> TraceRects(int w, int d, float e, Func<int, int, bool> own, Func<int, int, bool> open, Func<int, int, bool> keepOff)
+        {
+            List<float> Lines(int n) { var ls = new List<float>(); for (int k = -1; k <= n + 1; k++) { ls.Add(k * Cell - e); ls.Add(k * Cell); ls.Add(k * Cell + e); } return ls; }
+            var xs = Lines(w); var zs = Lines(d);
+            var cells = new HashSet<(int X, int Z)>();
+            for (int i = 0; i + 1 < xs.Count; i++)
+                for (int j = 0; j + 1 < zs.Count; j++)
+                {
+                    float px = (xs[i] + xs[i + 1]) * 0.5f, pz = (zs[j] + zs[j + 1]) * 0.5f;
+                    int cx = (int)MathF.Floor(px / Cell), cz = (int)MathF.Floor(pz / Cell);
+                    float fx = px - cx * Cell, fz = pz - cz * Cell;
+                    int nx = fx < e ? -1 : fx > Cell - e ? 1 : 0, nz = fz < e ? -1 : fz > Cell - e ? 1 : 0;
+                    if (keepOff(cx, cz) || (nx != 0 && keepOff(cx + nx, cz)) || (nz != 0 && keepOff(cx, cz + nz)) || (nx != 0 && nz != 0 && keepOff(cx + nx, cz + nz))) continue;
+                    if (own(cx, cz) || (open(cx, cz) && ((nx != 0 && own(cx + nx, cz)) || (nz != 0 && own(cx, cz + nz)) || (nx != 0 && nz != 0 && own(cx + nx, cz + nz)))))
+                        cells.Add((i, j));
+                }
+            if (cells.Count == 0) return new List<(float, float, float, float)>();
+            return Rectangles(cells).Select(r => (xs[r.X0], zs[r.Z0], xs[r.X1], zs[r.Z1])).ToList();
+        }
+
+        /// <summary>A stair core (BuildingGenResult.Cores): a switchback, stacked straight up from storey F0 to F1 in the same cells --
+        /// its bay three cells along its run (AlongX, else along Z) and two across, [X0, X1) x [Z0, Z1): the column at its foot end,
+        /// where its foot and the arrival from the storey below are side by side, then the column its two half flights climb in, then
+        /// the landing's column at its LandingHigh end (+X or +Z, else the low one), against the end wall. Its first flight climbs
+        /// along the FlightLow side across it (the low z or x side, else the high one) -- an outside wall's side, where it has one: the
+        /// second flight's far edge stands closer to its wall than an outside wall's half thickness. The geometry is the house's
+        /// switchback (BuildWalls), turned to face any way.</summary>
+        internal sealed class StairCore
+        {
+            public int F0, F1, X0, Z0, X1, Z1;
+            public bool AlongX, LandingHigh, FlightLow;
+        }
+
+        /// <summary>A core's frame: the point on its foot end's line and its first flight's side line, the way its run climbs from
+        /// the foot end to the landing (U), and the way across from the first flight's side (V).</summary>
+        static ((float X, float Z) O, (float X, float Z) U, (float X, float Z) V) CoreFrame(StairCore c)
+        {
+            float x0 = c.X0 * Cell, x1 = c.X1 * Cell, z0 = c.Z0 * Cell, z1 = c.Z1 * Cell;
+            return c.AlongX
+                ? ((c.LandingHigh ? x0 : x1, c.FlightLow ? z0 : z1), (c.LandingHigh ? 1f : -1f, 0f), (0f, c.FlightLow ? 1f : -1f))
+                : ((c.FlightLow ? x0 : x1, c.LandingHigh ? z0 : z1), (0f, c.LandingHigh ? 1f : -1f), (c.FlightLow ? 1f : -1f, 0f));
+        }
+
+        /// <summary>A plan rectangle between two points of a core's frame, (u, v) along and across it.</summary>
+        static (float X0, float Z0, float X1, float Z1) CoreRect(StairCore c, float u0, float v0, float u1, float v1)
+        {
+            var (o, u, v) = CoreFrame(c);
+            float ax = o.X + u.X * u0 + v.X * v0, az = o.Z + u.Z * u0 + v.Z * v0, bx = o.X + u.X * u1 + v.X * v1, bz = o.Z + u.Z * u1 + v.Z * v1;
+            return (MathF.Min(ax, bx), MathF.Min(az, bz), MathF.Max(ax, bx), MathF.Max(az, bz));
+        }
+
+        /// <summary>The hole a core's switchback needs in each storey it climbs to: SwitchbackHole's, in the core's frame -- over its
+        /// two flights and its landing, StairHoleMargin past them but for the flights' foot end, where the next storey's foot is.</summary>
+        static (float X0, float Z0, float X1, float Z1) CoreHole(StairCore c)
+        {
+            float he = Ext * 0.5f, m = WallOpenings.StairHoleMargin, run = WallOpenings.StairDefaultRun(Storey * 0.5f);
+            return CoreRect(c, Cell, he, Cell + run + StairWidth + m, Cell + 0.3f + StairWidth + m);
+        }
+
+        /// <summary>Each core's flights and landings, a switchback a storey from F0 up to F1 (BuildWalls' own, turned to the core's
+        /// frame): up its first side from the foot column to a landing in its end column at half height, then back along its second
+        /// side to arrive beside its own foot on the storey above.</summary>
+        static void LayCores(BuildingGenResult res)
+        {
+            float he = Ext * 0.5f, half = Storey * 0.5f, run = WallOpenings.StairDefaultRun(half), t = WallOpenings.StairTreadThickness;
+            float zA = he + WallOpenings.StairHoleMargin, zB = Cell + 0.3f + StairWidth;
+            foreach (var c in res.Cores)
+            {
+                var (o, u, v) = CoreFrame(c);
+                // a flight from u = foot, climbing along `dir` (U or -U), its width over [v0, v1] across: the editor's frame -- it
+                // climbs along Back and is Width wide along Right, from its foot corner
+                StairPlan Flight(float foot, float dir, float v0, float v1, float y, int f)
+                {
+                    var back = (X: u.X * dir, Z: u.Z * dir);
+                    float yaw = back.X > 0.5f ? 270f : back.X < -0.5f ? 90f : back.Z > 0.5f ? 180f : 0f;
+                    var right = (X: -back.Z, Z: back.X);
+                    float across = right.X * v.X + right.Z * v.Z > 0f ? v0 : v1;
+                    return new StairPlan { X = o.X + u.X * foot + v.X * across, Y = y, Z = o.Z + u.Z * foot + v.Z * across, Yaw = yaw,
+                                           Run = run, Width = StairWidth, Rise = half, Floor = f };
+                }
+                for (int f = c.F0; f < c.F1; f++)
+                {
+                    float y = f * Storey;
+                    res.Stairs.Add(Flight(Cell, 1f, zA, zA + StairWidth, y, f));
+                    res.Stairs.Add(Flight(Cell + run, -1f, zB - StairWidth, zB, y + half, f));
+                    // the landing: from the flights' end to the end wall, and from the first side's wall to the second flight's edge
+                    var (lx0, lz0, lx1, lz1) = CoreRect(c, Cell + run, he, 3 * Cell - he, zB);
+                    res.Walls.Add(new WallPlan { X = lx0, Y = y + half - t * 0.5f, Z = lz1, Yaw = 0f, Pitch = -90f, Length = lx1 - lx0,
+                                                 Height = lz1 - lz0, Thickness = t, Kind = SurfaceKind.Stairs });
+                }
+            }
         }
 
         /// <summary>A plan point turned clockwise from above (x east, z north) by a multiple of 90 degrees about the
@@ -3442,6 +3974,8 @@ namespace UnturnedSim
         /// open edges, as the house has. Its own rng stream, so a building without one is the building it was.</summary>
         static void AddPorches(BuildingGenResult res, Grid ground, PorchChoice choice, int seed)
         {
+            // a strip's porch is its canopy, the length of its shop fronts (BuildingGenStrip.cs)
+            if (res.Kind == BuildingKind.Strip) { AddCanopies(res, ground); return; }
             var prng = new Rng(unchecked(seed * 31337 + 0x504F));
             bool house = res.Kind == BuildingKind.Residential;
             bool rollFront = prng.Chance(house ? 55 : 30), rollBack = prng.Chance(house ? 30 : 10);
@@ -3523,10 +4057,14 @@ namespace UnturnedSim
                 // (each side from the house wall's centreline, inside its footing, so the corner solve finds them already met)
                 if (!in0) footings.Add(o.AlongX ? (a0 + tf * 0.5f, face - e * he, a0 + tf * 0.5f, face + e * depth) : (face - e * he, a0 + tf * 0.5f, face + e * depth, a0 + tf * 0.5f));
                 if (!in1) footings.Add(o.AlongX ? (a1 - tf * 0.5f, face - e * he, a1 - tf * 0.5f, face + e * depth) : (face - e * he, a1 - tf * 0.5f, face + e * depth, a1 - tf * 0.5f));
+                // (their tops the deck's underside: the deck is the porch's floor, and owns its top and its edges. Run up to the
+                // deck's top, a footing shared that top across its width and its outer face was the deck's edge, the foundation's
+                // colour and the floor's fighting all along the porch -- strawberry: "crazy z fighting between floor textures and
+                // foundation walls")
                 foreach (var (x0, z0, x1, z1) in footings)
                 {
                     var f = Wall(x0, z0, x1, z1, -WallOpenings.FoundationDepth, tf);
-                    f.Height = WallOpenings.FoundationDepth; f.Kind = SurfaceKind.Foundation;
+                    f.Height = WallOpenings.FoundationDepth - Slab; f.Kind = SurfaceKind.Foundation;
                     res.Walls.Add(f);
                 }
             }
@@ -3566,7 +4104,15 @@ namespace UnturnedSim
                     if (right && !left) Edge((x, z), (x, z + 1));         // a west face
                     else if (left && !right) Edge((x, z + 1), (x, z));    // an east face
                 }
-            var start = next.Where(kv => kv.Value.Z == kv.Key.Z && kv.Value.X > kv.Key.X)
+            // Loop by loop: a floor in pieces (a tower's stair standing alone in the colonnade under its slab) has a loop a piece,
+            // each walled the same way -- the first from the north-west corner, as a single loop always was, each next from the
+            // north-west corner of what is left. (A floor with a hole in it would walk its hole's loop the other way round, every
+            // corner of it an inside one, which is what that is.)
+            var outs = new List<Outer>();
+            var walkedAll = new HashSet<(int X, int Z)>();
+            while (walkedAll.Count < next.Count)
+            {
+            var start = next.Where(kv => kv.Value.Z == kv.Key.Z && kv.Value.X > kv.Key.X && !walkedAll.Contains(kv.Key))
                             .OrderByDescending(kv => kv.Key.Z).ThenBy(kv => kv.Key.X).First().Key;
             // the corners, in order
             var pts = new List<(int X, int Z)>();
@@ -3574,19 +4120,19 @@ namespace UnturnedSim
             int walked = 0;
             do
             {
+                walkedAll.Add(p);
                 var q = next[p];
                 var d = (q.X - p.X, q.Z - p.Z);
                 if (d != dir) { pts.Add(p); dir = d; }
                 p = q;
                 walked++;
             } while (p != start && walked <= next.Count);
-            // one loop through every edge: a floor in two pieces, or with a hole, is not an outline this can wall
-            if (p != start || walked != next.Count || pts.Count < 4) throw new InvalidOperationException("BuildingGen: the outline is not one loop");
+            // each a loop closing on itself
+            if (p != start || pts.Count < 4) throw new InvalidOperationException("BuildingGen: the outline is not one loop");
             int n = pts.Count;
             (int X, int Z) Dir(int i) { var a = pts[i]; var b = pts[(i + 1) % n]; return (Math.Sign(b.X - a.X), Math.Sign(b.Z - a.Z)); }
             // an outside corner turns right going round this way (x east, z north): the cross product is negative
             bool Convex(int i) { var a = Dir((i + n - 1) % n); var b = Dir(i); return a.X * b.Z - a.Z * b.X < 0; }
-            var outs = new List<Outer>();
             for (int i = 0; i < n; i++)
             {
                 var a = pts[i]; var b = pts[(i + 1) % n]; var d = Dir(i);
@@ -3601,6 +4147,7 @@ namespace UnturnedSim
                     A0 = (alongX ? Math.Min(a.X, b.X) : Math.Min(a.Z, b.Z)) * Cell, A1 = (alongX ? Math.Max(a.X, b.X) : Math.Max(a.Z, b.Z)) * Cell,
                     Face = d.X > 0 ? Sides.North : d.X < 0 ? Sides.South : d.Z > 0 ? Sides.West : Sides.East,
                 });
+            }
             }
             return outs;
         }
@@ -3653,6 +4200,212 @@ namespace UnturnedSim
                 grew++;
             }
             return grew;
+        }
+
+        /// <summary>⭐ WHO OWNS A SHARED PLANE (strawberry: "crazy z fighting between floor textures and foundation walls, 1st floor
+        /// wall tops clip and z fight the floor of the 2nd floor"). Two faces in one plane, facing the same way and painted
+        /// differently, are a coin toss per pixel for the depth test -- which face wins changes with the camera -- and the plan
+        /// laid every floor with its top in the plane of the walls under it: a storey's walls run up to its head, and the floor
+        /// over them has its top there too. Settled here, on the finished plan, by giving each shared plane to ONE surface:
+        ///   - A FLOOR OWNS ITS TOP. A wall under a floor or a ceiling stops at that slab's underside, Storey - Slab -- the
+        ///     OpeningTop every opening already stops at -- so none of it is in the plane of the floor over it: a partition, a
+        ///     basement's wall under the ground floor's rooms, a chimney's breast. A partition only partly under them (a
+        ///     business's, running on under a lower flat roof, which sits ON it; one under a stair hole) is split where they
+        ///     stop, each stretch under them stopping short, the pieces joined as the corner solve joins any wall. Not the
+        ///     outline's walls: the slab stops SlabInset short of their outer faces, so none is wholly under it, and their tops
+        ///     carry the wall (or the roof) above. (A porch's footings stop under its deck where they are laid: AddPorches.)
+        ///   - A WALL OWNS ITS FACE. Where a stair hole's edge is the face of a wall standing up through the slab (an outside
+        ///     wall), the hole runs on through that wall to the slab's edge: the strip of slab left inside the wall showed its
+        ///     edge in the plane of the face, the floor's colour fighting the wall's up the stairwell. Every full-storey flight's
+        ///     hole is cut here as the editor's FitStairsToStructure cuts it (which still cuts its own, a part of this one) --
+        ///     clipped to each slab, so one over the join of an L's two slabs is cut in both rather than in neither.
+        ///   - A WALL OWNS THE SILL IT STANDS ON. In a doorway through a wall standing on another (an outside door: on the
+        ///     footing, or on the basement's wall), the threshold is that other wall's top -- the slab reached to 5 cm short of
+        ///     the outer face and shared it. The floor, and a room's cover over it, stop at the wall's face across the doorway.
+        /// Run LAST (after the furnisher, the corner solve and the parapets; before the half turn): everything that reads the
+        /// walls while the building is made -- the furnisher's floor plan, the corner solve, the chimney, the doodads -- knows
+        /// a storey's own walls by their full Storey height and a full flight's hole by its flight, so they all read the plan
+        /// they always did, and only what is drawn changes. Returns the walls stopped short (pieces), the floors cut at a sill
+        /// and the holes run on through a wall.</summary>
+        static (int Walls, int Sills, int Holes) SettleShared(BuildingGenResult res)
+        {
+            const float E = 1e-3f;
+            bool Flat(WallPlan w) => MathF.Abs(w.Pitch + 90f) < 0.01f && MathF.Abs(w.Yaw) < 0.01f;
+            bool Upright(WallPlan w) => (w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation) && MathF.Abs(w.Pitch) < 0.01f
+                                        && w.InsetL0 + w.InsetL1 + w.InsetR0 + w.InsetR1 < 0.02f && w.GableRise < E;
+            float Top(WallPlan s) => s.Y + s.Thickness * 0.5f;
+            // a storey's floors and ceilings (not a room's cover, a landing, the hatch's lid or a roof, which sits ON its walls)
+            var slabs = res.Walls.Where(w => w.Kind == SurfaceKind.Floor && Flat(w) && MathF.Abs(w.Thickness - Slab) < E).ToList();
+
+            // every full-storey flight's hole, in each slab it arrives at: its footprint StairHoleMargin all round
+            foreach (var st in res.Stairs)
+            {
+                float rise = st.Rise > 0f ? st.Rise : Storey;
+                if (rise < Storey - 0.01f) continue;
+                var (bx, bz) = st.Back; var (rx, rz) = st.Right;
+                float ex = st.X + bx * st.Run + rx * st.Width, ez = st.Z + bz * st.Run + rz * st.Width, m = WallOpenings.StairHoleMargin;
+                var hole = (MathF.Min(st.X, ex) - m, MathF.Min(st.Z, ez) - m, MathF.Max(st.X, ex) + m, MathF.Max(st.Z, ez) + m);
+                foreach (var s in slabs.Where(s => MathF.Abs(Top(s) - (st.Y + rise)) <= rise * 0.5f)) Cut(s, hole);
+            }
+
+            // a floor owns its top: each stretch of a wall under the solid of the slabs whose top is its own stops at their underside
+            int walls = 0;
+            var pieces = new List<WallPlan>();
+            foreach (var w in res.Walls.Where(Upright).ToList())
+            {
+                float head = w.Y + w.Height;
+                var over = slabs.Where(s => MathF.Abs(Top(s) - head) < E).SelectMany(Solid).ToList();
+                if (over.Count == 0 || w.Height <= Slab + E) continue;
+                var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                float dx = c, dz = -sn, h = w.Thickness * 0.5f, x0 = w.X, z0 = w.Z;
+                bool alongX = MathF.Abs(dz) < 0.5f;
+                (float X0, float Z0, float X1, float Z1) Across(float u0, float u1)
+                {
+                    float xa = x0 + dx * u0, xb = x0 + dx * u1, za = z0 + dz * u0, zb = z0 + dz * u1;
+                    return alongX ? (MathF.Min(xa, xb), z0 - h, MathF.Max(xa, xb), z0 + h) : (x0 - h, MathF.Min(za, zb), x0 + h, MathF.Max(za, zb));
+                }
+                // the run cut wherever a slab's edge crosses it, each stretch under the slabs across the wall's whole thickness or not
+                var us = new SortedSet<float> { 0f, w.Length };
+                foreach (var q in over)
+                    foreach (float a in alongX ? new[] { q.X0, q.X1 } : new[] { q.Z0, q.Z1 })
+                    {
+                        float u = (a - (alongX ? x0 : z0)) * (alongX ? dx : dz);
+                        if (u > E && u < w.Length - E) us.Add(u);
+                    }
+                var cuts = us.ToList();
+                var under = new bool[cuts.Count - 1];
+                for (int i = 0; i + 1 < cuts.Count; i++) under[i] = Covers(over, Across(cuts[i], cuts[i + 1]));
+                if (!under.Any(b => b)) continue;
+                // never a seam inside an opening: one with both kinds of stretch over it keeps the wall's height over all of it
+                foreach (var o in w.Openings)
+                {
+                    var inside = Enumerable.Range(0, under.Length).Where(i => cuts[i + 1] > o.U + E && cuts[i] < o.U + o.Width - E).ToList();
+                    if (inside.Any(i => under[i]) && inside.Any(i => !under[i])) foreach (int i in inside) under[i] = false;
+                }
+                var runs = new List<(float U0, float U1, bool Under)>();
+                for (int i = 0; i < under.Length; i++)
+                    if (runs.Count > 0 && runs[^1].Under == under[i]) runs[^1] = (runs[^1].U0, cuts[i + 1], under[i]);
+                    else runs.Add((cuts[i], cuts[i + 1], under[i]));
+                if (!runs.Any(r => r.Under)) continue;
+                // (split, a partition only: an outside wall partly under a slab is an L's inside corner, where the main block's floor
+                // runs on over the end of the wing's wall -- a corner square the main block's own wall shares and shows nowhere in
+                // the audit -- and a split turns every tee into it into a corner the editor's corner pass would grow)
+                if (runs.Count > 1 && w.Thickness > Inner + E) continue;
+                var ops = w.Openings.ToList();
+                float h0 = w.Height;
+                int at = res.Walls.IndexOf(w);
+                for (int k = 0; k < runs.Count; k++)
+                {
+                    var (u0, u1, low) = runs[k];
+                    var p = k == 0 ? w : new WallPlan
+                    {
+                        Y = w.Y, Yaw = w.Yaw, Pitch = w.Pitch, Kind = w.Kind, Height = h0, Thickness = w.Thickness, Material = w.Material,
+                        Texel = w.Texel, MaterialBack = w.MaterialBack, TexelBack = w.TexelBack,
+                    };
+                    if (runs.Count > 1)
+                    {
+                        p.X = x0 + dx * u0; p.Z = z0 + dz * u0; p.Length = u1 - u0;
+                        p.Openings.Clear();
+                        foreach (var o in ops)
+                            if (o.U >= u0 - E && o.U + o.Width <= u1 + E) { var q = o; q.U -= u0; p.Openings.Add(q); }
+                        pieces.Add(p);
+                        if (k > 0) res.Walls.Insert(++at, p);
+                    }
+                    if (!low) continue;
+                    p.Height -= Slab;
+                    for (int i = 0; i < p.Openings.Count; i++)
+                    {
+                        var o = p.Openings[i];
+                        if (o.V + o.Height > p.Height) { o.Height = MathF.Max(0f, p.Height - o.V); p.Openings[i] = o; }
+                    }
+                    walls++;
+                }
+            }
+            // (a piece's new end joined to whatever it meets there, as every wall's is -- openings kept in place)
+            if (pieces.Count > 0) SolveCorners(res.Walls, pieces.Contains);
+
+            // a wall owns its face: a hole's edge on a wall standing up through the slab runs on through that wall
+            var uprights = res.Walls.Where(Upright).ToList();
+            int holes = 0;
+            foreach (var s in slabs)
+            {
+                float top = Top(s);
+                var through = uprights.Where(w => w.Y <= top - Slab + E && w.Y + w.Height >= top - E).Select(PlanRect).ToList();
+                foreach (var o in s.Openings.ToList())
+                {
+                    float hx0 = s.X + o.U, hx1 = hx0 + o.Width, hz1 = s.Z - o.V, hz0 = hz1 - o.Height;
+                    foreach (var (px0, pz0, px1, pz1) in through)
+                    {
+                        float ax0 = MathF.Max(hx0, px0), ax1 = MathF.Min(hx1, px1), az0 = MathF.Max(hz0, pz0), az1 = MathF.Min(hz1, pz1);
+                        if (ax1 - ax0 > E && (MathF.Abs(hz0 - pz1) < E || MathF.Abs(hz1 - pz0) < E)) holes += Cut(s, (ax0, pz0, ax1, pz1)) ? 1 : 0;
+                        else if (az1 - az0 > E && (MathF.Abs(hx0 - px1) < E || MathF.Abs(hx1 - px0) < E)) holes += Cut(s, (px0, az0, px1, az1)) ? 1 : 0;
+                    }
+                }
+            }
+
+            // a wall owns the sill it stands on: across a doorway in a wall standing on another, no floor over that other's top
+            var floors = res.Walls.Where(w => w.Kind == SurfaceKind.Floor && Flat(w)).ToList();
+            int sills = 0;
+            foreach (var w in uprights)
+            {
+                if (w.Kind != SurfaceKind.Wall) continue;
+                var below = uprights.Where(b => b != w && MathF.Abs(b.Y + b.Height - w.Y) < E).Select(PlanRect).ToList();
+                if (below.Count == 0) continue;
+                var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                float dx = c, dz = -sn, h = w.Thickness * 0.5f;
+                foreach (var o in w.Openings.Where(o => o.V < WallOpenings.Eps))
+                {
+                    float u0 = MathF.Max(0f, o.U), u1 = MathF.Min(w.Length, o.U + o.Width);
+                    if (u1 - u0 < E) continue;
+                    float xa = w.X + dx * u0, xb = w.X + dx * u1, za = w.Z + dz * u0, zb = w.Z + dz * u1;
+                    var (dx0, dz0, dx1, dz1) = MathF.Abs(dz) < 0.5f ? (MathF.Min(xa, xb), w.Z - h, MathF.Max(xa, xb), w.Z + h)
+                                                                     : (w.X - h, MathF.Min(za, zb), w.X + h, MathF.Max(za, zb));
+                    foreach (var (bx0, bz0, bx1, bz1) in below)
+                    {
+                        var sill = (MathF.Max(dx0, bx0), MathF.Max(dz0, bz0), MathF.Min(dx1, bx1), MathF.Min(dz1, bz1));
+                        if (sill.Item3 - sill.Item1 < E || sill.Item4 - sill.Item2 < E) continue;
+                        foreach (var f in floors.Where(f => Top(f) > w.Y - E && Top(f) < w.Y + 0.05f)) sills += Cut(f, sill) ? 1 : 0;
+                    }
+                }
+            }
+            return (walls, sills, holes);
+        }
+
+        /// <summary>An upright wall's plan rectangle: its run along its yaw (a multiple of 90), its thickness centred on it.</summary>
+        static (float X0, float Z0, float X1, float Z1) PlanRect(WallPlan w)
+        {
+            var (c, s) = PlanTrig.CosSin(w.Yaw);
+            float ex = w.X + c * w.Length, ez = w.Z - s * w.Length, h = w.Thickness * 0.5f;
+            return MathF.Abs(s) < 0.5f ? (MathF.Min(w.X, ex), w.Z - h, MathF.Max(w.X, ex), w.Z + h) : (w.X - h, MathF.Min(w.Z, ez), w.X + h, MathF.Max(w.Z, ez));
+        }
+
+        /// <summary>A flat slab's solid in plan: its rectangle less its holes, as WallOpenings.Solids partitions it to draw it.</summary>
+        static IEnumerable<(float X0, float Z0, float X1, float Z1)> Solid(WallPlan s)
+            => WallOpenings.Solids(s.Length, s.Height, s.Openings).Select(q => (s.X + q.U0, s.Z - q.V1, s.X + q.U1, s.Z - q.V0));
+
+        /// <summary>Is the plan rectangle r wholly inside the union of `by`? Exact: every cell of the grid their edges cut r into.</summary>
+        static bool Covers(List<(float X0, float Z0, float X1, float Z1)> by, (float X0, float Z0, float X1, float Z1) r)
+        {
+            var xs = by.SelectMany(q => new[] { q.X0, q.X1 }).Where(x => x > r.X0 && x < r.X1).Append(r.X0).Append(r.X1).Distinct().OrderBy(x => x).ToList();
+            var zs = by.SelectMany(q => new[] { q.Z0, q.Z1 }).Where(z => z > r.Z0 && z < r.Z1).Append(r.Z0).Append(r.Z1).Distinct().OrderBy(z => z).ToList();
+            for (int i = 0; i + 1 < xs.Count; i++)
+                for (int j = 0; j + 1 < zs.Count; j++)
+                {
+                    if (xs[i + 1] - xs[i] < 1e-4f || zs[j + 1] - zs[j] < 1e-4f) continue;
+                    float cx = (xs[i] + xs[i + 1]) * 0.5f, cz = (zs[j] + zs[j + 1]) * 0.5f;
+                    if (!by.Any(q => q.X0 <= cx && cx <= q.X1 && q.Z0 <= cz && cz <= q.Z1)) return false;
+                }
+            return true;
+        }
+
+        /// <summary>Cut the plan rectangle r, clipped to it, out of a flat slab: a hole in the slab's own frame (from its min X along
+        /// +X, from its max Z along -Z). Whether there was anything to cut.</summary>
+        static bool Cut(WallPlan s, (float X0, float Z0, float X1, float Z1) r)
+        {
+            float x0 = MathF.Max(r.X0, s.X), x1 = MathF.Min(r.X1, s.X + s.Length), z0 = MathF.Max(r.Z0, s.Z - s.Height), z1 = MathF.Min(r.Z1, s.Z);
+            if (x1 - x0 < 1e-3f || z1 - z0 < 1e-3f) return false;
+            s.Openings.Add(new WallOpening(x0 - s.X, s.Z - z1, x1 - x0, z1 - z0));
+            return true;
         }
 
         /// <summary>The hole a switchback in `bay` needs in each floor it climbs to, in plan metres: over its two flights and

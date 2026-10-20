@@ -389,4 +389,74 @@ namespace UnturnedGodot.Testing
             eb.QueueFree();
         }
     }
+
+    // THE GABLE END FACES OUT (strawberry 2026-10-19: "the wall under roofs is rendering inside out ... all buildings
+    // with gable roofs. on the gable end wall"). The triangle that closes a gable is its own little prism on top of the
+    // wall (WallSurface.AddGableCap). Godot draws a triangle only from the side it reads CLOCKWISE from, so each face's
+    // right-hand normal has to point INTO the prism; wound the other way, every face is culled from the street and seen
+    // from inside the attic -- which is what it had been since the cap was written. Held to geometry, not to the code:
+    // the cap is convex, so "outward" is just away from its own centre. The lit normals are checked too, because a face
+    // drawn from the right side but lit from behind reads just as wrong.
+    //
+    // BREAK IT: put AddGableCap's old order back (Tri P,B,A / C,D,Q; Quad A,C,Q,P / P,Q,D,B) -> every cap face fails.
+    public class TheGableEndFacesOut : GameTest
+    {
+        public override string Name => "buildtool.gable_end_faces_out";
+
+        public override IEnumerable<Step> Run()
+        {
+            var eb = new EditorBuildings();
+            World.AddChild(eb);
+            yield return Step.Ticks(1);
+            RoofProbe.Hall(eb);
+            yield return Step.Ticks(1);
+            eb.SolveCorners();
+            yield return Step.Ticks(1);
+            var roof = eb.PlaceRoofOverWalls(RoofKind.Gable, 25f);
+            yield return Step.Ticks(1);
+            T.Check("a gable roof was placed", roof != null);
+            if (roof == null) { eb.QueueFree(); yield break; }
+
+            int ends = 0, faces = 0, wound = 0, lit = 0;
+            foreach (var w in eb.Walls)
+            {
+                if (!GodotObject.IsInstanceValid(w) || w.GableRise < 0.01f) continue;
+                var mi = w.GetNodeOrNull<MeshInstance3D>("Mesh");
+                if (mi?.Mesh == null) continue;
+                ends++;
+                // the cap's triangles, in the wall's own frame: every one has a corner above the wall's head
+                var cap = new List<(Vector3 A, Vector3 B, Vector3 C, Vector3 N)>();
+                for (int surf = 0; surf < mi.Mesh.GetSurfaceCount(); surf++)
+                {
+                    var arr = mi.Mesh.SurfaceGetArrays(surf);
+                    var v = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                    var n = arr[(int)Mesh.ArrayType.Normal].AsVector3Array();
+                    var idx = arr[(int)Mesh.ArrayType.Index].AsInt32Array();
+                    int count = idx.Length > 0 ? idx.Length : v.Length;
+                    for (int k = 0; k + 2 < count; k += 3)
+                    {
+                        int i0 = idx.Length > 0 ? idx[k] : k, i1 = idx.Length > 0 ? idx[k + 1] : k + 1, i2 = idx.Length > 0 ? idx[k + 2] : k + 2;
+                        if (Mathf.Max(v[i0].Y, Mathf.Max(v[i1].Y, v[i2].Y)) <= w.Height + 0.01f) continue;
+                        cap.Add((v[i0], v[i1], v[i2], n.Length > 0 ? n[i0] + n[i1] + n[i2] : Vector3.Zero));
+                    }
+                }
+                var centre = Vector3.Zero;
+                foreach (var (a, b, c, _) in cap) centre += a + b + c;
+                if (cap.Count > 0) centre /= cap.Count * 3;
+                foreach (var (a, b, c, nn) in cap)
+                {
+                    faces++;
+                    var outward = (a + b + c) / 3f - centre;
+                    if ((b - a).Cross(c - a).Dot(outward) < 0f) wound++;   // clockwise from outside
+                    if (nn.Dot(outward) > 0f) lit++;
+                }
+            }
+            T.Check($"the roof raised gable ends ({ends})", ends >= 2);
+            T.Check($"each end has a cap: 2 triangles and 2 slopes ({faces} faces over {ends} ends)", faces == ends * 6);
+            T.Check($"every cap face is wound to be seen from outside ({wound}/{faces})", faces > 0 && wound == faces);
+            T.Check($"and is lit from outside ({lit}/{faces})", faces > 0 && lit == faces);
+
+            eb.QueueFree();
+        }
+    }
 }

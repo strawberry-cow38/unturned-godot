@@ -23,15 +23,19 @@ namespace UnturnedGodot
     /// Conflicts, decided the same way every time: a vertex wanted by a corner and an edge goes to the corner (the corner
     /// is on that edge); by one edge twice (it crosses both grid edges at that vertex), to the foot of the vertex on that
     /// edge; by two corners or two edges, to the nearer (then the lower target, x then y). The loser is left where it is,
-    /// and the outline is not followed there: a triangle is dug only if it is all but wholly inside the outline, or a
-    /// quarter inside a hatch's well -- ground left over a building's inside is under its walls and ground floor, ground
-    /// left over a well stands over the opening, ground missing outside is a hole beside the wall -- and a triangle the
-    /// moves squeezed flat or turned over is dug.
+    /// and the outline is not followed there. No quad may fold: one the moves turned inside out is split the other way
+    /// if that mends it, else gives a moved corner back (an edge's before a corner's, the farther move first).
+    ///
+    /// The 4 m grid cannot follow every outline -- two buildings 1.5 m apart, a well in another's notch -- so the bend
+    /// is only the first pass, and it need not be perfect: every triangle the outline still runs through is CLIPPED to
+    /// it, exactly, the part outside kept as convex pieces with vertices of their own (each on the triangle's plane, so
+    /// the ground does not move) and the part inside dropped. So the ground stops at the outline everywhere -- no hole
+    /// beside a wall, no ground over a well, none left inside -- and the bend just keeps those pieces few.
     ///
     /// The offsets are a per-vertex table the chunk mesh and its trimesh collider both read (RebuildChunk,
-    /// ApplyChunkTrimesh), as are the per-quad split and triangle flags; a chunk with a bent vertex or a cut takes the
-    /// trimesh collider, as one with a hole always did. Nothing here touches the rivers. Re-derived from the cuts whenever
-    /// one is added or removed, so removing a building's cut puts the ground back exactly.
+    /// ApplyChunkTrimesh), as are the per-quad split, dug and clipped flags and the pieces; a chunk with a bent vertex or
+    /// a cut takes the trimesh collider, as one with a hole always did. Nothing here touches the rivers. Re-derived from
+    /// the cuts whenever one is added or removed, so removing a building's cut puts the ground back exactly.
     /// </summary>
     public partial class Terrain
     {
@@ -42,9 +46,12 @@ namespace UnturnedGodot
         /// <summary>Each grid vertex's move, in GRID units (x along gx, y along gy); null while nothing is bent.</summary>
         Vector2[,] _bend;
         /// <summary>Per quad, what the cuts made of it: CutTriA (the triangle at its (gx, gy+1) corner) and CutTriB (the one at
-        /// (gx+1, gy)) dug, CutSplit11 split 00-11 rather than 01-10. 0 for untouched; null while nothing is cut.</summary>
+        /// (gx+1, gy)) dug, CutSplit11 split 00-11 rather than 01-10, CutClipA / CutClipB that triangle clipped to the
+        /// outline (its pieces in _cutPieces). 0 for untouched; null while nothing is cut.</summary>
         byte[,] _cutTri;
-        public const byte CutTriA = 1, CutTriB = 2, CutSplit11 = 4;
+        public const byte CutTriA = 1, CutTriB = 2, CutSplit11 = 4, CutClipA = 8, CutClipB = 16;
+        /// <summary>Per quad with a clipped triangle, what is left of it: convex pieces in grid units, wound as the mesh is.</summary>
+        Dictionary<(int, int), (Vector2[][] A, Vector2[][] B)> _cutPieces;
 
         /// <summary>What the last derivation did, in words: the corners and edge vertices moved, the conflicts, the triangles dug.</summary>
         public string CutReport { get; private set; } = "";
@@ -105,20 +112,71 @@ namespace UnturnedGodot
             return new Vector3(_bx + g.X * UNIT, y, -(_bz + g.Y * UNIT));
         }
 
-        /// <summary>A cut quad's surviving triangles, as indices of its corners 00, 10, 01, 11, in the winding the plain quad
-        /// uses (00-01-10, 10-01-11) -- split the other way where the cut says, each dug triangle left out.</summary>
-        static void CutQuadTriangles(byte f, int i00, int i10, int i01, int i11, System.Action<int, int, int> emit)
+        /// <summary>A cut quad's ground, triangle by triangle, as three of its corners (0 = 00, 1 = 10, 2 = 01, 3 = 11) in the
+        /// winding the plain quad uses (00-01-10, 10-01-11) -- split the other way where the cut says, a dug triangle left out
+        /// -- with null for the whole triangle, or once per piece of a clipped one (grid units, the same winding).</summary>
+        void CutQuadParts(int gx, int gy, System.Action<int, int, int, Vector2[]> emit)
         {
-            if ((f & CutSplit11) != 0)
+            byte f = CutTri(gx, gy);
+            bool s11 = (f & CutSplit11) != 0;
+            (int, int, int) ta = s11 ? (0, 2, 3) : (0, 2, 1), tb = s11 ? (0, 3, 1) : (1, 2, 3);   // the triangles at the 01 and 10 corners
+            (Vector2[][] A, Vector2[][] B) pc = default;
+            if ((f & (CutClipA | CutClipB)) != 0) _cutPieces?.TryGetValue((gx, gy), out pc);
+            void One((int, int, int) t, byte dug, byte clip, Vector2[][] pieces)
             {
-                if ((f & CutTriA) == 0) emit(i00, i01, i11);   // the triangle at the 01 corner
-                if ((f & CutTriB) == 0) emit(i00, i11, i10);   // and at the 10 corner
+                if ((f & dug) != 0) return;
+                if ((f & clip) == 0) { emit(t.Item1, t.Item2, t.Item3, null); return; }
+                if (pieces != null) foreach (var p in pieces) emit(t.Item1, t.Item2, t.Item3, p);
             }
-            else
+            One(ta, CutTriA, CutClipA, pc.A);
+            One(tb, CutTriB, CutClipB, pc.B);
+        }
+
+        /// <summary>A point's weights on a triangle's three corners (grid units): what a piece's vertex takes of each.</summary>
+        static Vector3 Bary(Vector2 p, Vector2 a, Vector2 b, Vector2 c)
+        {
+            float d = (b - a).Cross(c - a);
+            float wb = (p - a).Cross(c - a) / d, wc = (b - a).Cross(p - a) / d;
+            return new Vector3(1f - wb - wc, wb, wc);
+        }
+
+        /// <summary>The render mesh's triangles for a cut quad (RebuildChunk): a whole triangle by its corners' indices, a
+        /// clipped one's pieces as vertices of their own, everything (position, normal, splat UV, colour) weighted off the
+        /// triangle's corners -- so a piece lies in its triangle's plane and shades as it would have.</summary>
+        void EmitCutQuad(int gx, int gy, int i00, int i10, int i01, int i11, List<Vector3> v, List<Vector3> n, List<Vector2> u, List<Color> c, List<int> idx)
+        {
+            int[] ci = { i00, i10, i01, i11 };
+            Vector2[] g = { GridVertex(gx, gy), GridVertex(gx + 1, gy), GridVertex(gx, gy + 1), GridVertex(gx + 1, gy + 1) };
+            CutQuadParts(gx, gy, (a, b, cc, piece) =>
             {
-                if ((f & CutTriA) == 0) emit(i00, i01, i10);
-                if ((f & CutTriB) == 0) emit(i10, i01, i11);
-            }
+                int ia = ci[a], ib = ci[b], ic = ci[cc];
+                if (piece == null) { idx.Add(ia); idx.Add(ib); idx.Add(ic); return; }
+                int b0 = v.Count;
+                foreach (var p in piece)
+                {
+                    var w = Bary(p, g[a], g[b], g[cc]);
+                    v.Add(v[ia] * w.X + v[ib] * w.Y + v[ic] * w.Z);
+                    n.Add((n[ia] * w.X + n[ib] * w.Y + n[ic] * w.Z).Normalized());
+                    u.Add(u[ia] * w.X + u[ib] * w.Y + u[ic] * w.Z);
+                    c.Add(c[ia] * w.X + c[ib] * w.Y + c[ic] * w.Z);
+                }
+                for (int k = 1; k + 1 < piece.Length; k++) { idx.Add(b0); idx.Add(b0 + k); idx.Add(b0 + k + 1); }
+            });
+        }
+
+        /// <summary>The trimesh collider's triangles for a cut quad (ApplyChunkTrimesh), the same as EmitCutQuad's: the
+        /// ground you stand on is the ground you see.</summary>
+        void EmitCutQuadCollider(int gx, int gy, Vector3 v00, Vector3 v10, Vector3 v01, Vector3 v11, List<Vector3> tris)
+        {
+            Vector3[] cv = { v00, v10, v01, v11 };
+            Vector2[] g = { GridVertex(gx, gy), GridVertex(gx + 1, gy), GridVertex(gx, gy + 1), GridVertex(gx + 1, gy + 1) };
+            CutQuadParts(gx, gy, (a, b, cc, piece) =>
+            {
+                if (piece == null) { tris.Add(cv[a]); tris.Add(cv[b]); tris.Add(cv[cc]); return; }
+                var pts = new Vector3[piece.Length];
+                for (int k = 0; k < piece.Length; k++) { var w = Bary(piece[k], g[a], g[b], g[cc]); pts[k] = cv[a] * w.X + cv[b] * w.Y + cv[cc] * w.Z; }
+                for (int k = 1; k + 1 < pts.Length; k++) { tris.Add(pts[0]); tris.Add(pts[k]); tris.Add(pts[k + 1]); }
+            });
         }
 
         /// <summary>Does this chunk carry a bent vertex or a cut quad? Its collider is then the trimesh: a heightfield is one
@@ -140,15 +198,25 @@ namespace UnturnedGodot
         // ---- the derivation -----------------------------------------------------------------------------------------
 
         const float CutEps = 1e-4f;
+        /// <summary>A triangle smaller than this (grid units squared: 1.6 cm2) is flat: a quad with one under both splits folds.</summary>
+        const float MinTri = 1e-5f;
+        /// <summary>How much of a triangle (grid units squared: 16 cm2) may be on the wrong side of the outline before it is
+        /// clipped rather than dug or kept whole.</summary>
+        const float ClipEps = 1e-4f;
+        /// <summary>A clipped piece smaller than this (grid units squared: 1.6 cm2) is a crumb on an edge, and dropped.</summary>
+        const float PieceEps = 1e-5f;
+        /// <summary>Within this (grid units: 0.4 mm, against a float's grain of 0.24 mm 4 km from the map's corner) two
+        /// points are one, and a point is on a line.</summary>
+        const float ClipTol = 1e-4f;
         /// <summary>How far a corner may move a vertex that is not its nearest (grid units): its nearest is a corner's already.</summary>
         const float SecondMove = 0.75f;
 
-        /// <summary>Bend, split and dig for every cut, from scratch, and rebuild (mesh and collider) every chunk whose vertices
-        /// or quads changed. Returns the triangles dug.</summary>
+        /// <summary>Bend, split, dig and clip for every cut, from scratch, and rebuild (mesh and collider) every chunk whose
+        /// vertices or quads changed. Returns the triangles dug.</summary>
         int RederiveCuts()
         {
             if (_grid == null) return 0;
-            var oldBend = _bend; var oldTri = _cutTri;
+            var oldBend = _bend; var oldTri = _cutTri; var oldPieces = _cutPieces;
             // every cut's quads in grid units (world z is negated, as everywhere in this class)
             var polys = new List<Vector2[]>(); var open = new List<Vector2[]>();
             foreach (var kv in _cuts)
@@ -163,12 +231,11 @@ namespace UnturnedGodot
                     if (qi >= cov) open.Add(p);
                 }
             }
-            Vector2[,] bend = null; byte[,] tri = null;
-            int dug = 0, corners = 0, edges = 0, lost = 0, slivers = 0, splits = 0;
+            Vector2[,] bend = null; byte[,] tri = null; Dictionary<(int, int), (Vector2[][] A, Vector2[][] B)> pieces = null;
+            int dug = 0, corners = 0, edges = 0, lost = 0, clipped = 0, splits = 0;
             if (polys.Count > 0)
             {
                 bool Inside(Vector2 p) { foreach (var q in polys) if (InConvex(q, p)) return true; return false; }
-                bool InsideOpen(Vector2 p) { foreach (var q in open) if (InConvex(q, p)) return true; return false; }
                 // (a corner of an open quad -- a well's -- before one under the building: ground left over a well is in the
                 // way and in sight, ground left under the building is neither)
                 bool OpenCorner(Vector2 c)
@@ -256,71 +323,83 @@ namespace UnturnedGodot
                 }
                 bend = new Vector2[_gw, _gh];
                 foreach (var kv in claims) bend[kv.Key.Item1, kv.Key.Item2] = kv.Value.To - new Vector2(kv.Key.Item1, kv.Key.Item2);
-                // a corner on a vertex that was not its nearest must not turn a triangle round it inside out: else it is lost
-                // after all, and the vertex goes back
-                foreach (var (vx, vy) in second)
-                {
-                    bool folds = false;
-                    for (int qx = vx - 1; qx <= vx && !folds; qx++)
-                        for (int qy = vy - 1; qy <= vy && !folds; qy++)
-                        {
-                            if (qx < 0 || qy < 0 || qx >= _gw - 1 || qy >= _gh - 1) continue;
-                            Vector2 c00 = new Vector2(qx, qy) + bend[qx, qy], c10 = new Vector2(qx + 1, qy) + bend[qx + 1, qy];
-                            Vector2 c01 = new Vector2(qx, qy + 1) + bend[qx, qy + 1], c11 = new Vector2(qx + 1, qy + 1) + bend[qx + 1, qy + 1];
-                            // (the plain split, or the other: a quad that is a fold either way folds)
-                            bool plain = Tri(c00, c01, c10) < -0.02f && Tri(c10, c01, c11) < -0.02f, other = Tri(c00, c01, c11) < -0.02f && Tri(c00, c11, c10) < -0.02f;
-                            folds = !plain && !other;
-                        }
-                    if (!folds) continue;
-                    lostWhat.Add($"corner {claims[(vx, vy)].To} on ({vx},{vy}) folded the ground: lost");
-                    lost++; claims.Remove((vx, vy)); bend[vx, vy] = Vector2.Zero;
-                }
-                if (lostWhat.Count > 0) Log.Print($"[terrain] basement cut conflicts: {string.Join("; ", lostWhat)}");
-                HashSet<int> On(int gx, int gy) => claims.TryGetValue((gx, gy), out var c) ? c.On : null;
-                bool Shared(HashSet<int> p, HashSet<int> q) => p != null && q != null && p.Overlaps(q);
-                // each quad within the outline's reach: split along the outline where it runs corner to corner, then each
-                // triangle dug if it is mostly inside (10 points across it), or squeezed to nothing
+                // every quad within the outline's reach
                 float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
                 foreach (var q in polys) foreach (var p in q) { minX = System.Math.Min(minX, p.X); minY = System.Math.Min(minY, p.Y); maxX = System.Math.Max(maxX, p.X); maxY = System.Math.Max(maxY, p.Y); }
                 int qx0 = System.Math.Max(0, Mathf.FloorToInt(minX) - 2), qx1 = System.Math.Min(_gw - 2, Mathf.CeilToInt(maxX) + 1);
                 int qy0 = System.Math.Max(0, Mathf.FloorToInt(minY) - 2), qy1 = System.Math.Min(_gh - 2, Mathf.CeilToInt(maxY) + 1);
                 Vector2 B(int gx, int gy) => new Vector2(gx, gy) + bend[gx, gy];
-                // (dug when it is all but wholly inside -- or a quarter of it is inside a well: where a claim was lost, ground
-                // left under a building is under its walls and ground floor, where ground left over a well stands over the
-                // opening, and ground missing outside either is a hole beside it)
-                bool Dig(Vector2 p, Vector2 q, Vector2 r, ref int sliver)
+                // (a quad's two splits: each fine if both its triangles are wound as the mesh is, and not flat)
+                bool PlainOk(int gx, int gy) => Tri(B(gx, gy), B(gx, gy + 1), B(gx + 1, gy)) < -MinTri && Tri(B(gx + 1, gy), B(gx, gy + 1), B(gx + 1, gy + 1)) < -MinTri;
+                bool OtherOk(int gx, int gy) => Tri(B(gx, gy), B(gx, gy + 1), B(gx + 1, gy + 1)) < -MinTri && Tri(B(gx, gy), B(gx + 1, gy + 1), B(gx + 1, gy)) < -MinTri;
+                // no quad may fold: one inside out (or flat) under both splits gives a moved corner back -- an edge's before a
+                // corner's, a corner's second choice before its first, the farther move first -- and its neighbours are looked
+                // at again, until none folds (it ends: a vertex given back is never moved again, and an unmoved quad is fine)
+                int Rank((int, int) k) => !claims[k].Corner ? 0 : second.Contains(k) ? 1 : 2;
+                var work = new Queue<(int, int)>();
+                for (int gx = qx0; gx <= qx1; gx++) for (int gy = qy0; gy <= qy1; gy++) work.Enqueue((gx, gy));
+                while (work.Count > 0)
                 {
-                    if (Tri(p, q, r) > -0.005f) { sliver++; return true; }   // (squeezed flat, or turned inside out)
-                    int n = 0, inside = 0, inOpen = 0;
-                    for (int i = 0; i < 4; i++)
-                        for (int j = 0; i + j < 4; j++)
-                        {
-                            float u = (i + 1f / 3f) / 4f, v = (j + 1f / 3f) / 4f;   // points spread over the triangle
-                            var at = p + (q - p) * u + (r - p) * v;
-                            n++; if (Inside(at)) inside++;
-                            if (open.Count > 0 && InsideOpen(at)) inOpen++;
-                        }
-                    return inside * 10 >= n * 9 || inOpen * 4 >= n;
+                    var (qx, qy) = work.Dequeue();
+                    if (PlainOk(qx, qy) || OtherOk(qx, qy)) continue;
+                    (int, int) give = (-1, -1);
+                    foreach (var k in new[] { (qx, qy), (qx + 1, qy), (qx, qy + 1), (qx + 1, qy + 1) })
+                    {
+                        if (!claims.ContainsKey(k)) continue;
+                        if (give.Item1 < 0 || Rank(k) < Rank(give) || (Rank(k) == Rank(give) && bend[k.Item1, k.Item2].Length() > bend[give.Item1, give.Item2].Length())) give = k;
+                    }
+                    if (give.Item1 < 0) continue;
+                    lostWhat.Add($"({give.Item1},{give.Item2}) {claims[give].To} folded quad ({qx},{qy}): given back");
+                    lost++; claims.Remove(give); bend[give.Item1, give.Item2] = Vector2.Zero;
+                    for (int ax = give.Item1 - 1; ax <= give.Item1; ax++)
+                        for (int ay = give.Item2 - 1; ay <= give.Item2; ay++)
+                            if (ax >= 0 && ay >= 0 && ax < _gw - 1 && ay < _gh - 1) work.Enqueue((ax, ay));
                 }
+                if (lostWhat.Count > 0) Log.Print($"[terrain] basement cut conflicts: {string.Join("; ", lostWhat)}");
+                HashSet<int> On(int gx, int gy) => claims.TryGetValue((gx, gy), out var c) ? c.On : null;
+                bool Shared(HashSet<int> p, HashSet<int> q) => p != null && q != null && p.Overlaps(q);
+                // the outline's quads wound counter-clockwise, for the clipping
+                var ccw = new List<Vector2[]>();
+                foreach (var q in polys) { var r = (Vector2[])q.Clone(); if (PolyArea(r) < 0f) System.Array.Reverse(r); ccw.Add(r); }
+                // a triangle (the mesh's winding) dug if it is inside the outline, kept if it is outside, else clipped: what is
+                // left of it outside every quad, as convex pieces in the mesh's winding
+                byte Classify(Vector2 p, Vector2 q, Vector2 r, byte dugBit, byte clipBit, ref Vector2[][] keep)
+                {
+                    float whole = -Tri(p, q, r);
+                    if (whole < MinTri) { dug++; return dugBit; }   // (flat: nothing to draw -- the fold pass leaves none)
+                    var parts = new List<Vector2[]> { new[] { r, q, p } };
+                    foreach (var Q in ccw) { parts = Subtract(parts, Q); if (parts.Count == 0) break; }
+                    float outside = 0f;
+                    foreach (var pc in parts) outside += PolyArea(pc);
+                    if (outside <= ClipEps) { dug++; return dugBit; }
+                    if (outside >= whole - ClipEps) return 0;
+                    keep = new Vector2[parts.Count][];
+                    for (int i = 0; i < parts.Count; i++) { var w = (Vector2[])parts[i].Clone(); System.Array.Reverse(w); keep[i] = w; }
+                    clipped++;
+                    return clipBit;
+                }
+                // each quad: split along the outline where it runs corner to corner (unless that split folds and the other
+                // does not), then each triangle dug, kept or clipped
                 for (int gx = qx0; gx <= qx1; gx++)
                     for (int gy = qy0; gy <= qy1; gy++)
                     {
                         Vector2 c00 = B(gx, gy), c10 = B(gx + 1, gy), c01 = B(gx, gy + 1), c11 = B(gx + 1, gy + 1);
                         byte f = 0;
-                        if (Shared(On(gx, gy), On(gx + 1, gy + 1)) && !Shared(On(gx, gy + 1), On(gx + 1, gy))) { f |= CutSplit11; splits++; }
-                        bool a, b;
-                        if ((f & CutSplit11) != 0) { a = Dig(c00, c01, c11, ref slivers); b = Dig(c00, c11, c10, ref slivers); }
-                        else { a = Dig(c00, c01, c10, ref slivers); b = Dig(c10, c01, c11, ref slivers); }
-                        if (a) { f |= CutTriA; dug++; }
-                        if (b) { f |= CutTriB; dug++; }
+                        bool want11 = Shared(On(gx, gy), On(gx + 1, gy + 1)) && !Shared(On(gx, gy + 1), On(gx + 1, gy));
+                        bool plainOk = PlainOk(gx, gy), otherOk = OtherOk(gx, gy);
+                        if (want11 ? otherOk || !plainOk : !plainOk && otherOk) { f |= CutSplit11; splits++; }
+                        Vector2[][] pa = null, pb = null;
+                        if ((f & CutSplit11) != 0) f |= (byte)(Classify(c00, c01, c11, CutTriA, CutClipA, ref pa) | Classify(c00, c11, c10, CutTriB, CutClipB, ref pb));
+                        else f |= (byte)(Classify(c00, c01, c10, CutTriA, CutClipA, ref pa) | Classify(c10, c01, c11, CutTriB, CutClipB, ref pb));
+                        if (pa != null || pb != null) { pieces ??= new(); pieces[(gx, gy)] = (pa, pb); }
                         if (f == 0) continue;
                         tri ??= new byte[_gw - 1, _gh - 1];
                         tri[gx, gy] = f;
                     }
             }
-            _bend = bend; _cutTri = tri;
+            _bend = bend; _cutTri = tri; _cutPieces = pieces;
             CutReport = polys.Count == 0 ? "no basement cuts"
-                : $"{_cuts.Count} cut(s), {polys.Count} quad(s): {corners} corner(s) and {edges} edge crossing(s) bent, {lost} conflict(s) lost, {splits} quad(s) split corner to corner, {dug} triangle(s) dug ({slivers} squeezed)";
+                : $"{_cuts.Count} cut(s), {polys.Count} quad(s): {corners} corner(s) and {edges} edge crossing(s) bent, {lost} conflict(s) lost, {splits} quad(s) split corner to corner, {dug} triangle(s) dug, {clipped} clipped to the outline";
             // rebuild what changed, mesh AND collider (a cut is not a sculpt stroke: stale collision would stand in the hole)
             int cx0 = int.MaxValue, cy0 = int.MaxValue, cx1 = -1, cy1 = -1;
             for (int gx = 0; gx < _gw; gx++)
@@ -333,22 +412,53 @@ namespace UnturnedGodot
                     if (o == n && t0 == t1) continue;
                     cx0 = System.Math.Min(cx0, gx); cx1 = System.Math.Max(cx1, gx); cy0 = System.Math.Min(cy0, gy); cy1 = System.Math.Max(cy1, gy);
                 }
+            // (and a quad whose pieces changed while its flags did not: another cut moved the outline through it)
+            static bool Same(Vector2[][] x, Vector2[][] y)
+            {
+                if (x == null || y == null) return x == y;
+                if (x.Length != y.Length) return false;
+                for (int i = 0; i < x.Length; i++)
+                {
+                    if (x[i].Length != y[i].Length) return false;
+                    for (int j = 0; j < x[i].Length; j++) if (x[i][j] != y[i][j]) return false;
+                }
+                return true;
+            }
+            foreach (var (from, to) in new[] { (oldPieces, pieces), (pieces, oldPieces) })
+                if (from != null)
+                    foreach (var kv in from)
+                    {
+                        (Vector2[][] A, Vector2[][] B) other = default;
+                        if (to != null && to.TryGetValue(kv.Key, out other) && Same(kv.Value.A, other.A) && Same(kv.Value.B, other.B)) continue;
+                        var (gx, gy) = kv.Key;
+                        cx0 = System.Math.Min(cx0, gx); cx1 = System.Math.Max(cx1, gx + 1); cy0 = System.Math.Min(cy0, gy); cy1 = System.Math.Max(cy1, gy + 1);
+                    }
             if (cx1 >= 0 && _chunkMi != null) RebuildChunksIn(System.Math.Max(0, cx0 - 1), cx1 + 1, System.Math.Max(0, cy0 - 1), cy1 + 1, withCollider: true);
             Log.Print($"[terrain] basement cuts: {CutReport}");
-            // UG_TERRAINCUTDUMP=path writes the outline and the grid round it, bent, split and dug, for a diagram
+            // UG_TERRAINCUTDUMP=path writes the outline and the grid round it, bent, split, dug and clipped, for a diagram
             var dumpPath = System.Environment.GetEnvironmentVariable("UG_TERRAINCUTDUMP");
             if (!string.IsNullOrEmpty(dumpPath) && polys.Count > 0)
             {
                 var lines = new List<string>();
-                foreach (var q in polys) { var sb = new System.Text.StringBuilder("poly"); foreach (var p in q) sb.Append(System.FormattableString.Invariant($" {p.X:0.####} {p.Y:0.####}")); lines.Add(sb.ToString()); }
+                foreach (var q in polys) { var sb = new System.Text.StringBuilder("poly"); foreach (var p in q) sb.Append(System.FormattableString.Invariant($" {p.X:0.######} {p.Y:0.######}")); lines.Add(sb.ToString()); }
                 float mnx = float.MaxValue, mny = float.MaxValue, mxx = float.MinValue, mxy = float.MinValue;
                 foreach (var q in polys) foreach (var p in q) { mnx = System.Math.Min(mnx, p.X); mny = System.Math.Min(mny, p.Y); mxx = System.Math.Max(mxx, p.X); mxy = System.Math.Max(mxy, p.Y); }
                 for (int gx = System.Math.Max(0, (int)mnx - 3); gx <= System.Math.Min(_gw - 1, (int)mxx + 4); gx++)
                     for (int gy = System.Math.Max(0, (int)mny - 3); gy <= System.Math.Min(_gh - 1, (int)mxy + 4); gy++)
                     {
                         var v = GridVertex(gx, gy);
-                        lines.Add(System.FormattableString.Invariant($"v {gx} {gy} {v.X:0.####} {v.Y:0.####} {CutTri(gx, gy)}"));
+                        lines.Add(System.FormattableString.Invariant($"v {gx} {gy} {v.X:0.######} {v.Y:0.######} {CutTri(gx, gy)}"));
                     }
+                if (_cutPieces != null)
+                    foreach (var kv in _cutPieces)
+                        foreach (var (which, ps) in new[] { ("A", kv.Value.A), ("B", kv.Value.B) })
+                            if (ps != null)
+                                foreach (var p in ps)
+                                {
+                                    var sb = new System.Text.StringBuilder($"piece {kv.Key.Item1} {kv.Key.Item2} {which}");
+                                    foreach (var c in p) sb.Append(System.FormattableString.Invariant($" {c.X:0.######} {c.Y:0.######}"));
+                                    lines.Add(sb.ToString());
+                                }
                 System.IO.File.WriteAllLines(dumpPath, lines);
             }
             return dug;
@@ -422,6 +532,78 @@ namespace UnturnedGodot
         }
 
         static float Tri(Vector2 a, Vector2 b, Vector2 c) => (b - a).Cross(c - a) * 0.5f;
+        /// <summary>A polygon's signed area: positive counter-clockwise. (Taken about its first point: about the origin, 2 km
+        /// out, it is the difference of products a float holds only to ~0.03 grid units squared -- 0.5 m2 -- and that once
+        /// dropped a real 0.2 m2 piece and left a hole.)</summary>
+        static float PolyArea(Vector2[] p)
+        {
+            float a = 0f;
+            for (int i = 1; i + 1 < p.Length; i++) a += (p[i] - p[0]).Cross(p[i + 1] - p[0]);
+            return a * 0.5f;
+        }
+
+        /// <summary>Convex pieces (counter-clockwise) minus a convex quad (counter-clockwise): each piece cut by the quad's
+        /// edges in turn, the part beyond an edge kept as a piece of its own and the rest carried on to the next -- so the
+        /// parts are convex and do not overlap, and a quad wholly inside a piece leaves a ring of them round it.</summary>
+        static List<Vector2[]> Subtract(List<Vector2[]> pieces, Vector2[] q)
+        {
+            var outp = new List<Vector2[]>();
+            float qx0 = float.MaxValue, qy0 = float.MaxValue, qx1 = float.MinValue, qy1 = float.MinValue;
+            foreach (var v in q) { qx0 = System.Math.Min(qx0, v.X); qy0 = System.Math.Min(qy0, v.Y); qx1 = System.Math.Max(qx1, v.X); qy1 = System.Math.Max(qy1, v.Y); }
+            foreach (var p in pieces)
+            {
+                float px0 = float.MaxValue, py0 = float.MaxValue, px1 = float.MinValue, py1 = float.MinValue;
+                foreach (var v in p) { px0 = System.Math.Min(px0, v.X); py0 = System.Math.Min(py0, v.Y); px1 = System.Math.Max(px1, v.X); py1 = System.Math.Max(py1, v.Y); }
+                if (px1 <= qx0 + CutEps || qx1 <= px0 + CutEps || py1 <= qy0 + CutEps || qy1 <= py0 + CutEps) { outp.Add(p); continue; }
+                var rest = p;
+                for (int i = 0; i < q.Length && rest.Length >= 3; i++)
+                {
+                    Vector2 a = q[i], b = q[(i + 1) % q.Length];
+                    var beyond = HalfPlane(rest, b, a);   // (right of a->b: outside the quad)
+                    if (beyond.Length >= 3 && PolyArea(beyond) > PieceEps) outp.Add(beyond);
+                    rest = HalfPlane(rest, a, b);
+                }
+            }
+            return outp;
+        }
+
+        /// <summary>The part of a convex polygon on the left of the line a->b, the line itself included (a point within
+        /// ClipTol of it counts as on it, so a piece's edge along the outline is not split into crumbs).</summary>
+        static Vector2[] HalfPlane(Vector2[] p, Vector2 a, Vector2 b)
+        {
+            var outp = new List<Vector2>(p.Length + 1);
+            var d = b - a; float tol = ClipTol * d.Length();
+            for (int i = 0; i < p.Length; i++)
+            {
+                Vector2 s = p[i], e = p[(i + 1) % p.Length];
+                float ss = d.Cross(s - a), se = d.Cross(e - a);
+                if (System.Math.Abs(ss) <= tol) ss = 0f;
+                if (System.Math.Abs(se) <= tol) se = 0f;
+                if (ss >= 0f) outp.Add(s);
+                if ((ss > 0f && se < 0f) || (ss < 0f && se > 0f)) outp.Add(s + (e - s) * (ss / (ss - se)));
+            }
+            return Clean(outp);
+        }
+
+        /// <summary>A convex polygon without the points within ClipTol of the one before, or of the line through their two
+        /// neighbours: what is left is its corners, so the fan a piece is drawn with has no flat triangles in it.</summary>
+        static Vector2[] Clean(List<Vector2> p)
+        {
+            for (bool again = true; again && p.Count >= 3;)
+            {
+                again = false;
+                for (int i = 0; i < p.Count && p.Count >= 3; i++)
+                {
+                    Vector2 a = p[(i + p.Count - 1) % p.Count], v = p[i], b = p[(i + 1) % p.Count], ab = b - a;
+                    float len = ab.Length();
+                    bool keep = (v - a).Length() > ClipTol && (len <= ClipTol || System.Math.Abs(ab.Cross(v - a)) / len > ClipTol);
+                    if (keep) continue;
+                    p.RemoveAt(i); again = true; i--;
+                }
+            }
+            return p.Count >= 3 ? p.ToArray() : System.Array.Empty<Vector2>();
+        }
+
         /// <summary>Strictly inside a convex polygon, either winding.</summary>
         static bool InConvex(Vector2[] q, Vector2 p)
         {

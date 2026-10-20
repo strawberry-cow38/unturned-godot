@@ -142,7 +142,7 @@ namespace UnturnedSim
                 if (AnchorPieces.TryGetValue(word, out var pre))
                     l.AddRange(_mine.Where(m => !m.Ceiling && pre.Any(m.Name.StartsWith)).Select(m => m.Footprint));
                 else if (word == "Desk")
-                    l.AddRange(_mine.Where(m => m.Name == "Table_Wood_2" && _res.Furniture.Any(t => t.On == m && t.Name == "Computer_3")).Select(m => m.Footprint));
+                    l.AddRange(_mine.Where(m => m.Name == "Table_Wood_2" && Here().Any(t => t.On == m && t.Name == "Computer_3")).Select(m => m.Footprint));
                 else if (word == "Window")
                     foreach (var (w, o, side) in Windows().Where(q => q.O.V < 2.5f))
                     {
@@ -209,6 +209,10 @@ namespace UnturnedSim
                     }
             }
 
+            /// <summary>How far past a room's cells a floor piece's tests look (its clearance off what is hung, the floor it wants
+            /// clear in front of it): a piece of the storey further off than this is never near a spot in the room.</summary>
+            const float NearRoom = 5f;
+
             FurniturePlan FloorDoodad(DoodadRow row, Rng rng)
             {
                 string name = row.Name;
@@ -220,17 +224,27 @@ namespace UnturnedSim
                     if (need.Count == 0) return null;
                 }
                 bool back = row.AgainstWall || row.Yaw is DoodadYaw.BackToWall or DoodadYaw.FaceRoom;
+                // (what every spot is tested against, once: nothing changes while they are -- the room's windows, the storey's
+                // pieces, what the row keeps off. Asked afresh for each spot, a big room's thousands of spots made a tower's floor
+                // pieces take minutes.)
+                var wins = Windows();
+                // (the storey's pieces that could come near a spot in this room: those within NearRoom of its cells -- every spot
+                // is in the room, and nothing a spot is tested against reaches past that)
+                float bx0 = _room.Rects.Min(q => q.X0) * Cell - NearRoom, bz0 = _room.Rects.Min(q => q.Z0) * Cell - NearRoom;
+                float bx1 = _room.Rects.Max(q => q.X1) * Cell + NearRoom, bz1 = _room.Rects.Max(q => q.Z1) * Cell + NearRoom;
+                var pieces = Here().Where(o => o.Floor == _room.Floor && Overlaps((bx0, bz0, bx1, bz1), o.Footprint)).ToList();
+                var avoid = row.Avoid.Where(a => a is not ("Door" or "Stairs")).SelectMany(Anchors).ToList();
                 var cands = (back ? Against(name, Side.Back) : Against(name, Side.Back).Concat(Against(name, Side.Left)).Concat(Against(name, Side.Right)))
                     .Where(p =>
                     {
                         var fp = FurnitureCatalog.Footprint(name, p.X, p.Z, p.Yaw);
                         if (need != null && need.Min(b => Gap(fp, b)) > reach) return false;
-                        if (s.H > WallOpenings.WindowSill && BlocksWindow(fp)) return false;
-                        if (UnderHung(fp, s.H)) return false;
+                        if (s.H > WallOpenings.WindowSill && BlocksWindow(fp, wins)) return false;
+                        if (UnderHung(fp, s.H, pieces)) return false;
                         var me = new FurniturePlan { Name = name, X = p.X, Z = p.Z, Yaw = p.Yaw };
                         if (_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && FurnitureCatalog.Intersects(me, o, -row.Spacing))) return false;
-                        if (row.ClearFront > 0f && !StandClear(name, p.X, p.Z, p.Yaw, row.ClearFront)) return false;
-                        return !Avoids(row, fp);
+                        if (row.ClearFront > 0f && !StandClear(name, p.X, p.Z, p.Yaw, row.ClearFront, pieces)) return false;
+                        return !avoid.Any(b => Gap(fp, b) < DoodadAvoidGap);
                     }).ToList();
                 if (cands.Count == 0) return null;
                 return Put(name, cands, (x, z, yaw) => Nearness(row, name, (x, z, yaw)), 0f, rng);
@@ -345,7 +359,7 @@ namespace UnturnedSim
             /// host at that height -- or, on a sill, on the same window.</summary>
             IEnumerable<FurniturePlan> OnTop(Top t)
                 => t.Host != null
-                    ? _res.Furniture.Where(m => m.On == t.Host && MathF.Abs(m.Y - t.Y) < 0.02f).Concat(_res.Doodads.Where(m => m.On == t.Host && MathF.Abs(m.Y - t.Y) < 0.02f))
+                    ? Here().Where(m => m.On == t.Host && MathF.Abs(m.Y - t.Y) < 0.02f).Concat(_res.Doodads.Where(m => m.On == t.Host && MathF.Abs(m.Y - t.Y) < 0.02f))
                     : _res.Doodads.Where(m => m.On == null && m.Room == _room && MathF.Abs(m.Y - t.Y) < 0.02f && MathF.Abs(m.X - t.X) + MathF.Abs(m.Z - t.Z) < 3f);
 
             /// <summary>The kit's tops: each surface piece its rows' odds put in the room, on a top that serves as one of its
@@ -469,7 +483,7 @@ namespace UnturnedSim
             /// <summary>Is anything hung on this floor (but `except`, the shelf a piece stands on) or hanging from the ceiling
             /// within PlantClear of fp, its bottom lower than `top` (over the floor) and PlantClear?</summary>
             bool HungOver((float X0, float Z0, float X1, float Z1) fp, float top, FurniturePlan except)
-                => _res.Furniture.Any(o => o != except && o.Floor == _room.Floor && Overlaps(Grow(fp, PlantClear), o.Footprint)
+                => Here().Any(o => o != except && o.Floor == _room.Floor && Overlaps(Grow(fp, PlantClear), o.Footprint)
                                            && (o.Mounted ? o.Y - FurnitureCatalog.Sizes[o.Name].H : o.Ceiling ? o.Y - (o.Name.Contains("Pendant") ? PendantDrop : 0.28f) : float.MaxValue)
                                               < _room.Floor * Storey + top + PlantClear);
 
@@ -503,7 +517,7 @@ namespace UnturnedSim
         /// BuildingGenResult.Doodads -- with no room (Room null), as outside is none.</summary>
         static void Outdoors(BuildingGenResult res, int seed)
         {
-            bool house = res.Kind == BuildingKind.Residential, business = res.Kind is BuildingKind.Commercial or BuildingKind.Industrial;
+            bool house = res.Kind == BuildingKind.Residential, business = res.Kind is BuildingKind.Commercial or BuildingKind.Industrial or BuildingKind.Strip;
             if (!house && !business) return;
             var yard = new Yard(res);
             if (yard.Faces.Count == 0) return;

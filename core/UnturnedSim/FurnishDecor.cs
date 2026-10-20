@@ -308,7 +308,7 @@ namespace UnturnedSim
                                 m.Y = _room.Floor * Storey + UnderCeiling(m.Name, (m.X, m.Z, m.Yaw));
                             }
                             bool ok = run.All(m => { var f = BackFace(m.Name, m.X, m.Z, m.Yaw); return !WindowCuts(f).Any(c => c.A < f.Hi && c.B > f.Lo); })
-                                      && run.All(m => !_res.Furniture.Any(o => o.Mounted && o.Floor == m.Floor && !run.Contains(o) && Overlaps(m.Footprint, o.Footprint)));
+                                      && run.All(m => !Here().Any(o => o.Mounted && o.Floor == m.Floor && !run.Contains(o) && Overlaps(m.Footprint, o.Footprint)));
                             if (!ok) for (int k = 0; k < run.Count; k++) (run[k].X, run[k].Y, run[k].Z) = was[k];
                         }
                         if (i < sorted.Count) run = new List<FurniturePlan> { sorted[i] };
@@ -321,7 +321,7 @@ namespace UnturnedSim
             {
                 bool home = _res.Kind is BuildingKind.Residential or BuildingKind.Apartment;
                 if (r.Need.HasFlag(DecorNeed.Home) && !home) return false;
-                if (r.Need.HasFlag(DecorNeed.Business) && _res.Kind is not (BuildingKind.Commercial or BuildingKind.Industrial)) return false;
+                if (r.Need.HasFlag(DecorNeed.Business) && _res.Kind is not (BuildingKind.Commercial or BuildingKind.Industrial or BuildingKind.Strip)) return false;
                 if (_room.Kind == RoomKind.Bedroom)
                 {
                     var bed = _mine.FirstOrDefault(m => m.Name.StartsWith("Bed"));
@@ -361,8 +361,8 @@ namespace UnturnedSim
             /// <summary>The walls of this floor that the floor plan stands (full storey high), as they stand when asked: not
             /// kept from one call to the next, since the clock asks during the room's furnishing and the décor once the floor
             /// is done, and a window moved between the two is the décor's to see.</summary>
-            List<WallPlan> RoomWalls() => _res.Walls.Where(w => w.Kind == SurfaceKind.Wall && (int)MathF.Round(w.Y / Storey) == _room.Floor
-                                                                && w.Height > Storey - 0.01f).ToList();
+            // (the storey's walls -- the same filter, the same order -- which the floor plan has: FloorPlan.Walls)
+            List<WallPlan> RoomWalls() => _p.Walls;
 
             /// <summary>One face of wall into this room: its normal into the room (Nx, Nz), where it stands across, and the
             /// run of it along.</summary>
@@ -444,7 +444,7 @@ namespace UnturnedSim
                 if (row != null)
                 {
                     bool fixture = row.Spot == DecorSpot.Over;
-                    foreach (var o in _res.Furniture.Where(o => o.Floor == _room.Floor))
+                    foreach (var o in Here().Where(o => o.Floor == _room.Floor))
                     {
                         var s = f.Span(o.Footprint);
                         if (o.Mounted)
@@ -683,7 +683,7 @@ namespace UnturnedSim
             /// front of its face, across its width -- no piece, wall or stair on it, not the tile at a flight's end (where you
             /// step off the stairs), no door's leaf swinging through it? (The stairs and tiles exactly, as Put has them: the
             /// grid's cell centres miss a sliver.)</summary>
-            bool StandClear(string name, float x, float z, float yaw, float depth)
+            bool StandClear(string name, float x, float z, float yaw, float depth, IEnumerable<FurniturePlan> pieces = null)
             {
                 var s = FurnitureCatalog.Sizes[name];
                 var (fx, fz) = FrontOf(yaw); var (rx, rz) = RightOf(yaw);
@@ -692,7 +692,7 @@ namespace UnturnedSim
                 foreach (var (i, j) in _p.Cells(zone)) if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
                 // (and the pieces' own outlines: one reaching a few cm into the zone marks no cell of it -- a washer turned
                 // side-on beside the mirror's wall)
-                if (_res.Furniture.Any(o => o.Floor == _room.Floor && o.On == null && !o.Mounted && !o.Ceiling && Overlaps(zone, o.Footprint))) return false;
+                if ((pieces ?? Here()).Any(o => o.Floor == _room.Floor && o.On == null && !o.Mounted && !o.Ceiling && Overlaps(zone, o.Footprint))) return false;
                 return !_p.LeafRects.Concat(_p.StairRects).Concat(_p.TileRects).Any(r => Overlaps(zone, r));
             }
 

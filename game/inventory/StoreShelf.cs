@@ -17,6 +17,10 @@ namespace UnturnedGodot
         public string MeshName = "Shelf_1";
         public bool ShowItems = true;        // open shelves show their loot on the tiers; solid props (fridge/wardrobe) don't
         public bool RenderMesh = true;       // FRONT instance draws the shared gondola mesh+label; the BACK instance (a 180deg twin) draws only its display
+        /// <summary>Hang this container's door leaves even though it does not draw its mesh: an editor-placed or generated prop
+        /// (SmartProps.AttachEditor), whose root already draws the body and its collider. The leaves are the container's either
+        /// way -- closed, swung by its inventory -- and RenderMesh alone used to decide whether it had any.</summary>
+        public bool OwnDoors;
         public string LabelText = "Store Shelf";
         public bool ServerOwned = false;    // A1 (MP): a REPLICATED shelf -- skip the local loot roll; its tier display rides the server's digest via ApplyDisplay
         readonly Dictionary<int, Node3D> _display = new();   // grid cell (gx<<8|gy) -> its item model; a STABLE slot per cell so taking items doesn't re-organize the shelf
@@ -248,7 +252,8 @@ namespace UnturnedGodot
         protected override void BuildVisual()
         {
             var mesh = ShelfMesh();
-            if (!RenderMesh) return;   // BACK side of a double-sided shelf: shares the FRONT twin's mesh+label, just manages its own display (ShelfMesh() still cached for tier maths)
+            if (!RenderMesh) { if (OwnDoors) TrySpawnDoors(mesh); return; }   // BACK side of a double-sided shelf: shares the FRONT twin's mesh+label, just manages its own display (ShelfMesh() still cached for tier maths); an editor prop's container: its leaves only
+
             if (mesh != null)
             {
                 // Interior/shell split for the emissive glow, so only the INTERIOR lights (dark box, glowing

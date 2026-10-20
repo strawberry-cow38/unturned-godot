@@ -2443,9 +2443,8 @@ void fragment() {
 
                     if (!QuadHasRiver(qgx, qgy))
                     {
-                        // (a quad a basement cut split or half dug: TerrainBasementCuts)
-                        byte cutTri = CutTri(qgx, qgy);
-                        if (cutTri != 0) { CutQuadTriangles(cutTri, i00, i10, i01, i11, (a, b, c) => { iList.Add(a); iList.Add(b); iList.Add(c); }); continue; }
+                        // (a quad a basement cut split, dug or clipped: TerrainBasementCuts)
+                        if (CutTri(qgx, qgy) != 0) { EmitCutQuad(qgx, qgy, i00, i10, i01, i11, vList, nList, uList, cList, iList); continue; }
                         iList.Add(i00); iList.Add(i01); iList.Add(i10);
                         iList.Add(i10); iList.Add(i01); iList.Add(i11);
                         continue;
@@ -2615,14 +2614,8 @@ void fragment() {
                         _grid[ax, ay] * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutAt(ax, ay),   // identical to the mesh vert expression, river included
                         -(_bz + ay * UNIT));
                     Vector3 v00 = V(gx, gy), v10 = V(gx + 1, gy), v01 = V(gx, gy + 1), v11 = V(gx + 1, gy + 1);
-                    // (a quad a basement cut split or half dug, as the render mesh has it: TerrainBasementCuts)
-                    byte cutTri = CutTri(gx, gy);
-                    if (cutTri != 0)
-                    {
-                        var corner = new[] { v00, v10, v01, v11 };
-                        CutQuadTriangles(cutTri, 0, 1, 2, 3, (a, b, c) => { tris.Add(corner[a]); tris.Add(corner[b]); tris.Add(corner[c]); });
-                        continue;
-                    }
+                    // (a quad a basement cut split, dug or clipped, as the render mesh has it: TerrainBasementCuts)
+                    if (CutTri(gx, gy) != 0) { EmitCutQuadCollider(gx, gy, v00, v10, v01, v11, tris); continue; }
                     // Same winding + same diagonal as the render mesh (i00,i01,i10 / i10,i01,i11), so the
                     // collision surface matches the visible one on the split too, not just at the corners.
                     tris.Add(v00); tris.Add(v01); tris.Add(v10);

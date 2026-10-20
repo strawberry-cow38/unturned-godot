@@ -161,7 +161,9 @@ namespace UnturnedGodot
             // no-ops, so the cost is in per-pixel work, and the only way to find out which is to remove one.
             bool noBloom = System.Environment.GetEnvironmentVariable("UG_NOBLOOM") == "1";
             bool noFog = System.Environment.GetEnvironmentVariable("UG_NOFOG") == "1";
-            env.SsaoEnabled = AmbientOcclusion;
+            // UG_AO=1 is the other direction (a render's): the option ON for this run, written nowhere, so a capture can show what a
+            // player with AO turned on sees without changing the settings file every clone on the box reads
+            env.SsaoEnabled = AmbientOcclusion || System.Environment.GetEnvironmentVariable("UG_AO") == "1";
             env.GlowEnabled = Bloom && !noBloom;
             env.SsrEnabled = ScreenSpaceReflections;
             env.VolumetricFogEnabled = SunShafts && !noFog;

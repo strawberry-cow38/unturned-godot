@@ -226,7 +226,7 @@ namespace UnturnedSim
             {
                 var fp = FurnitureCatalog.Footprint(name, at.X, at.Z, at.Yaw);
                 float floorY = _room.Floor * Storey;
-                foreach (var o in _res.Furniture.Concat(_res.HvacVents).Concat(_res.Electrical).Where(o => o.Floor == _room.Floor && o.Mounted))
+                foreach (var o in Here().Concat(_res.HvacVents).Concat(_res.Electrical).Where(o => o.Floor == _room.Floor && o.Mounted))
                 {
                     float h = FurnitureCatalog.Sizes[o.Name].H, o0 = o.Y - floorY - h, o1 = o.Y - floorY + h;
                     if (o1 > bottom - 0.05f && o0 < top + 0.05f && Overlaps(Grow(fp, 0.1f), o.Footprint)) return false;
@@ -242,7 +242,7 @@ namespace UnturnedSim
                     return (fx < 0 ? x0 - depth : x0, fz < 0 ? z0 - depth : z0, fx > 0 ? x1 + depth : x1, fz > 0 ? z1 + depth : z1);
                 }
                 var near = Before(before, 0.05f); var far = Before(ElectricalAccess, -0.02f);
-                foreach (var o in _res.Furniture.Where(o => o.Floor == _room.Floor && !o.Mounted && !o.Ceiling))
+                foreach (var o in Here().Where(o => o.Floor == _room.Floor && !o.Mounted && !o.Ceiling))
                 {
                     float topOf = o.Y - floorY + FurnitureCatalog.Sizes[o.Name].H;
                     if (counter && o.On == null && (CounterTop(o.Name) || (basin && o.Name == "Counter_1"))) continue;
