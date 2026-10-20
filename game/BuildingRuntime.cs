@@ -577,6 +577,35 @@ namespace UnturnedGodot
         /// <summary>What the last Build grouped (null with the gate off).</summary>
         public static RoomGroups LastRooms;
 
+        /// <summary>The room of storey `floor` holding plan point (x, z), or null.</summary>
+        static GenRoom RoomAt(BuildingGenResult res, int floor, float x, float z)
+        {
+            foreach (var g in res.Layout) if (g.Floor == floor && g.Holds(x, z)) return g;
+            return null;
+        }
+
+        static void AddInside(Dictionary<int, List<WallSurface>> insides, int floor, WallSurface w)
+        {
+            if (w == null) return;
+            if (!insides.TryGetValue(floor, out var l)) insides[floor] = l = new List<WallSurface>();
+            l.Add(w);
+        }
+
+        /// <summary>Is a planned surface one of its storey's INSIDES -- a partition, with a room of that storey on BOTH sides of it
+        /// (so never an outside wall, a parapet, a porch post: something stands open to the outside on one side of those), or a
+        /// floor cover laid in a room -- and on which storey? Not the basement's: its insides are gated whole (InBasement).</summary>
+        static bool Inside(BuildingGenResult res, WallPlan pl, out int floor)
+        {
+            floor = Mathf.FloorToInt((pl.Y + 0.5f) / BuildingGen.Storey);
+            if (floor < 0) return false;
+            var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(pl.Pitch), Mathf.DegToRad(pl.Yaw), 0f));
+            var mid = new Vector3(pl.X, pl.Y, pl.Z) + basis * new Vector3(pl.Length * 0.5f, pl.Height * 0.5f, 0f);
+            if (pl.Kind == SurfaceKind.Floor) return pl.Thickness < 0.1f && RoomAt(res, floor, mid.X, mid.Z) != null;
+            if (pl.Kind != SurfaceKind.Wall || Mathf.Abs(pl.Pitch) > 1f || pl.Thickness >= (BuildingGen.Ext + BuildingGen.Inner) * 0.5f) return false;
+            var n = basis * new Vector3(0f, 0f, pl.Thickness * 0.5f + 0.3f);
+            return RoomAt(res, floor, mid.X + n.X, mid.Z + n.Z) != null && RoomAt(res, floor, mid.X - n.X, mid.Z - n.Z) != null;
+        }
+
         /// <summary>Group a building's furniture by the room the generator furnished it for (FurniturePlan.Room, or the room of its
         /// storey holding it), one node per room and per storey, before Furnish builds it -- every piece Furnish makes for a room:
         /// its furniture, its rugs and curtains, its vents, its switch and outlets, its doodads, and its lamps. A lamp is gated with
@@ -652,6 +681,9 @@ namespace UnturnedGodot
             int mat = MaterialFor(res.Palette);
             int roofTexel = WallMaterials.Count > 0 ? WallMaterials.At(Mathf.PosMod(mat, WallMaterials.Count)).RoofTexel : -1;
             var walls = new List<WallSurface>();
+            // a storey's INSIDES, by storey, for BuildingCull's storey shadow gate: its partitions (with the doors and glass they
+            // hold), its floor covers and its flights
+            var insides = BuildingCull.StoreyShadowsDisabled ? null : new Dictionary<int, List<WallSurface>>();
             float wx = res.CellsX * BuildingGen.Cell, dz = res.CellsZ * BuildingGen.Cell;
             if (System.Environment.GetEnvironmentVariable("UG_NOPARTYINSET") == "1") party = Sides.None;   // (the control: walls stacked)
             int clipped = 0;
@@ -661,9 +693,10 @@ namespace UnturnedGodot
                 if (len < 0.02f || hgt < 0.02f) continue;      // clipped away entirely (a porch post standing past the line)
                 var paint = PlanPaint(pl, mat, roofTexel);
                 // (a surface with a palette of its own -- a strip tenant's floor -- wears that one: WallPlan.Palette)
-                NewWall(below != null && InBasement(res, pl) ? below : root, walls, o, pl.Yaw, len, pl.Thickness, pl.Palette != null ? MaterialFor(pl.Palette, mat) : mat, ops,
-                        hgt, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
-                        pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
+                var made = NewWall(below != null && InBasement(res, pl) ? below : root, walls, o, pl.Yaw, len, pl.Thickness, pl.Palette != null ? MaterialFor(pl.Palette, mat) : mat, ops,
+                                   hgt, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
+                                   pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
+                if (insides != null && Inside(res, pl, out int fl)) AddInside(insides, fl, made);
             }
             LastClipped = clipped;
             foreach (var s in res.Stairs)
@@ -675,10 +708,15 @@ namespace UnturnedGodot
                 // the stair room's flight down is the basement's; the hatch's, in a well open to the sky, is the outside's
                 var treadParent = below != null && s.Floor == -1 && !InWell(res, s.X, s.Z) ? below : root;
                 int tread = 0;
+                // (a flight standing in a room of its storey is that storey's insides; a porch's steps or a hatch's are outside)
+                bool inside = insides != null && s.Floor >= 0 && RoomAt(res, s.Floor, s.X, s.Z) != null;
                 foreach (var p in EditorBuildings.StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
-                    NewWall(treadParent, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
-                            top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise),
-                            rails: WallSurface.TreadRails(s.Rails, tread++));
+                {
+                    var t = NewWall(treadParent, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
+                                    top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise),
+                                    rails: WallSurface.TreadRails(s.Rails, tread++));
+                    if (inside) AddInside(insides, s.Floor, t);
+                }
                 StairRamp(root, o, s.Yaw, s.Run, s.Width, rise);
                 // a switchback's half flights: the generator cut their floor's hole itself (it covers the landing too)
                 if (rise >= EditorBuildings.StoreyHeight - 0.01f) CutStairHole(walls, o, s.Yaw, s.Run, s.Width, rise, Punch);
@@ -691,8 +729,9 @@ namespace UnturnedGodot
                                     groups?.Parents);
             root.Transform = frame;
             BuildingCull.AddBasement(root, below, res);
-            BuildingCull.AddFurnitureShadows(root, res);
             BuildingCull.AddRooms(root, groups);
+            BuildingCull.AddStoreyShadows(root, res, groups, insides);   // (before the building's furniture gate: it leaves these alone)
+            BuildingCull.AddFurnitureShadows(root, res);
             LastRooms = groups;
             // ⚠ A water source rides a TopLevel node in a yaw-only frame (SmartProps: a sink's FluidContainer), seated at the
             // position the prop was BUILT at -- here the lattice's, not the world's -- and a TopLevel node does not follow the root

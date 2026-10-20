@@ -45,8 +45,10 @@ namespace UnturnedGodot
     /// LampFadeLength), and a lamp lights only its own room. UG_NOSHADOWGATE=1 is the control (every piece casts as it always
     /// did); ForceShadows the in-process one.
     ///
-    /// ⭐ AND A ROOM'S FURNITURE IS DRAWN ONLY NEAR THE ROOM (strawberry 2026-10-20: "have furniture in rooms cull past a certain
-    /// distance from the room"): the room gate, below.</summary>
+    /// ⭐ AND A ROOM'S FURNITURE IS DRAWN ONLY NEAR THE ROOM, AND A STOREY'S INSIDES CAST ONLY WHERE THEY CAN BE SEEN (strawberry
+    /// 2026-10-20: "work on a bunch of culling etc so big buildings like this dont KILL our frames, have furniture in rooms cull past
+    /// a certain distance from the room"). See the room gate and the storey shadow gate below: the two are what a tower needed --
+    /// its furniture and its storeys' insides were nearly all of the frame wherever the camera stood (CullProbe, UG_CULLGEN).</summary>
     public partial class BuildingCull : Node
     {
         public static readonly bool Disabled = System.Environment.GetEnvironmentVariable("UG_NOBASEMENTGATE") == "1";
@@ -107,7 +109,7 @@ namespace UnturnedGodot
             var cast = new List<GeometryInstance3D.ShadowCastingSetting>();
             void Walk(Node n)
             {
-                if (n is WallSurface) return;
+                if (n is WallSurface || n.HasMeta(StoreyShadowMeta)) return;   // (a storey gate's pieces are its own: AddStoreyShadows)
                 if (n is GeometryInstance3D g && g.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) { pieces.Add(g); cast.Add(g.CastShadow); }
                 foreach (var c in n.GetChildren()) Walk(c);
             }
@@ -203,6 +205,7 @@ namespace UnturnedGodot
                     if (IsInstanceValid(c.Pieces[k])) c.Pieces[k].CastShadow = on ? c.Cast[k] : GeometryInstance3D.ShadowCastingSetting.Off;
             }
             if (_rooms.Count > 0) EvaluateRooms(cam);
+            if (_storeyShadows.Count > 0) EvaluateStoreyShadows(cam);
         }
 
         /// <summary>How far the camera is from a building's plan, in plan (0 over it).</summary>
@@ -364,6 +367,148 @@ namespace UnturnedGodot
             }
             RoomTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
             RoomEvals++;
+        }
+
+        // ---- a storey's shadows: only where they can be seen ----------------------------------------------------------------
+
+        /// <summary>UG_NOSTOREYSHADOWGATE=1: the control -- no storey gates its shadows: the partitions, floor covers and flights cast
+        /// as they always did, and the furniture is back on the per-building gate (AddFurnitureShadows) alone.</summary>
+        public static readonly bool StoreyShadowsDisabled = System.Environment.GetEnvironmentVariable("UG_NOSTOREYSHADOWGATE") == "1";
+        /// <summary>Everything a storey gates casts regardless (the in-process control, CullProbe's "storeyshadowgate").</summary>
+        public static bool ForceStoreyShadows;
+        /// <summary>Marks a room-grouped storey node (BuildingRuntime.GroupRooms) whose pieces' shadows this storey gate owns, so the
+        /// per-building gate leaves them alone (two gates switching one piece's CastShadow would each undo the other).</summary>
+        public static readonly StringName StoreyShadowMeta = "storey_shadows";
+
+        sealed class ShadowStorey
+        {
+            public int Floor;
+            public Box Box;
+            public GeometryInstance3D[] Pieces;
+            public GeometryInstance3D.ShadowCastingSetting[] Cast;
+            public bool On = true;
+        }
+        sealed class StoreyShadowGate
+        {
+            public Node3D Building;
+            public Box Box;               // every gated storey's, together
+            public float Wx, Dz;          // its plan, (0, 0)..(Wx, Dz): the camera is INSIDE it when over that and within Box's height
+            public ShadowStorey[] Storeys;
+            public bool AllOff;
+            /// <summary>Is the camera inside, and on which storey -- each switched only half a metre past its line, so a camera
+            /// standing in a doorway or on a stair at a storey's floor level cannot flick thousands of shadows each frame.</summary>
+            public bool Inside;
+            public int CamFloor = int.MinValue;
+        }
+        static readonly List<StoreyShadowGate> _storeyShadows = new();
+        const float InsideMargin = 0.5f;
+
+        /// <summary>Storeys whose shadows are gated, and how many are casting right now.</summary>
+        public static int ShadowStoreys { get { int n = 0; foreach (var g in _storeyShadows) n += g.Storeys.Length; return n; } }
+        public static int ShadowStoreysCasting { get { int n = 0; foreach (var g in _storeyShadows) foreach (var s in g.Storeys) if (s.On) n++; return n; } }
+
+        /// <summary>⭐ A STOREY CASTS ITS INSIDES' SHADOWS ONLY WHERE THEY CAN BE SEEN. The far-building furniture gate's reasoning, one
+        /// level down. The sun's cascades draw every caster in range whether anything can see it or not, and a tower's casters are
+        /// nearly all inside it: measured on the setback (CullProbe, UG_CULLGEN), in a room on its ground floor its furniture was
+        /// 15,935 of the frame's 27,036 shadow-pass objects and the insides of its storeys (partitions with the doors and glass in
+        /// them, floor covers, flights) 5,296 more; at the street 30 m off its front, 9,339 and 6,807 of 23,664. A storey's insides stand under a
+        /// slab behind outside walls: the only sun they stop comes in at a window, and the floor it would fall on is seen only from
+        /// that storey or through its windows. So a storey's FURNITURE (its rooms' nodes) and its INSIDES cast
+        ///   - with the camera outside the building: while the camera is within ShadowRadius of the box round the storey's rooms
+        ///     (RoomHysteresis on top to switch off) -- the per-building gate's radius, now per storey;
+        ///   - with the camera inside the building's plan and height: only on the camera's own storey and the one above and below
+        ///     (a stair hole, a two-storey hall): from any other storey a slab is in the way.
+        /// The SHELL -- outside walls, slabs, roofs, railings, the glass in the outside walls -- is not gated: it is the building's
+        /// shadow on the street, and its slabs are what keep a window's sun on its own floor.
+        /// MEASURED (gate on against ForceStoreyShadows, room gate on in both): shadow-pass objects at the street 30 m off 16,109 ->
+        /// 8,659, at 150 m 6,714 -> 2,596, in a ground-floor room 18,400 -> 4,738, on the 15th 15,259 -> 6,141, 80 m up 6,184 ->
+        /// 1,854; pictures 0, 2, 0, 0 and 0 pixels changed by more than 24/255.</summary>
+        public static void AddStoreyShadows(Node3D building, BuildingGenResult res, BuildingRuntime.RoomGroups groups, Dictionary<int, List<WallSurface>> insides)
+        {
+            if (StoreyShadowsDisabled || building == null || res == null || !building.IsInsideTree()) return;
+            float c = BuildingGen.Cell, h = BuildingGen.Storey;
+            var floors = new SortedSet<int>();
+            if (groups != null) foreach (var st in groups.Storeys) floors.Add(st.Floor);
+            if (insides != null) foreach (var f in insides.Keys) floors.Add(f);
+            var storeys = new List<ShadowStorey>();
+            var gate = new StoreyShadowGate { Building = building, Wx = res.CellsX * c, Dz = res.CellsZ * c };
+            bool first = true;
+            foreach (int floor in floors)
+            {
+                Box sb = default; bool any = false;
+                foreach (var g in res.Layout)
+                {
+                    if (g.Floor != floor) continue;
+                    foreach (var (x0, z0, x1, z1) in g.Rects)
+                    {
+                        var b = new Box { X0 = x0 * c, Z0 = z0 * c, X1 = x1 * c, Z1 = z1 * c, Y0 = floor * h, Y1 = (floor + g.Span) * h };
+                        sb = any ? Box.Union(sb, b) : b; any = true;
+                    }
+                }
+                if (!any) continue;
+                var pieces = new List<GeometryInstance3D>();
+                var cast = new List<GeometryInstance3D.ShadowCastingSetting>();
+                void Walk(Node n)
+                {
+                    if (n is GeometryInstance3D gi && gi.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) { pieces.Add(gi); cast.Add(gi.CastShadow); }
+                    foreach (var ch in n.GetChildren()) Walk(ch);
+                }
+                if (groups != null)
+                    foreach (var st in groups.Storeys)
+                        if (st.Floor == floor && IsInstanceValid(st.Node)) { Walk(st.Node); st.Node.SetMeta(StoreyShadowMeta, true); }
+                if (insides != null && insides.TryGetValue(floor, out var surfaces))
+                    foreach (var w in surfaces) if (IsInstanceValid(w)) Walk(w);
+                if (pieces.Count == 0) continue;
+                storeys.Add(new ShadowStorey { Floor = floor, Box = sb, Pieces = pieces.ToArray(), Cast = cast.ToArray() });
+                gate.Box = first ? sb : Box.Union(gate.Box, sb); first = false;
+            }
+            if (storeys.Count == 0) return;
+            gate.Storeys = storeys.ToArray();
+            _storeyShadows.Add(gate);
+            Hub(building).Evaluate();
+        }
+
+        static void SetCasting(ShadowStorey s, bool on)
+        {
+            s.On = on;
+            for (int k = 0; k < s.Pieces.Length; k++)
+                if (IsInstanceValid(s.Pieces[k])) s.Pieces[k].CastShadow = on ? s.Cast[k] : GeometryInstance3D.ShadowCastingSetting.Off;
+        }
+
+        void EvaluateStoreyShadows(Camera3D cam)
+        {
+            bool force = ForceStoreyShadows || cam == null;
+            float far = ShadowRadius + RoomHysteresis;
+            for (int i = _storeyShadows.Count - 1; i >= 0; i--)
+            {
+                var g = _storeyShadows[i];
+                if (!IsInstanceValid(g.Building)) { _storeyShadows.RemoveAt(i); continue; }
+                var l = force ? Vector3.Zero : g.Building.GlobalTransform.AffineInverse() * cam.GlobalPosition;
+                if (!force && g.Box.DistanceSq(l) > far * far)
+                {
+                    if (g.AllOff) continue;
+                    foreach (var s in g.Storeys) if (s.On) SetCasting(s, false);
+                    g.AllOff = true;
+                    continue;
+                }
+                g.AllOff = false;
+                if (!force)
+                {
+                    const float m = InsideMargin;
+                    if (l.X >= m && l.X <= g.Wx - m && l.Z >= m && l.Z <= g.Dz - m && l.Y >= g.Box.Y0 + m && l.Y <= g.Box.Y1 - m) g.Inside = true;
+                    else if (l.X < -m || l.X > g.Wx + m || l.Z < -m || l.Z > g.Dz + m || l.Y < g.Box.Y0 - m || l.Y > g.Box.Y1 + m) g.Inside = false;
+                    int f = Mathf.FloorToInt(l.Y / BuildingGen.Storey), was = g.CamFloor;
+                    if (was == int.MinValue || f > was && l.Y >= f * BuildingGen.Storey + m || f < was && l.Y <= was * BuildingGen.Storey - m) g.CamFloor = f;
+                }
+                foreach (var s in g.Storeys)
+                {
+                    bool on;
+                    if (force) on = true;
+                    else if (g.Inside) on = Mathf.Abs(s.Floor - g.CamFloor) <= 1;
+                    else { float r = s.On ? far : ShadowRadius; on = s.Box.DistanceSq(l) <= r * r; }
+                    if (on != s.On) SetCasting(s, on);
+                }
+            }
         }
 
         /// <summary>Re-evaluate now (after ForceShow changes, or a camera jump that must not be drawn a frame late).</summary>
