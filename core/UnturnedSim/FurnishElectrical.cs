@@ -56,10 +56,14 @@ namespace UnturnedSim
             {
                 var rng = OwnRng(0x5E1C);
                 var rec = new RoomElectrical();
-                // the room's ceiling lights: each by its place among the building's (Furniture order, which a save keeps)
-                int k = 0;
-                foreach (var m in _res.Furniture.Where(m => m.Ceiling))
+                // the room's ceiling lights: each by its place among the building's (Furniture order, which a save keeps) -- counted
+                // on from the storey's first piece (FloorPlan.CeilingsBefore: the earlier storeys' lights, none of them this room's)
+                int before = _p.CeilingsBefore(), k = Math.Max(0, before);
+                var all = _res.Furniture;
+                for (int i = before < 0 ? 0 : _p.Start; i < all.Count; i++)
                 {
+                    var m = all[i];
+                    if (!m.Ceiling) continue;
                     if (m.Room == _room) rec.Lights.Add(k);
                     k++;
                 }
@@ -271,12 +275,12 @@ namespace UnturnedSim
             {
                 var set = new FitSet();
                 float floorY = _room.Floor * Storey;
-                foreach (var o in Here().Concat(_res.HvacVents).Concat(_res.Electrical).Where(o => o.Floor == _room.Floor && o.Mounted))
+                foreach (var o in Here().Concat(HereVents()).Concat(HereElectrical()).Where(o => o.Floor == _room.Floor && o.Mounted))
                 {
                     float h = FurnitureCatalog.Sizes[o.Name].H, o0 = o.Y - floorY - h, o1 = o.Y - floorY + h;
                     set.Hung.Add((o, o0, o1, o.Footprint));
                 }
-                foreach (var c in _res.RuntimeDecor.Where(c => c.Floor == _room.Floor && c.Gen.Kind == RuntimeDecorKind.Curtain)) set.Curtains.Add(c.Footprint);
+                foreach (var c in HereDecor().Where(c => c.Floor == _room.Floor && c.Gen.Kind == RuntimeDecorKind.Curtain)) set.Curtains.Add(c.Footprint);
                 foreach (var o in Here().Where(o => o.Floor == _room.Floor && !o.Mounted && !o.Ceiling))
                 {
                     float topOf = o.Y - floorY + FurnitureCatalog.Sizes[o.Name].H;

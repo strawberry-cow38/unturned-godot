@@ -1200,7 +1200,9 @@ namespace UnturnedSim
         static List<(string What, int Weight)> Shortfall(BuildingGenResult r, HashSet<GenRoom> unfurnished = null, HashSet<GenRoom> unlit = null)
         {
             var miss = new List<(string What, int Weight)>();
-            bool Has(GenRoom g, params string[] ns) => r.Furniture.Any(m => m.Room == g && ns.Any(n => m.Name.StartsWith(n)));
+            // (the pieces by room, each room's in Furniture's order: a tower asked the whole building's for every room)
+            var byRoom = r.Furniture.ToLookup(m => m.Room);
+            bool Has(GenRoom g, params string[] ns) => byRoom[g].Any(m => ns.Any(n => m.Name.StartsWith(n)));
             void Need(GenRoom g, string what, bool ok, int weight = 2) { if (!ok) { miss.Add(($"{g.Kind}: {what}", weight)); unfurnished?.Add(g); } }
             // (a basement's rooms are not what the building is for: its rec room needs no couch and gets no window)
             foreach (var g in r.Layout.Where(g => g.Floor >= 0))
@@ -1208,11 +1210,11 @@ namespace UnturnedSim
                 {
                     case RoomKind.Bedroom: Need(g, "bed", Has(g, "Bed")); break;
                     case RoomKind.LivingRoom: Need(g, "couch", Has(g, "Couch")); break;
-                    case RoomKind.DiningRoom: Need(g, "table", Has(g, "Table")); Need(g, "chairs", r.Furniture.Count(m => m.Room == g && m.Name.StartsWith("Chair")) >= 4, 1); break;
+                    case RoomKind.DiningRoom: Need(g, "table", Has(g, "Table")); Need(g, "chairs", byRoom[g].Count(m => m.Name.StartsWith("Chair")) >= 4, 1); break;
                     case RoomKind.Kitchen:
                         Need(g, "fridge", Has(g, "Fridge")); Need(g, "sink", Has(g, "Counter_1")); Need(g, "stove", Has(g, "Oven"));
                         // a plain counter at the sink or stove; and where the house eats in its kitchen, a table with a chair
-                        Need(g, "counter", Worktop(r.Furniture.Where(m => m.Room == g)), 1);
+                        Need(g, "counter", Worktop(byRoom[g].ToList()), 1);
                         if (EatsInKitchen(r, g)) Need(g, "dining table", Has(g, "Table_Wood_0", "Table_Wood_1", "Table_Wood_3") && Has(g, "Chair_Wood_0"), 1);
                         break;
                     case RoomKind.Bathroom: Need(g, "tub or sink", Has(g, "Tub", "Counter_1")); break;

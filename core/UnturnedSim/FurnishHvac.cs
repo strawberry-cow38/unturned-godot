@@ -118,7 +118,7 @@ namespace UnturnedSim
                 if (!RoomFree(fp)) return false;
                 if (_p.StairRects.Any(r => Overlaps(fp, r)) || _p.TileRects.Any(r => Overlaps(fp, r)) || _p.LeafRects.Any(r => Overlaps(fp, r)) || _p.WallOverlaps(fp)) return false;
                 if (Here().Any(o => o.Floor == _room.Floor && o.On == null && !o.Mounted && !o.Ceiling && Overlaps(Grow(fp, 0.05f), o.Footprint))) return false;
-                return !_res.RuntimeDecor.Concat(_res.HvacVents).Any(o => o.Floor == _room.Floor && !o.Mounted && Overlaps(fp, o.Footprint));
+                return !HereDecor().Concat(HereVents()).Any(o => o.Floor == _room.Floor && !o.Mounted && Overlaps(fp, o.Footprint));
             }
 
             /// <summary>The room on this storey behind a face at `t` along it, past a wall of any thickness this generator builds
@@ -164,7 +164,7 @@ namespace UnturnedSim
                     var at = AtFace(name, f, t);
                     if (at == null) continue;
                     var fp = FurnitureCatalog.Footprint(name, at.Value.X, at.Value.Z, at.Value.Yaw);
-                    if (_res.RuntimeDecor.Any(c => c.Floor == _room.Floor && c.Gen.Kind == RuntimeDecorKind.Curtain && Overlaps(Grow(fp, GrilleOffCurtain), c.Footprint))) continue;
+                    if (HereDecor().Any(c => c.Floor == _room.Floor && c.Gen.Kind == RuntimeDecorKind.Curtain && Overlaps(Grow(fp, GrilleOffCurtain), c.Footprint))) continue;
                     float ceiling = new[] { (fp.X0, fp.Z0), (fp.X1, fp.Z0), (fp.X0, fp.Z1), (fp.X1, fp.Z1) }.Min(p => CeilingOver(p.Item1, p.Item2));
                     var m = Fixture(name, at.Value.X, at.Value.Z, at.Value.Yaw);
                     m.Y = ceiling - GrilleUnderCeiling - s.H;

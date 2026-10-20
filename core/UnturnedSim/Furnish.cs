@@ -464,6 +464,31 @@ namespace UnturnedSim
             public readonly List<(float X, float Z, GenRoom Room)> Targets = new();
             /// <summary>Where this storey's pieces begin in Furniture: every one of them is at or past it (Furnisher.Here).</summary>
             public int Start;
+            /// <summary>Where this storey's vents, fixtures and rugs and curtains begin in HvacVents, Electrical and RuntimeDecor:
+            /// their count when the storey's furnishing began -- or 0 should one already there be on this storey (none ever
+            /// is: the storeys are furnished one after another), so a scan from here meets every one the whole list holds.</summary>
+            public readonly int VentStart, ElecStart, DecorStart;
+            /// <summary>How many ceiling lights stand in Furniture before this storey's first piece (Start) -- read once, when first
+            /// asked (nothing before Start changes while the storey is furnished) -- or -1 where one of them belongs to a room of
+            /// this storey (none ever does), and the caller counts from the start of the list.</summary>
+            public int CeilingsBefore()
+            {
+                if (_ceilingsBefore != int.MinValue) return _ceilingsBefore;
+                int n = 0;
+                for (int i = 0; i < Start && i < _res.Furniture.Count; i++)
+                {
+                    var m = _res.Furniture[i];
+                    if (m.Room != null && m.Room.Floor == F) return _ceilingsBefore = -1;
+                    if (m.Ceiling) n++;
+                }
+                return _ceilingsBefore = n;
+            }
+            int _ceilingsBefore = int.MinValue;
+            static int FloorStart(List<FurniturePlan> l, int f)
+            {
+                foreach (var m in l) if (m.Floor == f) return 0;
+                return l.Count;
+            }
             /// <summary>This storey's walls, full height, in the plan's order (nothing furnishing does adds or takes one): what a
             /// room's own walls are found among (RoomWalls) without a scan of the whole building's for every spot tried.</summary>
             public List<WallPlan> Walls;
@@ -533,6 +558,7 @@ namespace UnturnedSim
             public FloorPlan(BuildingGenResult res, int f)
             {
                 _res = res; F = f;
+                VentStart = FloorStart(res.HvacVents, f); ElecStart = FloorStart(res.Electrical, f); DecorStart = FloorStart(res.RuntimeDecor, f);
                 Ox = -1f; Oz = -1f;
                 Nx = (int)MathF.Ceiling((res.CellsX * Cell + 2f) / Step);
                 Nz = (int)MathF.Ceiling((res.CellsZ * Cell + 2f) / Step);
@@ -765,6 +791,12 @@ namespace UnturnedSim
             /// answer it got off the whole list. Scanning the whole list for every spot a piece was tried at made a tall building's
             /// furnishing quadratic in its size: a thirty-storey tower's floor doodads alone took minutes.</summary>
             IEnumerable<FurniturePlan> Here() { var l = _res.Furniture; for (int i = _p.Start; i < l.Count; i++) yield return l[i]; }
+            /// <summary>This storey's vents, fixtures, and rugs and curtains, the same way: from where the storey began in each
+            /// list (FloorPlan.VentStart, ElecStart, DecorStart), in the list's order -- with the rest of the building's before
+            /// them, which a test filtering on this storey passed over one by one, for every spot it tried.</summary>
+            IEnumerable<FurniturePlan> HereVents() { var l = _res.HvacVents; for (int i = _p.VentStart; i < l.Count; i++) yield return l[i]; }
+            IEnumerable<FurniturePlan> HereElectrical() { var l = _res.Electrical; for (int i = _p.ElecStart; i < l.Count; i++) yield return l[i]; }
+            IEnumerable<FurniturePlan> HereDecor() { var l = _res.RuntimeDecor; for (int i = _p.DecorStart; i < l.Count; i++) yield return l[i]; }
 
             static readonly (int X, int Z)[] Fronts = { (0, -1), (-1, 0), (0, 1), (1, 0) };   // yaw 0, 90, 180, 270
             static (int X, int Z) FrontOf(float yaw) => Fronts[((int)MathF.Round(yaw / 90f) % 4 + 4) % 4];
@@ -1239,6 +1271,14 @@ namespace UnturnedSim
             /// <summary>Where a piece stands with one side flush to a wall of this room: for each heading, the runs of
             /// wall face the side would meet, and every 0.25 m along them.</summary>
             IEnumerable<(float X, float Z, float Yaw)> Against(string name, Side side)
+            {
+                // (worked out once a room, per piece and side: it reads only what furnishing never changes -- the faces, the grid's
+                // wall cells (Flush) and the walls' rects (Backed) -- and a room asks again for every piece of a row it tries)
+                if (!_against.TryGetValue((name, side), out var l)) _against[(name, side)] = l = AgainstWalls(name, side).ToList();
+                return l;
+            }
+            readonly Dictionary<(string, Side), List<(float X, float Z, float Yaw)>> _against = new();
+            IEnumerable<(float X, float Z, float Yaw)> AgainstWalls(string name, Side side)
             {
                 var s = FurnitureCatalog.Sizes[name];
                 const float Gap = 0.03f;
