@@ -549,7 +549,11 @@ namespace UnturnedGodot
                 // UG_GENPLAY=1 takes the whole menu path: generate, then drop into play exactly as pressing
                 // PLAY on the Generate Island entry does. Without it the shot only proves the EDITOR builds the
                 // world -- and "you can walk around in it" is the actual request.
-                if (!string.IsNullOrEmpty(genSeedEnv) && int.TryParse(genSeedEnv, out int genSeedArg))
+                // UG_TOWNPLAY=<seed>: the menu's Generate Town from a flag -- that seed's town, straight into play, so a shot is
+                // taken from where a player starts in it. Ahead of UG_OPENMAP, which the town renders always set.
+                if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNPLAY"), out int townPlayArg))
+                    BuildEditorNew(EditorMaps.Unique($"Town {townPlayArg}"), autoPlay: true, townSeed: townPlayArg);
+                else if (!string.IsNullOrEmpty(genSeedEnv) && int.TryParse(genSeedEnv, out int genSeedArg))
                     // A UNIQUE name, exactly as the menu does. Passing null meant every generated render opened
                     // the map "NewMap" -- and EditorObjects' ctor calls LoadSaved(), which reads
                     // editor_<map>.txt. So once a playtest had SAVED NewMap, every later render loaded those
@@ -1141,6 +1145,9 @@ namespace UnturnedGodot
                     // Generate Map -> a brand new map whose terrain is a generated island, played immediately.
                     // The name carries the seed so two generated maps do not overwrite each other's save.
                     menu.OnGenerateMap = (seed, lakes) => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true, genLakes: lakes); };
+                    // Generate Town (strawberry 2026-10-15: "add a way to play a town map like this, with a seed"): a flat map with
+                    // the town grid laid on it from the seed -- buildings and all -- and straight into play
+                    menu.OnGenerateTown = seed => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Town {seed}"), autoPlay: true, townSeed: seed); };
                     // A SAVED generated island: open the map that is on disk, do NOT regenerate. Re-rolling the
                     // seed would rebuild the terrain and then load the saved props on top of it, which is two of
                     // everything the moment the generator changes -- the same trap the "NewMap" name once sprang.
@@ -1367,6 +1374,16 @@ namespace UnturnedGodot
                     _bootWait = Mathf.Max(0f, secs);
                     Log.Print($"[BOOTCMD] wait {_bootWait:0.##}s");
                     return;
+                }
+                // `key <Godot Key name>`: pressed and released as the keyboard would (PhysicalKeycode too -- Keybinds match on it),
+                // so a render can show what a KEY does -- the console opening, a menu -- and not only what a command does
+                if (line.StartsWith("key ", System.StringComparison.OrdinalIgnoreCase)
+                    && System.Enum.TryParse<Key>(line.Substring(4).Trim(), true, out var bootKey))
+                {
+                    Log.Print($"[BOOTCMD] key {bootKey}");
+                    Input.ParseInputEvent(new InputEventKey { Keycode = bootKey, PhysicalKeycode = bootKey, Pressed = true });
+                    Input.ParseInputEvent(new InputEventKey { Keycode = bootKey, PhysicalKeycode = bootKey, Pressed = false });
+                    continue;
                 }
                 Log.Print($"[BOOTCMD] {line}");
                 console.DebugRun(line);
@@ -6764,7 +6781,7 @@ namespace UnturnedGodot
         /// frozen menu instead, which is exactly what generating an island did.
         /// ⚠ Callers do not await it (it is fire-and-forget from _Ready and from the menu buttons), so the
         /// --shot harness is gated on _worldReady instead -- the same flag the objects/peidrive path uses.</summary>
-        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false, bool genLakes = false)
+        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false, bool genLakes = false, int? townSeed = null)
         {
             mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
             // ⚠ A GENERATED ISLAND REOPENED IS NOT A BLANK CUSTOM MAP, and treating it as one is what
@@ -6833,7 +6850,17 @@ namespace UnturnedGodot
                 BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.53f, 0.67f, 0.86f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.92f, 0.92f, 0.94f), AmbientLightEnergy = 1.15f,
             };
-            AddChild(new WorldEnvironment { Environment = env });
+            // ⚠⚠ THE GRAPHICS OPTIONS NEVER REACHED A CUSTOM MAP (strawberry 2026-10-15, of a generated town: "the buildings dont
+            // have lighting or AO"). Ambient occlusion, bloom, SSR and sun shafts are applied to the WorldEnvironments in the
+            // "world_env" group (GraphicsOptions.ApplyEnvironment, at load and from the settings panel) -- and only WorldBuilder's
+            // environment, PEI's, ever joined it. So on a generated island, a generated town or any map made in the editor, the
+            // Ambient occlusion row did nothing at all, at load or when flipped mid-game: retail's buildings had AO and the
+            // town's could not, while neither carries any baked AO of its own (no vertex colour on a retail building's LOD0, a
+            // 4x2 palette texture). Joined here exactly as WorldBuilder joins it, so the same switch drives both.
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); AddChild(we); }
+            // ...and the point-light shadow budget, which a custom map never had either: the nearest few lamps cast, as on PEI
+            // (LightShadowBudget), instead of every room's lamp lighting the next room through the wall between them.
+            AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f, VisualsEnabled = false };
             AddChild(dayNight);
             var editor = new Editor();
@@ -7070,6 +7097,8 @@ namespace UnturnedGodot
             editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
             editor.AddChild(tunnelEd); editor.TunnelEd = tunnelEd;
             editor.AddChild(blockEd); editor.BlockRoadEd = blockEd;
+            var fenceSplineEd = new EditorFenceSpline(editor, cam, editor.Objects);   // Shift+J: a fence solved along a clicked path
+            editor.AddChild(fenceSplineEd); editor.FenceSplineEd = fenceSplineEd;
             editor.Roads = rf;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
@@ -7154,10 +7183,37 @@ namespace UnturnedGodot
             // 3x3 plain has no gates firing, so what the render shows is the GRID -- on PEI the flattest
             // 400 m box still has 34 m of relief and half the spans were refused, so the picture was mostly
             // of the terrain gates working.
-            if (System.Environment.GetEnvironmentVariable("UG_TOWNGRID") == "1" && rf != null)
-                BuildTownGrid(rf, terr, editor);
+            if ((System.Environment.GetEnvironmentVariable("UG_TOWNGRID") == "1" || townSeed.HasValue) && rf != null)
+            {
+                // Generate Town: planning it and putting up its buildings is ~13 s on this thread -- under a cover that says
+                // so, not on a menu that has simply stopped answering. And it is never written (Editor.NotSaved): the seed is
+                // the town, so playing the seed again is how you come back to it.
+                LoadingScreen townCover = null;
+                if (townSeed.HasValue)
+                {
+                    editor.NotSaved = $"generated town, seed {townSeed.Value} (not saved: the seed rebuilds it)";
+                    _worldReady = false;
+                    LoadingScreen.NextMode = "map";
+                    townCover = new LoadingScreen();
+                    AddChild(townCover);
+                    townCover.SetTotal(2);
+                    townCover.SetStatus($"Building the town (seed {townSeed.Value})");
+                    townCover.Advance();
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                }
+                var townWatch = System.Diagnostics.Stopwatch.StartNew();
+                BuildTownGrid(rf, terr, editor, townSeed);
+                if (townCover != null)
+                {
+                    townCover.SetStatus("Ready");
+                    townCover.Advance();
+                    townCover.Finish(new System.Collections.Generic.Dictionary<string, double> { ["town"] = townWatch.Elapsed.TotalMilliseconds });
+                }
+            }
             DiscordPresence.SetEditor(mapName);
-            if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
+            // (launched to PLAY -- the menu's Generate Town/Island, a saved island, Workshop's Play: the real game's rules)
+            if (autoPlay) { play.PlayOnly = true; play.CallDeferred(nameof(EditorPlayMode.EnterPlay)); }
             _worldReady = true;
             Log.Print(genSeed.HasValue
                 ? $"[editor] custom map '{mapName}' (GENERATED island, seed {genSeed.Value}) up"
@@ -7763,9 +7819,14 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
-                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop]]]]]]]]] (sides
-                // as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
-                // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...) generates a building from a seed instead
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop[,basement[,style[,way[,strip[,wealth]]]]]]]]]]]]]]
+                // (sides as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
+                // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...; basement Y/N, its style U/S/F/W -- bare, store,
+                // finished, workshop -- and its way down S/H, stairs or hatch; strip a Strip kind's plan, Convenience/PostWar/MiniMall/
+                // Taxpayer or the research's L6/L3/L5/L1, anything else seeded -- and, the same field, a Tower kind's: MainStreet/Setback/
+                // Slab or MS/SB/IS (a kind has one plan field: a fixed plan's name, read as the kind it is for, ignored by the others);
+                // wealth the town's, P poor / A affluent / else working)
+                // generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
@@ -7781,7 +7842,7 @@ namespace UnturnedGodot
                             sd |= ch switch { 'N' => UnturnedSim.Sides.North, 'E' => UnturnedSim.Sides.East, 'S' => UnturnedSim.Sides.South, 'W' => UnturnedSim.Sides.West, _ => UnturnedSim.Sides.None };
                         return sd;
                     }
-                    buildings.Generate(new UnturnedSim.BuildingGenSpec
+                    var genRes = buildings.Generate(new UnturnedSim.BuildingGenSpec
                     {
                         Kind = UnturnedSim.RoomDesignations.ParseBuilding(g[0]), Seed = Arg(1, 0), MinRooms = Arg(2, 0),
                         MaxFloors = Arg(3, 2), MaxRoomsPerFloor = Arg(4, 6), Width = Arg(5, 0), Depth = Arg(6, 0),
@@ -7802,7 +7863,100 @@ namespace UnturnedGodot
                         } : UnturnedSim.ChimneyChoice.Auto,
                         FitPlot = g.Length > 13 && g[13].ToUpperInvariant() == "F",
                         Business = g.Length > 14 && System.Enum.TryParse<UnturnedSim.Business>(g[14], true, out var shop) ? shop : UnturnedSim.Business.None,
+                        Basement = g.Length > 15 ? g[15].ToUpperInvariant() switch
+                        {
+                            "Y" => UnturnedSim.BasementChoice.Require, "N" => UnturnedSim.BasementChoice.Forbid, _ => UnturnedSim.BasementChoice.Auto,
+                        } : UnturnedSim.BasementChoice.Auto,
+                        BasementStyle = g.Length > 16 ? g[16].ToUpperInvariant() switch
+                        {
+                            "U" => UnturnedSim.BasementStyle.Unfinished, "S" => UnturnedSim.BasementStyle.Storage, "F" => UnturnedSim.BasementStyle.Finished,
+                            "W" => UnturnedSim.BasementStyle.Workshop, _ => UnturnedSim.BasementStyle.Auto,
+                        } : UnturnedSim.BasementStyle.Auto,
+                        BasementAccess = g.Length > 17 ? g[17].ToUpperInvariant() switch
+                        {
+                            "S" => UnturnedSim.BasementAccess.Stairs, "H" => UnturnedSim.BasementAccess.Hatch, _ => UnturnedSim.BasementAccess.Auto,
+                        } : UnturnedSim.BasementAccess.Auto,
+                        Strip = g.Length > 18 ? g[18].ToUpperInvariant() switch
+                        {
+                            "L6" => UnturnedSim.StripStyle.Convenience, "L3" => UnturnedSim.StripStyle.PostWar, "L5" => UnturnedSim.StripStyle.MiniMall,
+                            "L1" => UnturnedSim.StripStyle.Taxpayer,
+                            _ => System.Enum.TryParse<UnturnedSim.StripStyle>(g[18], true, out var strip) ? strip : UnturnedSim.StripStyle.Auto,
+                        } : UnturnedSim.StripStyle.Auto,
+                        Tower = g.Length > 18 ? g[18].ToUpperInvariant() switch
+                        {
+                            "MS" or "MAIN" => UnturnedSim.TowerStyle.MainStreet, "SB" => UnturnedSim.TowerStyle.Setback, "IS" or "INTL" => UnturnedSim.TowerStyle.Slab,
+                            _ => System.Enum.TryParse<UnturnedSim.TowerStyle>(g[18], true, out var tower) ? tower : UnturnedSim.TowerStyle.Auto,
+                        } : UnturnedSim.TowerStyle.Auto,
+                        Wealth = g.Length > 19 ? g[19].ToUpperInvariant() switch
+                        {
+                            "P" => UnturnedSim.TownWealth.Poor, "A" => UnturnedSim.TownWealth.Affluent, _ => UnturnedSim.TownWealth.Working,
+                        } : UnturnedSim.TownWealth.Working,
                     });
+                    // UG_TERRAINBASEMENT=x,z,yaw cuts the generated building's basement (BuildingGenResult.Dig) out of the MAP's
+                    // terrain (Terrain.AddBasementCut: the ground bent to the outline, the inside dug), as if the building stood at
+                    // the nearest spot to (x, z) flat enough for it, its floor GroundClearance over the ground and turned by yaw.
+                    // The ground only: a building placed there comes from the run-time builder. UG_TERRAINBASEMENT2=dx,dz,dyaw cuts
+                    // a second copy that far off the first, in its frame (two cuts merged into one outline); UG_TERRAINCAM=
+                    // px,py,pz,lx,ly,lz puts the camera at p looking at l, both in the first building's frame.
+                    var tb = System.Environment.GetEnvironmentVariable("UG_TERRAINBASEMENT")?.Split(',');
+                    var ic = System.Globalization.CultureInfo.InvariantCulture; var nf = System.Globalization.NumberStyles.Float;
+                    if (tb is { Length: 3 } && res.Terr != null && float.TryParse(tb[0], nf, ic, out var tx) && float.TryParse(tb[1], nf, ic, out var tz)
+                        && float.TryParse(tb[2], nf, ic, out var tyaw))
+                    {
+                        var turn = new Basis(Vector3.Up, Mathf.DegToRad(tyaw));
+                        float w = genRes.CellsX * UnturnedSim.BuildingGen.Cell, d = genRes.CellsZ * UnturnedSim.BuildingGen.Cell;
+                        Vector3 site = new Vector3(tx, 0f, tz); float best = float.MaxValue;
+                        for (int ring = 0; ring <= 30 && best > 1f; ring++)
+                            for (int ix = -ring; ix <= ring; ix++)
+                                for (int iz = -ring; iz <= ring; iz++)
+                                {
+                                    if (System.Math.Max(System.Math.Abs(ix), System.Math.Abs(iz)) != ring) continue;
+                                    var o = new Vector3(tx + ix * 24f, 0f, tz + iz * 24f);
+                                    float lo = float.MaxValue, hi = float.MinValue;
+                                    foreach (var (cx, cz) in new[] { (0f, 0f), (w, 0f), (w, d), (0f, d), (w * 0.5f, d * 0.5f), (w + 4f, d * 0.5f) })
+                                    {
+                                        var p = o + turn * new Vector3(cx, 0f, cz);
+                                        float h = res.Terr.SampleHeight(p.X, p.Z);
+                                        lo = System.Math.Min(lo, h); hi = System.Math.Max(hi, h);
+                                    }
+                                    if (lo < Terrain.SeaLevelY + 1f || hi - lo >= best) continue;
+                                    best = hi - lo; site = o;
+                                }
+                        site.Y = res.Terr.SampleHeight(site.X, site.Z) + EditorBuildings.GroundClearance;
+                        var at = new Transform3D(turn, site);
+                        // the Dig rectangles as world x/z corners, those under the building first (the hatch's well is last)
+                        (System.Collections.Generic.List<Vector2[]> Quads, int Covered) Cut(Transform3D t)
+                        {
+                            var quads = new System.Collections.Generic.List<Vector2[]>(); int covered = 0;
+                            foreach (var (x0, z0, x1, z1) in genRes.Dig)
+                            {
+                                if ((x0, z0, x1, z1) != genRes.HatchWell) covered++;
+                                var c = new Vector2[4]; int i = 0;
+                                foreach (var (x, z) in new[] { (x0, z0), (x1, z0), (x1, z1), (x0, z1) }) { var q = t * new Vector3(x, 0f, z); c[i++] = new Vector2(q.X, q.Z); }
+                                quads.Add(c);
+                            }
+                            return (quads, covered);
+                        }
+                        var (q1, c1) = Cut(at);
+                        int dug = res.Terr.AddBasementCut(1, q1, c1);
+                        Log.Print($"[terrain-basement] cut at {site} yaw {tyaw} (corners within {best:0.00} m): {q1.Count} quad(s), {dug} triangle(s) dug -- {res.Terr.CutReport}");
+                        var tb2 = System.Environment.GetEnvironmentVariable("UG_TERRAINBASEMENT2")?.Split(',');
+                        if (tb2 is { Length: 3 })
+                        {
+                            float G(int i) => float.Parse(tb2[i], nf, ic);
+                            var at2 = at * new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(G(2))), new Vector3(G(0), 0f, G(1)));
+                            var (q2, c2) = Cut(at2);
+                            int dug2 = res.Terr.AddBasementCut(2, q2, c2);
+                            Log.Print($"[terrain-basement] second cut at {at2.Origin}: {dug2} triangle(s) dug -- {res.Terr.CutReport}");
+                        }
+                        var tc = System.Environment.GetEnvironmentVariable("UG_TERRAINCAM")?.Split(',');
+                        if (tc is { Length: 6 })
+                        {
+                            float F(int i) => float.Parse(tc[i], nf, ic);
+                            cam.GlobalPosition = at * new Vector3(F(0), F(1), F(2));
+                            cam.LookAt(at * new Vector3(F(3), F(4), F(5)), Vector3.Up);
+                        }
+                    }
                 }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
                 // UG_EDITLIGHTS=off flips every room's light switch off after the building is up, so a capture can show the
@@ -7894,6 +8048,8 @@ namespace UnturnedGodot
             editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
             editor.AddChild(tunnelEd); editor.TunnelEd = tunnelEd;
             editor.AddChild(blockEd); editor.BlockRoadEd = blockEd;
+            var fenceSplineEd = new EditorFenceSpline(editor, cam, editor.Objects);   // Shift+J: a fence solved along a clicked path
+            editor.AddChild(fenceSplineEd); editor.FenceSplineEd = fenceSplineEd;
             editor.Roads = rf;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.
@@ -10569,9 +10725,13 @@ namespace UnturnedGodot
         /// <summary>UG_TOWNGRID: lay a town's street grid and frame it. Shared by the PEI editor path and the
         /// flat custom-map path -- the same code must build both, or "it looks right on the flat map" would
         /// say nothing about the one the game ships.</summary>
-        void BuildTownGrid(RoadField rf, Terrain terrain, Editor editor)
+        /// <param name="playSeed">The menu's Generate Town: build THIS seed's town, every plot built on, with player spawns on its
+        /// pavements -- a town to play rather than to render (the UG_TOWN* switches still apply over it).</param>
+        void BuildTownGrid(RoadField rf, Terrain terrain, Editor editor, int? playSeed = null)
         {
             if (rf == null || terrain == null) return;
+            if (playSeed.HasValue && string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_TOWNBUILDINGS")))
+                TownRoadGrid.BuildingsMode = "all";
             // UG_TOWNHILLS=<metres>: roll gentle hills under the town before it is laid (strawberry 2026-10-13: "add support
             // for the grid to follow gentle hills and slopes") -- two long swells crossing, a few hundred metres from crest
             // to crest, so the steepest of it is a gentle 1-in-10 at 5 m. Everything the town builds has only ever met flat
@@ -10660,6 +10820,7 @@ namespace UnturnedGodot
             // 2-lane roads?" is a run rather than an opinion. 0 = Highway_0 (18.4 m), 1 = Highway_1 (13.8 m).
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNMAT"), out int tmat) && tmat >= 0)
             { town.MainMaterial = tmat; town.StreetMaterial = tmat; }
+            if (playSeed.HasValue) town.Seed = playSeed.Value;
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
             // UG_TOWNDIAG=0 takes the 45-degree avenue back out (strawberry 2026-10-12: "work on 45° intersections").
             town.Diagonal = System.Environment.GetEnvironmentVariable("UG_TOWNDIAG") != "0";
@@ -10675,12 +10836,25 @@ namespace UnturnedGodot
                 Log.Print($"[towngrid] material half-widths (m):{wsb}");
             }
             int before = rf.RoadCount;
+            // ⚠ WHERE THE TIME GOES, as one line of laps at the end (Generate Town took 101 s from PLAY to the street on seed 7,
+            // and the buildings -- the only stage that said -- were 14 of it)
+            var lapWatch = System.Diagnostics.Stopwatch.StartNew();
+            var laps = new System.Text.StringBuilder();
+            void Lap(string what) { laps.Append($" {what} {lapWatch.Elapsed.TotalSeconds:0.0},"); lapWatch.Restart(); }
             var rep = town.Generate(rf, HeightAt);
+            Lap("streets");
             Log.Print($"[towngrid] site ({site.X:0},{site.Y:0.0},{site.Z:0}) relief {flattest:0.0} m ACROSS THE FOOTPRINT -- {rep}");
             // UG_TOWNNOWALK=1: no pavements at all. An ABLATION, because five measured explanations for the
             // dark wedges at every mouth have now missed and the only honest next question is which mesh the
             // pixels belong to.
             bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
+            // the measurements (coverage, kerbs, ground under the paving -- a minute and more of a whole town) are for the
+            // renders; a town to PLAY skips them unless UG_TOWNPROBES=1 asks
+            // (UG_TOWNPROBES=0: none for a render either -- a run that is only after the buildings, the culling probe's, skips minutes)
+            bool probes = (!playSeed.HasValue || TownRoadGrid.ProbeEverything) && System.Environment.GetEnvironmentVariable("UG_TOWNPROBES") != "0";
+            town.Probes = probes;
+            // (UG_TOWNLOTMARKS=0: the renders without them too -- to see the ground as a player does)
+            if (playSeed.HasValue || System.Environment.GetEnvironmentVariable("UG_TOWNLOTMARKS") == "0") town.MarkLots = false;
             var walkProto = new EditorSidewalk { Width = town.PavementWidth }; editor.AddChild(walkProto);
             // ⭐ THE PLOTS AND THEIR PARKING ARE LAID OUT BEFORE THE PAVEMENT (strawberry 2026-10-12: "widened
             // sections of road, with dotted lines for parking"). A parking bay moves the kerb, the pavement and the
@@ -10692,7 +10866,9 @@ namespace UnturnedGodot
             // its two streets instead, one ran under a crest and out of sight. The grading then cuts under lanes and streets
             // alike.
             if (!noWalk) town.PlanPlots(rf, walkProto.Width);
+            Lap("plots");
             bool graded = town.GradeTerrain(terrain, rf);     // ⚠ BEFORE the pavement: its skirt is cut to the ground it finds
+            Lap("grade");
             // ⚠ MEASURE THE WIGGLE. These streets are straight BY CONSTRUCTION (one offset per grid line), so
             // any lateral deviation from the chord between a road's two ends is spline wobble and nothing
             // else -- a number, where "seems to wiggle" is an impression. UG_TOWNNORESPACE=1 is the control.
@@ -10717,33 +10893,66 @@ namespace UnturnedGodot
                 Log.Print($"[towngrid] straightness: worst bow off the chord {worstBow * 100f:0.0} cm over {bowRoads} streets"
                         + " -- these are straight by construction, so any bow is spline wobble");
             }
+            Lap("bow probe");
             int patches = town.BuildPatchMeshes(editor, rf);   // the asphalt paving each node, now the arms stop short of it
             // the boulevard's median, once its crossings are known: it stops short of each one
             town.BuildMedians(editor, rf);
             // the roads' own lines, painted over plain tarmac -- after the bays, which break the edge lines they open off
             town.BuildRoadLines(editor, rf);
+            Lap("paving");
             int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
             int corners = noWalk ? 0 : town.LaySidewalkCorners(editor, rf, walkProto);
             // the back lanes down the alleys PlanPlots marked (strawberry 2026-10-13: "replace placeholder alleys with
             // single lane roads with short sidewalks/kerbs and no markings") -- after the corners, whose fill their own
             // kerb returns join, and before that fill is laid
             if (!noWalk) town.BuildLanes(editor, rf);
+            // the grass of the verge and kerb-only streets (strawberry 2026-10-15: "support for kerb but no sidewalk for roads, as
+            // well as kerb-grass median-sidewalk") -- over the runs the pavement was just laid in
+            if (!noWalk) town.BuildStreetGrass(editor, rf, walkProto);
             // the asphalt under each kerb corner, from the same fillet the kerb was laid on -- then the
             // coverage probes again, because what the player sees is the slab PLUS this
+            Lap("pavements");
             int cornerFill = town.BuildCornerFill(editor, rf);
             Log.Print($"[towngrid] corner asphalt: {cornerFill} triangles under {corners} kerb corners");
-            town.ProbeCoverage(rf, "with corner asphalt");
-            int lights = town.PlaceLights(rf, editor.Objects);
+            if (probes) town.ProbeCoverage(rf, "with corner asphalt");
+            Lap("corner fill");
+            var kerbside = new System.Collections.Generic.List<Node3D>();     // everything PlaceLights stands on the kerb
+            int lights = town.PlaceLights(rf, editor.Objects, kerbside);
             town.PlantMedians(rf, editor.Objects);     // hedges and trees down the grass medians
+            // street trees, clear of all of that: in square planters down the paved streets, in the verges (strawberry 2026-10-15:
+            // "square grass "planters" for trees on sidewalks")
+            if (!noWalk) town.PlantStreetTrees(editor, rf, editor.Objects, walkProto, kerbside);
             // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
             // buildings, with fixed sizes and shapes"), and the parking bays paved and painted -- as planned above
             int plots = noWalk ? 0 : town.MarkPlots(editor, rf, plan: false);
+            // the dirt the paving leaves in the terrain paint (strawberry 2026-10-15: "work on the roads/sidewalks leaving terrain
+            // paint dirt footprints") -- after the plots, whose parking lots are paving too
+            Lap("lights+plots");
+            if (!noWalk) town.PaintFootprints(rf, terrain);
+            Lap("footprints");
+            // the buildings on the plots (strawberry 2026-10-15: "shove the building gen into town gen" -- one block first,
+            // UG_TOWNBUILDINGS=block|all): generated, framed to face their street, their pads levelled -- before anything
+            // else stands on the ground the pads change
+            if (!noWalk) town.PlanBuildings(rf, terrain);
+            Lap("plan buildings");
             // the dead space the plots left, filled (strawberry 2026-10-14: "procedural filling for dead space / empty lots /
             // parks. using hedges as splines"): hedgerows down the strips, pocket parks in the bigger pieces
             if (!noWalk) town.PlantGreens(rf, editor.Objects);
+            Lap("greens");
+            // the yard fences PlanPlots designated, laid as fences (strawberry 2026-10-14: "work on getting fences as splines")
+            if (!noWalk) town.BuildFences(editor, editor.Objects);
+            Lap("fences");
+            if (!noWalk) town.BuildBuildings(editor, editor.Objects);     // built by the generator's runtime builder (UG_TOWNMASSING=1: massing)
+            Lap("buildings");
             // the parking lots' street lights, and blocks if they have any (strawberry 2026-10-14: "add streetlight support for
             // parking lots too")
             if (!noWalk) town.PlaceParkingProps(editor.Objects);
+            // ...and no meter left under anything put up after the meters were (strawberry 2026-10-15: "prevent street lights or
+            // hydrants being placed on top of parking meters")
+            if (!noWalk) town.ClearMeterClashes(editor.Objects);
+            // a town to PLAY (Generate Town): somewhere on its pavements to start, and to come back to
+            if (!noWalk && playSeed.HasValue) town.PlaceSpawns(rf, editor.Spawns);
+            Lap("props");
             // UG_TOWNPARKED=1: a car in every parking space -- the game's own cars, dropped in and left to settle on
             // their wheels -- so a render SHOWS whether the bays fit them (strawberry 2026-10-12: "make sure they're
             // scaled to fit the vehicles in game"). Against the kerb, nosed the way the lane beside them runs:
@@ -10773,6 +10982,7 @@ namespace UnturnedGodot
             // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
             // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
             // the sharpest turn between consecutive segments of every corner piece, and where it is.
+            if (probes)
             {
                 float worstKink = 0f; var kinkAt = Vector3.Zero; int segs = 0;
                 foreach (var (cnode, cpts) in town.LastCorners)
@@ -10813,6 +11023,7 @@ namespace UnturnedGodot
                     }
                 Log.Print($"[towngrid] kerb join: worst straight-to-curve step {worstJoin * 100f:0.0} cm over {joins} ends at {joinAt}");
             }
+            Lap("kerb probes");
             Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches ({town.PaintPieces} painted, {town.CrossingPieces} crossings), {walks} pavement ribbons + {corners} corners, {lights} lights, site {(graded ? "GRADED" : "draped")}");
             // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
             // surface on them, and from 250 m up "I cannot see it" and "it is not there" look identical.
@@ -10830,6 +11041,7 @@ namespace UnturnedGodot
                 }
                 Log.Print($"[towngrid] {meshes} mesh children under the road field;{sb}");
             }
+            if (probes)
             {   // ...and does the ground stay under it? (strawberry 2026-10-13, "follow gentle hills and slopes")
                 var gp = town.GroundPokes(rf, (x, z) => terrain.SampleHeight(x, z));
                 Log.Print($"[towngrid] ground under the paving: {gp.pokes}/{gp.samples} points within 3 cm of the surface or through it; "
@@ -10858,6 +11070,9 @@ namespace UnturnedGodot
                     Log.Print($"[towngrid] paint {m.kind}: {m.buried}/{m.samples} top vertices under the paving they are painted on; "
                             + $"worst {m.worst * 100f:0.0} cm under at {m.at}");
             }
+            Lap("ground probes");
+            Log.Print($"[towngrid] timing (s):{laps.ToString().TrimEnd(',')}");
+            if (playSeed.HasValue) goto noTown;     // ...and no render camera: the player's own is about to take over
             // A GRID READS FROM THE AIR. Unlike the kerb, whose whole subject is 0.4 m tall, the claim here
             // is the LAYOUT -- junctions, blocks, where the gates refused to build -- and none of that is
             // legible at eye height.
@@ -10869,6 +11084,9 @@ namespace UnturnedGodot
             // UG_TOWNCLOSE=1 frames the busiest junction; UG_TOWNCLOSE=3 frames a THREE-way one, because a
             // tee is a different shape and its through-side pavement cannot be checked on a crossroads.
             var closeEnv = System.Environment.GetEnvironmentVariable("UG_TOWNCLOSE");
+            // UG_TOWNCLOSE=cull: the culling probe takes the camera and the capture over (CullProbe) -- five stops in and round
+            // one building, the renderer's own counters read at each, and its own pictures
+            if (closeEnv == "cull" && CullProbe.Begin(this, town, tcam, _shotPath)) { _shotPath = null; _shotRequested = null; goto noTown; }
             int wantArms = closeEnv == "3" ? 3 : 0;
             var busiest = Vector3.Zero; int bestDeg = 0;
             foreach (var (jp, ends) in rf.Junctions())
@@ -11004,6 +11222,109 @@ namespace UnturnedGodot
                     Log.Print($"[towngrid] plot camera over the town centre ({town.Plots.Count} plots)");
                     goto noTown;
                 }
+                // UG_TOWNCLOSE=fn[:k]: the k-th longest yard fence, from inside its own lot at a few metres up -- to see the
+                // posts stand plumb, the bays fit between them and the rails rack down the slope (fences as splines)
+                if (closeEnv != null && closeEnv.StartsWith("fn") && town.Fences.Count > 0)
+                {
+                    int fk = 0;
+                    if (closeEnv.Length > 3 && closeEnv[2] == ':') int.TryParse(closeEnv.Substring(3), out fk);
+                    var fruns = new System.Collections.Generic.List<TownRoadGrid.YardFence>(town.Fences);
+                    fruns.Sort((x, y) => new Vector2(y.B.X - y.A.X, y.B.Z - y.A.Z).Length().CompareTo(new Vector2(x.B.X - x.A.X, x.B.Z - x.A.Z).Length()));
+                    var fr = fruns[Mathf.Clamp(fk, 0, fruns.Count - 1)];
+                    var fmid = (fr.A + fr.B) * 0.5f; fmid.Y = terrain.SampleHeight(fmid.X, fmid.Z);
+                    var fdir = new Vector3(fr.B.X - fr.A.X, 0f, fr.B.Z - fr.A.Z); float flen = Mathf.Max(0.1f, fdir.Length()); fdir /= flen;
+                    var fout = new Vector3(-fdir.Z, 0f, fdir.X);
+                    var flot = Vector3.Zero; foreach (var fc in fr.Plot.Corners()) flot += fc; flot /= 4f;
+                    if ((flot - fmid).Dot(fout) < 0f) fout = -fout;
+                    tcam.GlobalPosition = fmid + fout * Mathf.Clamp(flen * 0.45f, 8f, 22f) + fdir * flen * 0.2f + Vector3.Up * 4.5f;
+                    tcam.Fov = 60f;
+                    tcam.LookAt(fmid + Vector3.Up * 1f, Vector3.Up);
+                    Log.Print($"[towngrid] fence camera on run {fk} of {fruns.Count}: {flen:0.0} m {fr.Edge} of a {fr.Plot.Kind} lot, {fr.A} -> {fr.B}");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=bla: every building, from above at an angle; bl[:k]: the k-th building, from its street, a little up
+                if (closeEnv == "bla" && town.Buildings.Count > 0)
+                {
+                    var bc = Vector3.Zero; int bn = 0;
+                    foreach (var b in town.Buildings) if (b.Result != null) { bc += b.Frame * new Vector3(b.Result.CellsX * 1.5f, 0f, b.Result.CellsZ * 1.5f); bn++; }
+                    bc /= Mathf.Max(1, bn);
+                    tcam.GlobalPosition = bc + new Vector3(35f, 55f, 55f);
+                    tcam.Fov = 55f;
+                    tcam.LookAt(bc, Vector3.Up);
+                    Log.Print($"[towngrid] building camera over {bn} buildings at {bc}");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=bk[:k]: the k-th building whose front door is on its parking lot's side, from over that lot
+                if (closeEnv != null && closeEnv.StartsWith("bk") && town.Buildings.Count > 0)
+                {
+                    int kk = 0;
+                    if (closeEnv.Length > 3 && closeEnv[2] == ':') int.TryParse(closeEnv.Substring(3), out kk);
+                    var lotFront = town.Buildings.FindAll(b => b.Result != null && b.Spec.FrontSide != UnturnedSim.Sides.South);
+                    if (lotFront.Count > 0)
+                    {
+                        var kb = lotFront[Mathf.Clamp(kk, 0, lotFront.Count - 1)];
+                        float wx = kb.Result.CellsX * 3f, dz = kb.Result.CellsZ * 3f;
+                        bool east = kb.Spec.FrontSide == UnturnedSim.Sides.East;
+                        var at = kb.Frame * new Vector3(east ? wx : 0f, 0f, dz * 0.5f);
+                        var outw = (kb.Frame.Basis.X.Normalized()) * (east ? 1f : -1f);
+                        tcam.GlobalPosition = at + outw * 18f - kb.Frame.Basis.Z.Normalized() * 8f + Vector3.Up * 9f;
+                        tcam.Fov = 60f;
+                        tcam.LookAt(at + Vector3.Up * 2f, Vector3.Up);
+                        Log.Print($"[towngrid] parking-front camera on building {kk} of {lotFront.Count} ({kb.Plot.Kind}, front {kb.Spec.FrontSide})");
+                        goto noTown;
+                    }
+                }
+                // UG_TOWNCLOSE=bp[:k]: the k-th building that stands against another (a party wall), at the line they share
+                if (closeEnv != null && closeEnv.StartsWith("bp") && town.Buildings.Count > 0)
+                {
+                    int pk = 0;
+                    if (closeEnv.Length > 3 && closeEnv[2] == ':') int.TryParse(closeEnv.Substring(3), out pk);
+                    var party = town.Buildings.FindAll(b => b.Result != null && b.Party != UnturnedSim.Sides.None);
+                    if (party.Count > 0)
+                    {
+                        var pb = party[Mathf.Clamp(pk, 0, party.Count - 1)];
+                        float wx = pb.Result.CellsX * 3f, dz = pb.Result.CellsZ * 3f;
+                        var local = pb.Party.HasFlag(UnturnedSim.Sides.East) ? new Vector3(wx, 0f, dz * 0.3f)
+                                  : pb.Party.HasFlag(UnturnedSim.Sides.West) ? new Vector3(0f, 0f, dz * 0.3f)
+                                  : pb.Party.HasFlag(UnturnedSim.Sides.North) ? new Vector3(wx * 0.5f, 0f, dz) : new Vector3(wx * 0.5f, 0f, 0f);
+                        var at = pb.Frame * local;
+                        tcam.GlobalPosition = at - pb.Frame.Basis.Z.Normalized() * 16f + Vector3.Up * 10f;
+                        tcam.Fov = 60f;
+                        tcam.LookAt(at + Vector3.Up * 3f, Vector3.Up);
+                        Log.Print($"[towngrid] party camera on building {pk} of {party.Count} with a party wall ({pb.Plot.Kind}, {pb.Party}) at ({at.X:0.0},{at.Z:0.0})");
+                        goto noTown;
+                    }
+                }
+                if (closeEnv != null && closeEnv.StartsWith("bl") && town.Buildings.Count > 0)
+                {
+                    int bk = 0;
+                    if (closeEnv.Length > 3 && closeEnv[2] == ':') int.TryParse(closeEnv.Substring(3), out bk);
+                    var tb = town.Buildings[Mathf.Clamp(bk, 0, town.Buildings.Count - 1)];
+                    var bmid = tb.Frame * new Vector3((tb.Result?.CellsX ?? 4) * 1.5f, 3f, (tb.Result?.CellsZ ?? 4) * 1.5f);
+                    tcam.GlobalPosition = bmid - tb.Frame.Basis.Z * 30f + tb.Frame.Basis.X * 10f + Vector3.Up * 14f;
+                    tcam.Fov = 60f;
+                    tcam.LookAt(bmid, Vector3.Up);
+                    Log.Print($"[towngrid] building camera on building {bk} of {town.Buildings.Count} ({tb.Plot.Kind})");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=view:<x>,<z>,<dist>,<yaw>[,<pitch>]: orbit a point -- yaw 0 is from the south looking north, 90 from
+                // the east looking west; pitch is down from level (30 if not given)
+                if (closeEnv != null && closeEnv.StartsWith("view:"))
+                {
+                    var vp = closeEnv.Substring(5).Split(',');
+                    var ic = System.Globalization.CultureInfo.InvariantCulture;
+                    float VF(int i, float dflt) => vp.Length > i && float.TryParse(vp[i], System.Globalization.NumberStyles.Float, ic, out float vv) ? vv : dflt;
+                    if (vp.Length >= 2)
+                    {
+                        float vx = VF(0, 0f), vz = VF(1, 0f), vd = VF(2, 20f), vyaw = Mathf.DegToRad(VF(3, 0f)), vpitch = Mathf.DegToRad(VF(4, 30f));
+                        var vt = new Vector3(vx, terrain.SampleHeight(vx, vz) + 1f, vz);
+                        tcam.GlobalPosition = vt + new Vector3(Mathf.Sin(vyaw) * Mathf.Cos(vpitch), Mathf.Sin(vpitch), Mathf.Cos(vyaw) * Mathf.Cos(vpitch)) * vd;
+                        tcam.Fov = 55f;
+                        tcam.LookAt(vt, Vector3.Up);
+                        Log.Print($"[towngrid] view camera on {vt}");
+                        goto noTown;
+                    }
+                }
                 // UG_TOWNCLOSE=at:<x>,<z>[,<height>]: a point a probe named -- looking down on it from the south-east
                 if (closeEnv != null && closeEnv.StartsWith("at:"))
                 {
@@ -11074,6 +11395,37 @@ namespace UnturnedGodot
                 }
                 // UG_TOWNCLOSE=bv: the boulevard, along its median from just off one end, so the median's nose, the
                 // lanes either side of it and the plain main it crosses all read in one frame
+                // UG_TOWNCLOSE=vg|ko|tp|sq|vb|lg: a verge, a kerb-only street, a tree planter, a square-cut bay, a bay through a verge, a lot's grass -- standing on the
+                // carriageway a little way back, looking along the kerb
+                if (closeEnv == "sq")
+                    foreach (var sqBay in town.Bays)
+                        if (sqBay.Taper <= TownRoadGrid.SquareTaper + 1e-4f && rf.EvaluateAlong(sqBay.Road, sqBay.A, out var sqP, out var sqT, snapTerrain: false))
+                        {
+                            var sqOut = new Vector3(sqT.Z, 0f, -sqT.X).Normalized() * sqBay.Side;
+                            var sqAt = sqP + sqOut * rf.RoadHalfWidth(sqBay.Road);
+                            if (!town.Shots.TryGetValue("sq", out var sqWas)
+                                || new Vector2(sqWas.at.X - site.X, sqWas.at.Z - site.Z).Length() > new Vector2(sqAt.X - site.X, sqAt.Z - site.Z).Length())
+                                town.Shots["sq"] = (sqAt, new Vector3(sqT.X, 0f, sqT.Z).Normalized(), sqOut);
+                        }
+                // ...a lot (lg): from over its street, down onto its middle -- one with dividers if there is one, it shows both turfs
+                if (closeEnv == "lg" && (town.Shots.TryGetValue("lgd", out var lgShot) || town.Shots.TryGetValue("lgp", out lgShot)))
+                {
+                    tcam.GlobalPosition = lgShot.at - lgShot.along * 22f + new Vector3(0f, 16f, 0f);
+                    tcam.Fov = 60f;
+                    tcam.LookAt(lgShot.at + lgShot.along * 2f, Vector3.Up);
+                    Log.Print($"[towngrid] lg camera at {lgShot.at}");
+                    goto noTown;
+                }
+                if ((closeEnv == "vg" || closeEnv == "ko" || closeEnv == "tp" || closeEnv == "sq" || closeEnv == "vb") && town.Shots.TryGetValue(closeEnv, out var shot))
+                {
+                    bool low = closeEnv == "tp" || closeEnv == "sq";     // a planter, a bay's step: at eye height, under the trees
+                    tcam.GlobalPosition = low ? shot.at - shot.along * 8f - shot.outw * 2.5f + new Vector3(0f, 1.9f, 0f)
+                                              : shot.at - shot.along * 15f - shot.outw * 3.5f + new Vector3(0f, 5.5f, 0f);
+                    tcam.Fov = 60f;
+                    tcam.LookAt(low ? shot.at + shot.along * 1.5f + shot.outw * 1.2f : shot.at + shot.along * 8f + shot.outw * 2f, Vector3.Up);
+                    Log.Print($"[towngrid] {closeEnv} camera at {shot.at}");
+                    goto noTown;
+                }
                 if (closeEnv == "bv" && town.Medians.Count > 0)
                 {
                     var bvM = town.Medians[0];

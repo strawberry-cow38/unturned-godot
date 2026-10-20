@@ -72,6 +72,36 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("FENCES", "Any fence along a path \u2014 Shift+J, click points, 1-8 picks it, C corners/curve, ENTER lays it", c =>
+            {
+                // \u2b50 OVER A HILL AND ROUND BENDS, the two things solving a fence does that tiling its prop cannot: every
+                // post stays plumb while the bays rack down the slope, and a curve gets its posts where the pitch says.
+                for (int i = 0; i < 7; i++) c.Terr?.EditHeight(c.Origin.X, c.Origin.Z - 4f, 30f, 1f);
+                if (c.Objects == null) return;
+                Vector3 G(float dx, float dz)
+                {
+                    var p = c.Origin + new Vector3(dx, 0f, dz);
+                    if (c.Terr != null) p.Y = c.Terr.SampleHeight(p.X, p.Z);
+                    return p;
+                }
+                // all eight, one S-bend each, side by side
+                var all = FenceSpline.All;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    float x = -49f + i * 14f;
+                    // the ones with a broken prop get one on the far side of the hill -- the prop's own width in two of them, opened
+                    // a bay wider in the other two (a second marker on the same spot)
+                    var wreck = all[i].Wreck == null ? null
+                              : i % 2 == 0 ? new[] { G(x - 3f, -10f) } : new[] { G(x - 3f, -10f), G(x - 3f, -10f) };
+                    c.Objects.AddFenceSpline(all[i], new[] { G(x, 30f), G(x + 5f, 12f), G(x - 5f, -6f), G(x + 4f, -26f) }, true, wreck);
+                }
+                // and a pen with square corners in front of them: one post on each corner, shared by both legs
+                c.Objects.AddFenceSpline(FenceSpline.WoodPrivacy,
+                    new[] { G(-22f, 40f), G(22f, 40f), G(22f, 54f), G(-22f, 54f), G(-22f, 40f) }, false,
+                    new[] { G(6f, 40f), G(-12f, 54f), G(-12f, 54f), G(-12f, 54f) });     // the prop's width at the front, two bays wider at the back
+                Log.Print($"[showcase] fences at {c.Origin}: {all.Length} styles on S-bends over a hill (top {G(0f, -4f).Y:0.0}), and a cornered pen; broken sections in the four that have one");
+            }),
+
             new Station("BLOCK ROAD", "Concrete jersey barrier \u2014 Shift+K, click a path, ENTER lays it", c =>
             {
                 // An S-BEND on purpose. A straight run of barrier proves nothing: the whole difficulty is the
@@ -383,11 +413,19 @@ namespace UnturnedGodot
         public static int Author(Terrain terr, RoadField roads, EditorObjects objects, PowerLineField powerLines, Node3D root, EditorSpawns spawns = null)
         {
             var stations = Stations();
+            // ⚠⚠ ON THE TERRAIN. A new map's ground runs X 0..3072, Z -3072..0, and the grid used to be laid from the world
+            // origin toward +Z -- its corner -- so every station past the first row stood over the void beyond the map's
+            // edge, at whatever height SampleHeight clamps to (found adding FENCES: the fences hung over a pink nothing).
+            // So the grid starts half a cell in from the corner and runs INTO the map, rows going -Z.
+            var tb = terr?.WorldBoundsXZ();
+            float gx0 = tb.HasValue ? tb.Value.MinX + StationSpacing * 0.5f : 0f;
+            float gz0 = tb.HasValue ? tb.Value.MaxZ - StationSpacing * 0.5f : 0f;
             for (int i = 0; i < stations.Count; i++)
             {
                 int col = i % StationsPerRow, row = i / StationsPerRow;
-                var origin = new Vector3(col * StationSpacing, 0f, row * StationSpacing);
+                var origin = new Vector3(gx0 + col * StationSpacing, 0f, gz0 - row * StationSpacing);
                 if (terr != null) origin.Y = terr.SampleHeight(origin.X, origin.Z);
+                if (i == 0) FirstStation = origin;
 
                 var ctx = new Context { Origin = origin, Terr = terr, Roads = roads, Objects = objects, PowerLines = powerLines, Root = root };
                 try { stations[i].Build(ctx); }
@@ -403,7 +441,7 @@ namespace UnturnedGodot
             // it, so playing the showcase starts where opening it does.
             if (spawns != null)
             {
-                var at = new Vector3(0f, 0f, 60f);
+                var at = FirstStation + new Vector3(0f, 0f, 60f);
                 if (terr != null) at.Y = terr.SampleHeight(at.X, at.Z);
                 spawns.SetCategoryTo(0);   // ECategory.Player
                 spawns.AddSpawn(at, 180f); // facing -Z, toward station 1
@@ -449,8 +487,11 @@ namespace UnturnedGodot
                     return;
                 }
             }
-            cam.SetPose(new Vector3(0f, 26f, 88f), 0f, -11f);
+            cam.SetPose(FirstStation + new Vector3(0f, 26f, 88f), 0f, -11f);
         }
+
+        /// <summary>Where Author put station 1 -- the opening camera and the player spawn are placed off it.</summary>
+        public static Vector3 FirstStation;
 
         /// <summary>A readable sign over each station. Label3D rather than a prop with a texture: the text is the
         /// documentation, it has to be editable in one place, and it must stay legible from the air where you will

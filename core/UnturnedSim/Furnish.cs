@@ -354,18 +354,28 @@ namespace UnturnedSim
         /// (one wardrobe to a bedroom) hold whoever asks (null: nothing more).</summary>
         public static Func<GenRoom, IEnumerable<string>> FurnishAlso;
 
-        static void Furnish(BuildingGenResult res, int seed)
+        /// <summary>(galley: a kitchen every layout leaves short of its fridge, its sink or its stove falls back on a galley
+        /// -- BuildOut asks for it only of the building it has settled on, built again, once nothing else would put that
+        /// right; and `draws` holds where each room left the draws in the build before, so that in the galley's build every
+        /// room ends where it did there, and a kitchen given a galley moves no room furnished after it.)</summary>
+        static void Furnish(BuildingGenResult res, int seed, Dictionary<GenRoom, ulong> draws = null, bool galley = false)
         {
             var rng = new Rng(seed ^ 0x51ED);
+            // (a basement's last, on draws of its own: a building is furnished above ground as it was without one)
+            var cellar = new Rng(seed ^ 0xBA5E);
             var all = new List<Furnisher>();
-            for (int f = 0; f < res.Floors; f++)
+            foreach (int f in Enumerable.Range(0, res.Floors).Append(-1))
             {
-                var fp = new FloorPlan(res, f);
+                if (f < 0 && !res.HasBasement) continue;
+                var fp = new FloorPlan(res, f) { Start = res.Furniture.Count };
                 var done = new List<Furnisher>();
-                foreach (var room in res.Layout.Where(r => r.Floor == f))
+                // (a shaft is a void: nothing stands in it, and nothing is hung or wired in it -- RoomKind.Shaft)
+                foreach (var room in res.Layout.Where(r => r.Floor == f && r.Kind != RoomKind.Shaft))
                 {
-                    var fu = new Furnisher(res, fp, room, rng) { Seed = seed };
+                    var own = f < 0 ? cellar : rng;
+                    var fu = new Furnisher(res, fp, room, own) { Seed = seed, MayGalley = galley };
                     fu.Run();
+                    if (draws != null) { if (galley && draws.TryGetValue(room, out var left)) own.Rewind(left); else draws[room] = own.Mark; }
                     done.Add(fu);
                 }
                 // the potted plants once the whole floor is furnished, then the wall décor: what the next room hangs later (a
@@ -391,7 +401,7 @@ namespace UnturnedSim
             if (!NoDoodads)
             {
                 foreach (var fu in all) fu.TopDoodads();
-                Outdoors(res, seed);
+                if (OutdoorDoodads) Outdoors(res, seed);
             }
             LabelRecords(res);
         }
@@ -407,6 +417,11 @@ namespace UnturnedSim
             public readonly byte[,] State;
             public readonly bool[,] KeepDoor, KeepTall;
             public readonly List<(float X, float Z, GenRoom Room)> Targets = new();
+            /// <summary>Where this storey's pieces begin in Furniture: every one of them is at or past it (Furnisher.Here).</summary>
+            public int Start;
+            /// <summary>This storey's walls, full height, in the plan's order (nothing furnishing does adds or takes one): what a
+            /// room's own walls are found among (RoomWalls) without a scan of the whole building's for every spot tried.</summary>
+            public List<WallPlan> Walls;
             /// <summary>The stairs, landings and holes on this floor, exactly.</summary>
             public readonly List<(float X0, float Z0, float X1, float Z1)> StairRects = new();
             /// <summary>The walls' exact footprints: the grid is 0.1 m, and where a wall's line steps in thickness -- an L's
@@ -428,7 +443,7 @@ namespace UnturnedSim
                 WinZones = new int[Nx, Nz]; Sight = new bool[Nx, Nz];
                 const float M = WallOpenings.StairHoleMargin;
                 int FloorOf(float y) => (int)MathF.Round(y / Storey);
-                var walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w.Y) == f && w.Height > Storey - 0.01f).ToList();
+                var walls = Walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w.Y) == f && w.Height > Storey - 0.01f).ToList();
                 // (a wall left out between two rooms that share one space -- open plan's cut, BuildingGen.OpenPlan -- is floor
                 // there, not wall: nothing stands with its back to it, and you walk across it; its piers and beam stay wall)
                 foreach (var w in walls) foreach (var b in Solid(w)) { Fill(b, Wall); WallRects.Add(b); }
@@ -614,6 +629,13 @@ namespace UnturnedSim
             }
             bool InRoom(int i, int j) => i >= _i0 && j >= _j0 && i < _i0 + _ni && j < _j0 + _nj && _inRoom[i - _i0, j - _j0];
 
+            /// <summary>This storey's pieces, in Furniture's order: the list from where the storey's furnishing began (FloorPlan.Start)
+            /// -- every piece of the storey is there, with only later storeys' after it (a storey's pieces are all added while it is
+            /// furnished, after every earlier storey's, and nothing removes an earlier one's), so a test of a storey's pieces gets the
+            /// answer it got off the whole list. Scanning the whole list for every spot a piece was tried at made a tall building's
+            /// furnishing quadratic in its size: a thirty-storey tower's floor doodads alone took minutes.</summary>
+            IEnumerable<FurniturePlan> Here() { var l = _res.Furniture; for (int i = _p.Start; i < l.Count; i++) yield return l[i]; }
+
             static readonly (int X, int Z)[] Fronts = { (0, -1), (-1, 0), (0, 1), (1, 0) };   // yaw 0, 90, 180, 270
             static (int X, int Z) FrontOf(float yaw) => Fronts[((int)MathF.Round(yaw / 90f) % 4 + 4) % 4];
             static (int X, int Z) RightOf(float yaw) { var (fx, fz) = FrontOf(yaw); return (-fz, fx); }
@@ -622,27 +644,33 @@ namespace UnturnedSim
 
             public void Run()
             {
+                // a basement's: its utility room the laundry; a bare or a store basement's big room the cellar's odds and ends
+                // (a rec room is a living room, a workshop a workshop)
+                if (_room == _res.BasementUtility) Utility();
+                else if (_room.Floor < 0 && _room.Kind == RoomKind.Storage) Cellar();
+                else
                 switch (_room.Kind)
                 {
                     case RoomKind.Bedroom: Bedroom(); break;
                     case RoomKind.LivingRoom: LivingRoom(); break;
-                    case RoomKind.DiningRoom: Dining(); break;
+                    case RoomKind.DiningRoom: if (_res.Kind == BuildingKind.Strip) Restaurant(); else Dining(); break;
                     case RoomKind.Kitchen: Kitchen(); break;
                     case RoomKind.Bathroom: Bathroom(); break;
                     case RoomKind.Office: Office(); break;
-                    case RoomKind.Closet: AlongWalls(new[] { "Wardrobe_1", "Shelf_3" }, 2); break;
+                    case RoomKind.Closet: AlongWalls(new[] { "Wardrobe_1", "Shelf_2" }, 2); break;
                     case RoomKind.Storage: Storage(); break;
                     case RoomKind.Garage: Garage(); break;
                     case RoomKind.Warehouse: Warehouse(); break;
                     case RoomKind.Workshop: Workshop(); break;
-                    case RoomKind.Shop: Shop(); break;
+                    case RoomKind.Shop: ShopFloor(_res.BusinessOf(_room)); break;
                     case RoomKind.Hall: Hall(); break;
                     case RoomKind.BreakRoom: BreakRoom(); break;
                 }
                 // (testing only: what a later recipe might also ask for, put the way any piece is)
                 if (FurnishAlso != null) foreach (var n in FurnishAlso(_room)) Put(n, Against(n, Side.Back));
                 Coats();
-                Jitter();
+                // (an open office's rows stand square, as a typing pool's do -- and a big room's every nudge is a walk of its floor)
+                if (!(_res.Kind == BuildingKind.Tower && _room.Kind == RoomKind.Office && _room.Cells > CapCells(RoomKind.Office, BuildingKind.Commercial))) Jitter();
                 // (every room's windows over what now stands in front of them, where each piece finally is)
                 WindowsOverPieces();
                 CeilingLights();
@@ -651,8 +679,8 @@ namespace UnturnedSim
             /// <summary>Ceiling lights (strawberry: "apply ceiling lights to ur layouts"): a pendant in the rooms you sit in
             /// -- over the table where there is one -- a flush mount in the rest; one to about every 9 m of each of the
             /// room's rectangles, at the middle of its share. Hung from the ceiling: the next floor's slab underside, a
-            /// flat roof's, or under a pitched roof the roof itself over the spot. Not under a stair hole or over a
-            /// flight, not in a wall.</summary>
+            /// flat roof's, or under a pitched roof the ceiling's (BuildWalls). Not under a stair hole or over a flight,
+            /// not in a wall.</summary>
             // (every 6 m hung four to seven pendants in one living room, a grid like an office's)
             const float LightEvery = 9f;
             /// <summary>How far the pendant hangs below the ceiling (Ceiling_Lamp_Pendant_0, astraclaw).</summary>
@@ -666,10 +694,18 @@ namespace UnturnedSim
                 bool top = f == _res.Floors - 1;
                 float Ceil(float x, float z)
                 {
-                    if (!top) return (f + 1) * Storey - Slab;                               // the floor above's underside
-                    if (_res.Roof == RoofKind.Flat) return (f + 1) * Storey;                 // the roof slab sits on the wall heads
-                    float h = RoofTopAt(_res, x, z);
-                    return float.IsNaN(h) ? (f + 1) * Storey : h;
+                    // (a tall room's, or a traced building's -- a tower's, whose storeys step back: the slab of whatever stands over
+                    // the spot on the storey over its top, else the roof on its wall heads -- GenRoom.Span, BuildingGenResult.Traced)
+                    if (_room.Span > 1 || _res.Traced)
+                    {
+                        int over = f + _room.Span;
+                        bool slab = _res.Layout.Any(r => r.Floor <= over && over < r.Floor + r.Span && r.Holds(x, z));
+                        return slab || _res.Roof != RoofKind.Flat ? over * Storey - Slab : over * Storey;
+                    }
+                    // the floor above's underside, or under a pitched roof the ceiling's, the same (BuildWalls); a flat roof's
+                    // slab sits on the wall heads
+                    if (!top || _res.Roof != RoofKind.Flat) return (f + 1) * Storey - Slab;
+                    return (f + 1) * Storey;
                 }
                 var spots = new List<(float X, float Z)>();
                 foreach (var q in _room.Rects)
@@ -710,7 +746,7 @@ namespace UnturnedSim
             {
                 foreach (var m in _mine.ToList())
                 {
-                    if (m.On != null || m.Mounted || _res.Furniture.Any(t => t.On == m)) continue;
+                    if (m.On != null || m.Mounted || Here().Any(t => t.On == m)) continue;
                     float turn = m.Name.StartsWith("Chair") ? 8f : m.Name.StartsWith("Table") ? 4f : m.Name.StartsWith("Couch") ? 2.5f : 0f;
                     if (turn == 0f) continue;
                     var s = FurnitureCatalog.Sizes[m.Name];
@@ -758,8 +794,9 @@ namespace UnturnedSim
             bool Clear(string name, float x, float z, float yaw)
             {
                 var fp = FurnitureCatalog.Footprint(name, x, z, yaw); float h = FurnitureCatalog.Sizes[name].H;
+                if (_cramped) return CrampedClear(fp);
                 if (Boxy(name, yaw)) return Clear(fp, h);
-                var t = h > TallFurniture ? _badTall : _bad;
+                var t = h > _tall ? _badTall : _bad;
                 int n = 0;
                 foreach (var (i, j) in Under(name, x, z, yaw))
                 {
@@ -788,11 +825,12 @@ namespace UnturnedSim
             /// doorways and stair tiles, and if tall out of the windows.</summary>
             bool Clear((float X0, float Z0, float X1, float Z1) a, float h)
             {
+                if (_cramped) return CrampedClear(a);
                 int i0 = (int)MathF.Ceiling((a.X0 - _p.Ox) / FloorPlan.Step - 0.5f) - _i0, i1 = (int)MathF.Floor((a.X1 - _p.Ox) / FloorPlan.Step - 0.5f) - _i0;
                 int j0 = (int)MathF.Ceiling((a.Z0 - _p.Oz) / FloorPlan.Step - 0.5f) - _j0, j1 = (int)MathF.Floor((a.Z1 - _p.Oz) / FloorPlan.Step - 0.5f) - _j0;
                 if (i1 < i0 || j1 < j0) return false;
                 if (i0 < 0 || j0 < 0 || i1 >= _ni || j1 >= _nj) return false;   // past the room's box: not in the room
-                var t = h > TallFurniture ? _badTall : _bad;
+                var t = h > _tall ? _badTall : _bad;
                 for (int b = j0; b <= j1; b++) if (t[b, i1 + 1] - t[b, i0] != 0) return false;
                 return true;
             }
@@ -971,7 +1009,7 @@ namespace UnturnedSim
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
                     // where you stand at a sink, no door's leaf swings (a doorway's walk is fine: you stand in it)
-                    if (Stand(name) > 0f && swing != null && _p.LeafRects.Any(r => Overlaps(swing.Value, r))) continue;
+                    if (Stand(name) > 0f && swing != null && !_cramped && _p.LeafRects.Any(r => Overlaps(swing.Value, r))) continue;
                     // a bed: a long side (both, a double's) to get in at
                     var way = name.StartsWith("Bed") ? BedWay(name, x, z, yaw) : null;
                     if (name.StartsWith("Bed") && way == null) continue;
@@ -1460,6 +1498,17 @@ namespace UnturnedSim
             /// <summary>How many places a table is tried at, of each kind, for one that seats enough.</summary>
             const int TableTries = 12;
 
+            /// <summary>A strip's restaurant's dining room -- its sales floor, a shop floor's size (TraitOf): tables while they go
+            /// in, each seated, a room's worth of them (one a RestaurantCover of floor, RestaurantTables at most), each as a house's
+            /// dining table goes in (Dining) round those already there.</summary>
+            void Restaurant()
+            {
+                int most = Math.Clamp((int)(_area / RestaurantCover), 1, RestaurantTables);
+                for (int k = 0; k < most && Dining() != null; k++) { }
+            }
+            const float RestaurantCover = 40f;
+            const int RestaurantTables = 6;
+
             /// <summary>Seat a table: each way of seating it in turn, actually placed (a chair the room's walk cannot spare is
             /// refused only then), keeping the first that seats everyone or else the one that seats the most.</summary>
             List<FurniturePlan> Seat(FurniturePlan t)
@@ -1686,8 +1735,13 @@ namespace UnturnedSim
                     // a big kitchen fills its floor (a 108 m2 one stood empty with every appliance in one corner): an
                     // island always from 54 m2, and a breakfast table as well from 72
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
-                    if (_area >= 72f) Dining();
+                    // (not a strip's restaurant's: its tables are out in its dining room)
+                    if (_area >= 72f && _res.Kind != BuildingKind.Strip) Dining();
                 }
+                // and where none of that leaves it a fridge, a sink AND a stove, a galley (Galley). Only here, once every layout,
+                // the scatter and the table have had their go and their draws -- a kitchen laid again for its table included --
+                // so a kitchen they furnish is the kitchen it always was; and only on the building BuildOut settles on (MayGalley)
+                if (!Full() && MayGalley) Galley(runs, three);
                 // a corner left free may take a lone corner cabinet, once the kitchen has what it needs
                 LoneCorner(runs);
                 WindowsOverPieces();
@@ -1696,6 +1750,110 @@ namespace UnturnedSim
             }
 
             const int MinPrep = 2;
+
+            /// <summary>The galleys a kitchen falls back on, best first: the fridge, the sink, a counter and the stove in a row
+            /// (5.86 m: the sink and the stove a counter apart, and a counter to work at); then the sink, the fridge and the
+            /// stove (4.36 m: the fridge between, so the stove is never beside the sink).</summary>
+            static readonly string[][] Galleys = { new[] { "Fridge_0", "Counter_1", "Counter_0", "Oven_0" }, new[] { "Counter_1", "Fridge_0", "Oven_0" } };
+
+            /// <summary>How tall a piece is before it may not stand in front of a window (TallFurniture), and whether the kitchen
+            /// is laid cramped: the floor you stand on at a sink may be swept by a door's leaf (Put), and a doorway's shoulders
+            /// may be stood on (CrampedClear) -- all given up only by a kitchen that cannot otherwise cook (Galley).</summary>
+            float _tall = TallFurniture;
+            bool _cramped;
+            /// <summary>Whether a kitchen left unable to cook may fall back on a galley (Galley): only in the last build of a
+            /// building, once BuildOut's own fixes -- an open plan closed, a door hung single -- have had their go, since a
+            /// cramped galley would stop it trying them (a 5x5 house whose kitchen cooked once its door was hung single).</summary>
+            public bool MayGalley;
+
+            /// <summary>The floor a cramped kitchen (Galley) still never stands on: each doorway's own walk, jamb to jamb and
+            /// DoorWalk out of both faces (a vehicle door's 6 m), and every door leaf's sweep (LeafRects). What it may take that
+            /// the floor plan keeps (KeepDoor): a doorway walk's 0.3 m shoulders past its jambs -- in a 6 m kitchen-diner with
+            /// a 2.5 m door near each end of two facing walls, those shoulders are what keeps a stove out of the corners.</summary>
+            List<(float X0, float Z0, float X1, float Z1)> _doorCores;
+            const float DoorWalk = 1.3f;
+            bool CrampedClear((float X0, float Z0, float X1, float Z1) a)
+            {
+                int i0 = (int)MathF.Ceiling((a.X0 - _p.Ox) / FloorPlan.Step - 0.5f), i1 = (int)MathF.Floor((a.X1 - _p.Ox) / FloorPlan.Step - 0.5f);
+                int j0 = (int)MathF.Ceiling((a.Z0 - _p.Oz) / FloorPlan.Step - 0.5f), j1 = (int)MathF.Floor((a.Z1 - _p.Oz) / FloorPlan.Step - 0.5f);
+                if (i1 < i0 || j1 < j0) return false;
+                for (int i = i0; i <= i1; i++)
+                    for (int j = j0; j <= j1; j++)
+                        if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
+                if (_doorCores == null)
+                {
+                    _doorCores = new List<(float, float, float, float)>(_p.LeafRects);
+                    foreach (var w in RoomWalls())
+                        foreach (var o in w.Openings.Where(o => o.V < 0.05f))
+                            _doorCores.Add(OpeningZone(w, o, 0f, o.Archetype == ArchGarage ? 6f : DoorWalk));
+                }
+                return !_doorCores.Any(r => Overlaps(a, r));
+            }
+
+            /// <summary>A kitchen every layout and the scatter left short of its fridge, its sink or its stove (cow tools,
+            /// 2026-10-15: "a 4x6 small house came out with no fridge/sink/stove"). A small house's kitchen-diner, 6 m square,
+            /// has its hall door and its back door in two facing walls, each 2.5 m wide: their walks (1.3 m deep, 0.3 m past each
+            /// jamb) take the corners of the two walls between, so a stove (1.37 m deep) fits only the middle 2.9 m of them;
+            /// their leaves sweep 2.5 m quarter circles, and where you stand at a sink no leaf may swing, so no wall takes the
+            /// sink; and the windows keep the fridge off the outside wall. Every layout and the scatter come away with a fridge
+            /// and nothing to cook on.
+            ///
+            /// So -- in the last build only (MayGalley), each from an empty kitchen, its table taken up too -- a galley in a row
+            /// along one wall (Galleys, Row: clear floor, backed, every swing clear, counters on along it while the wall
+            /// lasts); then the same CRAMPED (_cramped, _tall), three of the kitchen's comforts given up -- the sink's floor
+            /// clear of door leaves, the fridge clear of the windows (the window is raised over it, as over any piece:
+            /// WindowsOverPieces), and a doorway walk's shoulders (CrampedClear) -- since a door that can touch the cook, a
+            /// fridge under a high window or a stove at a doorway's jamb beats a house nobody can cook in; then, still cramped,
+            /// the stove at each place along a wall it fits and the sink and the fridge each nearest what is in, the stove
+            /// never beside the sink (Clash, as the scatter). The doorways' own walks, the door leaves, the stairs and the
+            /// room's walk stay as hard as ever. Then, by the ordinary rules, a counter beside the sink or the stove where a
+            /// wall still takes one, and the table where the house eats in its kitchen and one still goes. Where even that
+            /// cannot give it all three, the kitchen goes back to what it had.</summary>
+            void Galley(List<(int Nx, int Nz, float Face, float Lo, float Hi)> runs, string[] three)
+            {
+                bool Full() => three.All(n => _mine.Any(m => m.Name == n));
+                var was = _mine.Select(m => (m.Name, X: m.X, Z: m.Z, m.Yaw)).ToList();
+                void Clean() { foreach (var m in _mine.ToList()) Remove(m); }
+                string how = null;
+                Clean();
+                foreach (bool cramped in new[] { false, true })
+                {
+                    (_tall, _cramped) = cramped ? (float.MaxValue, true) : (TallFurniture, false);
+                    foreach (var names in Galleys)
+                        if (Row(runs, names) != null) { how = (cramped ? "cramped " : "") + "galley " + string.Join("-", names); break; }
+                    if (how != null) break;
+                }
+                if (how == null)
+                {
+                    // still cramped: the stove (deepest, and kept off the sink's side) at each place along a wall it fits, then
+                    // the sink and the fridge each where it fits nearest what is in -- and failing every place, the sink first
+                    bool Clash(string a, (float X, float Z, float Yaw) c) => _mine.Any(p => (a, p.Name) is ("Oven_0", "Counter_1") or ("Counter_1", "Oven_0")
+                        && Overlaps(Grow(FurnitureCatalog.Footprint(a, c.X, c.Z, c.Yaw), 0.5f), p.Footprint));
+                    double Near(float x, float z) => -_mine.Where(m => three.Contains(m.Name)).Sum(p => MathF.Sqrt((p.X - x) * (p.X - x) + (p.Z - z) * (p.Z - z)));
+                    foreach (var order in new[] { new[] { "Oven_0", "Counter_1", "Fridge_0" }, new[] { "Counter_1", "Oven_0", "Fridge_0" } })
+                    {
+                        foreach (var c in Against(order[0], Side.Back).ToList())
+                        {
+                            Clean();
+                            if (Put(order[0], new[] { c }) == null) continue;
+                            foreach (var a in order.Skip(1)) Put(a, Against(a, Side.Back).Where(q => !Clash(a, q)), (x, z, _) => Near(x, z));
+                            if (Full()) break;
+                        }
+                        if (Full()) { how = "cramped scatter"; break; }
+                    }
+                }
+                (_tall, _cramped) = (TallFurniture, false);
+                if (how != null && Full())
+                {
+                    if (!Worktop(_mine)) TopUp(1);
+                    // and the table of a house that eats in its kitchen, where it still goes
+                    if (EatsInKitchen(_res, _room)) Dining(1);
+                    FurnishTrace?.Invoke($"{how} in {_room}");
+                    return;
+                }
+                Clean();
+                foreach (var (n, x, z, yaw) in was) Put(n, new[] { (x, z, yaw) });
+            }
 
             /// <summary>Plain counters (prep space) beside the run: first one beside the sink or the stove where the kitchen
             /// has none there (Worktop), then a Counter_0 next to the sink, stove, dishwasher, fridge or another counter, on
@@ -2076,6 +2234,17 @@ namespace UnturnedSim
             /// a monitor on it; a filing cabinet and a bookcase along the walls.</summary>
             void Office()
             {
+                // (a tower's open office -- a typing pool, an open-plan floor, past a cellular office's cap: TowerCap -- its desks in rows)
+                if (_res.Kind == BuildingKind.Tower && _room.Cells > CapCells(RoomKind.Office, BuildingKind.Commercial)) OpenOffice();
+                else Desk();
+                Put("Files_0", Against("Files_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                if (_area >= 18f) Put("Shelf_2", Against("Shelf_2", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+            }
+
+            /// <summary>A desk and its chair, the chair's back to a wall, best facing the door; a monitor and a desk lamp on it.
+            /// Whether one went in.</summary>
+            bool Desk()
+            {
                 var cs = FurnitureCatalog.Sizes["Chair_Wood_1"]; var ds = FurnitureCatalog.Sizes["Table_Wood_2"];
                 // where the chair can stand with its back to a wall, best facing the door
                 foreach (var (x, z, yaw) in Rank(Against("Chair_Wood_1", Side.Back), DeskScore).Take(60))
@@ -2088,11 +2257,65 @@ namespace UnturnedSim
                     if (chair == null) { Remove(desk); continue; }
                     On(desk, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);   // its screen to the chair
                     On(desk, "Lamp_0", 0.55f, -0.45f, (yaw + 180f) % 360f);    // a desk lamp at the chair's right hand
-                    break;
+                    return true;
                 }
-                Put("Files_0", Against("Files_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
-                if (_area >= 18f) Put("Shelf_2", Against("Shelf_2", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                return false;
             }
+
+            /// <summary>An open office's desks (a tower's typing pool, an open-plan floor): in rows down each of its rectangles two cells
+            /// or more across, every desk with its chair behind it and its screen on it, all facing one way, OpenAisle between a
+            /// row's chairs and the desks behind, OpenGap between desks along a row, OpenMargin clear of the walls -- to about one
+            /// every TowerDeskArea of floor, TowerDesks at the most. Each goes in through Put on its one spot (a doorway, a window's
+            /// zone or the stairs there and it is left out), so a big floor costs a desk a try, not a wall's every spot a desk.</summary>
+            void OpenOffice()
+            {
+                var cs = FurnitureCatalog.Sizes["Chair_Wood_1"]; var ds = FurnitureCatalog.Sizes["Table_Wood_2"];
+                float d = cs.Y1 + 0.05f - ds.Y0, deep = d + ds.Y1 - cs.Y0, wide = ds.X1 - ds.X0;
+                int want = Math.Max(1, Math.Min(TowerDesks, (int)(_area / TowerDeskArea))), have = 0;
+                // Every row's every desk spot, then the spots cut into pods of OpenPod side by side along their row; the pods
+                // taken are spread evenly through the floor's list of them (a few desks to a work group, the groups over the
+                // whole floor -- taking the first `want` spots filled one row at one end of a 1250 m2 floor and left the rest
+                // bare). A pod spot Put refuses (a doorway, a window's zone, the stairs) is skipped, and if the spread pods come
+                // up short the rest are tried in order.
+                var pods = new List<List<(float X, float Z, float Yaw)>>();
+                foreach (var q in _room.Rects.OrderByDescending(q => (q.X1 - q.X0) * (q.Z1 - q.Z0)))
+                {
+                    if (Math.Min(q.X1 - q.X0, q.Z1 - q.Z0) < 2) continue;
+                    bool alongX = q.X1 - q.X0 >= q.Z1 - q.Z0;
+                    float a0 = (alongX ? q.X0 : q.Z0) * Cell + OpenMargin, a1 = (alongX ? q.X1 : q.Z1) * Cell - OpenMargin;
+                    float b0 = (alongX ? q.Z0 : q.X0) * Cell + OpenMargin, b1 = (alongX ? q.Z1 : q.X1) * Cell - OpenMargin;
+                    // the chairs' fronts toward +across: yaw 180 faces +Z, 270 faces +X
+                    float yaw = alongX ? 180f : 270f;
+                    for (float b = b0 - cs.Y0; b + d + ds.Y1 <= b1 + 1e-3f; b += deep + OpenAisle)
+                    {
+                        var row = new List<(float, float, float)>();
+                        for (float a = a0 + wide * 0.5f; a + wide * 0.5f <= a1 + 1e-3f; a += wide + OpenGap) row.Add(alongX ? (a, b, yaw) : (b, a, yaw));
+                        for (int i = 0; i < row.Count; i += OpenPod) pods.Add(row.GetRange(i, Math.Min(OpenPod, row.Count - i)));
+                    }
+                }
+                int nPods = Math.Min(pods.Count, (want + OpenPod - 1) / OpenPod);
+                var order = Enumerable.Range(0, nPods).Select(k => (int)((k + 0.5) * pods.Count / nPods))
+                                      .Concat(Enumerable.Range(0, pods.Count)).Distinct();
+                foreach (int p in order)
+                {
+                    if (have >= want) break;
+                    foreach (var (cx, cz, yaw) in pods[p])
+                    {
+                        if (have >= want) break;
+                        var (fx, fz) = FrontOf(yaw);
+                        var desk = Put("Table_Wood_2", new[] { (cx + fx * d, cz + fz * d, yaw) });
+                        if (desk == null) continue;
+                        if (Put("Chair_Wood_1", new[] { (cx, cz, yaw) }) == null) { Remove(desk); continue; }
+                        On(desk, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);
+                        On(desk, "Lamp_0", 0.55f, -0.45f, (yaw + 180f) % 360f);
+                        have++;
+                    }
+                }
+            }
+            /// <summary>An open office's rows: the walk between one row's chairs and the next row's desks, the gap between two desks of
+            /// a row, the floor kept clear along the walls, and the desks to a pod (a work group side by side in its row).</summary>
+            const float OpenAisle = 1.6f, OpenGap = 0.9f, OpenMargin = 1.0f;
+            const int OpenPod = 3;
 
             double DeskScore(float x, float z, float yaw)
             {
@@ -2117,9 +2340,47 @@ namespace UnturnedSim
                     foreach (var b in held.Select(c => c.Item2 - _j0).Where(b => b >= 0 && b < _nj).Distinct()) Recount(b);
                 }
                 _mustReach.Remove(m);
-                foreach (var top in _res.Furniture.Where(t => t.On == m).ToList()) _res.Furniture.Remove(top);
+                foreach (var top in Here().Where(t => t.On == m).ToList()) _res.Furniture.Remove(top);
                 _mine.Remove(m); _res.Furniture.Remove(m);
                 Recount(m.Footprint);
+            }
+
+            /// <summary>A basement's utility room: the washer and the dryer side by side against a wall, a hamper, a rack, and a
+            /// gas bottle and a drum in the corners. (The kit has no furnace or water heater.)</summary>
+            void Utility()
+            {
+                Laundry();
+                AlongWalls(new[] { "Shelf_3" }, 1, Side.Left);
+                foreach (var n in new[] { "Barrel_0", "Propane_0" })
+                    Put(n, Against(n, Side.Back).Where(p => Corner(n, p)), (x, z, yaw) => NearestDoor(x, z));
+            }
+
+            /// <summary>The washer against a wall away from the door, the dryer beside it, a hamper by them.</summary>
+            void Laundry()
+            {
+                var washer = Put("Washer_0", Against("Washer_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                double Beside(float x, float z) => washer == null ? 0 : -Math.Sqrt((x - washer.X) * (x - washer.X) + (z - washer.Z) * (z - washer.Z));
+                Put("Dryer_0", Against("Dryer_0", Side.Back), (x, z, yaw) => Beside(x, z));
+                Put("Laundry_Hamper_0", Against("Laundry_Hamper_0", Side.Back), (x, z, yaw) => Beside(x, z));
+            }
+
+            /// <summary>A basement's big room, bare or a store: racks along the walls (more in a store, with pallets of crates on
+            /// the floor), boxes, a crate and drums in the corners -- and a bare one's laundry, out in the open.</summary>
+            void Cellar()
+            {
+                bool store = _res.Basement == BasementStyle.Storage;
+                AlongWalls(new[] { "Shelf_0", "Shelf_3" }, store ? 4 : 2, Side.Left);
+                if (store)
+                    for (int k = 0; k < 2; k++)
+                    {
+                        var (cx, cz) = Centre();
+                        var pal = PutWithRoom("Pallet_Wood_0", 1.6f, cx, cz);
+                        if (pal == null) break;
+                        On(pal, "Crate_3", 0f, 0f, pal.Yaw);
+                    }
+                foreach (var n in new[] { "Crate_0", "Cardboard_0", "Barrel_0", "Barrel_0" })
+                    Put(n, Against(n, Side.Back).Where(p => Corner(n, p)), (x, z, yaw) => NearestDoor(x, z));
+                if (_res.BasementUtility == null) Laundry();
             }
 
             void Storage()
@@ -2162,12 +2423,109 @@ namespace UnturnedSim
                 Put("Barrel_0", Against("Barrel_0", Side.Back).Where(p => Corner("Barrel_0", p)));
             }
 
+            /// <summary>A shop floor, as its tenant's business has it (BuildingGenResult.BusinessOf): a shop's checkout, coolers and
+            /// gondolas (Shop) -- every single shop's, whose business is one of BuildingGen.Shops, as it always was -- and a strip's
+            /// own tenants' their own (strawberry, 2026-10-19): a laundromat's machines, a video store's racks, a liquor store's
+            /// coolers, an office's desks and waiting chairs; and in a strip a food place's front -- a pizzeria's, a diner's, a
+            /// cafe's -- a counter and tables.</summary>
+            void ShopFloor(Business b)
+            {
+                switch (b)
+                {
+                    case Business.Laundromat: Laundromat(); break;
+                    case Business.Video: VideoStore(); break;
+                    case Business.Liquor: LiquorStore(); break;
+                    case Business.Lawyer or Business.Accountant or Business.Office: OfficeFloor(b); break;
+                    case Business.Pizza: Takeout(); break;
+                    case Business.Diner or Business.Cafe when _res.Kind == BuildingKind.Strip: Takeout(); break;
+                    default: Shop(); break;
+                }
+            }
+
+            /// <summary>A food place's front: the counter by the street door, a drinks cooler, and tables (Restaurant).</summary>
+            void Takeout()
+            {
+                Till();
+                Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                Restaurant();
+            }
+
+            /// <summary>A laundromat (strawberry: "washers along one wall, dryers along the other, folding table"): the attendant's
+            /// counter by the door; the washers backed to one long wall and the dryers to the one across, each packed from one end
+            /// as far as the wall goes; a folding table down the middle; and a few chairs to wait in.</summary>
+            void Laundromat()
+            {
+                Till();
+                var r = _room.Rects.OrderByDescending(q => (q.X1 - q.X0) * (q.Z1 - q.Z0)).First();
+                bool longX = r.X1 - r.X0 >= r.Z1 - r.Z0;
+                // (a machine faces into the room off its wall: across the long axis, one way or the other)
+                foreach (var (name, sign) in new[] { ("Washer_0", 1), ("Dryer_0", -1) })
+                {
+                    bool Faces((float X, float Z, float Yaw) c) { var (fx, fz) = FrontOf(c.Yaw); return (longX ? fz : fx) * sign > 0.5f; }
+                    var line = Against(name, Side.Back).Where(Faces).ToList();
+                    for (int k = 0; k < LaundryMachines; k++)
+                        if (Put(name, line, (x, z, yaw) => -(longX ? x : z)) == null) break;
+                }
+                var (cx, cz) = Centre();
+                PutWithRoom("Table_Metal_0", 1.0f, cx, cz);
+                for (int k = 0; k < 3; k++) Put("Chair_Wood_1", Against("Chair_Wood_1", Side.Back), (x, z, yaw) => -NearestDoor(x, z));
+            }
+            /// <summary>The most washers, and dryers, a laundromat's wall takes.</summary>
+            const int LaundryMachines = 8;
+
+            /// <summary>A video store: the counter by the door, shelves of tapes round the walls and in rows down the floor
+            /// (bookcases, back to back). Not Shelf_3: that is the red steel GARAGE shelf (strawberry 2026-10-19: "the shelf
+            /// props u keep using are the red garage shelves lol") -- it belongs in garages, cellars, utility and stock rooms.</summary>
+            void VideoStore()
+            {
+                Till();
+                AlongWalls(new[] { "Shelf_2" }, 10);
+                Gondolas("Shelf_2");
+            }
+
+            /// <summary>A liquor store: the counter by the door, drink coolers along the walls -- as many as a back wall takes --
+            /// wine racks along the sides, gondolas down the middle.</summary>
+            void LiquorStore()
+            {
+                Till();
+                for (int k = 0; k < 6; k++) if (Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z)) == null) break;
+                AlongWalls(new[] { "Shelf_0" }, 4, Side.Left);   // the open rack, not the red garage shelf (VideoStore)
+                Gondolas();
+            }
+
+            /// <summary>Cheap office space -- a lawyer's, an accountant's, an office to let: a reception desk facing the street
+            /// door, chairs to wait in along the wall by it, desks with their chairs and screens (a lawyer's few, and his law
+            /// books; an accountant's more, and more filing cabinets).</summary>
+            void OfficeFloor(Business b)
+            {
+                Till(desk: true);
+                for (int k = 0; k < 4; k++) Put("Chair_Wood_1", Against("Chair_Wood_1", Side.Back), (x, z, yaw) => -NearestDoor(x, z));
+                // (a tower's banking hall, many times a strip's office: a desk to about every TowerDeskArea, up to TowerDesks)
+                int desks = b == Business.Lawyer ? 2 : 4;
+                if (_res.Kind == BuildingKind.Tower) desks = Math.Clamp((int)(_area / TowerDeskArea), desks, TowerDesks);
+                for (int k = 0; k < desks; k++) if (!Desk()) break;
+                AlongWalls(new[] { "Files_0" }, b == Business.Accountant ? 4 : 2);
+                if (b == Business.Lawyer) AlongWalls(new[] { "Shelf_2" }, 3);
+            }
+
             /// <summary>The checkout by the street door, the clerk's back to the room, a till on it; coolers along the
             /// back wall; gondolas in rows with aisles you can pass in.</summary>
             void Shop()
             {
-                var front = _res.Front;
+                Till();
+                for (int k = 0; k < 2; k++) Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                Gondolas();
+            }
+
+            /// <summary>The checkout by the room's own street door, facing it 2.5-6 m in, the till on it -- or, with `desk`, a
+            /// reception desk there (Table_Wood_2) with its chair behind it and a screen on it. Null where the room has no street
+            /// door or no spot takes it.</summary>
+            FurniturePlan Till(bool desk = false)
+            {
+                // (its own street door: a strip's every tenant has one, and the building's first is the end unit's)
+                var front = _res.Doors.FirstOrDefault(d => d.Role == DoorRole.Front && d.A == _room) ?? _res.Front;
                 var doors = Doors();
+                FurniturePlan co = null;
                 if (front != null && front.A == _room && doors.Count > 0)
                 {
                     var (fdx, fdz) = front.Middle;
@@ -2184,19 +2542,36 @@ namespace UnturnedSim
                                 if (((dcx - x) * fx + (dcz - z) * fz) / d < 0.6f) continue;
                                 cands.Add((x, z, yaw));
                             }
-                    var co = Put("Checkout_0", cands, (x, z, yaw) => -MathF.Abs(MathF.Sqrt((x - dcx) * (x - dcx) + (z - dcz) * (z - dcz)) - 3.5f));
-                    if (co != null) On(co, "Register_0", -0.5f, 0f, (co.Yaw + 180f) % 360f);
+                    double Score(float x, float z, float yaw) => -MathF.Abs(MathF.Sqrt((x - dcx) * (x - dcx) + (z - dcz) * (z - dcz)) - 3.5f);
+                    if (!desk)
+                    {
+                        co = Put("Checkout_0", cands, Score);
+                        if (co != null) On(co, "Register_0", -0.5f, 0f, (co.Yaw + 180f) % 360f);
+                    }
+                    else
+                        // the desk faces the door; its chair behind it, back to the room
+                        foreach (var (x, z, yaw) in Rank(cands, Score).Take(40))
+                        {
+                            var d = Put("Table_Wood_2", new[] { (x, z, yaw) });
+                            if (d == null) continue;
+                            var (fx, fz) = FrontOf(yaw);
+                            float back = FurnitureCatalog.Sizes["Table_Wood_2"].Y0 - 0.05f - FurnitureCatalog.Sizes["Chair_Wood_1"].Y1;
+                            if (Put("Chair_Wood_1", new[] { (x + fx * back, z + fz * back, yaw) }) == null) { Remove(d); continue; }
+                            On(d, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);   // its screen to the chair, as an office desk's
+                            co = d;
+                            break;
+                        }
                 }
-                for (int k = 0; k < 2; k++) Put("Cooler_0", Against("Cooler_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
-                Gondolas();
+                return co;
             }
 
             /// <summary>Gondolas in rows down the shop's length, every row starting from the same line and every gondola
             /// end to end with the next, two to a run before a cross aisle (strawberry: "store shelves should try to align
-            /// to other shelves"): aisles of 1.8 m between rows and a walk of 1.6 m round the room's edge.</summary>
-            void Gondolas()
+            /// to other shelves"): aisles of 1.8 m between rows and a walk of 1.6 m round the room's edge. (`shelf`: another
+            /// piece in the gondolas' place -- a video store's racks.)</summary>
+            void Gondolas(string shelf = "Shelf_1")
             {
-                var gs = FurnitureCatalog.Sizes["Shelf_1"];
+                var gs = FurnitureCatalog.Sizes[shelf];
                 float len = gs.X1 - gs.X0, deep = gs.Y1 - gs.Y0;
                 const float Aisle = 1.8f, Edge = 1.6f;
                 var r = _room.Rects.OrderByDescending(q => (q.X1 - q.X0) * (q.Z1 - q.Z0)).First();
@@ -2209,7 +2584,7 @@ namespace UnturnedSim
                     float a = a0 + Edge + len * 0.5f;
                     for (int k = 0; a + len * 0.5f <= a1 - Edge + 1e-3f; k++)
                     {
-                        Put("Shelf_1", new[] { longX ? (a, b, yaw) : (b, a, yaw) });
+                        Put(shelf, new[] { longX ? (a, b, yaw) : (b, a, yaw) });
                         a += len + (k % 2 == 1 ? Aisle : 0f);
                     }
                 }
@@ -2218,13 +2593,13 @@ namespace UnturnedSim
                 // their swings taking both rows that start from the edge and leaving the middle clear: there, fewer rows,
                 // centred across the shop -- one, down its middle, at the least.
                 int fit = (int)((b1 - b0 - 2 * Edge + Aisle) / (deep + Aisle));
-                for (int n = fit; n >= 1 && !_mine.Any(m => m.Name == "Shelf_1"); n--)
+                for (int n = fit; n >= 1 && !_mine.Any(m => m.Name == shelf); n--)
                 {
                     float span = n * deep + (n - 1) * Aisle, mid = (b0 + b1) * 0.5f;
                     for (int q = 0; q < n; q++) Row(mid - span * 0.5f + deep * 0.5f + q * (deep + Aisle));
                 }
                 // one with no partner in another row (its neighbours would not fit) is taken back out: the columns line up
-                var all = _mine.Where(m => m.Name == "Shelf_1").ToList();
+                var all = _mine.Where(m => m.Name == shelf).ToList();
                 float Along(FurniturePlan g) => longX ? g.X : g.Z; float Across(FurniturePlan g) => longX ? g.Z : g.X;
                 if (all.Select(Across).Distinct().Count() > 1)
                 {
@@ -2278,7 +2653,7 @@ namespace UnturnedSim
             /// counter, never on the last bare one: somewhere is left to work.</summary>
             void CounterTops()
             {
-                var tops = _mine.Where(m => m.Name == "Counter_0" && m.On == null && !_res.Furniture.Any(t => t.On == m)).ToList();
+                var tops = _mine.Where(m => m.Name == "Counter_0" && m.On == null && !Here().Any(t => t.On == m)).ToList();
                 // the one at the sink or stove is the cook's: the others first
                 tops = tops.OrderBy(c => _mine.Any(h => h.Name is "Counter_1" or "Oven_0" && Beside(c, h)) ? 1 : 0).ToList();
                 var small = new[] { "Microwave_0", _rng.Chance(50) ? "Coffee_0" : "Toaster_0" };
@@ -2312,8 +2687,8 @@ namespace UnturnedSim
             }
             /// <summary>A wall clock's 1 m face has its top this far under the ceiling over it (strawberry, round 12: "hang them
             /// much higher on the walls", then "bring clocks down slightly" from 0.15; the lead: top storeys as the rest), on
-            /// every storey: its middle 2.85 m up under a storey's 3.75 m ceiling (the floor above's slab), 3.35 under a top
-            /// storey's 4.25 m wall heads, lower where a pitched roof comes down nearer. It was 2.5 m, at a standing player's eye.</summary>
+            /// every storey: its middle 2.85 m up under a storey's 3.75 m ceiling (the floor above's slab, or a pitched roof's
+            /// ceiling), 3.35 under a flat roof on a top storey's 4.25 m wall heads. It was 2.5 m, at a standing player's eye.</summary>
             const float ClockUnderCeiling = 0.4f;
             /// <summary>The height the clock's clearance over what stands under it is judged at (Clock): where it hung before.</summary>
             const float ClockClearedAt = 2.5f;

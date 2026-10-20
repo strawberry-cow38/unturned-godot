@@ -134,6 +134,9 @@ namespace UnturnedGodot
             foreach (var n in GetTree().GetNodesInGroup(Group))
             {
                 if (n is not Node3D l || !GodotObject.IsInstanceValid(l) || !l.IsInsideTree()) continue;
+                // a HIDDEN light draws nothing -- a basement out of sight (BuildingCull) -- so a slot spent on it is a shadow
+                // taken from a lamp you can see
+                if (!l.IsVisibleInTree()) continue;
                 if (l is Light3D lit && lit.LightEnergy <= 0.001f) continue;   // an unlit lamp casting a shadow is pure waste
                 var d = l.GlobalPosition.DistanceTo(from);
                 if (d > MaxShadowDistance) continue;

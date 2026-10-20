@@ -92,7 +92,7 @@ namespace UnturnedGodot
             _editing = target?.Id; _draft = target?.Style.Copy() ?? new TextPropStyle(); _open = true; _placing = false;
             // Suspend competing tools without throwing away an unfinished spline/path.
             if (_suspendedTools.Count == 0)
-                foreach (var tool in new Node3D[] { _editor.PowerLinesEd, _editor.FenceRoadEd, _editor.RailEd, _editor.BridgeEd, _editor.TunnelEd, _editor.BlockRoadEd })
+                foreach (var tool in new Node3D[] { _editor.PowerLinesEd, _editor.FenceRoadEd, _editor.FenceSplineEd, _editor.RailEd, _editor.BridgeEd, _editor.TunnelEd, _editor.BlockRoadEd })
                     if (IsInstanceValid(tool)) { _suspendedTools.Add((tool,tool.IsProcessing(),tool.IsProcessingUnhandledInput(),tool.Visible)); tool.SetProcess(false); tool.SetProcessUnhandledInput(false); tool.Visible = false; }
             _previewView.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
             _sync = true; _text.Text = _draft.Text; _height.Value = _draft.Height; _width.Value = _draft.WidthScale*100; _depth.Value = _draft.Depth;

@@ -343,12 +343,20 @@ namespace UnturnedSim
                 return best;
             }
             // the least compromise that fits: the seed's own depth and stairs, then rooms compact, then compound stairs and no
-            // landing column -- off a plot, the seed's own and nothing else
+            // landing column -- off a plot, the seed's own and nothing else. And a street door asked for on the south or the
+            // north is a compromise past all of those: flats either side of the corridor with no lobby beside the stairs, and
+            // none of the south row left over for an alcove, have no shared space on the south wall (the stairwell is all
+            // flight, which no door opens onto) and none on the north, so the front door can only go in an end wall of the
+            // corridor (cow tools, 2026-10-15: "can't put the front door on the FrontSide"; every block on a 12x9 plot that
+            // rolled compact 1 went that way, though compact 2 with a lobby fitted). Such a plan is taken where it is the only
+            // one that fits the plot; and where none fits, any with a street door, however much more over, comes first --
+            // the plot is lost either way, the street door need not be.
+            bool streetEnds = (spec.FrontSide & (Sides.North | Sides.South)) != 0 && (spec.FrontSide & (Sides.East | Sides.West)) == 0;
             FlatPlan plan = null;
             (bool Single, int DS, int DN) depth = depths[0];
             bool compound = multi && compoundRoll, landing = true;
             int compactUsed = 0, plans = 0;
-            double planMiss = double.MaxValue;
+            double planMiss = double.MaxValue, rawMiss = double.MaxValue, planRaw = 0;
             foreach (var dp in depths)
                 foreach (int compact in fit ? new[] { 0, 1, 2, 3 } : new[] { 0 })
                     foreach (var (cmp, land) in fit ? new[] { (multi && compoundRoll, true), (multi, true), (multi, false) } : new[] { (multi && compoundRoll, true) })
@@ -358,8 +366,10 @@ namespace UnturnedSim
                         plans++;
                         if (p == null) continue;
                         int D0 = dp.DS + 1 + dp.DN;
-                        double m = p.Miss + 1e6 * Math.Max(0, D0 - capD);
-                        if (m < planMiss) { planMiss = m; plan = p; depth = dp; compound = cmp; landing = land; compactUsed = compact; }
+                        double raw = p.Miss + 1e6 * Math.Max(0, D0 - capD), m = raw;
+                        if (streetEnds && !land && !dp.Single && p.PadS == 0) m += m < 1e5 ? 5e5 : 1e9;
+                        rawMiss = Math.Min(rawMiss, raw);
+                        if (m < planMiss) { planMiss = m; planRaw = raw; plan = p; depth = dp; compound = cmp; landing = land; compactUsed = compact; }
                         if (m < 1e5) goto chosen;   // fits (any padding is the plan's own business)
                     }
             chosen:
@@ -391,7 +401,8 @@ namespace UnturnedSim
                 if (multi && compound && !compoundRoll) gave.Add("compound stairs");
                 if (!landing) gave.Add(multi ? "no landing beside the stairs" : "no lobby");
                 if (single && !singleRoll) gave.Add("flats one side of the corridor");
-                if (W > capW || D > capD) res.Notes.Add($"could not fit the {spec.Width}x{spec.Depth} plot: {W}x{D} is the closest of {plans} plans");
+                if (W > capW || D > capD) res.Notes.Add($"could not fit the {spec.Width}x{spec.Depth} plot: {W}x{D} is the closest of {plans} plans"
+                                                        + (planRaw > rawMiss ? " with the front door on its street (a closer one had no lobby, and its door only in an end wall)" : ""));
                 else res.Notes.Add($"fitted the {spec.Width}x{spec.Depth} plot as {W}x{D}" + (gave.Count > 0 ? ": " + string.Join(", ", gave) : ""));
             }
             if (wantW > 0 && W != wantW) res.Notes.Add($"{W} cells long, not the {wantW} asked for: its flats need it");
@@ -530,7 +541,8 @@ namespace UnturnedSim
                     ok = connect(g, rs, 0, null, doors, bay, frontAsked, ref turn);
                     if (!ok && frontAsked != Sides.None)
                     {
-                        res.Notes.Add($"no layout put the front door on the {spec.FrontSide} side: it went where it could");
+                        res.Notes.Add($"no layout put the front door on the {spec.FrontSide} side: it went where it could"
+                                      + (!landing && !single ? $" (no block with a lobby beside its stairs fits the {spec.Width}x{spec.Depth} plot, and without one only the corridor's end walls reach outside)" : ""));
                         frontAsked = Sides.None; turn = false; doors.Clear();
                         ok = connect(g, rs, 0, null, doors, bay, frontAsked, ref turn);
                     }
@@ -564,6 +576,8 @@ namespace UnturnedSim
                     d.Wide = rng.Chance(WideDoorway) && !new[] { d.A, d.B }.Any(r => r.Kind == RoomKind.Kitchen && r.Cells < 12);
                 }
             res.NoWindowSides = turn ? Turned(spec.NoWindows) : spec.NoWindows;
+            // a basement, as a house's (its stair room off the shared space, never out of a flat)
+            PlanBasement(res, spec, grids);
             // walls, furniture -- no porch unless one was asked for (a canopy over the lobby door, then), and no chimney --
             // and inside a flat, now and then its living room open to its kitchen or its vestibule (OpenPlan: never the
             // corridor, never a party wall)
@@ -575,6 +589,9 @@ namespace UnturnedSim
                 int at = res.Notes.FindLastIndex(n => n.StartsWith("fitted the"));
                 if (at >= 0) res.Notes[at] += $", but short of {string.Join(", ", miss.Select(x => x.What).Distinct())}";
             }
+            SettleShared(res);   // (which of two surfaces sharing a plane is drawn there, as BuildingGen's: see there)
+            RailStairs(res);
+            GuardStairs(res);
             if (turn) TurnHalf(res);
             return res;
         }

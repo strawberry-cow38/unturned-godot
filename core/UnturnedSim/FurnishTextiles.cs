@@ -75,19 +75,16 @@ namespace UnturnedSim
             /// <summary>Why the last window got no curtain, for FurnishTrace.</summary>
             string _curtainWhy;
 
-            /// <summary>The ceiling a fixture meets over a point of this room's floor: the floor above's underside; the flat
-            /// roof's, sitting on the wall heads; under a pitched roof the lower of the wall heads and the roof's underside --
-            /// RoofTopAt is the plane, and a surface is built Slab thick about its plane (WallSurface: +-Thickness/2 along its
-            /// normal), so half of it, measured along the slope, down. (The wall heads, because a top storey has no ceiling
-            /// under a pitched roof: the roof over the middle of a house stands 6 m up, and "flush to the ceiling" there hung
-            /// the counters over the kitchen out of reach -- out of the render's cutaway, which is how it was seen.)</summary>
+            /// <summary>The ceiling a fixture meets over a point of this room's floor: the floor above's underside, and under a
+            /// pitched roof the ceiling's, which is laid the same (BuildWalls); the flat roof's, sitting on the wall heads.
+            /// (Before a top storey had a ceiling it was the lower of the wall heads and the roof's underside: the roof over
+            /// the middle of a house stands 6 m up, and "flush to the ceiling" there hung the counters over the kitchen out
+            /// of reach.)</summary>
             float CeilingOver(float x, float z)
             {
                 int f = _room.Floor;
-                if (f < _res.Floors - 1) return (f + 1) * Storey - Slab;
-                if (_res.Roof == RoofKind.Flat) return (f + 1) * Storey;
-                float h = RoofTopAt(_res, x, z);
-                return float.IsNaN(h) ? (f + 1) * Storey : MathF.Min((f + 1) * Storey, h - Slab * 0.5f / MathF.Cos(_res.RoofPitch * MathF.PI / 180f));
+                if (f < _res.Floors - 1 || _res.Roof != RoofKind.Flat) return (f + 1) * Storey - Slab;
+                return (f + 1) * Storey;
             }
 
             /// <summary>The curtain for one window, or null where none fits. Its rail over the window's head (CurtainOverHead
@@ -168,7 +165,7 @@ namespace UnturnedSim
                     if (d1 <= 0.005f || d0 >= depth + CurtainClear || a1 <= u0 - reach || a0 >= u1 + reach) return;
                     obs.Add((a0, a1, h0, h1, what, stands));
                 }
-                foreach (var m in _res.Furniture.Where(m => m.Floor == _room.Floor))
+                foreach (var m in Here().Where(m => m.Floor == _room.Floor))
                 {
                     var sz = FurnitureCatalog.Sizes[m.Name];
                     float y = m.Y - floorY;
@@ -299,7 +296,7 @@ namespace UnturnedSim
                 foreach (var (i, j) in _p.Cells(Grow(r, RugWallGap)))
                     if (!InRoom(i, j) || _p.State[i, j] == FloorPlan.Wall || _p.State[i, j] == FloorPlan.Stair) return false;
                 if (_p.StairRects.Concat(_p.TileRects).Concat(_p.LeafRects).Any(q => Overlaps(r, q))) return false;
-                return !_res.Furniture.Any(o => o.Floor == _room.Floor && !o.Mounted && !o.Ceiling && o.On == null && !under.Contains(o) && Overlaps(r, o.Footprint));
+                return !Here().Any(o => o.Floor == _room.Floor && !o.Mounted && !o.Ceiling && o.On == null && !under.Contains(o) && Overlaps(r, o.Footprint));
             }
         }
     }

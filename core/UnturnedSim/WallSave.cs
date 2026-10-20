@@ -15,7 +15,10 @@ namespace UnturnedSim
     // Stairs is a LABEL, like every other kind -- Rebuild() never reads Kind. A flight is emitted as one
     // flat tread surface per step by AddStairs; the kind is what lets the panel, the bake and a future
     // "delete the whole flight" tell those treads from an ordinary floor.
-    public enum SurfaceKind { Wall, Floor, Roof, Foundation, Stairs }
+    // Railing: a guard -- posts and a top rail, RailHeight tall, along its run -- round a stairwell or a landing's open edge
+    // (BuildingGen.GuardStairs). Saved by NAME like every kind, so it goes on the end; an older reader that does not know
+    // it loads it as a thin wall, which is the building with a low wall where its railing was, not a lost building.
+    public enum SurfaceKind { Wall, Floor, Roof, Foundation, Stairs, Railing }
 
     public sealed class WallPlan
     {
@@ -37,6 +40,15 @@ namespace UnturnedSim
         public float InsetL0, InsetL1, InsetR0, InsetR1;
         /// <summary>Palette + texel for the BACK face, -1 for "same as the front".</summary>
         public int MaterialBack = -1, TexelBack = -1;
+        /// <summary>A stair tread drawn as a STEP (WallSurface.StepRise): the rise of one step, 0 for a flat plate (a landing,
+        /// or a tread saved before steps had bodies). Stairs only.</summary>
+        public float StepRise;
+        /// <summary>Which sides of a stair tread carry a handrail: 1 its start edge (U = 0), 2 its far edge (U = Length).</summary>
+        public int Rails;
+        /// <summary>A generated surface's own palette, by NAME (content/wall_palettes.tsv), where it is not its building's: a strip
+        /// mall's tenant's floor (BuildingGenResult.PaletteOf). Null for the building's -- every other surface. The plan's
+        /// input only: the editor and the runtime builder resolve it to the surface's Material as they lay it.</summary>
+        public string Palette;
         public readonly List<WallOpening> Openings = new();
     }
 
@@ -66,7 +78,7 @@ namespace UnturnedSim
         {
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
-            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
+            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack] [stepRise rails]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>] [swing <start|end> <front|back>] [action <double|pocket>]\n");
             sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc|Apartment (the volume is DERIVED from the walls)\n");
             sb.Append("# room <kind> <x> <z> [floor] [hvac <n> (<floor|wall> <id> <x> <y> <z> <yawDeg>) x n] -- a designation ANCHORED at a point inside the room it labels; hvac: its vents\n");
@@ -121,8 +133,11 @@ namespace UnturnedSim
                       .Append(' ').Append(F(w.InsetL0)).Append(' ').Append(F(w.InsetL1))
                       .Append(' ').Append(F(w.InsetR0)).Append(' ').Append(F(w.InsetR1))
                       .Append(' ').Append(w.MaterialBack.ToString(CultureInfo.InvariantCulture))
-                      .Append(' ').Append(w.TexelBack.ToString(CultureInfo.InvariantCulture))
-                      .Append('\n');
+                      .Append(' ').Append(w.TexelBack.ToString(CultureInfo.InvariantCulture));
+                    // a stair tread's step: written only when there is one, so every other surface saves the line it always did
+                    if (w.StepRise > 0f || w.Rails != 0)
+                        sb.Append(' ').Append(F(w.StepRise)).Append(' ').Append(w.Rails.ToString(CultureInfo.InvariantCulture));
+                    sb.Append('\n');
                     foreach (var o in w.Openings)
                     {
                         sb.Append("  open ").Append(F(o.U)).Append(' ').Append(F(o.V)).Append(' ')
@@ -360,6 +375,8 @@ namespace UnturnedSim
                     if (p.Length < 19 || !int.TryParse(p[17], out w.MaterialBack)
                         || !int.TryParse(p[18], out w.TexelBack))
                     { w.MaterialBack = -1; w.TexelBack = -1; }
+                    if (p.Length < 21 || !N(p[19], out w.StepRise) || !int.TryParse(p[20], out w.Rails))
+                    { w.StepRise = 0f; w.Rails = 0; }
                     outp.Add(w);
                     cur = w;
                 }

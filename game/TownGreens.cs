@@ -1054,7 +1054,8 @@ namespace UnturnedGodot
                 h = Mix(h + 0x9E3779B97F4A7C15UL);
                 var at = t; at.Y = terr != null ? terr.SampleHeight(t.X, t.Z) : t.Y;
                 string tree = ParkTrees[(int)(h % (ulong)ParkTrees.Length)];
-                Put(tree, at, new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * scale * (0.85f + 0.3f * Unit(h, 32))));
+                float ts = scale * (0.85f + 0.3f * Unit(h, 32));
+                Put(tree, SeatedTree(at, ts), new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * ts));     // let into the ground as the world's trees are
             }
             // the bushes: Y-up meshes, like the trees (retail's resource bushes stand at ~0 about X)
             foreach (var (bq, prop, scale) in Bushes)

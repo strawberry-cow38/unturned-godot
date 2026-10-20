@@ -58,6 +58,19 @@ namespace UnturnedGodot
         /// parking lines"): where two rows meet nose to nose, a raised island this wide runs between their heads, from the
         /// cross road to the back kerb -- the lot's own pavement, kerbed both sides, a rounded nose at the road.</summary>
         public float LotDividerWidth = 1.5f;
+        /// <summary>⭐ GRASS MEDIANS (strawberry 2026-10-15: "parking lots should get grassy medians as options"): the share of lots
+        /// planted -- their dividers islands of turf in their kerb, a tree between each pair of lamps, and their kerb's sides and
+        /// back turfed with trees down them (most lots have one aisle and no divider at all) -- rather than paved. Decided per
+        /// lot, from where it is; UG_TOWNLOTMEDIANS=grass|paved makes it every lot.</summary>
+        public float LotGrassShare = 0.5f;
+        public string LotMedianForce = System.Environment.GetEnvironmentVariable("UG_TOWNLOTMEDIANS");
+        /// <summary>The kerb left round a grass island's turf.</summary>
+        public float LotGrassKerb = 0.22f, LotEdgeTreeSpacing = 9f;
+        public int GrassyLots, LotTrees;
+        public bool LotGrassy(ParkingLot lot) => lot?.Lot != null
+            && (LotMedianForce == "grass" || (LotMedianForce != "paved"
+                && Unit(Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)Mathf.RoundToInt(lot.Lot.Centre.X * 4f)
+                                                           ^ ((ulong)(uint)Mathf.RoundToInt(lot.Lot.Centre.Z * 4f) << 24) ^ 0x6A55107UL)), 0) < LotGrassShare));
         /// <summary>⭐ A LOT FILLS THE ROOM IT HAS (strawberry 2026-10-14: "parking lots should try fill the space they reserved
         /// (within reason)"): once the town's plots have taken their yards, each lot stretches over what is left beside and
         /// behind it -- at most this far a side and this far back -- is laid again for the most stalls that holds, and keeps
@@ -1080,6 +1093,8 @@ namespace UnturnedGodot
                 }
             var ground = new SurfaceTool(); ground.Begin(Mesh.PrimitiveType.Triangles);
             var paint = new SurfaceTool(); paint.Begin(Mesh.PrimitiveType.Triangles);
+            var turf = new SurfaceTool(); turf.Begin(Mesh.PrimitiveType.Triangles);      // grass medians (LotGrassy)
+            GrassyLots = 0;
             void Tri(SurfaceTool st, Vector3 a, Vector3 b, Vector3 c, Vector2? uv)
             {
                 bool keep = (c - a).Cross(b - a).Y >= 0f;
@@ -1206,6 +1221,11 @@ namespace UnturnedGodot
                     marks.Sort((u, v) => u.s.CompareTo(v.s));
                     var pts = new List<Vector3>(); var outs = new List<Vector3>(); var widths = new List<float>();
                     var kerbsAt = new List<float>(); var surf = new List<float>();
+                    // a grassy lot (LotGrassy) turfs its kerb's sides and back -- not its front, the street's pavement -- leaving a kerb
+                    // LotGrassKerb wide at the asphalt and a hand's width at the back: each point's turf, inner and outer, or null
+                    bool grassy = LotGrassy(lot);
+                    var turfIn = new List<Vector3?>(); var turfOut = new List<Vector3?>();
+                    Vector3 Off(Vector2 o) => p.Along * o.X - p.Facing * o.Y;
                     for (int k = 0; k + 1 < marks.Count; k++)
                     {
                         int n = Mathf.Max(1, Mathf.CeilToInt((marks[k + 1].s - marks[k].s) / 2f));
@@ -1228,16 +1248,26 @@ namespace UnturnedGodot
                                 var back = legOut[prev] * (legW[prev] + gp) + legOut[corner] * (legW[corner] + gc);
                                 pts.Add(w); outs.Add(Out3(back)); widths.Add(back.Length());
                                 kerbsAt.Add(kerbH); surf.Add(Top(gp >= gc ? tp : tc));
+                                bool turfHere = grassy && corner >= 2;           // the back corners: both their legs are turfed
+                                turfIn.Add(turfHere ? w + Off((legOut[prev] + legOut[corner]) * LotGrassKerb) + Vector3.Up * (kerbH + 0.04f) : null);
+                                turfOut.Add(turfHere ? w + Off(legOut[prev] * (legW[prev] + gp - 0.1f) + legOut[corner] * (legW[corner] + gc - 0.1f))
+                                                         + Vector3.Up * (Top(gp >= gc ? tp : tc) + 0.04f) : null);
                                 continue;
                             }
                             var (g, tg) = Merge(leg);
                             pts.Add(w); outs.Add(Out3(legOut[leg])); widths.Add(legW[leg] + g);
                             kerbsAt.Add(kerbH); surf.Add(Top(tg));
+                            bool turfLeg = grassy && leg != 0 && legW[leg] + g > LotGrassKerb + 0.6f;
+                            turfIn.Add(turfLeg ? w + Off(legOut[leg] * LotGrassKerb) + Vector3.Up * (kerbH + 0.04f) : null);
+                            turfOut.Add(turfLeg ? w + Off(legOut[leg] * (legW[leg] + g - 0.1f)) + Vector3.Up * (Top(tg) + 0.04f) : null);
                         }
                     }
                     if (pts.Count < 2) continue;
                     var mi = EditorSidewalk.BuildRibbon(pts, outs, LotKerbWidth, kerbH, 0.6f, $"Parking_Kerb_{made}_{kerbs}", groundFn, kerbsAt, widths, surf);
                     if (mi != null) Keep(mi);
+                    for (int k = 0; k + 1 < turfIn.Count; k++)
+                        if (turfIn[k] is { } i0 && turfOut[k] is { } o0 && turfIn[k + 1] is { } i1 && turfOut[k + 1] is { } o1)
+                        { Tri(turf, i0, i1, o1, Vector2.Zero); Tri(turf, i0, o1, o0, Vector2.Zero); }
                 }
                 // ⭐ AND ROUND INTO EACH WAY, CURVED (strawberry 2026-10-14: "add a curve for the sidewalk going into the parking
                 // lot"): a quarter disc of pavement fanned onto its centre, from the way's kerb round onto the lot's kerb line,
@@ -1289,6 +1319,37 @@ namespace UnturnedGodot
                     for (int k = 0; k <= ns; k++) { float y = Mathf.Lerp(ny, dy1, (float)k / ns); Add(dx1, y, cx, y); }
                     var mi = EditorSidewalk.BuildRibbon(pts, outs, rr, kerbH, 0.6f, $"Parking_Divider_{made}_{kerbs}", groundFn, kerbsAt, widths, surf);
                     if (mi != null) Keep(mi);
+                    // ...and on a grassy lot, turf over it inside a kerb LotGrassKerb wide: down its length from the nose's centre to
+                    // the back kerb, and the nose's half disc -- at the island's top (its middle line's), a few cm proud
+                    if (!LotGrassy(lot)) continue;
+                    float gr = rr - LotGrassKerb;
+                    if (gr < 0.2f) continue;
+                    Vector3 G(float x, float y)
+                    {
+                        var c = At(cx, y); var w = At(x, y);
+                        return new Vector3(w.X, LotSurfaceY(lot, c.X, c.Z, Ground(c.X, c.Z)) + kerbH + 0.04f, w.Z);
+                    }
+                    float gy1 = dy1 - LotGrassKerb;
+                    int gs = Mathf.Max(1, Mathf.CeilToInt((gy1 - ny) / 2f));
+                    for (int k = 0; k < gs; k++)
+                    {
+                        float ya = Mathf.Lerp(ny, gy1, (float)k / gs), yb = Mathf.Lerp(ny, gy1, (float)(k + 1) / gs);
+                        Tri(turf, G(cx - gr, ya), G(cx + gr, ya), G(cx + gr, yb), Vector2.Zero);
+                        Tri(turf, G(cx - gr, ya), G(cx + gr, yb), G(cx - gr, yb), Vector2.Zero);
+                    }
+                    int gn = Mathf.Max(6, Mathf.CeilToInt(180f / ArcFacetDegrees));
+                    for (int k = 0; k < gn; k++)
+                    {
+                        float a0 = Mathf.Pi * k / gn, a1 = Mathf.Pi * (k + 1) / gn;
+                        Tri(turf, G(cx, ny), G(cx - gr * Mathf.Cos(a0), ny - gr * Mathf.Sin(a0)), G(cx - gr * Mathf.Cos(a1), ny - gr * Mathf.Sin(a1)), Vector2.Zero);
+                    }
+                }
+                if (LotGrassy(lot))
+                {
+                    GrassyLots++;
+                    // (the renders' lg camera: the lot's middle -- a lot with dividers first, it shows both kinds of turf)
+                    var mid = At((xL + xR) * 0.5f, (yF + yB) * 0.5f);
+                    OfferShot(lot.Dividers.Count > 0 ? "lgd" : "lgp", mid, -p.Facing.Normalized(), p.Along.Normalized());
                 }
             }
             var gm = ground.Commit();
@@ -1311,10 +1372,16 @@ namespace UnturnedGodot
                 parent.AddChild(mi);
                 made++;
             }
+            var tm = turf.Commit();
+            if (tm != null && tm.GetSurfaceCount() > 0)
+            {
+                parent.AddChild(new MeshInstance3D { Name = "Parking_Lots_Grass", Mesh = tm, MaterialOverride = GroundGrassMaterial() });
+                made++;
+            }
             int lanes = 0; foreach (var lot in ParkingLotsLaid) foreach (var e in lot.Entrances) if (e.Lane != null && e.Lane.Road >= 0) lanes++;
             if (FillSlivers) Log.Print($"[towngrid] slivers: lots' kerbs carried across to the pavement beyond at {SliverPoints} points, the widest gap {SliverWidest:0.00} m (at most {SliverMax:0.0})"
                                      + (SliverPoints > 0 ? $"; the first at ({SliverFirst.X:0.0},{SliverFirst.Z:0.0}), the widest at ({SliverWidestAt.X:0.0},{SliverWidestAt.Z:0.0})" : ""));
-            Log.Print($"[towngrid] parking lots built: {ParkingLotsLaid.Count} lots, {kerbs} kerb runs round them, {lanes} ways in built as lanes; "
+            Log.Print($"[towngrid] parking lots built: {ParkingLotsLaid.Count} lots ({GrassyLots} with grass medians), {kerbs} kerb runs round them, {lanes} ways in built as lanes; "
                     + $"{MouthsNearCorner} kept off a junction's corner ({ParkingWaysNearCorner} lots had to open their only one there)");
             return made + kerbs;
         }
@@ -1429,6 +1496,7 @@ namespace UnturnedGodot
                     if (node == null) continue;
                     into?.Add(node); blocks++;
                 }
+            var lotLamps = new List<Vector3>();       // the lamps' feet, which the grass medians' trees keep clear of
             if (StreetLights)
                 foreach (var lot in ParkingLotsLaid)
                 {
@@ -1479,13 +1547,136 @@ namespace UnturnedGodot
                         var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
                         var node = objs.Place(StreetLightProp, at, basis);
                         if (node == null) continue;
-                        into?.Add(node); lamps++;
+                        into?.Add(node); lamps++; lotLamps.Add(at);
                     }
                 }
-            if (blocks + lamps > 0) Log.Print($"[towngrid] parking lot props: {lamps} street lights, {blocks} blocks in {ParkingLotsLaid.Count} lots");
-            return blocks + lamps;
+            // the grass medians' trees (LotGrassy): one between each pair of a divider's lamps -- where it has one lamp, one
+            // towards each end -- in the turf on its middle line
+            LotTrees = 0;
+            foreach (var lot in ParkingLotsLaid)
+            {
+                if (!LotGrassy(lot)) continue;
+                var p = lot.Lot;
+                Vector3 At(float x, float y) => p.Front + p.Along * x - p.Facing * y;
+                foreach (var (dx0, dy0, dx1, dy1) in lot.Dividers)
+                {
+                    // (Spots' own span and count, so a tree falls exactly between two of its lamps)
+                    float cx = (dx0 + dx1) * 0.5f, a = dy0 + (dx1 - dx0) * 0.5f + 1f, b = dy1 - 1f, len = b - a;
+                    if (len < 4f) continue;
+                    int n = Mathf.Max(1, Mathf.RoundToInt(len / LotLampSpacing));
+                    var ys = new List<float>();
+                    if (n > 1) for (int k = 1; k < n; k++) ys.Add(a + k * len / n);
+                    else if (len >= 10f) { ys.Add(a + len * 0.15f); ys.Add(a + len * 0.85f); }
+                    foreach (float y in ys)
+                    {
+                        var at = At(cx, y);
+                        at.Y = LotSurfaceY(lot, at.X, at.Z, Ground(at.X, at.Z)) + _lotKerbH + 0.04f;
+                        ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)Mathf.RoundToInt(at.X * 8f) ^ ((ulong)(uint)Mathf.RoundToInt(at.Z * 8f) << 24) ^ 0x1077EEUL));
+                        string tree = MedianTrees[(int)(Unit(h, 0) * MedianTrees.Length) % MedianTrees.Length];
+                        var node = objs.Place(tree, SeatedTree(at, PlanterTreeScale), new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * PlanterTreeScale));
+                        if (node == null) continue;
+                        into?.Add(node); LotTrees++;
+                    }
+                }
+                // ...and down its turfed sides and back (BuildParkingLots), about LotEdgeTreeSpacing apart on the turf's middle line,
+                // clear of its corners, its ways in and its lamps
+                var (xL, xR) = InnerX(p, lot.For);
+                float yF = LotKerbWidth, yB = p.Depth - LotKerbWidth;
+                var legA = new[] { new Vector2(xL, yF), new Vector2(xR, yF), new Vector2(xR, yB), new Vector2(xL, yB) };
+                var legB = new[] { new Vector2(xR, yF), new Vector2(xR, yB), new Vector2(xL, yB), new Vector2(xL, yF) };
+                var legOut = new[] { new Vector2(0f, -1f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(-1f, 0f) };
+                var legW = new[] { 0f, SideKerb(p, lot.For, 1), LotKerbWidth, SideKerb(p, lot.For, -1) };
+                for (int leg = 1; leg < 4; leg++)
+                {
+                    float w = legW[leg] - 0.1f;
+                    if (w < LotGrassKerb + 1f) continue;                  // too narrow for a trunk
+                    var dir = legB[leg] - legA[leg]; float len = dir.Length(); if (len < 6f) continue;
+                    dir /= len;
+                    int n = Mathf.Max(1, Mathf.FloorToInt((len - 5f) / LotEdgeTreeSpacing) + 1);
+                    for (int k = 0; k < n; k++)
+                    {
+                        float s = n > 1 ? Mathf.Lerp(2.5f, len - 2.5f, (float)k / (n - 1)) : len * 0.5f;
+                        var q = legA[leg] + dir * s + legOut[leg] * ((LotGrassKerb + w) * 0.5f);
+                        bool open = false;
+                        foreach (var e in lot.Entrances)
+                        {
+                            if (e.Lane == null || e.Lane.Road < 0 || e.Edge != leg) continue;
+                            var r = e.Mouth - p.Front; var m = new Vector2(r.Dot(p.Along), -r.Dot(p.Facing));
+                            if ((m - q).Length() < ParkingEntranceHalf + 4f) open = true;
+                        }
+                        if (open) continue;
+                        var at = At(q.X, q.Y);
+                        bool lit = false; foreach (var l in lotLamps) if (Flat(l, at) < 3f) { lit = true; break; }
+                        if (lit) continue;
+                        at.Y = LotSurfaceY(lot, at.X, at.Z, Ground(at.X, at.Z)) + _lotKerbH + 0.04f;
+                        ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)Mathf.RoundToInt(at.X * 8f) ^ ((ulong)(uint)Mathf.RoundToInt(at.Z * 8f) << 24) ^ 0xED6E7EUL));
+                        string tree = MedianTrees[(int)(Unit(h, 0) * MedianTrees.Length) % MedianTrees.Length];
+                        var node = objs.Place(tree, SeatedTree(at, PlanterTreeScale), new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * PlanterTreeScale));
+                        if (node == null) continue;
+                        into?.Add(node); LotTrees++;
+                    }
+                }
+            }
+            if (blocks + lamps + LotTrees > 0) Log.Print($"[towngrid] parking lot props: {lamps} street lights, {blocks} blocks, {LotTrees} trees on grass medians in {ParkingLotsLaid.Count} lots");
+            return blocks + lamps + LotTrees;
         }
         /// <summary>The lots' kerbs' height over their asphalt, as BuildParkingLots built them.</summary>
         float _lotKerbH = 0.18f;
+
+        /// <summary>How close a lamp, hydrant, signal or sign may stand to a parking meter. ⚠ 2 m, not the 1.2 it was: a meter
+        /// 1.33 m off a lamp's pole passed, and next to a 7 m pole that is ON it as far as anyone looking is concerned.</summary>
+        public static float MeterClear = float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNMETERCLEAR"),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float mc) ? mc : 2f;
+        /// <summary>What the last ClearMeterClashes found and took down.</summary>
+        public int MetersCleared;
+
+        /// <summary>⭐ NOTHING STANDS ON A METER (strawberry 2026-10-15: "prevent street lights or hydrants being placed on top of
+        /// parking meters" -- then "meters should override lamp posts, by shoving the lamppost away"). PlaceLights now puts the
+        /// meters down first and shoves its street lamps clear of them, and keeps its hydrants off the bays altogether; this is
+        /// for what comes AFTER it. A lamp within MeterClear of a meter -- a parking lot's own -- is shoved straight away from it
+        /// to MeterClear; a signal mast or a stop sign is traffic control and stays, and the meter gives way to it instead (the
+        /// space keeps its paint). UG_TOWNMETERCLASH=1 only counts: the control. Returns the meters taken down.</summary>
+        public int ClearMeterClashes(EditorObjects objs)
+        {
+            MetersCleared = 0;
+            if (objs == null) return 0;
+            var standing = new List<(Node3D node, string what)>();
+            foreach (var what in new[] { StreetLightProp, HydrantProp, TrafficLightProp, StopSignProp })
+                foreach (var n in objs.PlacedOfNodes(what)) standing.Add((n, what));
+            var drop = new List<Node3D>();
+            var by = new Dictionary<string, int>();
+            var nearest = new List<string>();
+            int moved = 0;
+            bool control = System.Environment.GetEnvironmentVariable("UG_TOWNMETERCLASH") == "1";
+            foreach (var m in objs.PlacedOfNodes(ParkingMeterProp))
+            {
+                var mp = m.GlobalPosition;
+                float nd = float.MaxValue; string nw = "";
+                foreach (var (q, what) in standing) { float dq = Flat(q.GlobalPosition, mp); if (dq < nd) { nd = dq; nw = what; } }
+                if (nd < 4f) nearest.Add($"{nd:0.00} m {nw} at ({mp.X:0.0},{mp.Z:0.0})");
+                foreach (var (q, what) in standing)
+                {
+                    var qp = q.GlobalPosition;
+                    float dq = Flat(qp, mp);
+                    if (dq >= MeterClear) continue;
+                    by[what] = (by.TryGetValue(what, out int c) ? c : 0) + 1;
+                    if (control) continue;
+                    if (what == StreetLightProp)
+                    {
+                        var away = new Vector3(qp.X - mp.X, 0f, qp.Z - mp.Z);
+                        away = away.LengthSquared() < 1e-6f ? Vector3.Right : away.Normalized();
+                        q.GlobalPosition = new Vector3(mp.X, qp.Y, mp.Z) + away * (MeterClear + 0.05f);
+                        moved++;
+                    }
+                    else if (!drop.Contains(m)) drop.Add(m);
+                }
+            }
+            if (drop.Count > 0) objs.RemovePlaced(drop);
+            MetersCleared = drop.Count;
+            Log.Print($"[towngrid] meters: {(by.Count == 0 ? "nothing stood" : string.Join(", ", System.Linq.Enumerable.Select(by, kv => $"{kv.Value} x {kv.Key}")) + " stood")} "
+                    + $"within {MeterClear:0.#} m of one{(control ? " -- LEFT (control)" : $" -- {moved} lamp(s) shoved off, {drop.Count} meter(s) gave way to a signal or sign")}");
+            if (nearest.Count > 0) Log.Print($"[towngrid] meters within 4 m of something standing: {string.Join("; ", nearest)}");
+            return MetersCleared;
+        }
     }
 }

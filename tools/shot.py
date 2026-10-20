@@ -164,6 +164,14 @@ SCENES = {
     # scripted player is in the jeep by 1.7 s). Cheap: a plane and some particles, ~1 min rather than 22.
     "throwables":(["--throwtest", "--shot={OUT}"], {"UG_SHOTTIME": "4.8"}, False, 400,
                   "thrown smoke (red/green/white) + two lit flares, ~1.8s after the fuse"),
+    # The culling probe (game/CullProbe.cs): a generated town, one building, five camera stops in and round it, the renderer's
+    # own counters under each culling feature switched off in turn. Its pictures land beside {OUT} as cull_<stop>_<config>.png
+    # and the numbers in the log ([cullprobe]). EXTENT=metres sizes the town (smaller builds faster); UG_CULLSTOPS=a,b picks
+    # stops, UG_TOWNBASEMENTS=1 gives the town basements. Hundreds of frames on a software rasteriser: an hour is normal.
+    "cull":      (["--editor", "--shot={OUT}"],
+                  {"UG_NEWMAP": "1", "UG_TOWNGRID": "1", "UG_TOWNBUILDINGS": "all", "UG_TOWNCLOSE": "cull", "UG_TOWNPROBES": "0",
+                   "UG_TOWNEXTENT": os.environ.get("EXTENT", "150")}, False, 7200,
+                  "culling probe: a generated town's counters at five stops, each culling feature switched off in turn"),
     "walls":     (["--walls", "--shot={OUT}"], {}, False, 200, "building tool: a drawn room with openings"),
     "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
     "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),

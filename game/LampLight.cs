@@ -20,7 +20,7 @@ namespace UnturnedGodot
     // ex=270 but not all (one Lamp_1 is ex=295.019 -- tinyclaw), so a hardcoded axis would hang that light in the air.
     public partial class LampLight : GridLight
     {
-        public enum Kind { Generic, CeilingStrip, FloorShade, DeskBulb, CeilingBulb }
+        public enum Kind { Generic, CeilingStrip, FloorShade, DeskBulb, CeilingBulb, CeilingShade }
 
         // ONE source of truth for prop-name -> kind + which kinds are player-toggleable, so WorldBuilder and
         // --lamptest can't drift into disagreeing (tinyclaw: keep the prop list next to the kind table, not as a
@@ -34,6 +34,12 @@ namespace UnturnedGodot
             // is OFF, not as a black lump. Sharing the kind would have meant changing Light_0's diffuser to
             // fix a bulb, which is a regression to an approved asset for an unrelated reason.
             "Ceiling_Bulb_0" or "Ceiling_Shade_Cone_0" or "Ceiling_Shade_Dome_0" => Kind.CeilingBulb,
+            // A GENERATED ROOM'S CEILING LIGHT (astraclaw's, approved 2026-10-12): Lamp_1's shade hung from the ceiling, its
+            // origin the ceiling plane. Its own kind, not Generic -- Generic is the ABSENCE of a fixture, which is why the
+            // editor's own placer (SmartProps) never lit one and only the building stage's private branch did. The whole
+            // fixture glows as Generic's does (the stage's approved look); the light hangs just under the diffuser, where
+            // the handoff's ceiling_lamp_mounts.json puts it, not inside the closed shade a shadow would bottle it in.
+            "Ceiling_Lamp_Pendant_0" or "Ceiling_Lamp_Flush_0" => Kind.CeilingShade,
             "Lamp_1"               => Kind.FloorShade,
             "Lamp_0"               => Kind.DeskBulb,
             _                      => Kind.Generic,
@@ -82,6 +88,12 @@ namespace UnturnedGodot
         public static bool CeilingSpot;                // UG_LAMP_CEILSPOT=1: ceiling strip as a downward cone instead of an omni.
                                                        // DEFAULT OFF -- measured, and the trade does not pay. See MakeLight.
 
+        /// <summary>Past this far from the camera the light fades out over FadeLength and is then not drawn at all -- the
+        /// engine's own light LOD (Light3D.DistanceFade). 0, the default, keeps a lamp lit at any distance as every lamp
+        /// has always been; a generated town sets it (BuildingRuntime.LampFadeBegin), because it hangs a thousand of them.
+        /// Read once, when the light is built.</summary>
+        public float FadeBegin, FadeLength = 10f;
+
         Kind _kind = Kind.Generic;
         public Kind LampKind => _kind;         // so WorldBuilder can gate the look-meta on IsToggle without re-deriving from the name
         Light3D _light;                        // Spot for CeilingStrip (1 shadow face), Omni for the rest (6) -- see MakeLight
@@ -117,6 +129,7 @@ namespace UnturnedGodot
             float scale = _kind == Kind.DeskBulb ? 0.5f : 1f;   // master: desk lamp at half intensity
             _omniEnergy = Energy * _worn * scale;
             _light = MakeLight(_kind, _omniEnergy);
+            if (FadeBegin > 0f) { _light.DistanceFadeEnabled = true; _light.DistanceFadeBegin = FadeBegin; _light.DistanceFadeLength = FadeLength; }
             if (DebugForceShadow) _light.ShadowEnabled = true;   // harness only: the budget is absent in a bare scene
             _light.AddToGroup(LightShadowBudget.Group);   // opt in to the shadow budget; it decides when this one casts
 
@@ -189,7 +202,10 @@ namespace UnturnedGodot
                 }
             }
 
-            if (_kind == Kind.FloorShade)   // the shade wraps its own bulb -- see SelfShadowLayer
+            // the shade wraps its own bulb -- see SelfShadowLayer. A generated room's ceiling shade is the same shade hung upside
+            // down (Lamp_1's), and the shadow budget picking one put the ceiling over it in its own shadow: a lit room under a
+            // black ceiling, where the stage's unshadowed lamps had always lit it
+            if (_kind == Kind.FloorShade || _kind == Kind.CeilingShade)
             {
                 _light.ShadowCasterMask &= ~SelfShadowLayer;
                 // MOVE the body onto that layer, do not add it. The mask is an OR test -- a caster is drawn into the
@@ -217,6 +233,7 @@ namespace UnturnedGodot
                 {
                     LightColor = BulbColor, OmniRange = Range, LightEnergy = _omniEnergy * CeilingFillFraction,
                     ShadowEnabled = false, Position = _light.Position,
+                    DistanceFadeEnabled = _light.DistanceFadeEnabled, DistanceFadeBegin = _light.DistanceFadeBegin, DistanceFadeLength = _light.DistanceFadeLength,
                 };
                 AddChild(_fill);   // deliberately NOT in LightShadowBudget.Group
             }
@@ -327,6 +344,12 @@ namespace UnturnedGodot
 
         // Where the point light sits, in this node's local space (LampLight is TopLevel at the fixture centre). Always
         // off the fixture's real GlobalTransform, so the ex=295 outlier lands correctly.
+        //
+        // ⚠ Every case works out a WORLD point and ToLocal turns it into this node's frame. It used to subtract GlobalPosition,
+        // which is the same thing only while this node's basis is the identity -- true of a TopLevel lamp (the world loader's,
+        // a deployable's) and false of every lamp SmartProps hangs on an editor prop's root, which carries the prop's stand-up
+        // (Basis(X, 270)) and yaw: there a world offset UP to a floor lamp's shade was read in the stood-up frame, and came out
+        // pointing horizontally -- the light beside the lamp, not in its shade.
         Vector3 ComputeLightLocal()
         {
             if (_fixture == null || !IsInstanceValid(_fixture)) return Vector3.Zero;
@@ -338,8 +361,11 @@ namespace UnturnedGodot
                 case Kind.CeilingStrip:
                 {
                     float bottomY = WorldBottomY(fA, xf) - 0.9f;   // FLOATING well below the prop (master 2026-08-09: "a lil bit lower" then "lower still")
-                    return new Vector3(fCenterW.X, bottomY, fCenterW.Z) - GlobalPosition;
+                    return ToLocal(new Vector3(fCenterW.X, bottomY, fCenterW.Z));
                 }
+                case Kind.CeilingShade:
+                    // 1 cm under the diffuser (ceiling_lamp_mounts.json's suggested_light_origin): out of the closed shade
+                    return ToLocal(new Vector3(fCenterW.X, WorldBottomY(fA, xf) - 0.01f, fCenterW.Z));
                 case Kind.CeilingBulb:
                 {
                     // AT THE BULB, not 0.9 m under the fixture like the strip. A pendant's light source is the
@@ -353,13 +379,13 @@ namespace UnturnedGodot
                     // through every switch on Kind, not just the one it was added for.
                     var em = _emissive?.Mesh as ArrayMesh;
                     Vector3 bulbW = em != null ? xf * em.GetAabb().GetCenter() : fCenterW;
-                    return bulbW - GlobalPosition;
+                    return ToLocal(bulbW);
                 }
                 case Kind.FloorShade:
                 {
                     var em = _emissive?.Mesh as ArrayMesh;
                     Vector3 shadeW = em != null ? xf * em.GetAabb().GetCenter() : fCenterW;
-                    return shadeW - GlobalPosition;                                   // centre of the shade
+                    return ToLocal(shadeW);                                           // centre of the shade
                 }
                 case Kind.DeskBulb:
                 {
@@ -367,11 +393,14 @@ namespace UnturnedGodot
                     if (em == null) return Vector3.Zero;
                     Vector3 bulbW = xf * em.GetAabb().GetCenter();                    // bulb-face centre (world)
                     Vector3 nrmW = (xf.Basis * AverageNormal(em)).Normalized();       // the face normal (world): down + forward
-                    return (bulbW + nrmW * 0.18f) - GlobalPosition;                   // just IN FRONT of the face, along its normal (tinyclaw)
+                    return ToLocal(bulbW + nrmW * 0.18f);                             // just IN FRONT of the face, along its normal (tinyclaw)
                 }
                 default: return Vector3.Zero;                                         // fixture centre
             }
         }
+
+        /// <summary>A world point in this node's own frame (see ComputeLightLocal's warning).</summary>
+        Vector3 ToLocal(Vector3 world) => GlobalTransform.AffineInverse() * world;
 
         /// <summary>Where the ceiling decal sits: directly over the fixture, at the TOP of its own bounds. For a
         /// flush strip that IS the ceiling plane, so the projection box straddles the slab without this class ever
@@ -382,7 +411,7 @@ namespace UnturnedGodot
             var xf = _fixture.GlobalTransform;
             var fA = _fixture.GetAabb();
             Vector3 c = xf * fA.GetCenter();
-            return new Vector3(c.X, WorldTopY(fA, xf), c.Z) - GlobalPosition;
+            return ToLocal(new Vector3(c.X, WorldTopY(fA, xf), c.Z));
         }
 
         /// <summary>A soft radial falloff, built once and shared. Procedural so no art asset has to exist for a

@@ -32,6 +32,7 @@ namespace UnturnedGodot
         public EditorBridgeSpline BridgeEd;                // Shift+B: tile the cut bridge deck along a road spline, piers where it falls away
         public EditorTunnelSpline TunnelEd;                // Shift+U: bore the tunnel along a road spline, portals at both ends
         public EditorBlockRoad BlockRoadEd;                // Shift+K: tile the concrete jersey barrier along a spline
+        public EditorFenceSpline FenceSplineEd;            // Shift+J: a fence of any style solved along a clicked path
         public RoadField Roads;                           // the road graph, so a placed prop can ask what it is standing over
         public PowerLineField PowerLines;                 // the wires themselves (saved/loaded with the map)
         public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, LEGACY paving mode -- Shift+R)
@@ -75,6 +76,11 @@ namespace UnturnedGodot
         public double SecondsSinceSave { get; private set; }
         public const double AutosaveEvery = 120.0;         // 2 min of unsaved work is the most this can cost you
         public string LastSaveLabel { get; private set; } = "not saved yet";
+        /// <summary>Set: this map is never written -- Save only says so, with this as the reason. A generated town (the menu's
+        /// Generate Town): its seed rebuilds the whole of it, and a save could not -- the roads and props would go to disk but
+        /// the buildings, pavements and parking lots the town builds round them are not editor things, so the map would come
+        /// back off the list as a town with nothing standing in it.</summary>
+        public string NotSaved;
         double _autosaveTimer;
 
         /// <summary>Mark the session as having unsaved changes. Called from PushUndo so every reversible action
@@ -161,6 +167,12 @@ namespace UnturnedGodot
         // wired per-phase as the sub-editors land; Phase 1 has nothing persistent yet.
         public void Save(bool autosave = false)   // source Editor.save() -> fans out to the sub-editors
         {
+            if (NotSaved != null)
+            {
+                IsDirty = false; SecondsSinceSave = 0.0; LastSaveLabel = NotSaved;
+                if (!autosave) Log.Print($"[editor] not saving '{MapName}': {NotSaved}");
+                return;
+            }
             int n = Objects?.Save() ?? 0;
             int s = Spawns?.Save() ?? 0;
             int e = Environment?.Save() ?? 0;

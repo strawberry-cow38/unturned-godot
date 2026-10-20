@@ -109,22 +109,7 @@ namespace UnturnedGodot
         /// AABB: a WallSurface is a Node3D, and its mesh child's bounds would miss the openings partition and
         /// go stale mid-drag. Local box is X 0..Length, Y 0..Height, Z +/-Thickness/2 -- the same frame
         /// Rebuild generates in.</summary>
-        static Aabb SurfaceAabb(WallSurface w)
-        {
-            float t = w.Thickness * 0.5f;
-            var xf = w.GlobalTransform;
-            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
-            var hi = new Vector3(float.MinValue, float.MinValue, float.MinValue);
-            for (int i = 0; i < 8; i++)
-            {
-                var c = xf * new Vector3((i & 1) == 0 ? 0f : w.Length,
-                                         (i & 2) == 0 ? 0f : w.Height,
-                                         (i & 4) == 0 ? -t : t);
-                lo = new Vector3(Mathf.Min(lo.X, c.X), Mathf.Min(lo.Y, c.Y), Mathf.Min(lo.Z, c.Z));
-                hi = new Vector3(Mathf.Max(hi.X, c.X), Mathf.Max(hi.Y, c.Y), Mathf.Max(hi.Z, c.Z));
-            }
-            return new Aabb(lo, hi - lo);
-        }
+        static Aabb SurfaceAabb(WallSurface w) => BuildingRuntime.SurfaceAabb(w);
 
         /// <summary>Does this box already contain something? Used to warn, NOT to refuse -- strawberry chose
         /// "warn red", and refusing would fight you every time you deliberately run a partition into a wall.
@@ -844,25 +829,12 @@ namespace UnturnedGodot
                               float pitchDeg = 0f, SurfaceKind kind = SurfaceKind.Wall, float gableRise = 0f,
                               int texel = -1, float insetL0 = 0f, float insetL1 = 0f,
                               float insetR0 = 0f, float insetR1 = 0f,
-                              int materialBack = -1, int texelBack = -1)
+                              int materialBack = -1, int texelBack = -1, float stepRise = 0f, int rails = 0)
         {
-            // NO SNAPPING HERE. This is the path Load() and ImportRetail() come through, and rounding a
-            // length on the way in makes loading lossy: an imported wall measured off the mesh to the
-            // centimetre was being rounded to the nearest 3 m -- up to 1.5 m per wall -- so imported buildings
-            // mis-met at their corners and openings recovered against the true length fell off the shortened
-            // end, where the partition clamps them away silently. It also meant Load() was not the inverse of
-            // Save(). Snapping is a DRAWING aid and now lives in AddWall.
-            var w = new WallSurface
-            {
-                Length = Mathf.Max(0.01f, length), Height = height, Thickness = thickness, MaterialId = material, Kind = kind,
-                GableRise = gableRise, Texel = texel,
-                InsetL0 = insetL0, InsetL1 = insetL1, InsetR0 = insetR0, InsetR1 = insetR1,
-                MaterialIdBack = materialBack, TexelBack = texelBack,
-                Position = origin, RotationDegrees = new Vector3(pitchDeg, yawDeg, 0f),
-            };
-            AddChild(w);
-            if (openings != null) { w.Openings.AddRange(openings); w.Rebuild(); }
-            _walls.Add(w);
+            // NO SNAPPING HERE (Load() and ImportRetail() come through this; a length rounded on the way in made loading lossy --
+            // see BuildingRuntime.NewWall). The surface itself is the shared runtime builder's; the pick map is the stage's.
+            var w = BuildingRuntime.NewWall(this, _walls, origin, yawDeg, length, thickness, material, openings, height, pitchDeg, kind,
+                                            gableRise, texel, insetL0, insetL1, insetR0, insetR1, materialBack, texelBack, stepRise, rails);
             _pickToWall[w.BodyRid] = w;
             return w;
         }
@@ -888,6 +860,7 @@ namespace UnturnedGodot
             int texel = w.Texel, texelBack = w.TexelBack;
             int matBack = w.MaterialIdBack;
             float iL0 = w.InsetL0, iL1 = w.InsetL1, iR0 = w.InsetR0, iR1 = w.InsetR1;
+            float stepRise = w.StepRise; int rails = w.Rails;
             RemoveWall(w);
             _editor?.PushUndo("wall delete", () =>
             {
@@ -895,6 +868,7 @@ namespace UnturnedGodot
                 if (nw == null) return;
                 nw.Texel = texel; nw.TexelBack = texelBack; nw.MaterialIdBack = matBack;
                 nw.InsetL0 = iL0; nw.InsetL1 = iL1; nw.InsetR0 = iR0; nw.InsetR1 = iR1;
+                nw.StepRise = stepRise; nw.Rails = rails;
                 nw.Rebuild();
             });
         }
@@ -1774,7 +1748,7 @@ namespace UnturnedGodot
                 made.Add(SpawnWall(new Vector3(pl.X, pl.Y + dy, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                                    pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise,
                                    pl.Texel, pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1,
-                                   pl.MaterialBack, pl.TexelBack));
+                                   pl.MaterialBack, pl.TexelBack, pl.StepRise, pl.Rails));
             _editor?.PushUndo("paste floor", () => { foreach (var w in made) RemoveWall(w); });
             return made.Count;
         }
@@ -1816,7 +1790,7 @@ namespace UnturnedGodot
                 Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
                 Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
                 InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
-                MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
+                MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack, StepRise = w.StepRise, Rails = w.Rails,
                 Thickness = w.Thickness, Material = w.MaterialId,
             };
             pl.Openings.AddRange(w.Openings);
@@ -1839,7 +1813,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
                           pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack, pl.StepRise, pl.Rails);
             _selWall = null; _selOpening = -1;
             PositionHandles();
         }
@@ -2080,15 +2054,9 @@ namespace UnturnedGodot
             // A ground plane you can pick against, on the world layer, because GroundAt raycasts layer 0 and
             // with the map hidden there would otherwise be nothing under the cursor at all.
             var body = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0 };
-            body.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            // WorldBoundaryShape3D's plane is in the BODY's space, so parenting it under the offset stage puts
-            // the pick plane at the stage height and not at world y=0.
-            // Big enough that its edge is off-screen at working distances -- otherwise the map, 2 km below,
-            // shows past the rim and the "blank stage" has scenery in it.
-            var floor = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(900f, 900f) } };
-            floor.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.28f, 0.26f), Roughness = 1f };
-            body.AddChild(floor);
+            _stageGround = body;
             _stage.AddChild(body);
+            SetStageHoles(System.Array.Empty<Rect2>());
 
             // Lattice lines at the same 3m pitch walls snap to, so the snapping is something you can SEE
             // rather than something you infer from where the wall lands.
@@ -2109,6 +2077,62 @@ namespace UnturnedGodot
             };
             _stage.AddChild(grid);
             PositionGrid();   // the stage can be built while a storey is already selected
+        }
+
+        StaticBody3D _stageGround;
+        System.Collections.Generic.IReadOnlyList<Rect2> _stageHoles = System.Array.Empty<Rect2>();
+        const float StageHalf = 450f;
+
+        /// <summary>The stage's ground: a plane you can pick against, on the world layer, because GroundAt raycasts layer 0 and
+        /// with the map hidden there would otherwise be nothing under the cursor at all -- open over `holes` (stage-local plan
+        /// rectangles): a generated building's basement and its hatch's well, which the ground hid from a camera and closed
+        /// to a player (BuildingGenResult.Dig). With none, the one plane it always was.
+        /// Big enough that its edge is off-screen at working distances -- otherwise the map, 2 km below, shows past the rim
+        /// and the "blank stage" has scenery in it.</summary>
+        public void SetStageHoles(System.Collections.Generic.IReadOnlyList<Rect2> holes)
+        {
+            _stageHoles = holes;
+            if (_stageGround == null) return;
+            foreach (var c in _stageGround.GetChildren()) { _stageGround.RemoveChild(c); c.QueueFree(); }
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.28f, 0.26f), Roughness = 1f };
+            if (holes.Count == 0)
+            {
+                // WorldBoundaryShape3D's plane is in the BODY's space, so parenting it under the offset stage puts the pick
+                // plane at the stage height and not at world y=0
+                _stageGround.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+                _stageGround.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(2 * StageHalf, 2 * StageHalf) }, MaterialOverride = mat });
+                return;
+            }
+            // the plane cut along every hole's edges into rectangles, those under no hole kept: each a quad to see and a
+            // slab to stand on (a boundary plane has no holes)
+            var xs = new System.Collections.Generic.SortedSet<float> { -StageHalf, StageHalf };
+            var zs = new System.Collections.Generic.SortedSet<float> { -StageHalf, StageHalf };
+            foreach (var h in holes) { xs.Add(h.Position.X); xs.Add(h.End.X); zs.Add(h.Position.Y); zs.Add(h.End.Y); }
+            var xl = new List<float>(xs); var zl = new List<float>(zs);
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Triangles);
+            const float Deep = 1f;
+            for (int i = 0; i + 1 < xl.Count; i++)
+                for (int j = 0; j + 1 < zl.Count; j++)
+                {
+                    float x0 = xl[i], x1 = xl[i + 1], z0 = zl[j], z1 = zl[j + 1];
+                    var mid = new Vector2((x0 + x1) * 0.5f, (z0 + z1) * 0.5f);
+                    bool open = false;
+                    foreach (var h in holes) if (h.HasPoint(mid)) { open = true; break; }
+                    if (open || x1 - x0 < 1e-4f || z1 - z0 < 1e-4f) continue;
+                    foreach (var (x, z) in new[] { (x0, z0), (x1, z0), (x1, z1), (x0, z0), (x1, z1), (x0, z1) })
+                    {
+                        st.SetNormal(Vector3.Up);
+                        st.AddVertex(new Vector3(x, 0f, z));
+                    }
+                    _stageGround.AddChild(new CollisionShape3D
+                    {
+                        Shape = new BoxShape3D { Size = new Vector3(x1 - x0, Deep, z1 - z0) },
+                        Position = new Vector3(mid.X, -Deep * 0.5f, mid.Y),
+                    });
+                }
+            mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+            _stageGround.AddChild(new MeshInstance3D { Mesh = st.Commit(), MaterialOverride = mat });
         }
 
         // ---- persistence -------------------------------------------------------------------------------
@@ -2156,7 +2180,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
                           pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack, pl.StepRise, pl.Rails);
             Log.Print($"[editor-buildings] loaded {plans.Count} walls");
             return plans.Count;
         }
@@ -2329,87 +2353,12 @@ namespace UnturnedGodot
         /// LIMITATION: reaching the centreline fills the junction because the neighbour's own body covers
         /// the rest. At the 15-degree yaw snap's sharper angles a true mitre would need more, so a sliver of
         /// notch can survive on a very acute corner.</summary>
-        public List<(WallSurface W, float Len, Vector3 Pos)> SolveCorners()
-        {
-            const float MaxGrow = 1.6f;        // a wall thickness and a bit; past that it is not a junction
-            var undo = new List<(WallSurface, float, Vector3)>();
-            // Foundations solve too: a foundation is a wall, so it has the same missing quarter at every
-            // corner, and being underground is exactly why nobody would notice.
-            var walls = new List<WallSurface>();
-            foreach (var w in _walls)
-                if (IsInstanceValid(w) && (w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation)) walls.Add(w);
-
-            var growStart = new float[walls.Count];
-            var growEnd = new float[walls.Count];
-            for (int i = 0; i < walls.Count; i++)
-            {
-                var a = walls[i];
-                var a0 = a.UVToWorld(0f, 0f);
-                var ad = new Vector3(a.UVToWorld(a.Length, 0f).X - a0.X, 0f, a.UVToWorld(a.Length, 0f).Z - a0.Z);
-                if (ad.LengthSquared() < 1e-6f) continue;
-                ad = ad.Normalized();
-
-                for (int j = 0; j < walls.Count; j++)
-                {
-                    if (i == j) continue;
-                    var b = walls[j];
-                    // parallel walls are a seam, not a corner -- extending them just overlaps two walls
-                    float dy = Mathf.Abs(Mathf.Wrap(a.RotationDegrees.Y - b.RotationDegrees.Y, -90f, 90f));
-                    if (dy < 20f) continue;
-                    // and they must be the same storey, or a foundation solves against the wall above it
-                    if (Mathf.Abs(a.Position.Y - b.Position.Y) > 0.6f) continue;
-
-                    if (!CrossOnPlan(a0, ad, b.UVToWorld(0f, 0f), b.UVToWorld(b.Length, 0f), out float t, out float s2))
-                        continue;
-                    if (s2 < -0.02f || s2 > 1.02f) continue;          // the crossing is off the end of b
-
-                    // How far PAST the crossing to run, and the two junctions want different answers.
-                    //
-                    // At a CORNER -- the crossing is at one of b's own ends -- stopping on b's centreline
-                    // leaves the outer quarter square uncovered by either wall. That square IS the notch,
-                    // so run on to b's far face. At a TEE the crossing is mid-span of b, b's own body
-                    // already fills everything past it, and running to the far face would poke out the
-                    // other side of the wall you just joined.
-                    bool atEndOfB = s2 < 0.08f || s2 > 0.92f;
-                    float target = t + (atEndOfB ? b.Thickness * 0.5f : 0f);
-
-                    // target is ABSOLUTE, so an end already past it grows by nothing and the pass stays
-                    // idempotent -- that is what makes it safe to run over an import.
-                    if (target < 0f && target >= -MaxGrow) growStart[i] = Mathf.Max(growStart[i], -target);
-                    else if (target > a.Length && target <= a.Length + MaxGrow)
-                        growEnd[i] = Mathf.Max(growEnd[i], target - a.Length);
-                }
-            }
-
-            for (int i = 0; i < walls.Count; i++)
-            {
-                if (growStart[i] <= 1e-4f && growEnd[i] <= 1e-4f) continue;
-                var w = walls[i];
-                undo.Add((w, w.Length, w.Position));
-                var dir = (w.UVToWorld(1f, 0f) - w.UVToWorld(0f, 0f)).Normalized();
-                w.Position -= dir * growStart[i];
-                w.Length += growStart[i] + growEnd[i];
-                w.Rebuild();
-            }
-            return undo;
-        }
+        public List<(WallSurface W, float Len, Vector3 Pos)> SolveCorners() => BuildingRuntime.SolveCorners(_walls);
 
         /// <summary>Where the ray (from, dir) crosses the segment b0..b1, in PLAN. `t` is distance along the
         /// ray, `s` the 0..1 parameter along the segment.</summary>
         static bool CrossOnPlan(Vector3 from, Vector3 dir, Vector3 b0, Vector3 b1, out float t, out float s)
-        {
-            t = s = 0f;
-            var p = new Vector2(from.X, from.Z);
-            var d = new Vector2(dir.X, dir.Z);
-            var q = new Vector2(b0.X, b0.Z);
-            var e = new Vector2(b1.X, b1.Z) - q;
-            float den = d.X * e.Y - d.Y * e.X;
-            if (Mathf.Abs(den) < 1e-6f) return false;          // parallel in plan
-            var r = q - p;
-            t = (r.X * e.Y - r.Y * e.X) / den;
-            s = (r.X * d.Y - r.Y * d.X) / den;
-            return true;
-        }
+            => BuildingRuntime.CrossOnPlan(from, dir, b0, b1, out t, out s);
 
         public void RestoreCorners(List<(WallSurface W, float Len, Vector3 Pos)> undo)
         {
@@ -2648,7 +2597,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y + GroundClearance, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack, pl.StepRise, pl.Rails);
             // Corner solving runs on imports again, now that it is safe to.
             //
             // The first attempt at this grew a 0.30 m pilaster on every corner, because the old rule added a
@@ -2712,9 +2661,9 @@ namespace UnturnedGodot
         /// modify tools do not see it yet. The outside walls come corner-solved, and
         /// SolveCorners is run anyway as a check: it must find nothing, because it lengthens a wall from its origin
         /// without moving its openings, and every window on a solved wall would slide off its room.</summary>
-        /// <summary>The furniture on the stage: the data (saved as `prop` lines) and, rebuilt from it, a preview mesh per
-        /// piece -- a look, not yet a placed prop: placing through EditorObjects would put it in the MAP at the stage's
-        /// height, and the map's save would keep it there.</summary>
+        /// <summary>The furniture on the stage: the data (saved as `prop` lines) and, rebuilt from it, each piece as the editor's
+        /// placer builds it (EditorObjects.BuildProp, through BuildingRuntime.Furnish: collider, container, smart props) -- but
+        /// not PLACED: a placement would put it in the MAP at the stage's height, and the map's save would keep it there.</summary>
         public readonly List<PropDesignation> Furniture = new();
         readonly List<Node3D> _furnitureNodes = new();
 
@@ -2745,118 +2694,16 @@ namespace UnturnedGodot
             foreach (var n in _furnitureNodes) if (IsInstanceValid(n)) n.QueueFree();
             _furnitureNodes.Clear();
             _switches.Clear(); _ceilingLights.Clear(); _outlets.Clear();
-            var objects = _editor?.Objects;
-            // the switches and outlets by their place among the electrical props (ElectricalFixture.Id), the ceiling lights by
-            // theirs among the ceiling lights (RoomElectrical.Lights) -- a slot kept for one that built nothing, so the ids hold
-            var electrical = new List<Node3D>();
-            foreach (var m in Furniture)
-            {
-                bool lamp = m.Name != null && m.Name.StartsWith("Ceiling_Lamp"), plate = m.Name is "Light_Switch_0" or "Power_Outlet_0";
-                if (m.Name == "Light_Switch_0")
-                {
-                    var sw = BuildSwitch(m, objects);
-                    electrical.Add(sw);
-                    if (sw != null) { _switches.Add(sw); _furnitureNodes.Add(sw); }
-                    continue;
-                }
-                // a curtain, a rug: built from the inputs it was saved with -- no OBJ, so no object catalog either
-                if (m.Gen != null)
-                {
-                    var built = RuntimeDecorNode(m);
-                    if (built == null) continue;
-                    AddChild(built);
-                    built.GlobalTransform = RuntimeDecorTransform(m);
-                    _furnitureNodes.Add(built);
-                    continue;
-                }
-                var mesh = objects?.PreviewMesh(m.Name);
-                if (mesh == null)
-                {
-                    if (lamp) _ceilingLights.Add(null);
-                    if (plate) electrical.Add(null);
-                    // a kit doodad with no art of its own (the mug pair) is nothing but its stock children
-                    if (DoodadKitView.Has(m.Name))
-                    {
-                        var holder = new Node3D { Name = "Furniture_" + m.Name };
-                        AddChild(holder);
-                        holder.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
-                        DoodadKitView.Attach(holder, m.Name);
-                        _furnitureNodes.Add(holder);
-                    }
-                    continue;
-                }
-                var mi = new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, MaterialOverride = objects.PreviewMaterial(m.Name) };
-                AddChild(mi);
-                mi.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
-                DoodadKitView.Attach(mi, m.Name);   // a kit doodad's stock children (the knives in the block), in its native frame
-                _furnitureNodes.Add(mi);
-                if (lamp)
-                {
-                    // a ceiling lamp lights the room (LampLight: mains-fed, its manual switch the room's wall switch); the whole
-                    // fixture glows when lit -- these two have no separate lens in their palette
-                    var light = LampLight.Make(mi.GlobalTransform * mesh.GetAabb().GetCenter(), mi, LampLight.Kind.Generic);
-                    AddChild(light);
-                    _ceilingLights.Add(light);
-                    _furnitureNodes.Add(light);
-                }
-                else if (plate)
-                {
-                    var src = BuildOutlet(m, mi, mesh);
-                    electrical.Add(src);
-                    if (src != null) { _outlets.Add(src); _furnitureNodes.Add(src); }
-                }
-            }
-            // each room's switch to its record, and to the ceiling lights the record names: the record holds the state
-            foreach (var d in Designations)
-            {
-                var e = d.Electrical;
-                if (e == null) continue;
-                var sws = new List<(RoomLightSwitch Sw, int Index)>();
-                for (int i = 0; i < e.Switches.Count; i++)
-                {
-                    var f = e.Switches[i];
-                    if (f.Id >= 0 && f.Id < electrical.Count && electrical[f.Id] is RoomLightSwitch sw) sws.Add((sw, i));
-                }
-                var lamps = new List<LampLight>();
-                foreach (int k in e.Lights) if (k >= 0 && k < _ceilingLights.Count && _ceilingLights[k] != null) lamps.Add(_ceilingLights[k]);
-                var all = new List<RoomLightSwitch>(); foreach (var q in sws) all.Add(q.Sw);
-                foreach (var (sw, i) in sws) sw.Bind(e, i, lamps, all);
-            }
+            // the town's path, which is the editor placer's (BuildingRuntime.Furnish): colliders, containers, smart props, the
+            // rooms' switches wired to their ceiling lights and the outlets on the mains. The stage's lamps never fade (0).
+            var f = BuildingRuntime.Furnish(this, IsInsideTree() ? GlobalTransform.AffineInverse() : Transform3D.Identity, Furniture,
+                                            System.Linq.Enumerable.Select(Designations, d => d.Electrical), _editor?.Objects, 0f);
+            _furnitureNodes.AddRange(f.Nodes);
+            _furnitureNodes.AddRange(f.Outlets);   // (an outlet's source stands beside its plate: hidden and freed with the furniture)
+            _switches.AddRange(f.Switches);
+            _ceilingLights.AddRange(f.CeilingLights);
+            _outlets.AddRange(f.Outlets);
         }
-
-        /// <summary>A room's light switch on the stage: astraclaw's base and rocker (RoomLightSwitch), placed as the prop is.</summary>
-        RoomLightSwitch BuildSwitch(PropDesignation m, EditorObjects objects)
-        {
-            var baseMesh = ContentProvider.ParseObj("res://content/objects/Light_Switch_0_Base.obj");
-            var rocker = ContentProvider.ParseObj("res://content/objects/Light_Switch_0_Rocker.obj");
-            if (baseMesh == null || rocker == null) return null;
-            var sw = RoomLightSwitch.Make(baseMesh, rocker, objects?.PreviewMaterial(m.Name));
-            AddChild(sw);
-            sw.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
-            return sw;
-        }
-
-        /// <summary>An outlet on the stage: a power I/O source of BuildingGen.OutletWatts fed by the mains (GridPowerSource,
-        /// the breaker box's own node at an outlet's rating: wires take power from it while the grid is live, and the solver
-        /// caps what they draw at its watts), a port before each receptacle sharing that one rating, and a small look-at body
-        /// so the look-ray focuses it as it does the breaker box.</summary>
-        GridPowerSource BuildOutlet(PropDesignation m, MeshInstance3D mi, Mesh mesh)
-        {
-            var basis = EditorObjects.Upright(m.Yaw);
-            var src = GridPowerSource.Attach(this, new Vector3(m.X, m.Y, m.Z), basis, OutletPort, BuildingGen.OutletWatts, "Outlet", mesh);
-            // and one before the lower receptacle (strawberry: "do both outlet holes have a wire io connection?"), on the same
-            // 1500 W: one budget for the fixture's two ports (GridPowerSource.PowerOutputBudget)
-            src.AddOutputPort(OutletPortLower, "Outlet");
-            src.GlobalTransform = new Transform3D(basis, new Vector3(m.X, m.Y, m.Z));
-            var body = new StaticBody3D { Name = "OutletLook", CollisionLayer = 1u << 6, CollisionMask = 0, Position = new Vector3(0f, 0.04f, 0f) };
-            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.34f, 0.08f, 0.56f) } });
-            body.SetMeta("gridpower", src);
-            src.AddChild(body);
-            return src;
-        }
-        /// <summary>An outlet's power ports, in its native frame: before each receptacle (the handoff's socket points,
-        /// (0, 0.054, +-0.13)), clear of the plate.</summary>
-        static readonly Vector3 OutletPort = new Vector3(0f, 0.11f, 0.13f), OutletPortLower = new Vector3(0f, 0.11f, -0.13f);
 
         /// <summary>The furniture's preview nodes as built, in Furniture's order but for any that built nothing -- with a ceiling
         /// lamp's light, a switch (RoomLightSwitch) and an outlet's power source among them (the in-engine test reads the
@@ -2928,10 +2775,20 @@ namespace UnturnedGodot
             _stairRamps.Clear();
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
 
+            // (a back face of its own where the plan gives one: a basement's outside walls, concrete inside)
             foreach (var pl in res.Walls)
-                SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
-                          pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
+            {
+                var paint = BuildingRuntime.PlanPaint(pl, mat, roofTexel);
+                // (a surface with a palette of its own -- a strip tenant's floor -- wears that one: WallPlan.Palette)
+                SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Palette != null ? BuildingRuntime.MaterialFor(pl.Palette, mat) : mat, pl.Openings,
+                          pl.Height, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
+            }
+            // the stage's ground opened over a basement and its hatch's well, so they can be seen and walked down to
+            var holesBefore = _stageHoles;
+            var holes = new List<Rect2>();
+            foreach (var (x0, z0, x1, z1) in res.Dig) holes.Add(new Rect2(at.X - StageOrigin.X + x0, at.Z - StageOrigin.Z + z0, x1 - x0, z1 - z0));
+            SetStageHoles(holes);
             foreach (var s in res.Stairs)
             {
                 var o = at + new Vector3(s.X, s.Y, s.Z);
@@ -2939,8 +2796,13 @@ namespace UnturnedGodot
                 // covers the landing too), so they only want their ramps
                 float rise = s.Rise > 0f ? s.Rise : StoreyHeight;
                 int steps = WallOpenings.StairSteps(rise);
+                // (a basement hatch's flight is concrete: the palette's concrete texel)
+                var (top, body) = BuildingRuntime.StairTexels(mat, s.Concrete);
+                int tread = 0;
                 foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
-                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs);
+                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
+                              top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise),
+                              rails: WallSurface.TreadRails(s.Rails, tread++));
                 FitStairsToStructure(o, s.Yaw, s.Run, s.Width, rise, cutFloor: rise >= StoreyHeight - 0.01f);
             }
             var solved = SolveCorners();
@@ -2980,6 +2842,7 @@ namespace UnturnedGodot
                 foreach (var r in rampsMade) if (IsInstanceValid(r)) r.QueueFree();
                 _stairRamps.Clear();
                 RestoreAll(before);
+                SetStageHoles(holesBefore);
                 foreach (var r in rampsBefore) if (IsInstanceValid(r)) { AddChild(r); _stairRamps.Add(r); }
                 DesignatedKind = kindBefore;
                 Designations.Clear(); Designations.AddRange(roomsBefore);
@@ -3007,6 +2870,7 @@ namespace UnturnedGodot
             Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
                      + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "
                      + $"{res.Stairs.Count} flight(s), {res.Furniture.Count} pieces of furniture, {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}{(res.Business != UnturnedSim.Business.None ? $" ({res.Business})" : "")}"
+                     + (res.HasBasement ? $", a {EditorBuildingsPanel.BasementWords(res)}" : "")
                      + (res.Notes.Count > 0 ? " -- " + string.Join("; ", res.Notes) : ""));
             return res;
         }
@@ -3460,65 +3324,11 @@ namespace UnturnedGodot
         public int FitStairsToStructure(Vector3 origin, float yawDeg, float run, float width, float rise = 0f, bool cutFloor = true)
         {
             if (rise <= 0f) rise = StoreyHeight;
-            float yaw = Mathf.DegToRad(yawDeg);
-            var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));
-            var right = new Vector3(Mathf.Cos(yaw), 0f, -Mathf.Sin(yaw));
-
-            // ---- the invisible ramp -------------------------------------------------------------------
-            // Lies on the tread NOSES: from the foot at origin to the top tread's walking surface, which is
-            // exactly one storey up and one run back. Half a tread of lift so it rests on the noses rather
-            // than cutting through them.
-            var foot = origin + back * (run * 0.5f) + right * (width * 0.5f)
-                     + new Vector3(0f, rise * 0.5f + WallOpenings.StairTreadThickness * 0.5f, 0f);
-            float slope = Mathf.Sqrt(run * run + rise * rise);
-            var ramp = new StaticBody3D { Name = "StairRamp" };
-            var shape = new CollisionShape3D
-            {
-                Shape = new BoxShape3D { Size = new Vector3(width, WallOpenings.StairTreadThickness, slope) },
-            };
-            ramp.AddChild(shape);
-            AddChild(ramp);
-            ramp.GlobalPosition = foot;
-            // Pitch so the box lies along the flight: atan(rise/run) about the flight's lateral axis.
-            ramp.GlobalRotation = new Vector3(Mathf.Atan2(rise, run), yaw, 0f);
-            _stairRamps.Add(ramp);
+            // the invisible ramp on the tread noses, and the hole the flight arrives through: the shared runtime builder's, with
+            // the stage's own PunchHole (whose whole-slab case goes through RemoveWall and its undo)
+            _stairRamps.Add(BuildingRuntime.StairRamp(this, origin, yawDeg, run, width, rise));
             if (!cutFloor) return 0;   // the caller cut the hole itself (a generated switchback's spans its landing)
-
-            // ---- cut the floor above ------------------------------------------------------------------
-            // The flight's plan footprint, grown slightly so the opening clears the treads rather than
-            // touching them exactly (Aabb contact is a coin-flip and a hole flush with the tread reads as
-            // a seam you can catch on).
-            const float Margin = WallOpenings.StairHoleMargin;
-            var a = origin;
-            var b = origin + back * run + right * width;
-            float minX = Mathf.Min(a.X, b.X) - Margin, maxX = Mathf.Max(a.X, b.X) + Margin;
-            float minZ = Mathf.Min(a.Z, b.Z) - Margin, maxZ = Mathf.Max(a.Z, b.Z) + Margin;
-            float topY = origin.Y + rise;
-
-            int cut = 0;
-            foreach (var w in new List<WallSurface>(_walls))
-            {
-                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Floor) continue;
-                var box = SurfaceAabb(w);
-                // Only the slab this flight actually arrives at: its top must sit within half a storey of
-                // the landing. A floor two storeys up is not this staircase's problem.
-                if (Mathf.Abs(box.End.Y - topY) > rise * 0.5f) continue;
-                if (box.End.X < minX || box.Position.X > maxX || box.End.Z < minZ || box.Position.Z > maxZ) continue;
-
-                // Corners in the slab's own UV space. A floor is a wall lying down, so its U/V are the plan
-                // axes -- take all four and bound them, since yaw makes which-is-which change.
-                float u0 = float.MaxValue, v0 = float.MaxValue, u1 = float.MinValue, v1 = float.MinValue;
-                bool ok = true;
-                foreach (var c in new[] { new Vector3(minX, box.End.Y, minZ), new Vector3(maxX, box.End.Y, minZ),
-                                          new Vector3(minX, box.End.Y, maxZ), new Vector3(maxX, box.End.Y, maxZ) })
-                {
-                    if (!w.WorldToUV(c, out float u, out float v)) { ok = false; break; }
-                    u0 = Mathf.Min(u0, u); u1 = Mathf.Max(u1, u);
-                    v0 = Mathf.Min(v0, v); v1 = Mathf.Max(v1, v);
-                }
-                if (ok && PunchHole(w, u0, v0, u1, v1)) cut++;
-            }
-            return cut;
+            return BuildingRuntime.CutStairHole(_walls, origin, yawDeg, run, width, rise, PunchHole);
         }
 
         public int AddStairs(Vector3 origin, float yawDeg, float run = 0f, float width = 0f)
@@ -3537,9 +3347,14 @@ namespace UnturnedGodot
             var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));   // local -Z in world space
 
             var made = new List<WallSurface>();
+            // a drawn flight stands where it was put, walls or none, so it is railed both sides (a generated one is railed
+            // on its open sides only: BuildingGen.RailStairs)
+            var (top, body) = BuildingRuntime.StairTexels(ActiveMaterial, false);
+            int index = 0;
             foreach (var p in StairTreadOrigins(origin, yawDeg, run, width))
                 made.Add(SpawnWall(p, yawDeg, width, tread, ActiveMaterial, null,
-                                   going, -90f, SurfaceKind.Stairs));
+                                   going, -90f, SurfaceKind.Stairs, 0f, top, materialBack: ActiveMaterial, texelBack: body,
+                                   stepRise: stepRise, rails: WallSurface.TreadRails(3, index++)));
             int rampsBefore = _stairRamps.Count;
             FitStairsToStructure(origin, yawDeg, run, width);
             var mine = _stairRamps.GetRange(rampsBefore, _stairRamps.Count - rampsBefore);

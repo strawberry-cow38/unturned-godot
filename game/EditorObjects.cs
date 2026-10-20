@@ -196,6 +196,7 @@ namespace UnturnedGodot
             _nameToGuid.Clear();
             _guidToName.Clear();
             _meshCache.Clear();     // a re-bake under the same name must not serve the previous mesh
+            _shapeCache.Clear();    // ...nor the previous mesh's collider
             LoadCatalog();
             CatalogChanged?.Invoke();
         }
@@ -354,8 +355,32 @@ namespace UnturnedGodot
             if (name == HighwayGantryName) return PlaceHighwaySign(HighwayGantryMesh, pos, rot);
             if (name == LaneSignName) return PlaceLaneSigns(pos, rot);
             if (name == PylonName) return PlacePylon(pos, rot);
+            var root = BuildProp(name, pos, rot, materialName, PickLayer, out var body, out _);
+            if (root == null) return null;
+            _world.AddChild(root);
+            if (body != null) _pickToObj[body.GetRid()] = root;
+            _placed.Add(root);
+            return root;
+        }
+
+        /// <summary>⭐ ONE PROP'S NODES, AS THIS EDITOR PLACES IT -- the mesh, a tree's leaves, its smart devices (SmartProps:
+        /// lights, screens, clocks, openable leaves, a container), its window markers, its trimesh collider on the world layer
+        /// with its surface and device tags -- returned unparented and registered nowhere, with that collider in `body` (null
+        /// for a prop that has none) and the devices in `smart` (null for a kit doodad with no art of its own).
+        ///
+        /// Place is this plus the editor's own bookkeeping (the map, the pick table, the placed list, which is what the save
+        /// writes). A GENERATED BUILDING's furniture is this and nothing else (strawberry 2026-10-15: "work on placing
+        /// props/smart storage containers in buildings via the actual editor prop placement path, instead of the weird new
+        /// system they have. they dont have collision rn"): BuildingRuntime.Furnish calls it, so a wardrobe in a generated
+        /// house is a wardrobe placed by hand, and the two cannot drift. It is NOT a placement -- a town is rebuilt from its
+        /// seed and never saved (Editor.NotSaved), and a stage building saves its furniture as its own `prop` lines -- so it
+        /// passes `pickLayer` 0: the editor's pick ray goes through it and it never reaches _pickToObj or _placed.</summary>
+        public Node3D BuildProp(string name, Vector3 pos, Basis rot, string materialName, uint pickLayer, out StaticBody3D body,
+                                out SmartProps.Attached smart)
+        {
+            body = null; smart = null;
             var mesh = MeshFor(name);
-            if (mesh == null) return DoodadKitView.Has(name) ? PlaceStockOnly(name, pos, rot) : null;
+            if (mesh == null) return DoodadKitView.Has(name) ? BuildStockOnly(name, pos, rot, pickLayer, out body) : null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
             root.SetMeta("obj_name", name);
             root.SetMeta("guid", _nameToGuid.TryGetValue(name, out var g) ? g : "");   // for the placements save
@@ -380,15 +405,15 @@ namespace UnturnedGodot
             // PLACEMENT stays split, because the conventions genuinely differ -- WorldBuilder puts world-space
             // nodes under a root at the origin, and here the root carries the placement and the gizmo drags it.
             float yawDeg = Mathf.RadToDeg(Mathf.Atan2(-rot.X.Z, rot.X.X));
-            var smart = SmartProps.AttachEditor(root, name, mainMi, mat, pos, yawDeg, Dir, _doorCatalog, _doorMeshCache);
+            smart = SmartProps.AttachEditor(root, name, mainMi, mat, pos, yawDeg, Dir, _doorCatalog, _doorMeshCache);
             WindowMarkers.Attach(root, name, Dir);   // baked window openings -> window-barricade snap targets on this prop (no-op if it has no _openings.txt)
 
             // The collider comes off the ORIGINAL mesh, not mainMi's -- a device carves its lens/screen/hands out
             // of the visual mesh, and collision should still cover the whole prop (the world loader does the same).
-            var shp = mesh.CreateTrimeshShape();   // trimesh collider so the prop is pickable + walkable
+            var shp = TrimeshFor(name, mesh);   // trimesh collider so the prop is pickable + walkable
             if (shp != null)
             {
-                var body = new StaticBody3D { CollisionLayer = PickLayer | WorldLayerFor(mesh, mat), CollisionMask = 0 };
+                body = new StaticBody3D { CollisionLayer = pickLayer | WorldLayerFor(mesh, mat), CollisionMask = 0 };
                 // WHAT IS THIS PROP MADE OF. The world loader has tagged this all along and this path never did,
                 // so an editor-placed prop read as unlabelled concrete to footsteps, impacts and -- since
                 // 2026-10-10 -- vehicle handling. That is why a car on a laid rail spline drove like it was on a
@@ -401,21 +426,47 @@ namespace UnturnedGodot
                 // four parents looking for the StoreShelf node. So a container prop's body hangs off the shelf
                 // rather than off the root -- selection and saving are unaffected (_pickToObj still maps the
                 // body's RID to the root, and the root still carries obj_name/guid), and F now opens it.
-                (smart?.Container is not null ? (Node)smart.Container : root).AddChild(body);
-                _world.AddChild(root);
-                _pickToObj[body.GetRid()] = root;
+                // ⚠⚠ ...IN THE ROOT'S FRAME, NOT THE SHELF'S. The shelf stands at `_upright.Inverse()` under the root -- its
+                // frame is the placement's YAW alone, the stand-up taken back off (SmartProps) -- and this trimesh is the native
+                // Z-up mesh, which only the root's full basis stands up. Hung under the shelf with an identity transform it lay
+                // on its back: a wardrobe you walked into and a look-ray that went through it (seen from a generated house,
+                // 2026-10-16: the ray passed the wardrobe to the wall behind). The shelf's inverse puts it back in the root's.
+                if (smart?.Container is not null)
+                {
+                    body.Transform = smart.Container.Transform.AffineInverse();
+                    smart.Container.AddChild(body);
+                }
+                else root.AddChild(body);
             }
-            else _world.AddChild(root);
-            _placed.Add(root);
+            // culled by distance as the world loader culls it: its retail distance, on every piece it draws (PropCull) -- and a
+            // lamp's light goes out with it, over its fade length, rather than lighting a room whose lamp is no longer drawn (a
+            // caller that wants its own fade -- a town's 30 m, the stage's none -- sets FadeBegin after this)
+            var extent = mesh.GetAabb().Size;
+            float cull = PropCull.For(name, (string)root.GetMeta("guid"), Mathf.Max(extent.X, Mathf.Max(extent.Y, extent.Z)));
+            PropCull.Apply(root, cull);
+            if (cull > 0f && smart?.Lamp != null && smart.Lamp.FadeBegin <= 0f) smart.Lamp.FadeBegin = Mathf.Max(1f, cull - smart.Lamp.FadeLength);
             return root;
         }
+
+        /// <summary>One trimesh per prop MESH, shared by every placement of it -- the world loader's rule (WorldBuilder's
+        /// shapeCache). A shape is a resource and nothing edits one after it is made, so a hundred wardrobes need one wardrobe's
+        /// triangles; making one per placement cost a town of generated buildings eleven thousand of them.</summary>
+        Shape3D TrimeshFor(string name, ArrayMesh mesh)
+        {
+            if (_shapeCache.TryGetValue(name, out var s)) return s;
+            s = mesh.CreateTrimeshShape();
+            _shapeCache[name] = s;
+            return s;
+        }
+        readonly Dictionary<string, Shape3D> _shapeCache = new();
 
         /// <summary>A kit doodad with no art of its own (the mug pair, the plate stack, the garden tools): its stock children
         /// on the root, and -- as child 0, which PositionMarkers reads for the selection's bounds -- an unseen box of its
         /// composed extents (FurnitureCatalog.Sizes, the kit's bounds), with a box collider the same, so it is picked, moved and
-        /// saved like any prop.</summary>
-        Node3D PlaceStockOnly(string name, Vector3 pos, Basis rot)
+        /// saved like any prop. (BuildProp's half: unparented and unregistered.)</summary>
+        Node3D BuildStockOnly(string name, Vector3 pos, Basis rot, uint pickLayer, out StaticBody3D body)
         {
+            body = null;
             if (!UnturnedSim.FurnitureCatalog.Sizes.TryGetValue(name, out var sz)) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
             root.SetMeta("obj_name", name);
@@ -425,13 +476,11 @@ namespace UnturnedGodot
             var bounds = new MeshInstance3D { Mesh = new BoxMesh { Size = size }, Position = centre, Visible = false };
             root.AddChild(bounds);
             DoodadKitView.Attach(root, name);
-            var body = new StaticBody3D { CollisionLayer = PickLayer | (1u << 6), CollisionMask = 0 };
+            body = new StaticBody3D { CollisionLayer = pickLayer | (1u << 6), CollisionMask = 0 };
             body.SetMeta(PlayerController.SurfMeta, (int)PropSurfaces.SurfForProp(name));
             body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size }, Position = centre });
             root.AddChild(body);
-            _world.AddChild(root);
-            _pickToObj[body.GetRid()] = root;
-            _placed.Add(root);
+            PropCull.Apply(root, PropCull.Layer("SMALL"));   // a kit's stock is tabletop clutter: retail's small-prop distance
             return root;
         }
 
@@ -1205,6 +1254,7 @@ namespace UnturnedGodot
             SaveSigns();
             SaveLaneSigns();
             SaveTunnels();
+            SaveFences();
             n += SaveTextProps();
             SaveBakeOmit();
             Log.Print($"[editor] saved {n} placed props -> {SavePath}");
@@ -1241,6 +1291,7 @@ namespace UnturnedGodot
             LoadSigns();
             LoadLaneSigns();
             LoadTunnels();
+            LoadFences();
             LoadTextProps();
         }
 
