@@ -177,13 +177,29 @@ namespace UnturnedGodot
             return true;
         }
 
-        public override void _Process(double delta) => Evaluate();
+        public override void _Process(double delta) => Evaluate(budgeted: true);
+
+        /// <summary>How long one frame's evaluation may spend HIDING rooms and switching storeys' shadows OFF, ms. Hiding a room is
+        /// not free -- Node3D.Visible goes to every node under it -- measured on this ARM box (CullProbe, the setback): 691 us a
+        /// room, 21.9 us a drawable under it; a drawable's shadow switched 1.14 us, so a tower storey's ~1,900 casters 2 ms. A camera
+        /// driving past a tower, entering it, or jumping crosses many at once. Showing and switching ON are never held back: a late
+        /// show is a piece missing from the picture, a late hide only a piece drawn a frame longer. Driving 45 m/s along the
+        /// setback's front both gates cost 0.83 ms a frame (median 0.54, worst 2.38), and the state they settled on was the
+        /// unbudgeted one. Explicit evaluations (Refresh, a gate being added) are not budgeted at all.</summary>
+        public const double SwitchBudgetMs = 1.0;
+        static long _budgetEnd = long.MaxValue;
+        /// <summary>Is this frame's hiding budget spent?</summary>
+        static bool Spent => System.Diagnostics.Stopwatch.GetTimestamp() > _budgetEnd;
 
         /// <summary>Show or hide every gated basement, and switch every gated building's furniture shadows, for where the camera
         /// is now. Runs every frame (a few hundred point-in-rect tests), and at once when a gate is added or a Force flag changes,
         /// so nothing is ever a frame late at a threshold.</summary>
-        public void Evaluate()
+        public void Evaluate() => Evaluate(budgeted: false);
+
+        void Evaluate(bool budgeted)
         {
+            _budgetEnd = budgeted ? System.Diagnostics.Stopwatch.GetTimestamp() + (long)(SwitchBudgetMs * System.Diagnostics.Stopwatch.Frequency / 1000.0)
+                                  : long.MaxValue;
             var cam = GetViewport()?.GetCamera3D();
             for (int i = _gates.Count - 1; i >= 0; i--)
             {
@@ -324,6 +340,7 @@ namespace UnturnedGodot
         {
             float r = shown ? RoomRadius + RoomHysteresis : RoomRadius;
             bool want = force || d2 <= r * r;
+            if (!want && shown && Spent) return true;          // (a hide waits for the next frame's budget)
             if (want != shown)
             {
                 shown = want;
@@ -347,8 +364,14 @@ namespace UnturnedGodot
                 {
                     // the broad phase: nothing of it is near, every storey off -- once
                     if (g.AllHidden) continue;
-                    foreach (var s in g.Storeys) if (s.Shown && IsInstanceValid(s.Node)) { s.Shown = false; s.Node.Visible = false; RoomToggles++; }
-                    g.AllHidden = true;
+                    bool all = true;
+                    foreach (var s in g.Storeys)
+                    {
+                        if (!s.Shown || !IsInstanceValid(s.Node)) continue;
+                        if (Spent) { all = false; break; }
+                        s.Shown = false; s.Node.Visible = false; RoomToggles++;
+                    }
+                    g.AllHidden = all;
                     continue;
                 }
                 g.AllHidden = false;
@@ -475,7 +498,17 @@ namespace UnturnedGodot
                 if (IsInstanceValid(s.Pieces[k])) s.Pieces[k].CastShadow = on ? s.Cast[k] : GeometryInstance3D.ShadowCastingSetting.Off;
         }
 
+        /// <summary>The storey shadow gate's own cost, for the probe: stopwatch ticks spent evaluating it (switching included).</summary>
+        public static long StoreyShadowTicks;
+
         void EvaluateStoreyShadows(Camera3D cam)
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { EvaluateStoreyShadowsNow(cam); }
+            finally { StoreyShadowTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0; }
+        }
+
+        void EvaluateStoreyShadowsNow(Camera3D cam)
         {
             bool force = ForceStoreyShadows || cam == null;
             float far = ShadowRadius + RoomHysteresis;
@@ -487,8 +520,14 @@ namespace UnturnedGodot
                 if (!force && g.Box.DistanceSq(l) > far * far)
                 {
                     if (g.AllOff) continue;
-                    foreach (var s in g.Storeys) if (s.On) SetCasting(s, false);
-                    g.AllOff = true;
+                    bool all = true;
+                    foreach (var s in g.Storeys)
+                    {
+                        if (!s.On) continue;
+                        if (Spent) { all = false; break; }
+                        SetCasting(s, false);
+                    }
+                    g.AllOff = all;
                     continue;
                 }
                 g.AllOff = false;
@@ -506,7 +545,7 @@ namespace UnturnedGodot
                     if (force) on = true;
                     else if (g.Inside) on = Mathf.Abs(s.Floor - g.CamFloor) <= 1;
                     else { float r = s.On ? far : ShadowRadius; on = s.Box.DistanceSq(l) <= r * r; }
-                    if (on != s.On) SetCasting(s, on);
+                    if (on != s.On && (on || !Spent)) SetCasting(s, on);
                 }
             }
         }
