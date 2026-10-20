@@ -1061,10 +1061,7 @@ namespace UnturnedGodot
         // face oriented upright (image top -> screen top = world up) and un-mirrored when viewed from the front.
         ArrayMesh Reproject(ArrayMesh screen)
         {
-            var a0 = screen.SurfaceGetArrays(0);
-            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
-            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            var (V, N, C) = ScreenArrays(screen);
 
             Vector3 c = Vector3.Zero; foreach (var v in V) c += v; c /= Mathf.Max(1, V.Length);
             // WHICH WAY THE SCREEN FACES -- and this is NEGATED winding, which needs saying because it looks like a
@@ -1201,6 +1198,32 @@ namespace UnturnedGodot
         /// matches on -- so every screen UV lands in the same cell and averaging them cannot stray into a neighbour.
         /// ObjMesh V-flips on load, so the stored UVs are already Godot-space and index the image directly.</summary>
         internal static Color SampleScreenTexel(string propName, ArrayMesh screen, Color fallback)
+        {
+            // (once a prop, screen mesh and fallback: the screen is SplitScreen's, shared by every set of its prop, and both the
+            // read-back of its UVs -- a wait on the render thread -- and the texture's load were per set)
+            if (screen == null) return SampleScreenTexelUncached(propName, screen, fallback);
+            var key = (propName, screen, fallback);
+            lock (_texels) if (_texels.TryGetValue(key, out var hit)) return hit;
+            var c = SampleScreenTexelUncached(propName, screen, fallback);
+            lock (_texels) _texels[key] = c;
+            return c;
+        }
+        static readonly System.Collections.Generic.Dictionary<(string, ArrayMesh, Color), Color> _texels = new();
+
+        /// <summary>⚡ A screen mesh's vertices, normals and colours, read back ONCE A MESH: the screen is SplitScreen's (ObjMesh.SplitByUv's
+        /// cache), the same instance for every set of a prop, and reading a mesh back waits on the render thread -- per set,
+        /// 597 times in one tower. Reproject only reads them; what it builds from them is still each set's own.</summary>
+        static (Vector3[] V, Vector3[] N, Color[] C) ScreenArrays(ArrayMesh screen)
+        {
+            lock (_screenArrays) if (_screenArrays.TryGetValue(screen, out var hit)) return hit;
+            var a0 = screen.SurfaceGetArrays(0);
+            var r = (a0[(int)Mesh.ArrayType.Vertex].AsVector3Array(), a0[(int)Mesh.ArrayType.Normal].AsVector3Array(), a0[(int)Mesh.ArrayType.Color].AsColorArray());
+            lock (_screenArrays) _screenArrays[screen] = r;
+            return r;
+        }
+        static readonly System.Collections.Generic.Dictionary<ArrayMesh, (Vector3[], Vector3[], Color[])> _screenArrays = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+        static Color SampleScreenTexelUncached(string propName, ArrayMesh screen, Color fallback)
         {
             try
             {
