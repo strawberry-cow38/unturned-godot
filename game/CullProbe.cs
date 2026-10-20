@@ -430,23 +430,26 @@ namespace UnturnedGodot
         {
             var res = _b.Result;
             float c = BuildingGen.Cell, wx = res.CellsX * c, dz = res.CellsZ * c, top = res.Floors * Storey;
-            Vector3 doorL = new(wx * 0.5f, 0f, 0f), outL = new(0f, 0f, -1f);
+            // (the street off the plan's EDGE nearest the front door: a slab's lobby door is set back under its colonnade, on a
+            // line inside the plan, and "30 m out from the door" from there stood the camera in a storeroom)
+            Vector3 doorL = new(wx * 0.5f, 0f, 0f), outL = new(0f, 0f, -1f), edgeL = doorL;
             foreach (var d in res.Doors)
             {
                 if (d.Role != DoorRole.Front || d.Floor != 0) continue;
                 var (mx, mz) = d.Middle;
                 doorL = new Vector3(mx, 0f, mz);
-                outL = d.AlongX ? new Vector3(0f, 0f, d.Line == 0 ? -1f : 1f) : new Vector3(d.Line == 0 ? -1f : 1f, 0f, 0f);
+                if (d.AlongX) { bool near = d.Line * c < dz * 0.5f; outL = new Vector3(0f, 0f, near ? -1f : 1f); edgeL = new Vector3(mx, 0f, near ? 0f : dz); }
+                else { bool near = d.Line * c < wx * 0.5f; outL = new Vector3(near ? -1f : 1f, 0f, 0f); edgeL = new Vector3(near ? 0f : wx, 0f, mz); }
                 break;
             }
-            Vector3 Street(float off) { var e = W(doorL + outL * off); e.Y = Ground(e) + 1.7f; return e; }
+            Vector3 Street(float off) { var e = W(edgeL + outL * off); e.Y = Ground(e) + 1.7f; return e; }
             var mid = new Vector3(wx * 0.5f, top * 0.5f, dz * 0.5f);
             _stops.Add(("s30_street", Street(30f), W(doorL + new Vector3(0f, 8f, 0f))));
             _stops.Add(("s150_street", Street(150f), W(new Vector3(doorL.X, top * 0.5f, doorL.Z))));
             if (RoomView(0, 1.7f) is { } g0) _stops.Add(("r0_room", W(g0.Eye), W(g0.Look)));
             int midFloor = res.Floors > 16 ? 15 : res.Floors / 2;
             if (midFloor > 0 && RoomView(midFloor, midFloor * Storey + 1.7f) is { } gm) _stops.Add(($"r{midFloor}_room", W(gm.Eye), W(gm.Look)));
-            var hEye = W(doorL + outL * 120f); hEye.Y = Ground(hEye) + 80f;
+            var hEye = W(edgeL + outL * 120f); hEye.Y = Ground(hEye) + 80f;
             _stops.Add(("h_high", hEye, W(mid)));
         }
 
@@ -931,12 +934,42 @@ namespace UnturnedGodot
                     Log.Print($"[cullprobe] room gate at {tag}: {us:0.0} us an evaluation (500 in a row), {BuildingCull.RoomBuildings} buildings gated, "
                             + $"{BuildingCull.RoomBuildingsNear} past the broad phase, rooms drawn {BuildingCull.RoomsShown}/{BuildingCull.RoomCount}");
                 }
+            // ⚠ THE GATES WHILE THE CAMERA MOVES, as play drives them: every frame budgeted (BuildingCull.SwitchBudgetMs on hiding),
+            // never a Refresh. Along the target's front at the first stop's distance, 1.5 m a frame (45 m/s at 30 fps: a fast car)
+            // for 30 frames: each frame's evaluation time (both gates, switching included), then 30 still frames, and the state
+            // they settled on must be the state an explicit (unbudgeted) Refresh gives -- or the budget lost a hide.
+            if (_gen != null && BuildingCull.RoomBuildings > 0 && _stops.Count > 0)
+            {
+                var (_, e0, l0) = _stops[0];
+                Aim(e0, l0);
+                yield return 4;
+                var side = _b.Node.GlobalTransform.Basis.X.Normalized();
+                var per = new List<double>();
+                int toggles0 = BuildingCull.RoomToggles;
+                for (int k = 1; k <= 30; k++)
+                {
+                    long t0 = BuildingCull.RoomTicks + BuildingCull.StoreyShadowTicks;
+                    _cam.GlobalPosition = e0 + side * (1.5f * k);
+                    _cam.LookAt(l0 + side * (1.5f * k), Vector3.Up);
+                    yield return 1;
+                    per.Add((BuildingCull.RoomTicks + BuildingCull.StoreyShadowTicks - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+                }
+                yield return 30;
+                int roomsSettled = BuildingCull.RoomsShown, castSettled = BuildingCull.ShadowStoreysCasting;
+                BuildingCull.Refresh();
+                int roomsNow = BuildingCull.RoomsShown, castNow = BuildingCull.ShadowStoreysCasting;
+                per.Sort();
+                double mean = 0; foreach (var v in per) mean += v; mean /= per.Count;
+                Log.Print($"[cullprobe] moving 45 m/s along the front: both gates {mean:0.00} ms a frame mean, median {per[per.Count / 2]:0.00}, max {per[per.Count - 1]:0.00} "
+                        + $"(budget {BuildingCull.SwitchBudgetMs} ms on hiding), {BuildingCull.RoomToggles - toggles0} room/storey nodes switched; settled: rooms drawn "
+                        + $"{roomsSettled} vs {roomsNow} after a Refresh, storeys casting {castSettled} vs {castNow} -- {(roomsSettled == roomsNow && castSettled == castNow ? "SAME" : "DIFFERENT")}");
+            }
             // what SWITCHING costs, which the evaluation above does not include: every room node of the target hidden and shown
             // again (Node3D.Visible, propagated to every piece under it), and every drawable under them told to cast no shadow and
             // to cast again (what the storey shadow gate does to a storey), three times each, timed on the main thread
             if (_genRooms != null && _genRooms.Storeys.Count > 0)
             {
-                BuildingCull.ForceRooms = true; BuildingCull.Refresh();
+                BuildingCull.ForceRooms = true; BuildingCull.ForceStoreyShadows = true; BuildingCull.Refresh();
                 var nodes = new List<Node3D>(); var gis = new List<(GeometryInstance3D G, GeometryInstance3D.ShadowCastingSetting S)>();
                 void Walk(Node n) { if (n is GeometryInstance3D g && g.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) gis.Add((g, g.CastShadow)); foreach (var c in n.GetChildren()) Walk(c); }
                 foreach (var st in _genRooms.Storeys) foreach (var (_, rn) in st.Rooms) if (GodotObject.IsInstanceValid(rn)) { nodes.Add(rn); Walk(rn); }
@@ -950,7 +983,7 @@ namespace UnturnedGodot
                     foreach (var (g, c) in gis) g.CastShadow = c;
                 }
                 double castMs = sw.Elapsed.TotalMilliseconds;
-                BuildingCull.ForceRooms = false; BuildingCull.Refresh();
+                BuildingCull.ForceRooms = false; BuildingCull.ForceStoreyShadows = false; BuildingCull.Refresh();
                 Log.Print($"[cullprobe] switching cost: {nodes.Count} room nodes holding {gis.Count} casting drawables -- a room hidden or shown "
                         + $"{visMs * 1000.0 / (6 * nodes.Count):0.0} us ({visMs * 1000.0 / (6 * gis.Count):0.00} us a drawable under it); a drawable's shadow switched "
                         + $"{castMs * 1000.0 / (6 * gis.Count):0.00} us");
