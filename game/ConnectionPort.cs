@@ -76,6 +76,8 @@ namespace UnturnedGodot
             },
         };
 
+        static BoxMesh _cubeMesh;
+        static BoxShape3D _cubeShape;
         public static ConnectionPort Create(IPowerDevice owner, DeployableDef.Port p, string providerName)
         {
             var cp = new ConnectionPort
@@ -86,9 +88,11 @@ namespace UnturnedGodot
             cp._mat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel, Metallic = 0f, Roughness = 0.6f };
             if (p.Role == DeployableDef.SwitchRole.None) cp._mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;   // I/O ports translucent (master); triggers stay solid
             cp.UpdateCubeColor();   // grey-by-occupancy for I/O ports, green/red for switch triggers
-            cp._cube = new MeshInstance3D { Mesh = new BoxMesh { Size = Vector3.One * CubeSize }, MaterialOverride = cp._mat };
+            // (the cube's box and its collider shared by every port: the one size, and neither changes once made -- a port's look
+            // rides its own material, _mat, which stays its own. A tower made two of each for each of its thousands of ports.)
+            cp._cube = new MeshInstance3D { Mesh = _cubeMesh ??= new BoxMesh { Size = Vector3.One * CubeSize }, MaterialOverride = cp._mat };
             cp.AddChild(cp._cube);
-            cp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = Vector3.One * CubeSize } });
+            cp.AddChild(new CollisionShape3D { Shape = _cubeShape ??= new BoxShape3D { Size = Vector3.One * CubeSize } });
             cp.BuildArrow(p.Kind);
             cp.Visible = ShowAll;     // built while the tool is stowed -> comes up hidden, like every port already placed
             cp.AddToGroup("ports");   // PlayerController toggles all ports' arrows when the wire tool is out

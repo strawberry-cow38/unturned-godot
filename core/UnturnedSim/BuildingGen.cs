@@ -152,12 +152,35 @@ namespace UnturnedSim
         public readonly List<(int X0, int Z0, int X1, int Z1)> More = new List<(int, int, int, int)>();
         public IEnumerable<(int X0, int Z0, int X1, int Z1)> Rects
         { get { yield return (X0, Z0, X1, Z1); foreach (var r in More) yield return r; } }
-        public int Cells => Rects.Sum(r => (r.X1 - r.X0) * (r.Z1 - r.Z0));
+        // (Cells, HasCell and Holds walk the rectangles by hand, not through Rects: they are asked millions of times in a tower,
+        // and the iterator and the lambda were most of their cost)
+        public int Cells
+        {
+            get
+            {
+                int n = (X1 - X0) * (Z1 - Z0);
+                for (int i = 0; i < More.Count; i++) { var r = More[i]; n += (r.X1 - r.X0) * (r.Z1 - r.Z0); }
+                return n;
+            }
+        }
         public bool Circulation => Kind == RoomKind.Hall || Kind == RoomKind.Stairwell;
-        public bool HasCell(int x, int z) => Rects.Any(r => x >= r.X0 && x < r.X1 && z >= r.Z0 && z < r.Z1);
+        public bool HasCell(int x, int z)
+        {
+            if (x >= X0 && x < X1 && z >= Z0 && z < Z1) return true;
+            for (int i = 0; i < More.Count; i++) { var r = More[i]; if (x >= r.X0 && x < r.X1 && z >= r.Z0 && z < r.Z1) return true; }
+            return false;
+        }
         /// <summary>Is this plan point (metres) in the room? Half-open, so a point is in at most one room.</summary>
-        public bool Holds(float x, float z) => Rects.Any(r => x >= r.X0 * BuildingGen.Cell && x < r.X1 * BuildingGen.Cell
-                                                            && z >= r.Z0 * BuildingGen.Cell && z < r.Z1 * BuildingGen.Cell);
+        public bool Holds(float x, float z)
+        {
+            if (x >= X0 * BuildingGen.Cell && x < X1 * BuildingGen.Cell && z >= Z0 * BuildingGen.Cell && z < Z1 * BuildingGen.Cell) return true;
+            for (int i = 0; i < More.Count; i++)
+            {
+                var r = More[i];
+                if (x >= r.X0 * BuildingGen.Cell && x < r.X1 * BuildingGen.Cell && z >= r.Z0 * BuildingGen.Cell && z < r.Z1 * BuildingGen.Cell) return true;
+            }
+            return false;
+        }
         public override string ToString() => $"{Kind}@{Floor} [{X0},{Z0}..{X1},{Z1}]" + (More.Count > 0 ? $"+{More.Count}" : "") + (Unit >= 0 ? $" flat {Unit}" : "")
                                              + (Span > 1 ? $" x{Span} storeys" : "");
     }
@@ -1177,7 +1200,9 @@ namespace UnturnedSim
         static List<(string What, int Weight)> Shortfall(BuildingGenResult r, HashSet<GenRoom> unfurnished = null, HashSet<GenRoom> unlit = null)
         {
             var miss = new List<(string What, int Weight)>();
-            bool Has(GenRoom g, params string[] ns) => r.Furniture.Any(m => m.Room == g && ns.Any(n => m.Name.StartsWith(n)));
+            // (the pieces by room, each room's in Furniture's order: a tower asked the whole building's for every room)
+            var byRoom = r.Furniture.ToLookup(m => m.Room);
+            bool Has(GenRoom g, params string[] ns) => byRoom[g].Any(m => ns.Any(n => m.Name.StartsWith(n)));
             void Need(GenRoom g, string what, bool ok, int weight = 2) { if (!ok) { miss.Add(($"{g.Kind}: {what}", weight)); unfurnished?.Add(g); } }
             // (a basement's rooms are not what the building is for: its rec room needs no couch and gets no window)
             foreach (var g in r.Layout.Where(g => g.Floor >= 0))
@@ -1185,11 +1210,11 @@ namespace UnturnedSim
                 {
                     case RoomKind.Bedroom: Need(g, "bed", Has(g, "Bed")); break;
                     case RoomKind.LivingRoom: Need(g, "couch", Has(g, "Couch")); break;
-                    case RoomKind.DiningRoom: Need(g, "table", Has(g, "Table")); Need(g, "chairs", r.Furniture.Count(m => m.Room == g && m.Name.StartsWith("Chair")) >= 4, 1); break;
+                    case RoomKind.DiningRoom: Need(g, "table", Has(g, "Table")); Need(g, "chairs", byRoom[g].Count(m => m.Name.StartsWith("Chair")) >= 4, 1); break;
                     case RoomKind.Kitchen:
                         Need(g, "fridge", Has(g, "Fridge")); Need(g, "sink", Has(g, "Counter_1")); Need(g, "stove", Has(g, "Oven"));
                         // a plain counter at the sink or stove; and where the house eats in its kitchen, a table with a chair
-                        Need(g, "counter", Worktop(r.Furniture.Where(m => m.Room == g)), 1);
+                        Need(g, "counter", Worktop(byRoom[g].ToList()), 1);
                         if (EatsInKitchen(r, g)) Need(g, "dining table", Has(g, "Table_Wood_0", "Table_Wood_1", "Table_Wood_3") && Has(g, "Chair_Wood_0"), 1);
                         break;
                     case RoomKind.Bathroom: Need(g, "tub or sink", Has(g, "Tub", "Counter_1")); break;
@@ -2518,12 +2543,19 @@ namespace UnturnedSim
         public static bool SharesCorner(bool alongX1, int line1, float at1, bool alongX2, int line2, float at2)
         {
             const float Near = 1.0f;
-            IEnumerable<(int X, int Z)> Points(bool alongX, int line, float at)
+            // each door's corners are the lattice points s along its line from s0 = Ceiling((at - HalfDoor - Near) / Cell) while
+            // s * Cell <= at + HalfDoor + Near -- a run of s, so whether two doors' runs meet is worked out, not walked (a tower
+            // asks it of every pair of its thousand doors): two along the same line meet where the later start is inside both
+            // runs; one along x and one along z only at the point where their lines cross, inside both
+            int s1 = (int)MathF.Ceiling((at1 - HalfDoor - Near) / Cell), s2 = (int)MathF.Ceiling((at2 - HalfDoor - Near) / Cell);
+            float e1 = at1 + HalfDoor + Near, e2 = at2 + HalfDoor + Near;
+            if (alongX1 == alongX2)
             {
-                for (int s = (int)MathF.Ceiling((at - HalfDoor - Near) / Cell); s * Cell <= at + HalfDoor + Near; s++)
-                    yield return alongX ? (s, line) : (line, s);
+                if (line1 != line2) return false;
+                int s = Math.Max(s1, s2);
+                return s * Cell <= e1 && s * Cell <= e2;
             }
-            return Points(alongX1, line1, at1).Intersect(Points(alongX2, line2, at2)).Any();
+            return line2 >= s1 && line2 * Cell <= e1 && line1 >= s2 && line1 * Cell <= e2;
         }
 
         /// <summary>Is the living room (what is left of it beside the stairs) at least as big as the dining room and the

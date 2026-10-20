@@ -173,7 +173,7 @@ namespace UnturnedSim
                     else if (m.Ceiling) Box(m.Footprint, y - (m.Name.Contains("Pendant") ? PendantDrop : 0.28f), y, m.Name);
                     else Box(m.Footprint, y, y + sz.H, m.Name, stands: true);
                 }
-                foreach (var c in _res.RuntimeDecor.Where(c => c.Floor == _room.Floor && c.Gen.Kind == RuntimeDecorKind.Curtain))
+                foreach (var c in HereDecor().Where(c => c.Floor == _room.Floor && c.Gen.Kind == RuntimeDecorKind.Curtain))
                     Box(c.Footprint, c.Y - floorY - RuntimeDecor.CurtainRailOverCloth - c.Gen.Height, c.Y - floorY + RuntimeDecor.CurtainCapOverRail, "a curtain");
                 // (the stairs, and the tile at a flight's foot and top: you step off the stairs there, at any curtain's height)
                 foreach (var r in _p.StairRects) Box(r, 0f, Storey, "the stairs");

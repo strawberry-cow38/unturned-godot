@@ -197,6 +197,7 @@ namespace UnturnedGodot
             _guidToName.Clear();
             _meshCache.Clear();     // a re-bake under the same name must not serve the previous mesh
             _shapeCache.Clear();    // ...nor the previous mesh's collider
+            lock (_texCache) _texCache.Clear();   // ...nor its texture
             LoadCatalog();
             CatalogChanged?.Invoke();
         }
@@ -240,21 +241,15 @@ namespace UnturnedGodot
                 };
             var mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = Dir + name + "_tex.png";
-            var img = new Image();
-            if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp))
+            var tx = TexFor(tp);
+            if (tx.Texture != null)
             {
-                if (img.GetFormat() == Image.Format.Rgba8)   // leaf/foliage cutout: real transparency (>0.25% of texels) -> alpha-scissor (matches WorldBuilder)
-                {
-                    var data = img.GetData(); int tr = 0;
-                    for (int i = 3; i < data.Length; i += 4) if (data[i] < 200) tr++;
-                    if (tr > data.Length / 400) { mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mm.AlphaScissorThreshold = 0.5f; }
-                }
+                if (tx.Scissor) { mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mm.AlphaScissorThreshold = 0.5f; }
                 // ...unless its handoff says the alpha is GLASS (WantsTranslucent): the doodad kit's jars are a 4x4 palette with
                 // one swatch at alpha 112, which a scissor at 0.5 throws away -- the glass simply vanishes
                 if (WantsTranslucent(name)) mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaDepthPrePass;
-                bool palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
-                if (!palette) img.GenerateMipmaps();
-                mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                bool palette = tx.Palette;
+                mm.AlbedoTexture = tx.Texture;
                 // ⚠⚠ NEAREST IS THE RIGHT DEFAULT AND THE WRONG ONE FOR FOLIAGE. The game's props are
                 // flat-shaded palette work and want crisp texels; a leaf CARD wants its edge smoothed, and
                 // master asked astraclaw for exactly that ("use bilinear on the foliage textures"). An OBJ
@@ -269,6 +264,34 @@ namespace UnturnedGodot
             else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
             return mm;
         }
+
+        /// <summary>⚡ A prop texture file's texture, ONCE A FILE (by its path), with what reading it decided: a cutout's scissor
+        /// (real transparency in more than 0.25% of its texels) and a palette's no-mipmaps. Every placement used to re-read,
+        /// decode and upload its PNG -- a texture per PIECE, 14,332 of them for one tower. Only the file's product is shared,
+        /// and nothing edits a texture once it is made; each piece still gets a material of its own (MatFor), which devices
+        /// do change. Cleared with the catalog (ReloadCatalog). Locked: the cache is the only state here a thread might share.</summary>
+        (ImageTexture Texture, bool Scissor, bool Palette) TexFor(string tp)
+        {
+            lock (_texCache)
+            {
+                if (_texCache.TryGetValue(tp, out var tx)) return tx;
+                var img = new Image();
+                if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp))
+                {
+                    if (img.GetFormat() == Image.Format.Rgba8)   // leaf/foliage cutout: real transparency (>0.25% of texels) -> alpha-scissor (matches WorldBuilder)
+                    {
+                        var data = img.GetData(); int tr = 0;
+                        for (int i = 3; i < data.Length; i += 4) if (data[i] < 200) tr++;
+                        tx.Scissor = tr > data.Length / 400;
+                    }
+                    tx.Palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
+                    if (!tx.Palette) img.GenerateMipmaps();
+                    tx.Texture = ImageTexture.CreateFromImage(img);
+                }
+                return _texCache[tp] = tx;
+            }
+        }
+        readonly Dictionary<string, (ImageTexture Texture, bool Scissor, bool Palette)> _texCache = new();
 
         /// <summary>Props whose art handoff asked for Linear (bilinear) texture filtering, read out of the
         /// `*_materials.json` files that ship beside the OBJs in content/objects.

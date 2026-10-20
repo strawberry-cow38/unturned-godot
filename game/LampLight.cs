@@ -176,8 +176,8 @@ namespace UnturnedGodot
                 {
                     case Kind.CeilingStrip:
                     case Kind.CeilingBulb:  (body, emit) = ObjMesh.SplitLens(src); break;   // same UV-quadrant emitter; they differ only in the lens MATERIAL below
-                    case Kind.FloorShade:   (body, emit) = ObjMesh.SplitByUvCentroid(src, uv => uv.X < 0.5f && uv.Y > 0.5f); break;
-                    case Kind.DeskBulb:     (body, emit) = ObjMesh.SplitByFace(src, (c, n) => c.Z > 0.6f && n.Z < -0.4f && n.X * DebugBulbSide > 0f); break;   // head "opening" face: on the head, facing down + to the picked side
+                    case Kind.FloorShade:   (body, emit) = SplitOnce(src, _kind, () => ObjMesh.SplitByUvCentroid(src, uv => uv.X < 0.5f && uv.Y > 0.5f)); break;
+                    case Kind.DeskBulb:     (body, emit) = SplitOnce(src, _kind, () => ObjMesh.SplitByFace(src, (c, n) => c.Z > 0.6f && n.Z < -0.4f && n.X * DebugBulbSide > 0f)); break;   // head "opening" face: on the head, facing down + to the picked side
                     // Generic: no split (whole small fixture glows).
                 }
                 if (emit != null)
@@ -457,11 +457,33 @@ namespace UnturnedGodot
 
         static Vector3 AverageNormal(ArrayMesh m)
         {
+            // (once a mesh: the emitter is SplitOnce's, shared by every lamp of its prop, and reading its arrays back waits on
+            // the render thread)
+            lock (_normals) if (_normals.TryGetValue(m, out var hit)) return hit;
             var N = m.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Normal].AsVector3Array();
             Vector3 s = Vector3.Zero;
             foreach (var n in N) s += n;
-            return s.Length() > 0.001f ? s.Normalized() : Vector3.Down;
+            var r = s.Length() > 0.001f ? s.Normalized() : Vector3.Down;
+            lock (_normals) _normals[m] = r;
+            return r;
         }
+        static readonly System.Collections.Generic.Dictionary<ArrayMesh, Vector3> _normals = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+        /// <summary>⚡ A fixture mesh's split into housing and emitter, ONCE A MESH (the prop's own, from EditorObjects.MeshFor: one
+        /// instance per prop) and kind -- and, for a desk lamp, per DebugBulbSide, which its predicate reads. The split reads the
+        /// mesh's arrays back, which waits on the render thread, and builds two meshes: per lamp, 2,646 times in one tower. Meshes
+        /// are never edited once built (ContentProvider: materials ride the instances), so every lamp of a prop shares the two,
+        /// as ObjMesh.SplitLens already shares a ceiling strip's.</summary>
+        static (ArrayMesh Body, ArrayMesh Emit) SplitOnce(ArrayMesh src, Kind kind, System.Func<(ArrayMesh, ArrayMesh)> split)
+        {
+            if (src == null) return split();
+            var key = (src, kind, kind == Kind.DeskBulb ? DebugBulbSide : 0f);
+            lock (_splits) if (_splits.TryGetValue(key, out var hit)) return hit;
+            var r = split();
+            lock (_splits) _splits[key] = r;
+            return r;
+        }
+        static readonly System.Collections.Generic.Dictionary<(ArrayMesh, Kind, float), (ArrayMesh, ArrayMesh)> _splits = new();
 
         protected override void ApplyLit(bool lit) { _lastLit = lit; ApplyEffective(); }
 

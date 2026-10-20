@@ -10,6 +10,12 @@ namespace UnturnedSim
     {
         public static (float Cos, float Sin) CosSin(float degrees)
         {
+            // (the four right angles, which nearly every call is, as the general path below gives them -- its signed zeros
+            // too -- without its rounding and remainder)
+            if (degrees == 0f) return (1f, 0f);
+            if (degrees == 90f) return (-0f, 1f);
+            if (degrees == 180f) return (-1f, -0f);
+            if (degrees == 270f) return (0f, -1f);
             double q = Math.Round(degrees / 90.0);
             double r = degrees - 90.0 * q;               // within 45 degrees of a right angle
             int k = (int)(((long)q % 4 + 4) % 4);

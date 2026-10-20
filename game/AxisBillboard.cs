@@ -29,13 +29,26 @@ namespace UnturnedGodot
             var b = new AxisBillboard();
             b._quad = new MeshInstance3D
             {
-                Mesh = new QuadMesh { Size = size },
+                Mesh = QuadFor(size),
                 MaterialOverride = mat,
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             };
             b.AddChild(b._quad);
             return b;
         }
+
+        /// <summary>⚡ The quad, ONCE A SIZE. Every port arrow is the same 0.17 x 0.24 quad (ConnectionPort.MakeArrow, the one caller), and a
+        /// tower made one for each of its thousands of ports. Nothing edits the quad once made -- Tick turns the instance, and the
+        /// arrow's colour rides its own material -- so every arrow of a size shares it. Locked, though only the main thread builds.</summary>
+        static QuadMesh QuadFor(Vector2 size)
+        {
+            lock (_quads)
+            {
+                if (!_quads.TryGetValue(size, out var q)) _quads[size] = q = new QuadMesh { Size = size };
+                return q;
+            }
+        }
+        static readonly System.Collections.Generic.Dictionary<Vector2, QuadMesh> _quads = new();
 
         public override void _Ready() { TickHub.AddProcess(this, Tick); SetProcess(false); }
         public override void _ExitTree() { TickHub.RemoveProcess(this); }

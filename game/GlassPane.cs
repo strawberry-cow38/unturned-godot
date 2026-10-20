@@ -36,11 +36,25 @@ namespace UnturnedGodot
             var box = new Vector3(size.X, size.Y, thickness);
             pane._mesh = new MeshInstance3D { Mesh = new BoxMesh { Size = box }, MaterialOverride = GlassMat(pane._hue) };
             pane.AddChild(pane._mesh);
-            pane._mesh.SetInstanceShaderParameter("pane_axis", DominantFaceAxis(pane._mesh.Mesh));   // the big face decides where the water runs (see DominantFaceAxis)
+            pane._mesh.SetInstanceShaderParameter("pane_axis", AxisFor(box, pane._mesh.Mesh));   // the big face decides where the water runs (see DominantFaceAxis)
             pane.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = box } });
             pane.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);   // a stray hit reads as a hard 'tink'; the shatter carries the real read
             return pane;
         }
+
+        /// <summary>⚡ DominantFaceAxis of a pane's box, once a SIZE: the pane's mesh is a BoxMesh of that size and nothing else (its
+        /// subdivisions the defaults), so its faces -- and their biggest -- are the size's. Asking the mesh for its faces waits
+        /// on the render thread (mesh_get_surface) and warns with a backtrace: 2,641 times for one tower's windows. Locked, as
+        /// the one static state here.</summary>
+        static Vector3 AxisFor(Vector3 size, Mesh mesh)
+        {
+            lock (_axisBySize)
+            {
+                if (!_axisBySize.TryGetValue(size, out var axis)) _axisBySize[size] = axis = DominantFaceAxis(mesh);
+                return axis;
+            }
+        }
+        static readonly System.Collections.Generic.Dictionary<Vector3, Vector3> _axisBySize = new();
 
         MeshInstance3D _mesh;
         /// <summary>Distance-cull the pane's mesh (the body and its collider stay -- a pane you cannot see is still a

@@ -28,7 +28,23 @@ namespace UnturnedSim
         public RuntimeDecor Gen;
         public (float X, float Z) Front { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
         public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
-        public (float X0, float Z0, float X1, float Z1) Footprint => Gen != null ? FurnitureCatalog.Footprint(Gen.Size, X, Z, Yaw) : FurnitureCatalog.Footprint(Name, X, Z, Yaw);
+        public (float X0, float Z0, float X1, float Z1) Footprint
+        {
+            get
+            {
+                // (kept from the last time it was asked, while the piece is the same and stands exactly where it did -- compared
+                // bit for bit, so one moved by a hair, or turned, is worked out afresh: the furnisher asks a tower's pieces for
+                // their footprints tens of millions of times. A piece's furnishing is one thread's, so the cache is too.)
+                if (!_lcOk || !ReferenceEquals(_lcName, Name) || !ReferenceEquals(_lcGen, Gen) || BitConverter.SingleToInt32Bits(_lcX) != BitConverter.SingleToInt32Bits(X)
+                    || BitConverter.SingleToInt32Bits(_lcZ) != BitConverter.SingleToInt32Bits(Z) || BitConverter.SingleToInt32Bits(_lcYaw) != BitConverter.SingleToInt32Bits(Yaw))
+                {
+                    _lcFp = Gen != null ? FurnitureCatalog.Footprint(Gen.Size, X, Z, Yaw) : FurnitureCatalog.Footprint(Name, X, Z, Yaw);
+                    _lcName = Name; _lcGen = Gen; _lcX = X; _lcZ = Z; _lcYaw = Yaw; _lcOk = true;
+                }
+                return _lcFp;
+            }
+        }
+        (float X0, float Z0, float X1, float Z1) _lcFp; string _lcName; RuntimeDecor _lcGen; float _lcX, _lcZ, _lcYaw; bool _lcOk;
         public override string ToString() => $"{Name} at ({X:0.00},{Z:0.00}) yaw {Yaw:0} in {Room}";
     }
 
@@ -251,21 +267,50 @@ namespace UnturnedSim
                 float qx = Math.Clamp(mx, s.X0, s.X1) - mx, qy = Math.Clamp(my, s.Y0, s.Y1) - my;
                 return MathF.Sqrt(qx * qx + qy * qy) < r - eps;
             }
-            var ca = Corners(a); var cb = Corners(b);
-            foreach (var m in new[] { a, b })
-                foreach (var (ax, az) in new[] { m.Right, m.Front })
-                {
-                    float a0 = ca.Min(p => p.X * ax + p.Z * az), a1 = ca.Max(p => p.X * ax + p.Z * az);
-                    float b0 = cb.Min(p => p.X * ax + p.Z * az), b1 = cb.Max(p => p.X * ax + p.Z * az);
-                    if (MathF.Min(a1, b1) - MathF.Max(a0, b0) <= eps) return false;
-                }
+            // (the corners and the four axes worked out once, into locals: this is asked of every piece in a room for every spot a
+            // floor piece is tried at; the same arithmetic, and the same Min and Max as Enumerable's, NaNs and all)
+            Corners(a, out var a0x, out var a0z, out var a1x, out var a1z, out var a2x, out var a2z, out var a3x, out var a3z);
+            Corners(b, out var b0x, out var b0z, out var b1x, out var b1z, out var b2x, out var b2z, out var b3x, out var b3z);
+            for (int k = 0; k < 4; k++)
+            {
+                var m = k < 2 ? a : b;
+                var (ax, az) = (k & 1) == 0 ? m.Right : m.Front;
+                float pa0 = a0x * ax + a0z * az, pa1 = a1x * ax + a1z * az, pa2 = a2x * ax + a2z * az, pa3 = a3x * ax + a3z * az;
+                float pb0 = b0x * ax + b0z * az, pb1 = b1x * ax + b1z * az, pb2 = b2x * ax + b2z * az, pb3 = b3x * ax + b3z * az;
+                float mina = Min4(pa0, pa1, pa2, pa3), maxa = Max4(pa0, pa1, pa2, pa3);
+                float minb = Min4(pb0, pb1, pb2, pb3), maxb = Max4(pb0, pb1, pb2, pb3);
+                if (MathF.Min(maxa, maxb) - MathF.Max(mina, minb) <= eps) return false;
+            }
             return true;
         }
-
-        static (float X, float Z)[] Corners(FurniturePlan m)
+        /// <summary>Enumerable.Min over four floats in order: the first NaN met, else the least (the first of equals).</summary>
+        static float Min4(float p0, float p1, float p2, float p3)
+        {
+            float v = p0;
+            if (float.IsNaN(v)) return v;
+            if (p1 < v) v = p1; else if (float.IsNaN(p1)) return p1;
+            if (p2 < v) v = p2; else if (float.IsNaN(p2)) return p2;
+            if (p3 < v) v = p3; else if (float.IsNaN(p3)) return p3;
+            return v;
+        }
+        /// <summary>Enumerable.Max over four floats in order: NaNs passed over (NaN only if all are), else the greatest (the first
+        /// of equals).</summary>
+        static float Max4(float p0, float p1, float p2, float p3)
+        {
+            float v = p0; int k = 0;
+            while (float.IsNaN(v)) { if (++k == 4) return v; v = k == 1 ? p1 : k == 2 ? p2 : p3; }
+            if (k < 1 && p1 > v) v = p1;
+            if (k < 2 && p2 > v) v = p2;
+            if (k < 3 && p3 > v) v = p3;
+            return v;
+        }
+        static void Corners(FurniturePlan m, out float x0, out float z0, out float x1, out float z1, out float x2, out float z2, out float x3, out float z3)
         {
             var s = Sizes[m.Name]; var (rx, rz) = m.Right; var (fx, fz) = m.Front;
-            return new[] { (s.X0, s.Y0), (s.X1, s.Y0), (s.X1, s.Y1), (s.X0, s.Y1) }.Select(q => (m.X + rx * q.Item1 + fx * q.Item2, m.Z + rz * q.Item1 + fz * q.Item2)).ToArray();
+            x0 = m.X + rx * s.X0 + fx * s.Y0; z0 = m.Z + rz * s.X0 + fz * s.Y0;
+            x1 = m.X + rx * s.X1 + fx * s.Y0; z1 = m.Z + rz * s.X1 + fz * s.Y0;
+            x2 = m.X + rx * s.X1 + fx * s.Y1; z2 = m.Z + rz * s.X1 + fz * s.Y1;
+            x3 = m.X + rx * s.X0 + fx * s.Y1; z3 = m.Z + rz * s.X0 + fz * s.Y1;
         }
 
         /// <summary>A prop's footprint in plan at (x, z) turned by yaw, as the axis-aligned box round it (exact at right
@@ -419,6 +464,31 @@ namespace UnturnedSim
             public readonly List<(float X, float Z, GenRoom Room)> Targets = new();
             /// <summary>Where this storey's pieces begin in Furniture: every one of them is at or past it (Furnisher.Here).</summary>
             public int Start;
+            /// <summary>Where this storey's vents, fixtures and rugs and curtains begin in HvacVents, Electrical and RuntimeDecor:
+            /// their count when the storey's furnishing began -- or 0 should one already there be on this storey (none ever
+            /// is: the storeys are furnished one after another), so a scan from here meets every one the whole list holds.</summary>
+            public readonly int VentStart, ElecStart, DecorStart;
+            /// <summary>How many ceiling lights stand in Furniture before this storey's first piece (Start) -- read once, when first
+            /// asked (nothing before Start changes while the storey is furnished) -- or -1 where one of them belongs to a room of
+            /// this storey (none ever does), and the caller counts from the start of the list.</summary>
+            public int CeilingsBefore()
+            {
+                if (_ceilingsBefore != int.MinValue) return _ceilingsBefore;
+                int n = 0;
+                for (int i = 0; i < Start && i < _res.Furniture.Count; i++)
+                {
+                    var m = _res.Furniture[i];
+                    if (m.Room != null && m.Room.Floor == F) return _ceilingsBefore = -1;
+                    if (m.Ceiling) n++;
+                }
+                return _ceilingsBefore = n;
+            }
+            int _ceilingsBefore = int.MinValue;
+            static int FloorStart(List<FurniturePlan> l, int f)
+            {
+                foreach (var m in l) if (m.Floor == f) return 0;
+                return l.Count;
+            }
             /// <summary>This storey's walls, full height, in the plan's order (nothing furnishing does adds or takes one): what a
             /// room's own walls are found among (RoomWalls) without a scan of the whole building's for every spot tried.</summary>
             public List<WallPlan> Walls;
@@ -431,11 +501,64 @@ namespace UnturnedSim
             /// <summary>The tiles at the flights' ends, exactly: kept clear on the grid too, but a piece's edge can stand up
             /// to half a cell into one between the cell centres (a couch 5 cm onto a switchback's foot tile).</summary>
             public readonly List<(float X0, float Z0, float X1, float Z1)> TileRects = new();
+            /// <summary>This storey's rooms, in the layout's order (the layout is settled before anything is furnished): what a
+            /// search for the room on this storey at a point looks through, rather than every room of the building.</summary>
+            public readonly List<GenRoom> Rooms;
             readonly BuildingGenResult _res;
+
+            // ---- WallRects by WallStep-square buckets, so a point or a box is tested against the walls near it, not the storey's
+            // every wall: each rect is in every bucket its closed extent touches, and a query looks in every bucket its own
+            // closed extent touches (clamped at the plan's edge, both alike), so every rect that could contain the point or
+            // overlap the box is looked at -- the same answer as a scan of the whole list, which is what they replace.
+            const float WallStep = 3f;
+            int _wbx, _wbz;
+            List<int>[] _wallBuckets;
+            int Wbx(float x) => Math.Clamp((int)MathF.Floor((x - Ox) / WallStep), 0, _wbx - 1);
+            int Wbz(float z) => Math.Clamp((int)MathF.Floor((z - Oz) / WallStep), 0, _wbz - 1);
+            void IndexWalls()
+            {
+                _wbx = Math.Max(1, (int)MathF.Ceiling(Nx * Step / WallStep)); _wbz = Math.Max(1, (int)MathF.Ceiling(Nz * Step / WallStep));
+                _wallBuckets = new List<int>[_wbx * _wbz];
+                for (int k = 0; k < WallRects.Count; k++)
+                {
+                    var r = WallRects[k];
+                    for (int a = Wbx(r.X0); a <= Wbx(r.X1); a++)
+                        for (int b = Wbz(r.Z0); b <= Wbz(r.Z1); b++)
+                            (_wallBuckets[a * _wbz + b] ??= new List<int>()).Add(k);
+                }
+            }
+            /// <summary>Is the point in (or on the edge of) a wall's rect: WallRects.Any(r => px >= r.X0 && px <= r.X1 && pz >= r.Z0
+            /// && pz <= r.Z1). (`except`: rects not counted, by value -- a wall's own.)</summary>
+            public bool WallAt(float px, float pz, List<(float X0, float Z0, float X1, float Z1)> except = null)
+            {
+                var l = _wallBuckets[Wbx(px) * _wbz + Wbz(pz)];
+                if (l == null) return false;
+                for (int k = 0; k < l.Count; k++)
+                {
+                    var r = WallRects[l[k]];
+                    if (px >= r.X0 && px <= r.X1 && pz >= r.Z0 && pz <= r.Z1 && (except == null || !except.Contains(r))) return true;
+                }
+                return false;
+            }
+            /// <summary>Does a box overlap a wall's rect, as Furnisher.Overlaps has it: WallRects.Any(r => Overlaps(a, r)).</summary>
+            public bool WallOverlaps((float X0, float Z0, float X1, float Z1) a)
+            {
+                // (min and max of the buckets: a box given max-first still overlaps, by Overlaps, a rect spanning it)
+                int a0 = Math.Min(Wbx(a.X0), Wbx(a.X1)), a1 = Math.Max(Wbx(a.X0), Wbx(a.X1)), b0 = Math.Min(Wbz(a.Z0), Wbz(a.Z1)), b1 = Math.Max(Wbz(a.Z0), Wbz(a.Z1));
+                for (int i = a0; i <= a1; i++)
+                    for (int j = b0; j <= b1; j++)
+                    {
+                        var l = _wallBuckets[i * _wbz + j];
+                        if (l == null) continue;
+                        for (int k = 0; k < l.Count; k++) if (Furnisher.Overlaps(a, WallRects[l[k]])) return true;
+                    }
+                return false;
+            }
 
             public FloorPlan(BuildingGenResult res, int f)
             {
                 _res = res; F = f;
+                VentStart = FloorStart(res.HvacVents, f); ElecStart = FloorStart(res.Electrical, f); DecorStart = FloorStart(res.RuntimeDecor, f);
                 Ox = -1f; Oz = -1f;
                 Nx = (int)MathF.Ceiling((res.CellsX * Cell + 2f) / Step);
                 Nz = (int)MathF.Ceiling((res.CellsZ * Cell + 2f) / Step);
@@ -444,9 +567,11 @@ namespace UnturnedSim
                 const float M = WallOpenings.StairHoleMargin;
                 int FloorOf(float y) => (int)MathF.Round(y / Storey);
                 var walls = Walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w.Y) == f && w.Height > Storey - 0.01f).ToList();
+                Rooms = res.Layout.Where(g => g.Floor == f).ToList();
                 // (a wall left out between two rooms that share one space -- open plan's cut, BuildingGen.OpenPlan -- is floor
                 // there, not wall: nothing stands with its back to it, and you walk across it; its piers and beam stay wall)
                 foreach (var w in walls) foreach (var b in Solid(w)) { Fill(b, Wall); WallRects.Add(b); }
+                IndexWalls();
                 // the stairs: flights on this floor, the landings, and the holes in this floor
                 float Rise(StairPlan s) => s.Rise > 0f ? s.Rise : Storey;
                 foreach (var s in res.Stairs.Where(s => s.Floor == f)) Fill(Foot(s), Stair);
@@ -566,9 +691,22 @@ namespace UnturnedSim
             /// <summary>The cells whose centres lie inside a box.</summary>
             public IEnumerable<(int I, int J)> Cells((float X0, float Z0, float X1, float Z1) a)
             {
-                int i0 = Math.Max(0, (int)MathF.Ceiling((a.X0 - Ox) / Step - 0.5f)), i1 = Math.Min(Nx - 1, (int)MathF.Floor((a.X1 - Ox) / Step - 0.5f));
-                int j0 = Math.Max(0, (int)MathF.Ceiling((a.Z0 - Oz) / Step - 0.5f)), j1 = Math.Min(Nz - 1, (int)MathF.Floor((a.Z1 - Oz) / Step - 0.5f));
+                CellBox(a, out int i0, out int i1, out int j0, out int j1);
                 for (int i = i0; i <= i1; i++) for (int j = j0; j <= j1; j++) yield return (i, j);
+            }
+            /// <summary>The range of cells Cells walks (i0..i1 by j0..j1, empty where i1 < i0 or j1 < j0): for a test of every
+            /// cell under a box that is asked too often to go through an iterator.</summary>
+            public void CellBox((float X0, float Z0, float X1, float Z1) a, out int i0, out int i1, out int j0, out int j1)
+            {
+                i0 = Math.Max(0, (int)MathF.Ceiling((a.X0 - Ox) / Step - 0.5f)); i1 = Math.Min(Nx - 1, (int)MathF.Floor((a.X1 - Ox) / Step - 0.5f));
+                j0 = Math.Max(0, (int)MathF.Ceiling((a.Z0 - Oz) / Step - 0.5f)); j1 = Math.Min(Nz - 1, (int)MathF.Floor((a.Z1 - Oz) / Step - 0.5f));
+            }
+            /// <summary>Is any cell under a box one a tall piece may not stand on (KeepTall)?</summary>
+            public bool AnyTall((float X0, float Z0, float X1, float Z1) a)
+            {
+                CellBox(a, out int i0, out int i1, out int j0, out int j1);
+                for (int i = i0; i <= i1; i++) for (int j = j0; j <= j1; j++) if (KeepTall[i, j]) return true;
+                return false;
             }
             void Fill((float, float, float, float) a, byte v)
             {
@@ -605,29 +743,77 @@ namespace UnturnedSim
                 foreach (var r in room.Rects)
                     foreach (var (i, j) in p.Cells((r.X0 * Cell, r.Z0 * Cell, r.X1 * Cell, r.Z1 * Cell)))
                         if (i >= _i0 && j >= _j0 && i < _i0 + _ni && j < _j0 + _nj) _inRoom[i - _i0, j - _j0] = true;
+                _open = new bool[_ni * _nj];
+                for (int a = 0; a < _ni; a++) for (int b = 0; b < _nj; b++) _open[a * _nj + b] = _inRoom[a, b];
                 _bad = new int[_nj, _ni + 1]; _badTall = new int[_nj, _ni + 1];
-                for (int b = 0; b < _nj; b++) Recount(b);
+                RecountAll();
             }
+            /// <summary>Every row's running counts at once (Recount, for each b): the room's box of the floor's grids copied out
+            /// row by row (row i of a grid is its cells j, one run in memory), the sums made in plain arrays and copied in.</summary>
+            void RecountAll()
+            {
+                int size = _ni * _nj, nz = _p.Nz;
+                var st = new byte[size]; var door = new bool[size]; var keepTall = new bool[size];
+                for (int a = 0; a < _ni; a++)
+                {
+                    int from = (_i0 + a) * nz + _j0;
+                    Buffer.BlockCopy(_p.State, from, st, a * _nj, _nj);
+                    Buffer.BlockCopy(_p.KeepDoor, from, door, a * _nj, _nj);
+                    Buffer.BlockCopy(_p.KeepTall, from, keepTall, a * _nj, _nj);
+                }
+                int w = _ni + 1;
+                var sum = new int[_nj * w]; var sumTall = new int[_nj * w];
+                for (int b = 0; b < _nj; b++)
+                {
+                    int row = b * w;
+                    for (int a = 0; a < _ni; a++)
+                    {
+                        int k = a * _nj + b;
+                        int bad = !_open[k] || st[k] != FloorPlan.Free || door[k] ? 1 : 0;
+                        int tall = bad == 1 || keepTall[k] ? 1 : 0;
+                        sum[row + a + 1] = sum[row + a] + bad;
+                        sumTall[row + a + 1] = sumTall[row + a] + tall;
+                    }
+                }
+                Buffer.BlockCopy(sum, 0, _bad, 0, sum.Length * sizeof(int));
+                Buffer.BlockCopy(sumTall, 0, _badTall, 0, sumTall.Length * sizeof(int));
+            }
+            /// <summary>_inRoom as one run, (a, b) at a * _nj + b: what the hot loops read.</summary>
+            readonly bool[] _open;
 
             /// <summary>Row b's running counts of the cells a short piece, and a tall one, may not stand on.</summary>
             void Recount(int b)
             {
-                int j = _j0 + b;
+                // (the floor plan's grids and the sums read as runs of their elements -- [i, j] at i * Nz + j, [b, a] at
+                // b * (_ni + 1) + a -- rather than through two-index lookups, which a debug build does not inline)
+                var state = Flat(_p.State); var door = Flat(_p.KeepDoor); var keepTall = Flat(_p.KeepTall);
+                var sum = Flat(_bad); var sumTall = Flat(_badTall);
+                int j = _j0 + b, nz = _p.Nz, row = b * (_ni + 1);
                 for (int a = 0; a < _ni; a++)
                 {
-                    int i = _i0 + a;
-                    int bad = !_inRoom[a, b] || _p.State[i, j] != FloorPlan.Free || _p.KeepDoor[i, j] ? 1 : 0;
-                    int tall = bad == 1 || _p.KeepTall[i, j] ? 1 : 0;
-                    _bad[b, a + 1] = _bad[b, a] + bad;
-                    _badTall[b, a + 1] = _badTall[b, a] + tall;
+                    int g = (_i0 + a) * nz + j;
+                    int bad = !_open[a * _nj + b] || state[g] != FloorPlan.Free || door[g] ? 1 : 0;
+                    int tall = bad == 1 || keepTall[g] ? 1 : 0;
+                    sum[row + a + 1] = sum[row + a] + bad;
+                    sumTall[row + a + 1] = sumTall[row + a] + tall;
                 }
             }
+            /// <summary>A two-index array's elements as one run, row by row.</summary>
+            static Span<T> Flat<T>(T[,] a) => System.Runtime.InteropServices.MemoryMarshal.CreateSpan(
+                ref System.Runtime.CompilerServices.Unsafe.As<byte, T>(ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(a)), a.Length);
             void Recount((float X0, float Z0, float X1, float Z1) a)
             {
                 int b0 = Math.Max(0, _p.J(a.Z0) - _j0 - 1), b1 = Math.Min(_nj - 1, _p.J(a.Z1) - _j0 + 1);
                 for (int b = b0; b <= b1; b++) Recount(b);
             }
             bool InRoom(int i, int j) => i >= _i0 && j >= _j0 && i < _i0 + _ni && j < _j0 + _nj && _inRoom[i - _i0, j - _j0];
+            /// <summary>Is every floor cell under a box this room's, and Free? (True when the box has no cell centre in it.)</summary>
+            bool RoomFree((float X0, float Z0, float X1, float Z1) a)
+            {
+                _p.CellBox(a, out int i0, out int i1, out int j0, out int j1);
+                for (int i = i0; i <= i1; i++) for (int j = j0; j <= j1; j++) if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
+                return true;
+            }
 
             /// <summary>This storey's pieces, in Furniture's order: the list from where the storey's furnishing began (FloorPlan.Start)
             /// -- every piece of the storey is there, with only later storeys' after it (a storey's pieces are all added while it is
@@ -635,6 +821,12 @@ namespace UnturnedSim
             /// answer it got off the whole list. Scanning the whole list for every spot a piece was tried at made a tall building's
             /// furnishing quadratic in its size: a thirty-storey tower's floor doodads alone took minutes.</summary>
             IEnumerable<FurniturePlan> Here() { var l = _res.Furniture; for (int i = _p.Start; i < l.Count; i++) yield return l[i]; }
+            /// <summary>This storey's vents, fixtures, and rugs and curtains, the same way: from where the storey began in each
+            /// list (FloorPlan.VentStart, ElecStart, DecorStart), in the list's order -- with the rest of the building's before
+            /// them, which a test filtering on this storey passed over one by one, for every spot it tried.</summary>
+            IEnumerable<FurniturePlan> HereVents() { var l = _res.HvacVents; for (int i = _p.VentStart; i < l.Count; i++) yield return l[i]; }
+            IEnumerable<FurniturePlan> HereElectrical() { var l = _res.Electrical; for (int i = _p.ElecStart; i < l.Count; i++) yield return l[i]; }
+            IEnumerable<FurniturePlan> HereDecor() { var l = _res.RuntimeDecor; for (int i = _p.DecorStart; i < l.Count; i++) yield return l[i]; }
 
             static readonly (int X, int Z)[] Fronts = { (0, -1), (-1, 0), (0, 1), (1, 0) };   // yaw 0, 90, 180, 270
             static (int X, int Z) FrontOf(float yaw) => Fronts[((int)MathF.Round(yaw / 90f) % 4 + 4) % 4];
@@ -727,7 +919,7 @@ namespace UnturnedSim
                 {
                     var fp = FurnitureCatalog.Footprint(lamp, x, z, 0f);
                     var grown = (fp.X0 - 0.6f, fp.Z0 - 0.6f, fp.X1 + 0.6f, fp.Z1 + 0.6f);
-                    if (_p.StairRects.Any(r => Overlaps(grown, r)) || _p.WallRects.Any(r => Overlaps(fp, r))) continue;
+                    if (_p.StairRects.Any(r => Overlaps(grown, r)) || _p.WallOverlaps(fp)) continue;
                     // a pendant over something tall (bunk beds) would hang into it: a flush mount there
                     string here = lamp == "Ceiling_Lamp_Pendant_0" && _mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && Overlaps(fp, o.Footprint)
                                                                                && f * Storey + FurnitureCatalog.Sizes[o.Name].H > Ceil(x, z) - PendantDrop - 0.1f)
@@ -762,7 +954,7 @@ namespace UnturnedSim
                     Recount(before);
                     var after = FurnitureCatalog.Footprint(m.Name, nx, nz, nyaw);
                     bool ok = Clear(m.Name, nx, nz, nyaw) && !HitsPiece(m.Name, nx, nz, nyaw, m) && !_p.StairRects.Any(r => Overlaps(after, r))
-                              && !_p.TileRects.Any(r => Overlaps(after, r)) && !_p.WallRects.Any(r => Overlaps(after, r)) && !InSwing(after, m);
+                              && !_p.TileRects.Any(r => Overlaps(after, r)) && !_p.WallOverlaps(after) && !InSwing(after, m);
                     if (ok)
                     {
                         var (ox, oz, oyaw) = (m.X, m.Z, m.Yaw);
@@ -866,26 +1058,65 @@ namespace UnturnedSim
                 if (cells.Count == 0 && musts.Count > 0) cells.Add(musts[0]);
                 if (cells.Count == 0) return true;
                 _stamp++;
-                if (_seen == null || _seen.Length != _ni * _nj) { _seen = new int[_ni * _nj]; _queue = new int[_ni * _nj]; }
+                int ni = _ni, nj = _nj, size = ni * nj, stamp = _stamp;
+                if (_seen == null || _seen.Length != size) { _seen = new int[size]; _queue = new int[size]; _goal = new int[size]; _sideAt = new int[size]; }
+                // ⚡ The walk, from the first target, over the room's clear cells, stops as soon as it has met every door and stair end
+                // and every must (`left`: each distinct cell once) and some cell of every piece's sides (`sidesLeft`) -- the answer
+                // the whole walk would give, since what it has met it keeps. A room's walk was a tower's biggest single cost: a
+                // big office walked its whole floor, 0.1 m cell by cell, for every desk tried.
+                var seen = _seen; var queue = _queue; var goal = _goal; var sideAt = _sideAt; var open = _open;
+                int left = 0, sidesLeft = sides.Count;
+                foreach (int c in cells) if (goal[c] != stamp) { goal[c] = stamp; left++; }
+                foreach (int c in musts) if (goal[c] != stamp) { goal[c] = stamp; left++; }
+                bool[] met = sidesLeft > 0 ? new bool[sides.Count] : null;
+                foreach (var sd in sides) foreach (int c in sd) sideAt[c] = stamp;
+                // (the floor's grid as one run of bytes: row i is State[i, *], so the room's cell (a, b) is at (_i0 + a) * Nz + _j0 + b)
+                // (the room's box of the floor's grid copied out row by row -- row i of State is its cells j, one run in memory --
+                // so the walk reads a plain array, as the room's own (a, b) at a * nj + b)
+                var box = _box ??= new byte[size];
+                for (int a = 0; a < ni; a++) Buffer.BlockCopy(_p.State, (_i0 + a) * _p.Nz + _j0, box, a * nj, nj);
                 int head = 0, tail = 0;
-                _seen[cells[0]] = _stamp; _queue[tail++] = cells[0];
-                var want = new HashSet<int>(cells); want.Remove(cells[0]);
+                // (a cell met: is it a target, a must, a side's?)
+                bool Met(int c)
+                {
+                    if (goal[c] == stamp) { goal[c] = 0; left--; }
+                    if (sideAt[c] == stamp)
+                        for (int s = 0; s < sides.Count; s++)
+                            if (!met[s] && Array.IndexOf(sides[s], c) >= 0) { met[s] = true; sidesLeft--; }
+                    return left == 0 && sidesLeft == 0;
+                }
+                // (from the door or stair end nearest the middle of everything the walk must meet, rather than the first: the answer
+                // is the same from any of them -- every one must be met, and the pieces' sides and the musts with them -- and a walk
+                // from a far corner covered the whole room before it met the last)
+                int start = cells[0];
+                if (cells.Count > 1)
+                {
+                    int Far(int s)
+                    {
+                        int sa = s / nj, sb = s - sa * nj, far = 0;
+                        void At(int q) { int qa = q / nj, d = Math.Abs(qa - sa) + Math.Abs(q - qa * nj - sb); if (d > far) far = d; }
+                        foreach (int q in cells) At(q);
+                        foreach (int q in musts) At(q);
+                        foreach (var sd in sides) At(sd[0]);
+                        return far;
+                    }
+                    int best = int.MaxValue;
+                    foreach (int s in cells) { int f = Far(s); if (f < best) { best = f; start = s; } }
+                }
+                seen[start] = stamp; queue[tail++] = start;
+                if (Met(start)) return true;
                 while (head < tail)
                 {
-                    int c = _queue[head++], a = c / _nj, b = c % _nj;
-                    for (int k = 0; k < 4; k++)
-                    {
-                        int na = a + (k == 0 ? 1 : k == 1 ? -1 : 0), nb = b + (k == 2 ? 1 : k == 3 ? -1 : 0);
-                        if (na < 0 || nb < 0 || na >= _ni || nb >= _nj) continue;
-                        int n = na * _nj + nb;
-                        if (_seen[n] == _stamp || !_inRoom[na, nb] || _p.State[_i0 + na, _j0 + nb] != FloorPlan.Free) continue;
-                        _seen[n] = _stamp; _queue[tail++] = n;
-                        want.Remove(n);
-                    }
+                    int c = queue[head++], a = c / nj, b = c - a * nj;
+                    // (the four neighbours: +a, -a, +b, -b)
+                    if (a + 1 < ni) { int n = c + nj; if (seen[n] != stamp && box[n] == FloorPlan.Free && open[n]) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
+                    if (a > 0) { int n = c - nj; if (seen[n] != stamp && box[n] == FloorPlan.Free && open[n]) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
+                    if (b + 1 < nj) { int n = c + 1; if (seen[n] != stamp && box[n] == FloorPlan.Free && open[n]) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
+                    if (b > 0) { int n = c - 1; if (seen[n] != stamp && box[n] == FloorPlan.Free && open[n]) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
                 }
-                return want.Count == 0 && sides.All(c => c.Any(i => _seen[i] == _stamp)) && musts.All(i => _seen[i] == _stamp);
+                return false;
             }
-            int[] _seen, _queue; int _stamp;
+            int[] _seen, _queue, _goal, _sideAt; byte[] _box; int _stamp;
             /// <summary>The clear cell of this room nearest (x, z), within `reach` cells (0.4 m), as an index into the room's
             /// box; -1 if none.</summary>
             int Nearest(float x, float z, int reach = 4)
@@ -938,8 +1169,7 @@ namespace UnturnedSim
             /// <summary>Clear for a door to swing through: this room's floor, nothing solid in it (doorways are fine).</summary>
             bool SwingClear((float X0, float Z0, float X1, float Z1) a)
             {
-                foreach (var (i, j) in _p.Cells(a)) if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
-                return true;
+                return RoomFree(a);
             }
             readonly Dictionary<FurniturePlan, List<(int, int)>> _reserved = new();
             /// <summary>Points a piece needs walked to (the middles of a bed's access strips), checked by Connected.</summary>
@@ -968,7 +1198,7 @@ namespace UnturnedSim
             /// double, the one nearer the door of a single; null when it has too few.</summary>
             List<(float X0, float Z0, float X1, float Z1)> BedWay(string name, float x, float z, float yaw)
             {
-                var ok = BedSides(name, x, z, yaw).Where(a => SwingClear(a) && !_p.StairRects.Any(r => Overlaps(a, r)) && !_p.WallRects.Any(r => Overlaps(a, r))
+                var ok = BedSides(name, x, z, yaw).Where(a => SwingClear(a) && !_p.StairRects.Any(r => Overlaps(a, r)) && !_p.WallOverlaps(a)
                                                               && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && Overlaps(a, o.Footprint))).ToList();
                 int need = IsDoubleBed(name) ? 2 : 1;
                 if (ok.Count < need) return null;
@@ -1005,7 +1235,7 @@ namespace UnturnedSim
                     if (HitsPiece(name, x, z, yaw)) continue;
                     if (InSwing(fp, null)) continue;
                     if (_p.StairRects.Any(r => Overlaps(fp, r)) || _p.TileRects.Any(r => Overlaps(fp, r))) continue;
-                    if (_p.WallRects.Any(r => Overlaps(fp, r))) continue;
+                    if (_p.WallOverlaps(fp)) continue;
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
                     // where you stand at a sink, no door's leaf swings (a doorway's walk is fine: you stand in it)
@@ -1071,7 +1301,7 @@ namespace UnturnedSim
             }
 
             static (float X0, float Z0, float X1, float Z1) Grow((float X0, float Z0, float X1, float Z1) a, float m) => (a.X0 - m, a.Z0 - m, a.X1 + m, a.Z1 + m);
-            static bool Overlaps((float X0, float Z0, float X1, float Z1) a, (float X0, float Z0, float X1, float Z1) b)
+            internal static bool Overlaps((float X0, float Z0, float X1, float Z1) a, (float X0, float Z0, float X1, float Z1) b)
                 => a.X0 < b.X1 - 0.005f && a.X1 > b.X0 + 0.005f && a.Z0 < b.Z1 - 0.005f && a.Z1 > b.Z0 + 0.005f;
 
             /// <summary>Set a piece on another's top (a monitor on a desk, a till on a checkout): no floor of its own.</summary>
@@ -1090,6 +1320,14 @@ namespace UnturnedSim
             /// <summary>Where a piece stands with one side flush to a wall of this room: for each heading, the runs of
             /// wall face the side would meet, and every 0.25 m along them.</summary>
             IEnumerable<(float X, float Z, float Yaw)> Against(string name, Side side)
+            {
+                // (worked out once a room, per piece and side: it reads only what furnishing never changes -- the faces, the grid's
+                // wall cells (Flush) and the walls' rects (Backed) -- and a room asks again for every piece of a row it tries)
+                if (!_against.TryGetValue((name, side), out var l)) _against[(name, side)] = l = AgainstWalls(name, side).ToList();
+                return l;
+            }
+            readonly Dictionary<(string, Side), List<(float X, float Z, float Yaw)>> _against = new();
+            IEnumerable<(float X, float Z, float Yaw)> AgainstWalls(string name, Side side)
             {
                 var s = FurnitureCatalog.Sizes[name];
                 const float Gap = 0.03f;
@@ -1125,17 +1363,38 @@ namespace UnturnedSim
 
             /// <summary>Wall faces looking into this room along (nx, nz): the room's clear cells with a wall cell right
             /// behind them, gathered into straight runs -- (the face's coordinate across, the run's ends along).</summary>
+            /// <summary>Which cells of the room's box, and of the ring of cells round it, are wall on the floor's grid (State ==
+            /// Wall), at (a + 1) * (_nj + 2) + (b + 1); none past the grid's edge. Made once: no cell becomes or stops being wall
+            /// while a storey is furnished.</summary>
+            bool[] WallMask()
+            {
+                if (_wallMask != null) return _wallMask;
+                int w = _nj + 2;
+                var m = new bool[(_ni + 2) * w];
+                var row = new byte[w];
+                for (int a = -1; a <= _ni; a++)
+                {
+                    int i = _i0 + a;
+                    if (i < 0 || i >= _p.Nx) continue;
+                    int j0 = Math.Max(0, _j0 - 1), j1 = Math.Min(_p.Nz - 1, _j0 + _nj);
+                    Buffer.BlockCopy(_p.State, i * _p.Nz + j0, row, 0, j1 - j0 + 1);
+                    for (int j = j0; j <= j1; j++) m[(a + 1) * w + (j - _j0 + 1)] = row[j - j0] == FloorPlan.Wall;
+                }
+                return _wallMask = m;
+            }
+            bool[] _wallMask;
             List<(float Face, float Lo, float Hi)> Faces(int nx, int nz)
             {
                 if (_faces.TryGetValue((nx, nz), out var cached)) return cached;
                 var hits = new Dictionary<int, List<int>>();
+                var wall = WallMask(); int w = _nj + 2;
                 for (int i = _i0; i < _i0 + _ni; i++)
                     for (int j = _j0; j < _j0 + _nj; j++)
                     {
-                        int bi = i - nx, bj = j - nz;
-                        if (bi < 0 || bj < 0 || bi >= _p.Nx || bj >= _p.Nz) continue;
-                        if (_p.State[bi, bj] != FloorPlan.Wall || _p.State[i, j] == FloorPlan.Wall) continue;
-                        if (!InRoom(i, j)) continue;
+                        int a = i - _i0, b = j - _j0;
+                        // (the cell behind, and this one, by the mask: a cell past the plan's grid is no wall)
+                        if (!wall[(a - nx + 1) * w + (b - nz + 1)] || wall[(a + 1) * w + (b + 1)]) continue;
+                        if (!_open[a * _nj + b]) continue;
                         int key = nx != 0 ? i : j, along = nx != 0 ? j : i;
                         if (!hits.TryGetValue(key, out var l)) hits[key] = l = new List<int>();
                         l.Add(along);
@@ -1167,7 +1426,7 @@ namespace UnturnedSim
                 var (fx, fz) = FrontOf(yaw);
                 const float Back = 0.14f;
                 int n = 0, hit = 0;
-                bool WallAt(float px, float pz) => _p.WallRects.Any(r => px >= r.X0 && px <= r.X1 && pz >= r.Z0 && pz <= r.Z1);
+                bool WallAt(float px, float pz) => _p.WallAt(px, pz);
                 if (MathF.Abs(fx) > 0.5f)
                 {
                     float bx = fx > 0 ? fp.X0 - Back : fp.X1 + Back;
@@ -1188,7 +1447,8 @@ namespace UnturnedSim
                 (float, float, float, float) strip = nx > 0 ? (a.X0 - 0.15f, a.Z0, a.X0, a.Z1) : nx < 0 ? (a.X1, a.Z0, a.X1 + 0.15f, a.Z1)
                                                    : nz > 0 ? (a.X0, a.Z0 - 0.15f, a.X1, a.Z0) : (a.X0, a.Z1, a.X1, a.Z1 + 0.15f);
                 int n = 0, wall = 0;
-                foreach (var (i, j) in _p.Cells(strip)) { n++; if (_p.State[i, j] == FloorPlan.Wall) wall++; }
+                _p.CellBox(strip, out int i0, out int i1, out int j0, out int j1);
+                for (int i = i0; i <= i1; i++) for (int j = j0; j <= j1; j++) { n++; if (_p.State[i, j] == FloorPlan.Wall) wall++; }
                 return n == 0 ? 0 : wall / (double)n;
             }
 
@@ -1262,7 +1522,7 @@ namespace UnturnedSim
                 var (fx, fz) = FrontOf(c.Yaw);
                 var behind = fx != 0 ? (fx > 0 ? (fp.X0 - 0.8f, fp.Z0, fp.X0, fp.Z1) : (fp.X1, fp.Z0, fp.X1 + 0.8f, fp.Z1))
                                      : (fz > 0 ? (fp.X0, fp.Z0 - 0.8f, fp.X1, fp.Z0) : (fp.X0, fp.Z1, fp.X1, fp.Z1 + 0.8f));
-                return _p.Cells(behind).Any(k => _p.KeepTall[k.I, k.J]);
+                return _p.AnyTall(behind);
             }
 
             double BedScore(string bed, float x, float z, float yaw)
@@ -1283,7 +1543,7 @@ namespace UnturnedSim
                 var fp = FurnitureCatalog.Footprint(bed, x, z, yaw);
                 var head = fx != 0 ? (fx > 0 ? (fp.X0 - 0.8f, fp.Z0, fp.X0, fp.Z1) : (fp.X1, fp.Z0, fp.X1 + 0.8f, fp.Z1))
                                    : (fz > 0 ? (fp.X0, fp.Z0 - 0.8f, fp.X1, fp.Z0) : (fp.X0, fp.Z1, fp.X1, fp.Z1 + 0.8f));
-                if (_p.Cells(head).Any(c => _p.KeepTall[c.I, c.J])) score -= 40;
+                if (_p.AnyTall(head)) score -= 40;
                 // a side to get in at
                 foreach (int sgn in new[] { -1, 1 })
                 {
@@ -2106,7 +2366,7 @@ namespace UnturnedSim
                             var isl = (X0: MathF.Min(a.X0, b.X0), Z0: MathF.Min(a.Z0, b.Z0), X1: MathF.Max(a.X1, b.X1), Z1: MathF.Max(a.Z1, b.Z1));
                             var aisle = (isl.X0 - 1.0f, isl.Z0 - 1.0f, isl.X1 + 1.0f, isl.Z1 + 1.0f);
                             if (Clear(isl, 0f) && Clear(aisle, 0f) is var roomy
-                                && (roomy || !_p.WallRects.Any(r => Overlaps(aisle, r)) && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && Overlaps(aisle, o.Footprint))
+                                && (roomy || !_p.WallOverlaps(aisle) && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && Overlaps(aisle, o.Footprint))
                                              && _room.Rects.Any(r => aisle.Item1 >= r.X0 * Cell && aisle.Item2 >= r.Z0 * Cell && aisle.Item3 <= r.X1 * Cell && aisle.Item4 <= r.Z1 * Cell)))
                                 cands.Add((x, z, yaw));
                         }

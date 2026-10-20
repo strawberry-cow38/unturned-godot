@@ -172,14 +172,15 @@ namespace UnturnedSim
 
             /// <summary>How near a piece at fp is to what its row likes, best 0: minus the gap to the nearest anchor, and a
             /// corner where the row likes one.</summary>
-            double Nearness(DoodadRow row, string name, (float X, float Z, float Yaw) p)
+            /// (`anchors`: each word's Anchors, read already -- Put ranks every spot before it changes anything)
+            double Nearness(DoodadRow row, string name, (float X, float Z, float Yaw) p, Dictionary<string, List<(float X0, float Z0, float X1, float Z1)>> anchors = null)
             {
                 var fp = FurnitureCatalog.Footprint(name, p.X, p.Z, p.Yaw);
                 double best = double.NegativeInfinity;
                 foreach (var word in row.Near)
                 {
                     if (word == "Corner") { if (Corner(name, p)) best = Math.Max(best, 0); continue; }
-                    foreach (var b in Anchors(word)) best = Math.Max(best, -Gap(fp, b));
+                    foreach (var b in anchors != null ? anchors[word] : Anchors(word)) best = Math.Max(best, -Gap(fp, b));
                 }
                 return double.IsNegativeInfinity(best) ? -3 : best;
             }
@@ -247,7 +248,9 @@ namespace UnturnedSim
                         return !avoid.Any(b => Gap(fp, b) < DoodadAvoidGap);
                     }).ToList();
                 if (cands.Count == 0) return null;
-                return Put(name, cands, (x, z, yaw) => Nearness(row, name, (x, z, yaw)), 0f, rng);
+                var near = new Dictionary<string, List<(float X0, float Z0, float X1, float Z1)>>();
+                foreach (var word in row.Near) if (word != "Corner" && !near.ContainsKey(word)) near[word] = Anchors(word);
+                return Put(name, cands, (x, z, yaw) => Nearness(row, name, (x, z, yaw), near), 0f, rng);
             }
 
             // ---- tops: once the whole building is furnished, into Doodads ----

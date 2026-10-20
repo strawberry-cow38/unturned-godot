@@ -170,6 +170,9 @@ namespace UnturnedSim
             public bool[,] Sight;
             /// <summary>Each window's zone on this floor, and the room and slot it has: what a room's layout may change.</summary>
             public readonly List<Pane> Panes = new();
+            /// <summary>Moved by every change to a window of this storey (Furnisher.Reshape, and its undoing): what a list of the
+            /// windows read off the walls is kept against (Furnisher.Windows).</summary>
+            public int OpeningsVersion;
             /// <summary>Every hung door's leaf sweep, exactly, on the side it opens to: no one stands at a sink in one.</summary>
             public readonly List<(float X0, float Z0, float X1, float Z1)> LeafRects = new();
 
@@ -205,7 +208,7 @@ namespace UnturnedSim
                     // (one BuildWalls did not lay out: the room a metre in from its middle, either side)
                     var (wc, ws) = PlanTrig.CosSin(w.Yaw);
                     float u = o.U + o.Width * 0.5f, cx = w.X + wc * u, cz = w.Z - ws * u;
-                    room = _res.Layout.FirstOrDefault(g => g.Floor == F && (g.Holds(cx - ws, cz - wc) || g.Holds(cx + ws, cz + wc)));
+                    room = Rooms.FirstOrDefault(g => g.Floor == F && (g.Holds(cx - ws, cz - wc) || g.Holds(cx + ws, cz + wc)));
                 }
                 Panes.Add(new Pane { W = w, I = k, Room = room, A = slot?.U0 ?? o.U, B = slot?.U1 ?? o.U1, Zone = zone });
             }
@@ -240,7 +243,7 @@ namespace UnturnedSim
                         var o = w.Openings[k];
                         if (o.V >= 0.05f || !o.HasDoor || o.Archetype == ArchGarage) continue;
                         float um = o.U + o.Width * 0.5f, cx = w.X + dx * um, cz = w.Z + dz * um;
-                        GenRoom Side(float s) => _res.Layout.FirstOrDefault(g => g.Floor == F && g.Holds(cx + ws * s * (t + 0.3f), cz + wc * s * (t + 0.3f)));
+                        GenRoom Side(float s) => Rooms.FirstOrDefault(g => g.Floor == F && g.Holds(cx + ws * s * (t + 0.3f), cz + wc * s * (t + 0.3f)));
                         // how far the wall runs on past a jamb (dir -1: past U, +1: past U1) before a wall across it on side s
                         // -- one standing out from this wall, met within a metre of its face: where the open leaf would rest
                         // against it (3: nothing near). (Deeper, it found a narrow hall's far wall, which is in front of the
@@ -254,7 +257,7 @@ namespace UnturnedSim
                                 foreach (float deep in new[] { 0.5f, 1.0f })
                                 {
                                     float px = w.X + dx * u + ws * s * (t + deep), pz = w.Z + dz * u + wc * s * (t + deep);
-                                    if (WallRects.Any(r => !own.Contains(r) && px >= r.X0 && px <= r.X1 && pz >= r.Z0 && pz <= r.Z1)) return g;
+                                    if (WallAt(px, pz, own)) return g;
                                 }
                             }
                             return 3f;
@@ -369,6 +372,7 @@ namespace UnturnedSim
             Action Reshape(FloorPlan.Pane q, WallOpening? to)
             {
                 var before = q.O; var zone = q.Zone; int at = q.I;
+                _p.OpeningsVersion++;
                 _p.Zone(zone, -1);
                 if (to is WallOpening n)
                 {
@@ -385,6 +389,7 @@ namespace UnturnedSim
                 Recount(zone); Recount(q.Zone);
                 return () =>
                 {
+                    _p.OpeningsVersion++;
                     if (q.Gone)
                     {
                         foreach (var r in _p.Panes) if (r != q && r.W == q.W && r.I >= at) r.I++;
