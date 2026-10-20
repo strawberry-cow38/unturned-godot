@@ -353,6 +353,11 @@ namespace UnturnedGodot
         /// The building STAGE passes 0: one building, a dozen lamps, and its renders look at it from further than this.</summary>
         public const float LampFadeBegin = 30f, LampFadeLength = 10f;
 
+        /// <summary>The prop a piece's node was built for, on every node Furnish makes (and an outlet's source): its name. A node's
+        /// own name cannot say -- "Furniture_" + the prop's name is only the FIRST of a name under a parent; Godot renames every
+        /// later one to "@Node3D@n" (the culling probe's census counted 860 pieces in a town of 1,415 that way).</summary>
+        public static readonly StringName PieceMeta = "furnish_piece";
+
         /// <summary>What Furnish made live, in the order the building's props came.</summary>
         public sealed class Furnished
         {
@@ -401,8 +406,10 @@ namespace UnturnedGodot
         /// moved -- see Build), the stage's for the stage. Lights hung here fade out past `lampFade` metres (0: never).</summary>
         /// <param name="below">Where a piece below the ground floor goes (its Y under BasementY), but for a lamp -- the basement's
         /// gated node (BuildingCull); null puts everything under `parent`.</param>
+        /// <param name="into">Each piece's own parent, in `props`' order -- its room's node (RoomGroups, BuildingCull's room gate);
+        /// a null entry, or none, falls back to `below` / `parent` as above.</param>
         public static Furnished Furnish(Node3D parent, Transform3D frame, IEnumerable<PropDesignation> props, IEnumerable<RoomElectrical> rooms,
-                                        EditorObjects objs, float lampFade, Node3D below = null)
+                                        EditorObjects objs, float lampFade, Node3D below = null, IReadOnlyList<Node3D> into = null)
         {
             var f = new Furnished();
             if (parent == null || props == null) return f;
@@ -410,12 +417,16 @@ namespace UnturnedGodot
             // the switches and outlets by their place among the electrical props (ElectricalFixture.Id), the ceiling lights by
             // theirs among the ceiling lights (RoomElectrical.Lights) -- a slot kept for one that built nothing, so the ids hold
             var electrical = new List<Node3D>();
+            int index = -1;
             foreach (var m in props)
             {
-                // (this piece's parent: the basement's is gated -- all but its lamps, whose light is not the basement's alone: with no
-                // shadow a lamp lights through the slab, and hiding them changed the floor above, seen from the street through a
-                // window. A lamp still goes out past LampFadeBegin + LampFadeLength like every lamp in town.)
-                parent = below != null && m.Y < BasementY && LampLight.KindFor(m.Name) == LampLight.Kind.Generic ? below : top;
+                index++;
+                // (this piece's parent: its room's node if it was given one; else the basement's, which is gated -- all but its lamps,
+                // whose light is not the basement's alone: with no shadow a lamp lights through the slab, and hiding them changed the
+                // floor above, seen from the street through a window. A lamp still goes out past LampFadeBegin + LampFadeLength like
+                // every lamp in town.)
+                parent = into != null && index < into.Count && into[index] != null ? into[index]
+                       : below != null && m.Y < BasementY && LampLight.KindFor(m.Name) == LampLight.Kind.Generic ? below : top;
                 bool ceiling = LampLight.KindFor(m.Name) == LampLight.Kind.CeilingShade, outlet = m.Name == "Power_Outlet_0";
                 var at = frame * new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
                 long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -424,7 +435,7 @@ namespace UnturnedGodot
                     var sw = BuildSwitch(parent, at, objs);
                     PropCull.Apply(sw, PropCull.Layer("SMALL"));
                     electrical.Add(sw);
-                    if (sw != null) { f.Switches.Add(sw); f.Nodes.Add(sw); f.Colliders++; }
+                    if (sw != null) { sw.SetMeta(PieceMeta, m.Name); f.Switches.Add(sw); f.Nodes.Add(sw); f.Colliders++; }
                     f.SwitchTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
                     continue;
                 }
@@ -433,6 +444,7 @@ namespace UnturnedGodot
                     var built = EditorBuildings.RuntimeDecorNode(m);
                     if (built == null) continue;
                     built.Transform = frame * EditorBuildings.RuntimeDecorTransform(m);
+                    built.SetMeta(PieceMeta, m.Name);
                     PropCull.Apply(built, PropCull.Layer("MEDIUM"));   // a rug or a curtain: furniture-sized, as retail's furniture is
                     if (m.Gen.Kind == RuntimeDecorKind.Rug && RugCollider(built) != null) f.Colliders++;
                     parent.AddChild(built);
@@ -451,6 +463,7 @@ namespace UnturnedGodot
                     continue;
                 }
                 node.Name = "Furniture_" + m.Name;
+                node.SetMeta(PieceMeta, m.Name);
                 if (smart?.Lamp != null) { smart.Lamp.FadeBegin = lampFade; smart.Lamp.FadeLength = LampFadeLength; f.Lamps.Add(smart.Lamp); }
                 parent.AddChild(node);   // BEFORE an outlet's source: GridPowerSource.Attach looks for the tree's PowerManager
                 long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -462,6 +475,7 @@ namespace UnturnedGodot
                 else if (outlet)
                 {
                     var src = BuildOutlet(parent, at, node);
+                    src?.SetMeta(PieceMeta, m.Name);
                     PropCull.Apply(src, PropCull.Layer("SMALL"));
                     body?.SetMeta("gridpower", src);   // the plate's own collider focuses the outlet too, not only its look box
                     electrical.Add(src);
@@ -541,6 +555,113 @@ namespace UnturnedGodot
         }
         static readonly Dictionary<Mesh, Shape3D> _rugShapes = new();
 
+        /// <summary>A building's furniture grouped by room for BuildingCull's room gate: a node per storey (under the root, or the
+        /// basement's gated node for the storey under the ground), a node per room under its storey, and each piece's parent in
+        /// BuildingGenResult.Props' order. The nodes stand at the building's origin, unturned, so a piece's transform means what it
+        /// meant flat under the root.</summary>
+        public sealed class RoomGroups
+        {
+            /// <summary>Each piece's parent, in res.Props' order: its room's node, or null where it is not grouped.</summary>
+            public Node3D[] Parents;
+            public readonly List<Storey> Storeys = new();
+            /// <summary>Pieces left where they were: with no room (none the generator makes, so far), and a basement's lamps.</summary>
+            public int NoRoom, BasementLamps, Grouped;
+            public sealed class Storey
+            {
+                public int Floor;
+                public Node3D Node;
+                public readonly List<(GenRoom Room, Node3D Node)> Rooms = new();
+            }
+        }
+
+        /// <summary>What the last Build grouped (null with the gate off).</summary>
+        public static RoomGroups LastRooms;
+
+        /// <summary>The room of storey `floor` holding plan point (x, z), or null.</summary>
+        static GenRoom RoomAt(BuildingGenResult res, int floor, float x, float z)
+        {
+            foreach (var g in res.Layout) if (g.Floor == floor && g.Holds(x, z)) return g;
+            return null;
+        }
+
+        static void AddInside(Dictionary<int, List<WallSurface>> insides, int floor, WallSurface w)
+        {
+            if (w == null) return;
+            if (!insides.TryGetValue(floor, out var l)) insides[floor] = l = new List<WallSurface>();
+            l.Add(w);
+        }
+
+        /// <summary>Is a planned surface one of its storey's INSIDES -- a partition, with a room of that storey on BOTH sides of it
+        /// (so never an outside wall, a parapet, a porch post: something stands open to the outside on one side of those), or a
+        /// floor cover laid in a room -- and on which storey? Not the basement's: its insides are gated whole (InBasement).</summary>
+        static bool Inside(BuildingGenResult res, WallPlan pl, out int floor)
+        {
+            floor = Mathf.FloorToInt((pl.Y + 0.5f) / BuildingGen.Storey);
+            if (floor < 0) return false;
+            var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(pl.Pitch), Mathf.DegToRad(pl.Yaw), 0f));
+            var mid = new Vector3(pl.X, pl.Y, pl.Z) + basis * new Vector3(pl.Length * 0.5f, pl.Height * 0.5f, 0f);
+            if (pl.Kind == SurfaceKind.Floor) return pl.Thickness < 0.1f && RoomAt(res, floor, mid.X, mid.Z) != null;
+            if (pl.Kind != SurfaceKind.Wall || Mathf.Abs(pl.Pitch) > 1f || pl.Thickness >= (BuildingGen.Ext + BuildingGen.Inner) * 0.5f) return false;
+            var n = basis * new Vector3(0f, 0f, pl.Thickness * 0.5f + 0.3f);
+            return RoomAt(res, floor, mid.X + n.X, mid.Z + n.Z) != null && RoomAt(res, floor, mid.X - n.X, mid.Z - n.Z) != null;
+        }
+
+        /// <summary>Group a building's furniture by the room the generator furnished it for (FurniturePlan.Room, or the room of its
+        /// storey holding it), one node per room and per storey, before Furnish builds it -- every piece Furnish makes for a room:
+        /// its furniture, its rugs and curtains, its vents, its switch and outlets, its doodads, and its lamps. A lamp is gated with
+        /// its room because the gate's radius is the lamp fade's end (BuildingCull.RoomRadius): a room is hidden only when the
+        /// camera is further than that from every point of it, so its lamp, inside it, is already out (LampLight's DistanceFade) --
+        /// hiding its fixture takes no light off anything. A BASEMENT's lamps are the exception and stay out, as BuildingCull's
+        /// basement gate keeps them out of its node: a room node of the basement's is under that node.
+        ///
+        /// Furnish lays the pieces out in res.Props' order (the electrical ids and the ceiling lights' are places in it), so the
+        /// rooms are read in that order from the lists Props concatenates -- and checked against Props piece by piece: if the two
+        /// ever disagree, nothing is grouped (said in the log) rather than a piece being gated with another room.</summary>
+        static RoomGroups GroupRooms(BuildingGenResult res, Node3D root, Node3D below)
+        {
+            var plans = new List<FurniturePlan>();
+            plans.AddRange(res.Furniture); plans.AddRange(res.RuntimeDecor); plans.AddRange(res.HvacVents);
+            plans.AddRange(res.Electrical); plans.AddRange(res.Doodads);
+            int i = 0;
+            foreach (var p in res.Props)
+            {
+                if (i >= plans.Count || plans[i].Name != p.Name || plans[i].X != p.X || plans[i].Y != p.Y || plans[i].Z != p.Z)
+                {
+                    Log.Err($"[rooms] a {res.Kind}'s props are not in the order GroupRooms reads them (piece {i}: {p.Name}): its furniture is not grouped by room");
+                    return null;
+                }
+                i++;
+            }
+            if (i != plans.Count) { Log.Err($"[rooms] a {res.Kind} has {plans.Count} planned pieces and {i} props: not grouped by room"); return null; }
+            var g = new RoomGroups { Parents = new Node3D[plans.Count] };
+            var storeys = new Dictionary<int, RoomGroups.Storey>();
+            var rooms = new Dictionary<GenRoom, Node3D>();
+            for (int k = 0; k < plans.Count; k++)
+            {
+                var m = plans[k];
+                var room = m.Room;
+                if (room == null) foreach (var r in res.Layout) if (r.Floor == m.Floor && r.Holds(m.X, m.Z)) { room = r; break; }
+                if (room == null) { g.NoRoom++; continue; }
+                bool basement = room.Floor < 0 && below != null;
+                if (basement && LampLight.KindFor(m.Name) != LampLight.Kind.Generic) { g.BasementLamps++; continue; }
+                if (!rooms.TryGetValue(room, out var node))
+                {
+                    if (!storeys.TryGetValue(room.Floor, out var st))
+                    {
+                        st = new RoomGroups.Storey { Floor = room.Floor, Node = new Node3D { Name = $"Storey_{room.Floor}" } };
+                        (basement ? below : root).AddChild(st.Node);
+                        storeys[room.Floor] = st; g.Storeys.Add(st);
+                    }
+                    node = new Node3D { Name = $"Room_{res.Layout.IndexOf(room)}_{room.Kind}" };
+                    st.Node.AddChild(node);
+                    st.Rooms.Add((room, node));
+                    rooms[room] = node;
+                }
+                g.Parents[k] = node; g.Grouped++;
+            }
+            return g;
+        }
+
         /// <summary>⭐ A generated building, built under `parent` and stood in `frame` -- the lattice's (0, 0) corner at floor level,
         /// +X and +Z the plan's. Walls and their openings, stair flights with their ramps and floor holes, the corner solve, and
         /// the furniture made live by Furnish -- the editor placer's own props, colliders, containers and lights, the rooms'
@@ -560,6 +681,9 @@ namespace UnturnedGodot
             int mat = MaterialFor(res.Palette);
             int roofTexel = WallMaterials.Count > 0 ? WallMaterials.At(Mathf.PosMod(mat, WallMaterials.Count)).RoofTexel : -1;
             var walls = new List<WallSurface>();
+            // a storey's INSIDES, by storey, for BuildingCull's storey shadow gate: its partitions (with the doors and glass they
+            // hold), its floor covers and its flights
+            var insides = BuildingCull.StoreyShadowsDisabled ? null : new Dictionary<int, List<WallSurface>>();
             float wx = res.CellsX * BuildingGen.Cell, dz = res.CellsZ * BuildingGen.Cell;
             if (System.Environment.GetEnvironmentVariable("UG_NOPARTYINSET") == "1") party = Sides.None;   // (the control: walls stacked)
             int clipped = 0;
@@ -569,9 +693,10 @@ namespace UnturnedGodot
                 if (len < 0.02f || hgt < 0.02f) continue;      // clipped away entirely (a porch post standing past the line)
                 var paint = PlanPaint(pl, mat, roofTexel);
                 // (a surface with a palette of its own -- a strip tenant's floor -- wears that one: WallPlan.Palette)
-                NewWall(below != null && InBasement(res, pl) ? below : root, walls, o, pl.Yaw, len, pl.Thickness, pl.Palette != null ? MaterialFor(pl.Palette, mat) : mat, ops,
-                        hgt, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
-                        pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
+                var made = NewWall(below != null && InBasement(res, pl) ? below : root, walls, o, pl.Yaw, len, pl.Thickness, pl.Palette != null ? MaterialFor(pl.Palette, mat) : mat, ops,
+                                   hgt, pl.Pitch, pl.Kind, pl.GableRise, paint.Texel,
+                                   pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, paint.MatBack, paint.TexelBack, pl.StepRise, pl.Rails);
+                if (insides != null && Inside(res, pl, out int fl)) AddInside(insides, fl, made);
             }
             LastClipped = clipped;
             foreach (var s in res.Stairs)
@@ -583,20 +708,31 @@ namespace UnturnedGodot
                 // the stair room's flight down is the basement's; the hatch's, in a well open to the sky, is the outside's
                 var treadParent = below != null && s.Floor == -1 && !InWell(res, s.X, s.Z) ? below : root;
                 int tread = 0;
+                // (a flight standing in a room of its storey is that storey's insides; a porch's steps or a hatch's are outside)
+                bool inside = insides != null && s.Floor >= 0 && RoomAt(res, s.Floor, s.X, s.Z) != null;
                 foreach (var p in EditorBuildings.StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
-                    NewWall(treadParent, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
-                            top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise),
-                            rails: WallSurface.TreadRails(s.Rails, tread++));
+                {
+                    var t = NewWall(treadParent, walls, p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f,
+                                    top, materialBack: mat, texelBack: body, stepRise: WallOpenings.StairStepRise(rise),
+                                    rails: WallSurface.TreadRails(s.Rails, tread++));
+                    if (inside) AddInside(insides, s.Floor, t);
+                }
                 StairRamp(root, o, s.Yaw, s.Run, s.Width, rise);
                 // a switchback's half flights: the generator cut their floor's hole itself (it covers the landing too)
                 if (rise >= EditorBuildings.StoreyHeight - 0.01f) CutStairHole(walls, o, s.Yaw, s.Run, s.Width, rise, Punch);
             }
             SolveCorners(walls);
-            // the furniture, live: the editor placer's own nodes (Furnish), in the lattice's frame like everything above
-            var furnished = Furnish(root, Transform3D.Identity, res.Props, System.Linq.Enumerable.Select(res.Rooms, r => r.Electrical), objs, LampFadeBegin, below);
+            // the furniture, live: the editor placer's own nodes (Furnish), in the lattice's frame like everything above -- each
+            // room's under a node of its own (GroupRooms), which BuildingCull's room gate shows only while the camera is near it
+            var groups = BuildingCull.RoomGateDisabled ? null : GroupRooms(res, root, below);
+            var furnished = Furnish(root, Transform3D.Identity, res.Props, System.Linq.Enumerable.Select(res.Rooms, r => r.Electrical), objs, LampFadeBegin, below,
+                                    groups?.Parents);
             root.Transform = frame;
             BuildingCull.AddBasement(root, below, res);
+            BuildingCull.AddRooms(root, groups);
+            BuildingCull.AddStoreyShadows(root, res, groups, insides);   // (before the building's furniture gate: it leaves these alone)
             BuildingCull.AddFurnitureShadows(root, res);
+            LastRooms = groups;
             // ⚠ A water source rides a TopLevel node in a yaw-only frame (SmartProps: a sink's FluidContainer), seated at the
             // position the prop was BUILT at -- here the lattice's, not the world's -- and a TopLevel node does not follow the root
             // being moved. Re-seat them now the building stands where its plot says, or every kitchen sink's water port in town

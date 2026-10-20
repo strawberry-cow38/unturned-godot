@@ -168,6 +168,9 @@ SCENES = {
     # own counters under each culling feature switched off in turn. Its pictures land beside {OUT} as cull_<stop>_<config>.png
     # and the numbers in the log ([cullprobe]). EXTENT=metres sizes the town (smaller builds faster); UG_CULLSTOPS=a,b picks
     # stops, UG_TOWNBASEMENTS=1 gives the town basements. Hundreds of frames on a software rasteriser: an hour is normal.
+    # UG_CULLGEN=<UG_EDITGEN's string> builds THAT building beside the town through the town's own builder and probes it instead,
+    # at stops from its size (a tower: Tower,1,0,1,6,0,0,,,,,,,,,,,,Setback) -- two hours and ~5 GB for the setback; UG_CULLEXP /
+    # UG_CULLTIME pick the experiments and the configs timed (a+b: together).
     "cull":      (["--editor", "--shot={OUT}"],
                   {"UG_NEWMAP": "1", "UG_TOWNGRID": "1", "UG_TOWNBUILDINGS": "all", "UG_TOWNCLOSE": "cull", "UG_TOWNPROBES": "0",
                    "UG_TOWNEXTENT": os.environ.get("EXTENT", "150")}, False, 7200,

@@ -83,8 +83,11 @@ namespace UnturnedGodot
         {
             public long Objects, Draws, Prims;      // RenderingServer totals: every viewport, visible + shadow passes
             public int VisObj, VisDraw, ShadObj;    // the main viewport's visible pass, and its shadow pass
+            public int VisPrims, ShadDraw, ShadPrims;
             public double CpuMs, SetupMs;           // the viewport's measured CPU render time, and the frame setup time
-            public override string ToString() => $"objects {Objects} draws {Draws} prims {Prims} | visible {VisObj} obj / {VisDraw} draws, shadow {ShadObj} obj | cpu {CpuMs:0.00} ms setup {SetupMs:0.00} ms";
+            public double ProcMs;                   // Performance.TimeProcess: every _Process of the last frame (the gates' own cost is in it)
+            public override string ToString() => $"objects {Objects} draws {Draws} prims {Prims} | visible {VisObj} obj / {VisDraw} draws / {VisPrims} prims, "
+                                               + $"shadow {ShadObj} obj / {ShadDraw} draws / {ShadPrims} prims | cpu {CpuMs:0.00} ms setup {SetupMs:0.00} ms process {ProcMs:0.00} ms";
             public bool SameCounts(Reading o) => Objects == o.Objects && Draws == o.Draws && Prims == o.Prims;
         }
 
@@ -98,9 +101,13 @@ namespace UnturnedGodot
                 Prims = (long)RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalPrimitivesInFrame),
                 VisObj = vp.GetRenderInfo(Viewport.RenderInfoType.Visible, Viewport.RenderInfo.ObjectsInFrame),
                 VisDraw = vp.GetRenderInfo(Viewport.RenderInfoType.Visible, Viewport.RenderInfo.DrawCallsInFrame),
+                VisPrims = vp.GetRenderInfo(Viewport.RenderInfoType.Visible, Viewport.RenderInfo.PrimitivesInFrame),
                 ShadObj = vp.GetRenderInfo(Viewport.RenderInfoType.Shadow, Viewport.RenderInfo.ObjectsInFrame),
+                ShadDraw = vp.GetRenderInfo(Viewport.RenderInfoType.Shadow, Viewport.RenderInfo.DrawCallsInFrame),
+                ShadPrims = vp.GetRenderInfo(Viewport.RenderInfoType.Shadow, Viewport.RenderInfo.PrimitivesInFrame),
                 CpuMs = RenderingServer.ViewportGetMeasuredRenderTimeCpu(vp.GetViewportRid()),
                 SetupMs = RenderingServer.GetFrameSetupTimeCpu(),
+                ProcMs = Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0,
             };
         }
 
@@ -139,6 +146,7 @@ namespace UnturnedGodot
 
         TownRoadGrid.TownBuilding Pick()
         {
+            if (_gen != null) return _gen;
             TownRoadGrid.TownBuilding best = null;
             int bestRank = -1; float bestD = float.MaxValue;
             foreach (var b in _town.Buildings)
@@ -265,6 +273,186 @@ namespace UnturnedGodot
                 }
         }
 
+        // ---- UG_CULLGEN: one generated building, built through the town's own path -----------------------------------
+        //
+        // A tower is what costs the frame now (strawberry 2026-10-20: "big buildings like this dont KILL our frames"), and the
+        // town does not put one up yet (cow tools is wiring them onto downtown plots). So the probe builds ONE building from a
+        // UG_EDITGEN-style spec through BuildingRuntime.Build -- the town's builder, with every gate the town's buildings get
+        // (the lamp fade, the basement gate, the furniture shadow gate, PropCull, the occluders) -- just outside the town it was
+        // given, its front toward the town's middle, and takes it as THE building. The town stays round it: its buildings, its
+        // streets and its props are in every frame and every shadow pass they would be in, so what the counters read is a tower
+        // standing at the edge of a town, not a tower alone on a plain.
+
+        TownRoadGrid.TownBuilding _gen;
+        BuildingRuntime.RoomGroups _genRooms;
+        /// <summary>The generated building's Build + Furnish time, ms (BuildingGen.Generate's apart).</summary>
+        double _genMs, _buildMs;
+
+        /// <summary>UG_CULLGEN's spec: UG_EDITGEN's fields kind,seed,minRooms,maxFloors,perFloor,width,depth (0-6), the plan
+        /// field (18: a tower's MainStreet/Setback/Slab or MS/SB/IS) and wealth (19), read as Main.cs reads them. The fields
+        /// between (sides, shape, porch, chimney, fit, shop, basement) are not read here: say so rather than drop them.</summary>
+        static BuildingGenSpec GenSpec(string gen)
+        {
+            var g = gen.Split(',');
+            int Arg(int i, int dflt) => g.Length > i && int.TryParse(g[i], out var v) ? v : dflt;
+            for (int i = 7; i < 18 && i < g.Length; i++)
+                if (!string.IsNullOrWhiteSpace(g[i])) Log.Print($"[cullprobe] UG_CULLGEN field {i} ('{g[i]}') is not read by the probe");
+            string plan = g.Length > 18 ? g[18].ToUpperInvariant() : "";
+            return new BuildingGenSpec
+            {
+                Kind = RoomDesignations.ParseBuilding(g[0]), Seed = Arg(1, 0), MinRooms = Arg(2, 0),
+                MaxFloors = Arg(3, 2), MaxRoomsPerFloor = Arg(4, 6), Width = Arg(5, 0), Depth = Arg(6, 0),
+                Tower = plan switch
+                {
+                    "MS" or "MAIN" => TowerStyle.MainStreet, "SB" => TowerStyle.Setback, "IS" or "INTL" => TowerStyle.Slab,
+                    _ => System.Enum.TryParse<TowerStyle>(plan, true, out var t) ? t : TowerStyle.Auto,
+                },
+                Wealth = g.Length > 19 ? g[19].ToUpperInvariant() switch { "P" => TownWealth.Poor, "A" => TownWealth.Affluent, _ => TownWealth.Working }
+                                       : TownWealth.Working,
+            };
+        }
+
+        /// <summary>Generate UG_CULLGEN's building and build it through BuildingRuntime.Build, outside the town's extent on the
+        /// side away from its bearing, its front (the plan's z = 0 side) facing the town's middle across a 35 m gap.</summary>
+        IEnumerable<int> BuildGenerated(string gen)
+        {
+            var spec = GenSpec(gen);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            BuildingGenResult res = null;
+            try { res = BuildingGen.Generate(spec); }
+            catch (System.Exception e) { Log.Err($"[cullprobe] UG_CULLGEN '{gen}' failed to generate: {e.Message}"); yield break; }
+            _genMs = clock.Elapsed.TotalMilliseconds;
+            if (res == null) { Log.Err($"[cullprobe] UG_CULLGEN '{gen}' generated nothing"); yield break; }
+            // the parent and the placer the town's own buildings were built with
+            Node3D parent = null;
+            foreach (var b in _town.Buildings) if (b.Node != null && GodotObject.IsInstanceValid(b.Node)) { parent = b.Node.GetParent() as Node3D; break; }
+            parent ??= GetParent() as Node3D;
+            var objs = (parent as Editor)?.Objects;
+            if (objs == null) Log.Err("[cullprobe] no EditorObjects beside the town: the generated building gets no furniture");
+            float wx = res.CellsX * BuildingGen.Cell, dz = res.CellsZ * BuildingGen.Cell;
+            // +Z away from the town (its front toward it), +X = up x +Z: a proper turn, as TownRoadGrid.FrameFor makes one
+            var zw = new Vector3(Mathf.Sin(_town.Bearing), 0f, Mathf.Cos(_town.Bearing)).Normalized();
+            var xw = Vector3.Up.Cross(zw).Normalized();
+            var origin = _town.Centre + zw * (_town.Extent + 35f) - xw * (wx * 0.5f);
+            float lo = float.MaxValue, hi = float.MinValue;
+            foreach (var (u, v) in new[] { (0f, 0f), (wx, 0f), (wx, dz), (0f, dz), (wx * 0.5f, dz * 0.5f) })
+            {
+                var q = origin + xw * u + zw * v;
+                float h = Ground(q); lo = Mathf.Min(lo, h); hi = Mathf.Max(hi, h);
+            }
+            origin.Y = hi + TownRoadGrid.BuildingClearance;
+            var frame = new Transform3D(new Basis(xw, Vector3.Up, zw), origin);
+            clock.Restart();
+            var node = BuildingRuntime.Build(res, frame, parent, objs, "Building_Generated");
+            _buildMs = clock.Elapsed.TotalMilliseconds;
+            if (node == null) { Log.Err("[cullprobe] UG_CULLGEN: Build returned nothing"); yield break; }
+            _genRooms = BuildingRuntime.LastRooms;
+            _gen = new TownRoadGrid.TownBuilding { Spec = spec, Result = res, Frame = frame, Node = node, PadY = hi, Ms = _genMs };
+            _town.Buildings.Add(_gen);     // (the census and the experiments walk the town's buildings: it is one of them now)
+            var f = BuildingRuntime.LastFurnished;
+            Log.Print($"[cullprobe] UG_CULLGEN '{gen}': a {res.Kind} ({res.Plan}), {res.CellsX}x{res.CellsZ} cells ({wx:0} x {dz:0} m), {res.Floors} storeys "
+                    + $"({res.Floors * BuildingGen.Storey:0.0} m), {res.Layout.Count} rooms, {res.Doors.Count} doors, {res.Walls.Count} planned surfaces; "
+                    + $"generated in {_genMs:0} ms, built in {_buildMs:0} ms -- {BuildingRuntime.LastWalls} surfaces, {BuildingRuntime.LastProps} pieces "
+                    + $"({f?.Colliders} with a collider, {f?.Containers} containers, {f?.Lamps.Count} lamps); furnishing: {f?.Timings}; ground under it {lo:0.00}..{hi:0.00} m");
+            Log.Print($"[cullprobe]   props by list: {res.Furniture.Count} furniture, {res.RuntimeDecor.Count} rugs and curtains, {res.HvacVents.Count} vents, "
+                    + $"{res.Electrical.Count} electrical, {res.Doodads.Count} doodads; grouped by room "
+                    + (_genRooms == null ? "NOT (the room gate is off)" : $"{_genRooms.Grouped} in {System.Linq.Enumerable.Sum(_genRooms.Storeys, st => st.Rooms.Count)} rooms on "
+                       + $"{_genRooms.Storeys.Count} storeys, {_genRooms.NoRoom} with no room, {_genRooms.BasementLamps} basement lamps left out"));
+            yield return 4;   // its last nodes ready, a frame drawn with it
+        }
+
+        /// <summary>What a drawable of the target is, by the nearest thing over it that says: a surface by its kind (an outside
+        /// wall, a partition, a slab, a floor cover, a roof, a railing, a stair), what hangs in a surface (glazing, a door), and a
+        /// piece of furniture by the list the generator put it in (furniture, rugs and curtains, vents, electrical, doodads) or
+        /// as a lamp.</summary>
+        Dictionary<string, string> _propList;
+        string PieceLabel(string name)
+        {
+            if (_propList == null)
+            {
+                var res = _b.Result;
+                _propList = new Dictionary<string, string>();
+                foreach (var m in res.Doodads) _propList[m.Name] = "doodads";
+                foreach (var m in res.HvacVents) _propList[m.Name] = "vents";
+                foreach (var m in res.Electrical) _propList[m.Name] = "electrical";
+                foreach (var m in res.RuntimeDecor) _propList[m.Name] = "rugs+curtains";
+            }
+            if (LampLight.KindFor(name) != LampLight.Kind.Generic) return "lamps";
+            return _propList.TryGetValue(name, out var l) ? l : "furniture";
+        }
+
+        static string SurfaceLabel(WallSurface w) => w.Kind switch
+        {
+            SurfaceKind.Railing => "railings",
+            SurfaceKind.Stairs => "stairs",
+            SurfaceKind.Roof => "roofs",
+            SurfaceKind.Floor => w.Thickness < 0.1f ? "floor covers" : "slabs",
+            SurfaceKind.Foundation => "foundations",
+            _ => w.Thickness < (BuildingGen.Ext + BuildingGen.Inner) * 0.5f ? "partitions" : "outside walls",
+        };
+
+        /// <summary>The target's census by kind: drawables (GeometryInstance3D), and of the whole: nodes, collision shapes,
+        /// occluders, lights.</summary>
+        void TargetCensus(string when)
+        {
+            var gis = new SortedDictionary<string, int>();
+            var shown = new SortedDictionary<string, int>();
+            int nodes = 0, shapes = 0, occ = 0, lights = 0, lightsShown = 0;
+            void Walk(Node n, string label)
+            {
+                nodes++;
+                if (n is WallSurface w) label = SurfaceLabel(w);
+                else if (n is GlassPane || n.Name.ToString().StartsWith("GlassShards")) label = "glazing";
+                else if (n.GetParent() is WallSurface && n is Node3D && n is not GeometryInstance3D && n is not StaticBody3D && n is not OccluderInstance3D) label = "doors";
+                else if (n.HasMeta(BuildingRuntime.PieceMeta)) label = PieceLabel(n.GetMeta(BuildingRuntime.PieceMeta).AsString());
+                if (n is GeometryInstance3D)
+                {
+                    gis[label] = (gis.TryGetValue(label, out int c) ? c : 0) + 1;
+                    if (((GeometryInstance3D)n).IsVisibleInTree()) shown[label] = (shown.TryGetValue(label, out int s) ? s : 0) + 1;
+                }
+                if (n is CollisionShape3D) shapes++;
+                if (n is OccluderInstance3D o && o.Occluder != null) occ++;
+                if (n is Light3D l) { lights++; if (l.IsVisibleInTree()) lightsShown++; }
+                foreach (var ch in n.GetChildren()) Walk(ch, label);
+            }
+            Walk(_b.Node, "other");
+            int total = 0; foreach (var v in gis.Values) total += v;
+            int totalShown = 0; foreach (var v in shown.Values) totalShown += v;
+            Log.Print($"[cullprobe] target census ({when}): {nodes} nodes, {total} drawables ({totalShown} visible in tree), {shapes} collision shapes, "
+                    + $"{occ} occluders, {lights} lights ({lightsShown} visible in tree)");
+            Log.Print($"[cullprobe]   drawables by kind: {string.Join(", ", System.Linq.Enumerable.Select(gis, kv => $"{kv.Key} {kv.Value} ({(shown.TryGetValue(kv.Key, out int s) ? s : 0)} shown)"))}");
+        }
+
+        /// <summary>The stops round a generated TOWER, from its real size: the street 30 m and 150 m off its front, its biggest
+        /// ground-floor room, its biggest room on a middle storey (the 15th, or half way up a lower one), and a high view, 80 m
+        /// up and 120 m off its front, that holds the whole of it.</summary>
+        void PlanTowerStops()
+        {
+            var res = _b.Result;
+            float c = BuildingGen.Cell, wx = res.CellsX * c, dz = res.CellsZ * c, top = res.Floors * Storey;
+            // (the street off the plan's EDGE nearest the front door: a slab's lobby door is set back under its colonnade, on a
+            // line inside the plan, and "30 m out from the door" from there stood the camera in a storeroom)
+            Vector3 doorL = new(wx * 0.5f, 0f, 0f), outL = new(0f, 0f, -1f), edgeL = doorL;
+            foreach (var d in res.Doors)
+            {
+                if (d.Role != DoorRole.Front || d.Floor != 0) continue;
+                var (mx, mz) = d.Middle;
+                doorL = new Vector3(mx, 0f, mz);
+                if (d.AlongX) { bool near = d.Line * c < dz * 0.5f; outL = new Vector3(0f, 0f, near ? -1f : 1f); edgeL = new Vector3(mx, 0f, near ? 0f : dz); }
+                else { bool near = d.Line * c < wx * 0.5f; outL = new Vector3(near ? -1f : 1f, 0f, 0f); edgeL = new Vector3(near ? 0f : wx, 0f, mz); }
+                break;
+            }
+            Vector3 Street(float off) { var e = W(edgeL + outL * off); e.Y = Ground(e) + 1.7f; return e; }
+            var mid = new Vector3(wx * 0.5f, top * 0.5f, dz * 0.5f);
+            _stops.Add(("s30_street", Street(30f), W(doorL + new Vector3(0f, 8f, 0f))));
+            _stops.Add(("s150_street", Street(150f), W(new Vector3(doorL.X, top * 0.5f, doorL.Z))));
+            if (RoomView(0, 1.7f) is { } g0) _stops.Add(("r0_room", W(g0.Eye), W(g0.Look)));
+            int midFloor = res.Floors > 16 ? 15 : res.Floors / 2;
+            if (midFloor > 0 && RoomView(midFloor, midFloor * Storey + 1.7f) is { } gm) _stops.Add(($"r{midFloor}_room", W(gm.Eye), W(gm.Look)));
+            var hEye = W(edgeL + outL * 120f); hEye.Y = Ground(hEye) + 80f;
+            _stops.Add(("h_high", hEye, W(mid)));
+        }
+
         void Aim(Vector3 eye, Vector3 look)
         {
             _cam.Current = true;
@@ -282,7 +470,7 @@ namespace UnturnedGodot
             void Walk(Node n)
             {
                 if (n is GeometryInstance3D g) { gi++; if (g.VisibilityRangeEnd > 0f) ranged++; if (!g.IsVisibleInTree()) hidden++; }
-                if (n is Node3D n3 && n3.Name.ToString().StartsWith("Furniture_")) furniture++;
+                if (n.HasMeta(BuildingRuntime.PieceMeta)) furniture++;
                 if (n is LampLight l) { lamps++; if (l.IsVisibleInTree()) lampsShown++; }
                 if (n is OccluderInstance3D o && o.Occluder is ArrayOccluder3D ao) { occ++; occTris += ao.Indices.Length / 3; }
                 foreach (var ch in n.GetChildren()) Walk(ch);
@@ -290,7 +478,7 @@ namespace UnturnedGodot
             int bn = 0;
             foreach (var b in _town.Buildings) if (b.Node != null && GodotObject.IsInstanceValid(b.Node)) { bn++; Walk(b.Node); }
             Log.Print($"[cullprobe] census ({when}): {bn} buildings -- {gi} drawable instances ({ranged} with a distance cull, {hidden} hidden), "
-                    + $"{furniture} furniture pieces, {lamps} lamps ({lampsShown} shown), {occ} occluders ({occTris} triangles)");
+                    + $"{furniture} furnished pieces (nodes Furnish made, an outlet's source among them), {lamps} lamps ({lampsShown} shown), {occ} occluders ({occTris} triangles)");
         }
 
         /// <summary>Lamps whose light could reach the frame from here: shown, and within their fade-out distance of the camera
@@ -309,12 +497,39 @@ namespace UnturnedGodot
             return n;
         }
 
+        /// <summary>The target's lamps: fixtures drawn (visible in the tree) of all it has, and of those how many are within their
+        /// light's fade-out distance of the camera (lit).</summary>
+        string TargetLamps()
+        {
+            int n = 0, drawn = 0, lit = 0;
+            var at = _cam.GlobalPosition;
+            float reach = BuildingRuntime.LampFadeBegin + BuildingRuntime.LampFadeLength;
+            void Walk(Node x)
+            {
+                if (x is LampLight l) { n++; if (l.IsVisibleInTree()) { drawn++; if (l.GlobalPosition.DistanceTo(at) <= reach) lit++; } }
+                foreach (var ch in x.GetChildren()) Walk(ch);
+            }
+            Walk(_b.Node);
+            return $"target lamps drawn {drawn}/{n} ({lit} within their light's reach)";
+        }
+
+        long _roomTicks; int _roomEvals;
+        /// <summary>What the room gate's evaluation cost since the last call: microseconds an evaluation, and how many.</summary>
+        string RoomGateCost()
+        {
+            long dt = BuildingCull.RoomTicks - _roomTicks; int de = BuildingCull.RoomEvals - _roomEvals;
+            _roomTicks = BuildingCull.RoomTicks; _roomEvals = BuildingCull.RoomEvals;
+            double us = de > 0 ? dt * 1e6 / System.Diagnostics.Stopwatch.Frequency / de : 0;
+            return $"room gate {us:0.0} us an evaluation over {de}, {BuildingCull.RoomToggles} nodes switched so far";
+        }
+
         /// <summary>The culling features to switch off one at a time: only those this build and this run actually have on.</summary>
         void MakeConfigs()
         {
             var vp = GetViewport();
             Log.Print($"[cullprobe] viewport occlusion culling: {(vp.UseOcclusionCulling ? "ON" : "off")}; gated basements: {BuildingCull.Count}; "
-                    + $"buildings with gated furniture shadows: {BuildingCull.ShadowCount}");
+                    + $"buildings with gated furniture shadows: {BuildingCull.ShadowCount}; buildings with gated rooms: {BuildingCull.RoomBuildings} "
+                    + $"({BuildingCull.RoomCount} rooms); storeys with gated shadows: {BuildingCull.ShadowStoreys}");
             if (vp.UseOcclusionCulling)
                 Configs.Add(new Config { Tag = "occlusion", Off = () => vp.UseOcclusionCulling = false, On = () => vp.UseOcclusionCulling = true });
             if (BuildingCull.Count > 0)
@@ -323,6 +538,20 @@ namespace UnturnedGodot
                     Tag = "basementgate",
                     Off = () => { BuildingCull.ForceShow = true; BuildingCull.Refresh(); },
                     On = () => { BuildingCull.ForceShow = false; BuildingCull.Refresh(); },
+                });
+            if (BuildingCull.RoomBuildings > 0)
+                Configs.Add(new Config
+                {
+                    Tag = "roomgate",
+                    Off = () => { BuildingCull.ForceRooms = true; BuildingCull.Refresh(); },
+                    On = () => { BuildingCull.ForceRooms = false; BuildingCull.Refresh(); },
+                });
+            if (BuildingCull.ShadowStoreys > 0)
+                Configs.Add(new Config
+                {
+                    Tag = "storeyshadowgate",
+                    Off = () => { BuildingCull.ForceStoreyShadows = true; BuildingCull.Refresh(); },
+                    On = () => { BuildingCull.ForceStoreyShadows = false; BuildingCull.Refresh(); },
                 });
             if (BuildingCull.ShadowCount > 0)
                 Configs.Add(new Config
@@ -369,6 +598,8 @@ namespace UnturnedGodot
         /// <summary>EXPERIMENTS, not features: something the build does NOT do, switched ON at a stop to measure what it would
         /// save. Read as "x-&lt;tag&gt;" rows; nothing here ships.</summary>
         readonly List<Config> Experiments = new();
+        /// <summary>UG_CULLEXP=tag,tag: only those experiments (all of them if unset).</summary>
+        readonly HashSet<string> _expOnly = System.Environment.GetEnvironmentVariable("UG_CULLEXP") is { Length: > 0 } ex ? new HashSet<string>(ex.Split(',')) : null;
 
         void MakeExperiments()
         {
@@ -411,6 +642,62 @@ namespace UnturnedGodot
                 },
                 Off = () => { foreach (var n in hiddenFurniture) if (GodotObject.IsInstanceValid(n)) n.Visible = true; },
             });
+            // the room gate at PropCull's SMALL distance instead of the lamp fade's end: nearly every piece of furniture is SMALL
+            // (64 m, LodBaker.LayerFor), so at that radius the gate hides only what the pieces' own ranges have already culled
+            // -- the picture the gate leaves at that radius is the one without it, but for the pieces with a longer range
+            if (BuildingCull.RoomBuildings > 0)
+                Experiments.Add(new Config
+                {
+                    Tag = "roomradius-64",
+                    On = () => { BuildingCull.RoomRadius = LodTable.LayerCull("SMALL"); BuildingCull.Refresh(); },
+                    Off = () => { BuildingCull.RoomRadius = BuildingCull.DefaultRoomRadius; BuildingCull.Refresh(); },
+                });
+            if (_gen == null) return;
+            // and for a generated target (UG_CULLGEN), what each part of IT costs -- the upper bound of a gate on that part:
+            // every piece of its furniture hidden (all a room gate could ever take away); the insides of its storeys hidden
+            // (partitions and floor covers, with the doors and glazing they hold: a storey-insides gate's most); nothing of it
+            // casting a shadow (its share of the shadow passes)
+            var hidden = new List<Node3D>();
+            void Hide(System.Func<Node, bool> want)
+            {
+                hidden.Clear();
+                void Walk(Node n)
+                {
+                    if (n is Node3D n3 && n3.Visible && want(n)) { n3.Visible = false; hidden.Add(n3); return; }
+                    foreach (var c in n.GetChildren()) Walk(c);
+                }
+                Walk(_gen.Node);
+            }
+            void Unhide() { foreach (var n in hidden) if (GodotObject.IsInstanceValid(n)) n.Visible = true; }
+            Experiments.Add(new Config
+            {
+                Tag = "target-furniture-hidden",
+                On = () => Hide(n => n.HasMeta(BuildingRuntime.PieceMeta)),
+                Off = Unhide,
+            });
+            Experiments.Add(new Config
+            {
+                Tag = "target-insides-hidden",
+                On = () => Hide(n => n is WallSurface w && (SurfaceLabel(w) == "partitions" || SurfaceLabel(w) == "floor covers")),
+                Off = Unhide,
+            });
+            var tcast = new List<(GeometryInstance3D G, GeometryInstance3D.ShadowCastingSetting S)>();
+            Experiments.Add(new Config
+            {
+                Tag = "target-casts-no-shadow",
+                On = () =>
+                {
+                    tcast.Clear();
+                    void Walk(Node n)
+                    {
+                        if (n is GeometryInstance3D g && g.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) tcast.Add((g, g.CastShadow));
+                        foreach (var c in n.GetChildren()) Walk(c);
+                    }
+                    Walk(_gen.Node);
+                    foreach (var (g, _) in tcast) g.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+                },
+                Off = () => { foreach (var (g, s) in tcast) if (GodotObject.IsInstanceValid(g)) g.CastShadow = s; },
+            });
         }
 
         /// <summary>Every door hung at the building's basement level stands open (ObjectDoor.SetInitialState, as UG_EDITDOORSOPEN
@@ -442,6 +729,42 @@ namespace UnturnedGodot
             return $"shadowed lamps {n} ({below} in basements)";
         }
 
+        /// <summary>What a config COSTS the CPU at this stop: its feature on and off, interleaved, three rounds of five frames
+        /// each way after the lag -- the viewport's measured render time (the render thread's cull and draw recording), the
+        /// frame's process time (every _Process: a gate's own evaluation is in it), the frame setup time, and the wall time
+        /// between frames (on this box that includes the software rasteriser, so it moves with what is DRAWN, not only with
+        /// the CPU's share). Mean, min and max each way.</summary>
+        IEnumerable<int> TimeConfig(string tag, Config cfg)
+        {
+            var on = new List<(double Cpu, double Proc, double Setup, double Wall)>();
+            var off = new List<(double Cpu, double Proc, double Setup, double Wall)>();
+            for (int round = 0; round < 3; round++)
+                foreach (bool want in new[] { true, false })
+                {
+                    if (want) cfg.On(); else cfg.Off();
+                    yield return _lag;
+                    ulong t0 = Godot.Time.GetTicksUsec();
+                    for (int k = 0; k < 5; k++)
+                    {
+                        yield return 1;
+                        ulong t1 = Godot.Time.GetTicksUsec();
+                        var r = Read();
+                        (want ? on : off).Add((r.CpuMs, r.ProcMs, r.SetupMs, (t1 - t0) / 1000.0));
+                        t0 = t1;
+                    }
+                }
+            cfg.On();
+            string Stat(List<(double Cpu, double Proc, double Setup, double Wall)> l, System.Func<(double Cpu, double Proc, double Setup, double Wall), double> f)
+            {
+                double sum = 0, lo = double.MaxValue, hi = double.MinValue;
+                foreach (var v in l) { double x = f(v); sum += x; lo = System.Math.Min(lo, x); hi = System.Math.Max(hi, x); }
+                return l.Count == 0 ? "-" : $"{sum / l.Count:0.00} [{lo:0.00}..{hi:0.00}]";
+            }
+            Log.Print($"[cullprobe] {cfg.Tag} cost at {tag} ({on.Count} frames each way, interleaved; mean [min..max] ms) -- "
+                    + $"render cpu ON {Stat(on, v => v.Cpu)} vs off {Stat(off, v => v.Cpu)}; process ON {Stat(on, v => v.Proc)} vs off {Stat(off, v => v.Proc)}; "
+                    + $"setup ON {Stat(on, v => v.Setup)} vs off {Stat(off, v => v.Setup)}; frame wall ON {Stat(on, v => v.Wall)} vs off {Stat(off, v => v.Wall)}");
+        }
+
         // ---- the run -------------------------------------------------------------------------------------------
 
         IEnumerable<int> Run()
@@ -457,6 +780,9 @@ namespace UnturnedGodot
             HideUi(GetTree().Root);
             // the sun held still: a shadow edge creeping across the frame between two captures reads as a difference between them
             if (DayNightCycle.Current != null) DayNightCycle.Current.Speed = 0f;
+            // UG_CULLGEN=<UG_EDITGEN's string>: one generated building, built through the town's path beside the town, is the target
+            var genEnv = System.Environment.GetEnvironmentVariable("UG_CULLGEN");
+            if (!string.IsNullOrEmpty(genEnv)) foreach (var e in BuildGenerated(genEnv)) yield return e;
             _b = Pick();
             if (_b == null) { Log.Err("[cullprobe] no built building in the town"); yield break; }
             MakeConfigs();
@@ -465,7 +791,8 @@ namespace UnturnedGodot
             Log.Print($"[cullprobe] building {_b.Node.Name} at {_b.Node.GlobalPosition}: {res.Kind}, {res.CellsX}x{res.CellsZ} cells, {res.Floors} floor(s), "
                     + $"basement {(res.HasBasement ? $"{res.Basement} by {res.BasementAccess}" : "none")}; configs: {string.Join(", ", Configs.ConvertAll(c => c.Tag))}");
             Census("as built");
-            PlanStops();
+            if (_gen != null) { TargetCensus("as built"); PlanTowerStops(); }
+            else PlanStops();
             foreach (var s in _stops) Log.Print($"[cullprobe] stop {s.Tag}: eye {s.Eye} looking at {s.Look}");
             // UG_CULLSTOPS=a_street,d_hatch,...: only those stops (the teeth check always runs at the first one planned)
             var only = System.Environment.GetEnvironmentVariable("UG_CULLSTOPS");
@@ -516,7 +843,9 @@ namespace UnturnedGodot
                 foreach (var e in Settle(tag)) yield return e;
                 var all = _last;
                 Log.Print($"[cullprobe] {tag} all: {all} | live lamps {LiveLamps()} | {ShadowedLamps()} | basement {(BuildingCull.IsShown(_b.Node) ? "DRAWN" : "hidden")} "
-                        + $"({BuildingCull.ShownCount}/{BuildingCull.Count} basements drawn, {BuildingCull.CastingCount}/{BuildingCull.ShadowCount} buildings' furniture casting)");
+                        + $"({BuildingCull.ShownCount}/{BuildingCull.Count} basements drawn, {BuildingCull.CastingCount}/{BuildingCull.ShadowCount} buildings' furniture casting) "
+                        + $"| rooms drawn {BuildingCull.RoomsShown}/{BuildingCull.RoomCount} | storeys casting {BuildingCull.ShadowStoreysCasting}/{BuildingCull.ShadowStoreys} "
+                        + $"| {TargetLamps()} | {RoomGateCost()}");
                 Save($"cull_{tag}_all");
                 // the same frame again, nothing changed: the noise floor any picture-to-picture difference is read against (the
                 // sky, the water, a lamp's flicker all move between two frames on their own)
@@ -544,7 +873,8 @@ namespace UnturnedGodot
                 }
                 foreach (var x in Experiments)
                 {
-                    if (tag != "a_street" && tag != "b_room") continue;   // street-level questions
+                    if (tag != "a_street" && tag != "b_room" && _gen == null) continue;   // street-level questions (every stop of a generated target's)
+                    if (_expOnly != null && !_expOnly.Contains(x.Tag)) continue;
                     x.On();
                     foreach (var e in Settle($"{tag} x-{x.Tag}")) yield return e;
                     var r = _last;
@@ -571,28 +901,94 @@ namespace UnturnedGodot
             // what occlusion culling COSTS: its rays are CPU work on every frame. Interleaved on/off at two stops so drift on
             // this shared box falls on both sides; the viewport's measured CPU render time includes the occlusion buffer's
             // update (its worker threads are waited on inside it), but also the cull and the draw recording it saves.
-            var occ = Configs.Find(c => c.Tag == "occlusion");
-            if (occ != null && System.Environment.GetEnvironmentVariable("UG_CULLTIMING") != "0")
+            // (A generated target's: at every stop, and for every config named in UG_CULLTIME -- occlusion if unset.)
+            if (System.Environment.GetEnvironmentVariable("UG_CULLTIMING") != "0")
+            {
+                var timed = new List<Config>();
+                // (a+b: those configs off and on together)
+                foreach (var t in (System.Environment.GetEnvironmentVariable("UG_CULLTIME") ?? "occlusion").Split(','))
+                {
+                    var parts = Configs.FindAll(c => System.Array.IndexOf(t.Split('+'), c.Tag) >= 0);
+                    if (parts.Count == 0) continue;
+                    timed.Add(new Config { Tag = t, Off = () => { foreach (var c in parts) c.Off(); }, On = () => { foreach (var c in parts) c.On(); } });
+                }
                 foreach (var (tag, eye, look) in _stops)
                 {
-                    if (tag != "a_street" && tag != "b_room") continue;
+                    if (tag != "a_street" && tag != "b_room" && _gen == null) continue;
                     Aim(eye, look);
                     yield return 6;
-                    var on = new List<double>(); var off = new List<double>();
-                    for (int round = 0; round < 3; round++)
-                        foreach (bool want in new[] { true, false })
-                        {
-                            if (want) occ.On(); else occ.Off();
-                            yield return _lag;
-                            for (int k = 0; k < 5; k++) { yield return 1; (want ? on : off).Add(Read().CpuMs); }
-                        }
-                    occ.On();
-                    on.Sort(); off.Sort();
-                    double Med(List<double> l) => l.Count == 0 ? 0 : l[l.Count / 2];
-                    double Mean(List<double> l) { double t = 0; foreach (var v in l) t += v; return l.Count == 0 ? 0 : t / l.Count; }
-                    Log.Print($"[cullprobe] occlusion cost at {tag}: viewport CPU render time median {Med(on):0.00} ms ON vs {Med(off):0.00} ms off "
-                            + $"(means {Mean(on):0.00} / {Mean(off):0.00}, {on.Count} frames each, interleaved)");
+                    foreach (var cfg in timed)
+                        foreach (var e in TimeConfig(tag, cfg)) yield return e;
                 }
+            }
+            // what the room gate's evaluation costs a frame at each stop, alone: every gate evaluated 500 times with the camera there
+            // (the basement and shadow gates' loops run too, but only the room gate's own time is counted)
+            if (BuildingCull.RoomBuildings > 0)
+                foreach (var (tag, eye, look) in _stops)
+                {
+                    Aim(eye, look);
+                    yield return 2;
+                    long t0 = BuildingCull.RoomTicks; int e0 = BuildingCull.RoomEvals;
+                    for (int k = 0; k < 500; k++) BuildingCull.Refresh();
+                    double us = (BuildingCull.RoomTicks - t0) * 1e6 / System.Diagnostics.Stopwatch.Frequency / Mathf.Max(1, BuildingCull.RoomEvals - e0);
+                    Log.Print($"[cullprobe] room gate at {tag}: {us:0.0} us an evaluation (500 in a row), {BuildingCull.RoomBuildings} buildings gated, "
+                            + $"{BuildingCull.RoomBuildingsNear} past the broad phase, rooms drawn {BuildingCull.RoomsShown}/{BuildingCull.RoomCount}");
+                }
+            // ⚠ THE GATES WHILE THE CAMERA MOVES, as play drives them: every frame budgeted (BuildingCull.SwitchBudgetMs on hiding),
+            // never a Refresh. Along the target's front at the first stop's distance, 1.5 m a frame (45 m/s at 30 fps: a fast car)
+            // for 30 frames: each frame's evaluation time (both gates, switching included), then 30 still frames, and the state
+            // they settled on must be the state an explicit (unbudgeted) Refresh gives -- or the budget lost a hide.
+            if (_gen != null && BuildingCull.RoomBuildings > 0 && _stops.Count > 0)
+            {
+                var (_, e0, l0) = _stops[0];
+                Aim(e0, l0);
+                yield return 4;
+                var side = _b.Node.GlobalTransform.Basis.X.Normalized();
+                var per = new List<double>();
+                int toggles0 = BuildingCull.RoomToggles;
+                for (int k = 1; k <= 30; k++)
+                {
+                    long t0 = BuildingCull.RoomTicks + BuildingCull.StoreyShadowTicks;
+                    _cam.GlobalPosition = e0 + side * (1.5f * k);
+                    _cam.LookAt(l0 + side * (1.5f * k), Vector3.Up);
+                    yield return 1;
+                    per.Add((BuildingCull.RoomTicks + BuildingCull.StoreyShadowTicks - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+                }
+                yield return 30;
+                int roomsSettled = BuildingCull.RoomsShown, castSettled = BuildingCull.ShadowStoreysCasting;
+                BuildingCull.Refresh();
+                int roomsNow = BuildingCull.RoomsShown, castNow = BuildingCull.ShadowStoreysCasting;
+                per.Sort();
+                double mean = 0; foreach (var v in per) mean += v; mean /= per.Count;
+                Log.Print($"[cullprobe] moving 45 m/s along the front: both gates {mean:0.00} ms a frame mean, median {per[per.Count / 2]:0.00}, max {per[per.Count - 1]:0.00} "
+                        + $"(budget {BuildingCull.SwitchBudgetMs} ms on hiding), {BuildingCull.RoomToggles - toggles0} room/storey nodes switched; settled: rooms drawn "
+                        + $"{roomsSettled} vs {roomsNow} after a Refresh, storeys casting {castSettled} vs {castNow} -- {(roomsSettled == roomsNow && castSettled == castNow ? "SAME" : "DIFFERENT")}");
+            }
+            // what SWITCHING costs, which the evaluation above does not include: every room node of the target hidden and shown
+            // again (Node3D.Visible, propagated to every piece under it), and every drawable under them told to cast no shadow and
+            // to cast again (what the storey shadow gate does to a storey), three times each, timed on the main thread
+            if (_genRooms != null && _genRooms.Storeys.Count > 0)
+            {
+                BuildingCull.ForceRooms = true; BuildingCull.ForceStoreyShadows = true; BuildingCull.Refresh();
+                var nodes = new List<Node3D>(); var gis = new List<(GeometryInstance3D G, GeometryInstance3D.ShadowCastingSetting S)>();
+                void Walk(Node n) { if (n is GeometryInstance3D g && g.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) gis.Add((g, g.CastShadow)); foreach (var c in n.GetChildren()) Walk(c); }
+                foreach (var st in _genRooms.Storeys) foreach (var (_, rn) in st.Rooms) if (GodotObject.IsInstanceValid(rn)) { nodes.Add(rn); Walk(rn); }
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                for (int k = 0; k < 3; k++) { foreach (var rn in nodes) rn.Visible = false; foreach (var rn in nodes) rn.Visible = true; }
+                double visMs = sw.Elapsed.TotalMilliseconds;
+                sw.Restart();
+                for (int k = 0; k < 3; k++)
+                {
+                    foreach (var (g, _) in gis) g.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+                    foreach (var (g, c) in gis) g.CastShadow = c;
+                }
+                double castMs = sw.Elapsed.TotalMilliseconds;
+                BuildingCull.ForceRooms = false; BuildingCull.ForceStoreyShadows = false; BuildingCull.Refresh();
+                Log.Print($"[cullprobe] switching cost: {nodes.Count} room nodes holding {gis.Count} casting drawables -- a room hidden or shown "
+                        + $"{visMs * 1000.0 / (6 * nodes.Count):0.0} us ({visMs * 1000.0 / (6 * gis.Count):0.00} us a drawable under it); a drawable's shadow switched "
+                        + $"{castMs * 1000.0 / (6 * gis.Count):0.00} us");
+                yield return 2;
+            }
             Log.Print("[cullprobe] done");
         }
     }
