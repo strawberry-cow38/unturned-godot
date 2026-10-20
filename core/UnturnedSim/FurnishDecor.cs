@@ -350,7 +350,7 @@ namespace UnturnedSim
                         {
                             float px = cx + sgn * nx * d, pz = cz + sgn * nz * d, qx = cx - sgn * nx * d, qz = cz - sgn * nz * d;
                             if (!_room.Holds(px, pz)) continue;
-                            var past = _res.Layout.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(qx, qz));
+                            var past = _p.Rooms.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(qx, qz));
                             if (!outside || past == null || (_room.Unit >= 0 && past.Unit < 0)) l.Add((px, pz));
                         }
                     }
@@ -479,7 +479,12 @@ namespace UnturnedSim
             /// furnished: whatever moves a window before the décor (a room's layout shrinking one) is seen.</summary>
             List<(WallPlan W, WallOpening O, int Side)> Windows()
             {
-                var l = new List<(WallPlan, WallOpening, int)>();
+                // (kept while no window of the storey has changed since -- FloorPlan.OpeningsVersion, which every change to one
+                // moves: the walls themselves stand still while a storey is furnished, so the same walls give the same list.
+                // Its callers only read it.)
+                if (_wins != null && _winsVersion == _p.OpeningsVersion) return _wins;
+                _winsVersion = _p.OpeningsVersion;
+                var l = _wins = new List<(WallPlan, WallOpening, int)>();
                 foreach (var w in RoomWalls())
                 {
                     var (dx, dz) = PlanTrig.CosSin(w.Yaw); dz = -dz;
@@ -494,6 +499,8 @@ namespace UnturnedSim
                 }
                 return l;
             }
+
+            List<(WallPlan W, WallOpening O, int Side)> _wins; int _winsVersion;
 
             /// <summary>The stretches of a face within DecorWindowGap of a window, in plan, at any height: the window's jambs
             /// on the room's face of its wall, as a segment, and the stretch of the face's line within DecorWindowGap of it --
@@ -555,7 +562,7 @@ namespace UnturnedSim
                     {
                         int nx = alongX ? 0 : sgn, nz = alongX ? sgn : 0;
                         if (!WallAt(mx - nx * (half + 0.15f), mz - nz * (half + 0.15f)) || WallAt(mx + nx * (half + 0.15f), mz + nz * (half + 0.15f))) continue;
-                        var room = _res.Layout.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(mx + nx * (half + 0.3f), mz + nz * (half + 0.3f)));
+                        var room = _p.Rooms.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(mx + nx * (half + 0.3f), mz + nz * (half + 0.3f)));
                         if (room == null) continue;
                         if (room == _room || _res.OpenPlan.Any(o => o.Floor == _room.Floor && ((o.A == room && o.B == _room) || (o.B == room && o.A == _room))))
                             _fires.Add((b.X0, b.Z0, b.X1, b.Z1, nx, nz, room == _room));
@@ -647,7 +654,7 @@ namespace UnturnedSim
                 if (at == null) return null;
                 var s = FurnitureCatalog.Sizes[name];
                 var fp = FurnitureCatalog.Footprint(name, at.Value.X, at.Value.Z, at.Value.Yaw);
-                if (_p.WallRects.Any(r => Overlaps(fp, r))) return null;
+                if (_p.WallOverlaps(fp)) return null;
                 var (fx, fz) = FrontOf(at.Value.Yaw);
                 var (rx, rz) = RightOf(at.Value.Yaw);
                 float bottom = height - s.H, top = height + s.H, floorY = _room.Floor * Storey;
@@ -689,7 +696,7 @@ namespace UnturnedSim
                 var (fx, fz) = FrontOf(yaw); var (rx, rz) = RightOf(yaw);
                 float ax = x + rx * s.X0 + fx * s.Y1, az = z + rz * s.X0 + fz * s.Y1, bx = x + rx * s.X1 + fx * (s.Y1 + depth), bz = z + rz * s.X1 + fz * (s.Y1 + depth);
                 var zone = (MathF.Min(ax, bx), MathF.Min(az, bz), MathF.Max(ax, bx), MathF.Max(az, bz));
-                foreach (var (i, j) in _p.Cells(zone)) if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
+                if (!RoomFree(zone)) return false;
                 // (and the pieces' own outlines: one reaching a few cm into the zone marks no cell of it -- a washer turned
                 // side-on beside the mirror's wall)
                 if ((pieces ?? Here()).Any(o => o.Floor == _room.Floor && o.On == null && !o.Mounted && !o.Ceiling && Overlaps(zone, o.Footprint))) return false;

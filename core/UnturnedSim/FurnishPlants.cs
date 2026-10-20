@@ -138,7 +138,7 @@ namespace UnturnedSim
             /// (`wins`: the room's windows, Windows(), where a caller trying many spots has them already)
             bool BlocksWindow((float X0, float Z0, float X1, float Z1) fp, List<(WallPlan W, WallOpening O, int Side)> wins = null)
             {
-                if (_p.Cells(fp).Any(c => _p.KeepTall[c.I, c.J])) return true;
+                if (_p.AnyTall(fp)) return true;
                 foreach (var (w, o, side) in wins ?? Windows())
                 {
                     if (o.V >= 2.5f) continue;

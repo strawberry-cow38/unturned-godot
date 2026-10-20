@@ -64,8 +64,16 @@ namespace UnturnedSim
                     k++;
                 }
                 var placed = new List<FurniturePlan>();
-                if (rec.Lights.Count > 0) placed.AddRange(LightSwitches(rng));
-                placed.AddRange(Outlets(rng, OutletsPerRoom.GetValueOrDefault(_room.Kind)));
+                // (what Fits tests against, read once: nothing is added to the building, moved or hung until the room's switches
+                // and outlets are all chosen -- they go into Electrical below -- so the storey's pieces, vents, fixtures and
+                // curtains are the same for every spot it is asked of)
+                _fitOn = true;
+                try
+                {
+                    if (rec.Lights.Count > 0) placed.AddRange(LightSwitches(rng));
+                    placed.AddRange(Outlets(rng, OutletsPerRoom.GetValueOrDefault(_room.Kind)));
+                }
+                finally { _fitOn = false; _fit = null; }
                 foreach (var m in placed)
                 {
                     bool outlet = m.Name == "Power_Outlet_0";
@@ -226,12 +234,10 @@ namespace UnturnedSim
             {
                 var fp = FurnitureCatalog.Footprint(name, at.X, at.Z, at.Yaw);
                 float floorY = _room.Floor * Storey;
-                foreach (var o in Here().Concat(_res.HvacVents).Concat(_res.Electrical).Where(o => o.Floor == _room.Floor && o.Mounted))
-                {
-                    float h = FurnitureCatalog.Sizes[o.Name].H, o0 = o.Y - floorY - h, o1 = o.Y - floorY + h;
-                    if (o1 > bottom - 0.05f && o0 < top + 0.05f && Overlaps(Grow(fp, 0.1f), o.Footprint)) return false;
-                }
-                if (_res.RuntimeDecor.Any(c => c.Floor == _room.Floor && c.Gen.Kind == RuntimeDecorKind.Curtain && Overlaps(Grow(fp, 0.15f), c.Footprint))) return false;
+                var snap = _fitOn ? _fit ??= FitSnapshot() : FitSnapshot();
+                foreach (var (o, o0, o1, ofp) in snap.Hung)
+                    if (o1 > bottom - 0.05f && o0 < top + 0.05f && Overlaps(Grow(fp, 0.1f), ofp)) return false;
+                foreach (var cfp in snap.Curtains) if (Overlaps(Grow(fp, 0.15f), cfp)) return false;
                 if (_p.LeafRects.Any(r => Overlaps(Grow(fp, 0.05f), r))) return false;
                 // what stands before it: right before it (its plate's width, `before` deep), and anything tall a little further
                 var (fx, fz) = FrontOf(at.Yaw);
@@ -242,14 +248,41 @@ namespace UnturnedSim
                     return (fx < 0 ? x0 - depth : x0, fz < 0 ? z0 - depth : z0, fx > 0 ? x1 + depth : x1, fz > 0 ? z1 + depth : z1);
                 }
                 var near = Before(before, 0.05f); var far = Before(ElectricalAccess, -0.02f);
+                foreach (var (o, topOf, h, ofp) in snap.Standing)
+                {
+                    if (counter && o.On == null && (CounterTop(o.Name) || (basin && o.Name == "Counter_1"))) continue;
+                    if (before > 0f && topOf > bottom - 0.1f && Overlaps(near, ofp)) return false;
+                    if (o.On == null && h > HidesOutlet && Overlaps(far, ofp)) return false;
+                }
+                return true;
+            }
+
+            /// <summary>What Fits tests a fixture against, on this storey: the hung pieces, vents and fixtures (each with its
+            /// height's span over the floor and its footprint), the curtains' footprints, and the standing pieces (each with its
+            /// top over the floor, its height and its footprint) -- in the order Fits used to read them off the lists.</summary>
+            sealed class FitSet
+            {
+                public readonly List<(FurniturePlan O, float O0, float O1, (float X0, float Z0, float X1, float Z1) Fp)> Hung = new();
+                public readonly List<(float X0, float Z0, float X1, float Z1)> Curtains = new();
+                public readonly List<(FurniturePlan O, float Top, float H, (float X0, float Z0, float X1, float Z1) Fp)> Standing = new();
+            }
+            FitSet _fit; bool _fitOn;
+            FitSet FitSnapshot()
+            {
+                var set = new FitSet();
+                float floorY = _room.Floor * Storey;
+                foreach (var o in Here().Concat(_res.HvacVents).Concat(_res.Electrical).Where(o => o.Floor == _room.Floor && o.Mounted))
+                {
+                    float h = FurnitureCatalog.Sizes[o.Name].H, o0 = o.Y - floorY - h, o1 = o.Y - floorY + h;
+                    set.Hung.Add((o, o0, o1, o.Footprint));
+                }
+                foreach (var c in _res.RuntimeDecor.Where(c => c.Floor == _room.Floor && c.Gen.Kind == RuntimeDecorKind.Curtain)) set.Curtains.Add(c.Footprint);
                 foreach (var o in Here().Where(o => o.Floor == _room.Floor && !o.Mounted && !o.Ceiling))
                 {
                     float topOf = o.Y - floorY + FurnitureCatalog.Sizes[o.Name].H;
-                    if (counter && o.On == null && (CounterTop(o.Name) || (basin && o.Name == "Counter_1"))) continue;
-                    if (before > 0f && topOf > bottom - 0.1f && Overlaps(near, o.Footprint)) return false;
-                    if (o.On == null && FurnitureCatalog.Sizes[o.Name].H > HidesOutlet && Overlaps(far, o.Footprint)) return false;
+                    set.Standing.Add((o, topOf, FurnitureCatalog.Sizes[o.Name].H, o.Footprint));
                 }
-                return true;
+                return set;
             }
 
             /// <summary>Is a counter run's worktop right before a fixture at `at`, all along its plate (within 0.35 m of the
@@ -286,7 +319,7 @@ namespace UnturnedSim
                         foreach (int sgn in new[] { 1, -1 })
                         {
                             if (!_room.Holds(cx + sgn * nx * (d + 0.3f), cz + sgn * nz * (d + 0.3f))) continue;
-                            var past = _res.Layout.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(cx - sgn * nx * (d + 0.3f), cz - sgn * nz * (d + 0.3f)));
+                            var past = _p.Rooms.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(cx - sgn * nx * (d + 0.3f), cz - sgn * nz * (d + 0.3f)));
                             // (not by a closet's door: nobody switches a room's light on from the wardrobe)
                             if (past != null && past.Kind == Closet) continue;
                             bool main = past == null || past.Circulation, leaf = o.HasDoor && o.Archetype != ArchGarage;

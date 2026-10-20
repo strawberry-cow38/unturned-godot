@@ -115,8 +115,8 @@ namespace UnturnedSim
             bool RegisterFits(string name, float x, float z, float yaw)
             {
                 var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
-                foreach (var (i, j) in _p.Cells(fp)) if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
-                if (_p.StairRects.Concat(_p.TileRects).Concat(_p.LeafRects).Concat(_p.WallRects).Any(r => Overlaps(fp, r))) return false;
+                if (!RoomFree(fp)) return false;
+                if (_p.StairRects.Any(r => Overlaps(fp, r)) || _p.TileRects.Any(r => Overlaps(fp, r)) || _p.LeafRects.Any(r => Overlaps(fp, r)) || _p.WallOverlaps(fp)) return false;
                 if (Here().Any(o => o.Floor == _room.Floor && o.On == null && !o.Mounted && !o.Ceiling && Overlaps(Grow(fp, 0.05f), o.Footprint))) return false;
                 return !_res.RuntimeDecor.Concat(_res.HvacVents).Any(o => o.Floor == _room.Floor && !o.Mounted && Overlaps(fp, o.Footprint));
             }
@@ -126,7 +126,9 @@ namespace UnturnedSim
             GenRoom Behind(Face f, float t)
             {
                 float x = f.Nx != 0 ? f.At - f.Nx * 0.9f : t, z = f.Nx != 0 ? t : f.At - f.Nz * 0.9f;
-                return _res.Layout.FirstOrDefault(g => g.Floor == _room.Floor && g != _room && g.Holds(x, z));
+                // (the storey's rooms in the layout's order: the first the whole layout would give)
+                foreach (var g in _p.Rooms) if (g.Floor == _room.Floor && g != _room && g.Holds(x, z)) return g;
+                return null;
             }
 
             /// <summary>A wall grille, its top GrilleUnderCeiling under the ceiling over it, on a wall with another room behind it
