@@ -312,6 +312,64 @@ namespace UnturnedGodot
             };
         }
 
+        /// <summary>Every node under `root`, depth first in child order: its depth, class and name, local transform (exact, as bits),
+        /// visibility, and what it draws or collides with -- mesh (its path, else its surface count and bounds), material, shape,
+        /// layers, light, cull range and metas. Written to `path`, with a count by class at the end.</summary>
+        static void DumpTree(Node root, string path)
+        {
+            var sb = new System.Text.StringBuilder(1 << 24);
+            var census = new SortedDictionary<string, int>();
+            int loot = 0;
+            static string Bits(float v) => System.BitConverter.SingleToInt32Bits(v).ToString("X8");
+            static string V3(Vector3 v) => $"{Bits(v.X)},{Bits(v.Y)},{Bits(v.Z)}";
+            static string Res(Resource r) => r == null ? "-" : !string.IsNullOrEmpty(r.ResourcePath) ? r.ResourcePath : r.GetClass() + (r.ResourceName is { Length: > 0 } rn ? ":" + rn : "");
+            static string Mat(Material m) => m switch
+            {
+                null => "-",
+                BaseMaterial3D b => $"{Res(b)} albedo {b.AlbedoColor} tex {Res(b.AlbedoTexture)} transp {b.Transparency} cull {b.CullMode} shading {b.ShadingMode}",
+                ShaderMaterial s => $"{Res(s)} shader {Res(s.Shader)}",
+                _ => Res(m),
+            };
+            void Walk(Node n, int depth)
+            {
+                if (n.IsQueuedForDeletion()) return;   // (gone at the frame's end: not part of what was built)
+                // (a store shelf's loot on show: rolled afresh, unseeded, every time a shelf is made -- counted, not compared)
+                if (n is MeshInstance3D && n.GetParent() is StoreShelf)
+                    foreach (var c in n.GetChildren()) if (c is ShelfItemBody) { loot++; return; }
+                string cls = n.GetClass();
+                census[cls] = census.GetValueOrDefault(cls) + 1;
+                sb.Append(depth).Append(' ').Append(cls).Append(' ').Append((string)n.Name);
+                if (n is Node3D n3)
+                {
+                    var t = n3.Transform;
+                    sb.Append(" xf ").Append(V3(t.Basis.X)).Append(';').Append(V3(t.Basis.Y)).Append(';').Append(V3(t.Basis.Z)).Append(';').Append(V3(t.Origin));
+                    sb.Append(n3.Visible ? " vis" : " hid");
+                }
+                if (n is GeometryInstance3D gi)
+                    sb.Append($" shadow {gi.CastShadow} range {Bits(gi.VisibilityRangeBegin)}..{Bits(gi.VisibilityRangeEnd)} fade {gi.VisibilityRangeFadeMode} layers {gi.Layers} mo {Mat(gi.MaterialOverride)}");
+                if (n is MeshInstance3D mi && mi.Mesh is Mesh mesh)
+                {
+                    sb.Append($" mesh {Res(mesh)} surf {mesh.GetSurfaceCount()} aabb {V3(mesh.GetAabb().Position)}/{V3(mesh.GetAabb().Size)}");
+                    for (int k = 0; k < mesh.GetSurfaceCount(); k++) sb.Append($" s{k} {Mat(mi.GetSurfaceOverrideMaterial(k))}|{Mat(mesh.SurfaceGetMaterial(k))}");
+                }
+                if (n is CollisionObject3D co) sb.Append($" coll {co.CollisionLayer}/{co.CollisionMask}");
+                if (n is CollisionShape3D cs) sb.Append($" shape {cs.Shape?.GetClass()} {(cs.Shape is BoxShape3D bx ? V3(bx.Size) : cs.Shape is ConcavePolygonShape3D cp ? cp.GetFaces().Length.ToString() : "")} {(cs.Disabled ? "off" : "on")}");
+                if (n is Light3D l) sb.Append($" light {l.LightColor} e {Bits(l.LightEnergy)} shadow {l.ShadowEnabled} fade {l.DistanceFadeEnabled} {Bits(l.DistanceFadeBegin)} {Bits(l.DistanceFadeLength)}"
+                                              + (l is OmniLight3D o ? $" r {Bits(o.OmniRange)}" : l is SpotLight3D sp ? $" r {Bits(sp.SpotRange)} a {Bits(sp.SpotAngle)}" : ""));
+                if (n is OccluderInstance3D oc) sb.Append($" occ {oc.Occluder?.GetClass()}");
+                foreach (var key in n.GetMetaList()) sb.Append($" meta {key}={n.GetMeta(key)}");
+                sb.Append('\n');
+                foreach (var c in n.GetChildren()) Walk(c, depth + 1);
+            }
+            Walk(root, 0);
+            sb.Append($"loot on show {loot}\n");
+            sb.Append("census");
+            foreach (var (k, v) in census) sb.Append($" {k}={v}");
+            sb.Append('\n');
+            System.IO.File.WriteAllText(path, sb.ToString());
+            Log.Print($"[cullprobe] dumped the built tree to {path}: {string.Join(", ", System.Linq.Enumerable.Select(census, kv => $"{kv.Value} {kv.Key}"))}");
+        }
+
         /// <summary>Generate UG_CULLGEN's building and build it through BuildingRuntime.Build, outside the town's extent on the
         /// side away from its bearing, its front (the plan's z = 0 side) facing the town's middle across a 35 m gap.</summary>
         IEnumerable<int> BuildGenerated(string gen)
@@ -342,6 +400,7 @@ namespace UnturnedGodot
             }
             origin.Y = hi + TownRoadGrid.BuildingClearance;
             var frame = new Transform3D(new Basis(xw, Vector3.Up, zw), origin);
+            Log.Print($"[cullprobe] UG_CULLGEN generated in {_genMs:0} ms; building it");
             clock.Restart();
             var node = BuildingRuntime.Build(res, frame, parent, objs, "Building_Generated");
             _buildMs = clock.Elapsed.TotalMilliseconds;
@@ -354,6 +413,10 @@ namespace UnturnedGodot
                     + $"({res.Floors * BuildingGen.Storey:0.0} m), {res.Layout.Count} rooms, {res.Doors.Count} doors, {res.Walls.Count} planned surfaces; "
                     + $"generated in {_genMs:0} ms, built in {_buildMs:0} ms -- {BuildingRuntime.LastWalls} surfaces, {BuildingRuntime.LastProps} pieces "
                     + $"({f?.Colliders} with a collider, {f?.Containers} containers, {f?.Lamps.Count} lamps); furnishing: {f?.Timings}; ground under it {lo:0.00}..{hi:0.00} m");
+            Log.Print($"[cullprobe]   build by part: {BuildingRuntime.LastTimings}");
+            // UG_CULLDUMP=<file>: the built building's whole node tree, a line a node, for a before/after comparison of WHAT was
+            // built (a change to how it is built must leave this the same) -- and the census of it by class
+            if (System.Environment.GetEnvironmentVariable("UG_CULLDUMP") is { Length: > 0 } dumpPath) DumpTree(node, dumpPath);
             Log.Print($"[cullprobe]   props by list: {res.Furniture.Count} furniture, {res.RuntimeDecor.Count} rugs and curtains, {res.HvacVents.Count} vents, "
                     + $"{res.Electrical.Count} electrical, {res.Doodads.Count} doodads; grouped by room "
                     + (_genRooms == null ? "NOT (the room gate is off)" : $"{_genRooms.Grouped} in {System.Linq.Enumerable.Sum(_genRooms.Storeys, st => st.Rooms.Count)} rooms on "

@@ -35,8 +35,11 @@ namespace UnturnedGodot
                 MaterialIdBack = materialBack, TexelBack = texelBack, StepRise = stepRise, Rails = rails,
                 Position = origin, RotationDegrees = new Vector3(pitchDeg, yawDeg, 0f),
             };
+            // ⚡ its openings BEFORE it goes into the tree: its _Ready builds it (WallSurface.Rebuild), so it is built once, with
+            // them -- added after, every surface with a door or a window was built twice, bare and then cut (a tower's 3,570
+            // surfaces were a quarter of its build)
+            if (openings != null) w.Openings.AddRange(openings);
             parent.AddChild(w);
-            if (openings != null) { w.Openings.AddRange(openings); w.Rebuild(); }
             into?.Add(w);
             return w;
         }
@@ -72,23 +75,41 @@ namespace UnturnedGodot
                 if (GodotObject.IsInstanceValid(w) && (w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation)) walls.Add(w);
             var growStart = new float[walls.Count];
             var growEnd = new float[walls.Count];
-            for (int i = 0; i < walls.Count; i++)
+            // ⚡ each wall's yaw, height, ends, length and thickness read off its node ONCE -- nothing moves until every pair is
+            // judged -- and each wall paired only with those within the storey test's 0.6 m of its height (by height, sorted):
+            // the same pairs judged on the same numbers, where a tower's 2,000 walls read four million pairs' transforms
+            int n = walls.Count;
+            var rotY = new float[n]; var posY = new float[n]; var e0 = new Vector3[n]; var e1 = new Vector3[n];
+            for (int i = 0; i < n; i++)
+            {
+                rotY[i] = walls[i].RotationDegrees.Y; posY[i] = walls[i].Position.Y;
+                e0[i] = walls[i].UVToWorld(0f, 0f); e1[i] = walls[i].UVToWorld(walls[i].Length, 0f);
+            }
+            var byY = new int[n];
+            for (int i = 0; i < n; i++) byY[i] = i;
+            System.Array.Sort(byY, (p, q) => posY[p].CompareTo(posY[q]));
+            var sortedY = new float[n];
+            for (int k = 0; k < n; k++) sortedY[k] = posY[byY[k]];
+            for (int i = 0; i < n; i++)
             {
                 var a = walls[i];
-                var a0 = a.UVToWorld(0f, 0f);
-                var ad = new Vector3(a.UVToWorld(a.Length, 0f).X - a0.X, 0f, a.UVToWorld(a.Length, 0f).Z - a0.Z);
+                var a0 = e0[i];
+                var ad = new Vector3(e1[i].X - a0.X, 0f, e1[i].Z - a0.Z);
                 if (ad.LengthSquared() < 1e-6f) continue;
                 ad = ad.Normalized();
-                for (int j = 0; j < walls.Count; j++)
+                // (every wall whose height is within a centimetre past 0.6 m of this one's: the exact test is below)
+                int lo = LowerBound(sortedY, posY[i] - 0.61f);
+                for (int k = lo; k < n && sortedY[k] <= posY[i] + 0.61f; k++)
                 {
+                    int j = byY[k];
                     if (i == j) continue;
                     var b = walls[j];
                     // parallel walls are a seam, not a corner -- extending them just overlaps two walls
-                    float dy = Mathf.Abs(Mathf.Wrap(a.RotationDegrees.Y - b.RotationDegrees.Y, -90f, 90f));
+                    float dy = Mathf.Abs(Mathf.Wrap(rotY[i] - rotY[j], -90f, 90f));
                     if (dy < 20f) continue;
                     // and they must be the same storey, or a foundation solves against the wall above it
-                    if (Mathf.Abs(a.Position.Y - b.Position.Y) > 0.6f) continue;
-                    if (!CrossOnPlan(a0, ad, b.UVToWorld(0f, 0f), b.UVToWorld(b.Length, 0f), out float t, out float s2)) continue;
+                    if (Mathf.Abs(posY[i] - posY[j]) > 0.6f) continue;
+                    if (!CrossOnPlan(a0, ad, e0[j], e1[j], out float t, out float s2)) continue;
                     if (s2 < -0.02f || s2 > 1.02f) continue;          // the crossing is off the end of b
                     // at a CORNER run on to b's far face (the notch is the outer quarter square); at a TEE stop on its centreline
                     bool atEndOfB = s2 < 0.08f || s2 > 0.92f;
@@ -109,6 +130,14 @@ namespace UnturnedGodot
                 w.Rebuild();
             }
             return undo;
+        }
+
+        /// <summary>The first index of a sorted array whose value is at least v (its length if none is).</summary>
+        static int LowerBound(float[] sorted, float v)
+        {
+            int lo = 0, hi = sorted.Length;
+            while (lo < hi) { int mid = (lo + hi) >> 1; if (sorted[mid] < v) lo = mid + 1; else hi = mid; }
+            return lo;
         }
 
         /// <summary>Where the ray (from, dir) crosses the segment b0..b1, in PLAN: `t` along the ray, `s` 0..1 along the segment.</summary>
@@ -342,6 +371,9 @@ namespace UnturnedGodot
         public static int LastWalls, LastProps;
         /// <summary>...and of that furniture, what the last Build's Furnish made live.</summary>
         public static Furnished LastFurnished;
+        /// <summary>Where the last Build's time went, ms: the surfaces, the stairs, the corner solve, the rooms' nodes, the
+        /// furniture (Furnished.Timings has its parts) and the culling gates.</summary>
+        public static string LastTimings = "";
 
         /// <summary>Where a generated TOWN's lamps fade out and stop being drawn, metres from the camera (LampLight.FadeBegin; the
         /// fade then runs LampFadeLength). A town hangs a light in nearly every room -- seed 7 measured 1,141 (915 ceiling
@@ -580,9 +612,18 @@ namespace UnturnedGodot
         /// <summary>The room of storey `floor` holding plan point (x, z), or null.</summary>
         static GenRoom RoomAt(BuildingGenResult res, int floor, float x, float z)
         {
+            // (while Build builds `res`, its rooms by storey, each storey's in the layout's order: the same first room, without a
+            // walk of a tower's 906 for each of its 3,570 surfaces)
+            if (_roomsOf == res && _roomsByFloor != null)
+            {
+                if (_roomsByFloor.TryGetValue(floor, out var l)) foreach (var g in l) if (g.Holds(x, z)) return g;
+                return null;
+            }
             foreach (var g in res.Layout) if (g.Floor == floor && g.Holds(x, z)) return g;
             return null;
         }
+        static BuildingGenResult _roomsOf;
+        static Dictionary<int, List<GenRoom>> _roomsByFloor;
 
         static void AddInside(Dictionary<int, List<WallSurface>> insides, int floor, WallSurface w)
         {
@@ -673,6 +714,20 @@ namespace UnturnedGodot
                                    Sides party = Sides.None)
         {
             if (res == null || parent == null) return null;
+            long tStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            _roomsOf = res; _roomsByFloor = new Dictionary<int, List<GenRoom>>();
+            foreach (var g in res.Layout)
+            {
+                if (!_roomsByFloor.TryGetValue(g.Floor, out var l)) _roomsByFloor[g.Floor] = l = new List<GenRoom>();
+                l.Add(g);
+            }
+            try { return BuildIndexed(res, frame, parent, objs, name, party, tStart); }
+            finally { _roomsOf = null; _roomsByFloor = null; }
+        }
+
+        static Node3D BuildIndexed(BuildingGenResult res, Transform3D frame, Node3D parent, EditorObjects objs, string name, Sides party, long tStart)
+        {
+            static double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             var root = new Node3D { Name = name };
             parent.AddChild(root);                      // at the parent's origin: built there, moved last (see the class summary)
             // the basement's insides, under one node the camera gates (BuildingCull): drawn only when it could be seen
@@ -699,6 +754,7 @@ namespace UnturnedGodot
                 if (insides != null && Inside(res, pl, out int fl)) AddInside(insides, fl, made);
             }
             LastClipped = clipped;
+            long tWalls = System.Diagnostics.Stopwatch.GetTimestamp();
             foreach (var s in res.Stairs)
             {
                 var o = new Vector3(s.X, s.Y, s.Z);
@@ -721,12 +777,16 @@ namespace UnturnedGodot
                 // a switchback's half flights: the generator cut their floor's hole itself (it covers the landing too)
                 if (rise >= EditorBuildings.StoreyHeight - 0.01f) CutStairHole(walls, o, s.Yaw, s.Run, s.Width, rise, Punch);
             }
+            long tStairs = System.Diagnostics.Stopwatch.GetTimestamp();
             SolveCorners(walls);
+            long tCorners = System.Diagnostics.Stopwatch.GetTimestamp();
             // the furniture, live: the editor placer's own nodes (Furnish), in the lattice's frame like everything above -- each
             // room's under a node of its own (GroupRooms), which BuildingCull's room gate shows only while the camera is near it
             var groups = BuildingCull.RoomGateDisabled ? null : GroupRooms(res, root, below);
+            long tGroups = System.Diagnostics.Stopwatch.GetTimestamp();
             var furnished = Furnish(root, Transform3D.Identity, res.Props, System.Linq.Enumerable.Select(res.Rooms, r => r.Electrical), objs, LampFadeBegin, below,
                                     groups?.Parents);
+            long tFurnish = System.Diagnostics.Stopwatch.GetTimestamp();
             root.Transform = frame;
             BuildingCull.AddBasement(root, below, res);
             BuildingCull.AddRooms(root, groups);
@@ -737,8 +797,12 @@ namespace UnturnedGodot
             // position the prop was BUILT at -- here the lattice's, not the world's -- and a TopLevel node does not follow the root
             // being moved. Re-seat them now the building stands where its plot says, or every kitchen sink's water port in town
             // sits in a heap at the lattice origin's spot in the world.
+            long tGates = System.Diagnostics.Stopwatch.GetTimestamp();
             foreach (var n in furnished.Nodes) SmartProps.Resync(n);
+            long tEnd = System.Diagnostics.Stopwatch.GetTimestamp();
             LastWalls = walls.Count; LastProps = furnished.Nodes.Count; LastFurnished = furnished;
+            LastTimings = $"surfaces {Ms(tStart, tWalls):0} ms, stairs {Ms(tWalls, tStairs):0} ms, corners {Ms(tStairs, tCorners):0} ms, room nodes {Ms(tCorners, tGroups):0} ms, "
+                        + $"furniture {Ms(tGroups, tFurnish):0} ms, gates {Ms(tFurnish, tGates):0} ms, resync {Ms(tGates, tEnd):0} ms";
             return root;
         }
     }
