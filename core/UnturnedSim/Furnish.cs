@@ -746,7 +746,37 @@ namespace UnturnedSim
                 _open = new bool[_ni * _nj];
                 for (int a = 0; a < _ni; a++) for (int b = 0; b < _nj; b++) _open[a * _nj + b] = _inRoom[a, b];
                 _bad = new int[_nj, _ni + 1]; _badTall = new int[_nj, _ni + 1];
-                for (int b = 0; b < _nj; b++) Recount(b);
+                RecountAll();
+            }
+            /// <summary>Every row's running counts at once (Recount, for each b): the room's box of the floor's grids copied out
+            /// row by row (row i of a grid is its cells j, one run in memory), the sums made in plain arrays and copied in.</summary>
+            void RecountAll()
+            {
+                int size = _ni * _nj, nz = _p.Nz;
+                var st = new byte[size]; var door = new bool[size]; var keepTall = new bool[size];
+                for (int a = 0; a < _ni; a++)
+                {
+                    int from = (_i0 + a) * nz + _j0;
+                    Buffer.BlockCopy(_p.State, from, st, a * _nj, _nj);
+                    Buffer.BlockCopy(_p.KeepDoor, from, door, a * _nj, _nj);
+                    Buffer.BlockCopy(_p.KeepTall, from, keepTall, a * _nj, _nj);
+                }
+                int w = _ni + 1;
+                var sum = new int[_nj * w]; var sumTall = new int[_nj * w];
+                for (int b = 0; b < _nj; b++)
+                {
+                    int row = b * w;
+                    for (int a = 0; a < _ni; a++)
+                    {
+                        int k = a * _nj + b;
+                        int bad = !_open[k] || st[k] != FloorPlan.Free || door[k] ? 1 : 0;
+                        int tall = bad == 1 || keepTall[k] ? 1 : 0;
+                        sum[row + a + 1] = sum[row + a] + bad;
+                        sumTall[row + a + 1] = sumTall[row + a] + tall;
+                    }
+                }
+                Buffer.BlockCopy(sum, 0, _bad, 0, sum.Length * sizeof(int));
+                Buffer.BlockCopy(sumTall, 0, _badTall, 0, sumTall.Length * sizeof(int));
             }
             /// <summary>_inRoom as one run, (a, b) at a * _nj + b: what the hot loops read.</summary>
             readonly bool[] _open;
@@ -1041,9 +1071,10 @@ namespace UnturnedSim
                 bool[] met = sidesLeft > 0 ? new bool[sides.Count] : null;
                 foreach (var sd in sides) foreach (int c in sd) sideAt[c] = stamp;
                 // (the floor's grid as one run of bytes: row i is State[i, *], so the room's cell (a, b) is at (_i0 + a) * Nz + _j0 + b)
-                var state = System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(
-                    ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(_p.State), _p.State.Length);
-                int nz = _p.Nz, origin = _i0 * nz + _j0;
+                // (the room's box of the floor's grid copied out row by row -- row i of State is its cells j, one run in memory --
+                // so the walk reads a plain array, as the room's own (a, b) at a * nj + b)
+                var box = _box ??= new byte[size];
+                for (int a = 0; a < ni; a++) Buffer.BlockCopy(_p.State, (_i0 + a) * _p.Nz + _j0, box, a * nj, nj);
                 int head = 0, tail = 0;
                 // (a cell met: is it a target, a must, a side's?)
                 bool Met(int c)
@@ -1054,20 +1085,38 @@ namespace UnturnedSim
                             if (!met[s] && Array.IndexOf(sides[s], c) >= 0) { met[s] = true; sidesLeft--; }
                     return left == 0 && sidesLeft == 0;
                 }
-                seen[cells[0]] = stamp; queue[tail++] = cells[0];
-                if (Met(cells[0])) return true;
+                // (from the door or stair end nearest the middle of everything the walk must meet, rather than the first: the answer
+                // is the same from any of them -- every one must be met, and the pieces' sides and the musts with them -- and a walk
+                // from a far corner covered the whole room before it met the last)
+                int start = cells[0];
+                if (cells.Count > 1)
+                {
+                    int Far(int s)
+                    {
+                        int sa = s / nj, sb = s - sa * nj, far = 0;
+                        void At(int q) { int qa = q / nj, d = Math.Abs(qa - sa) + Math.Abs(q - qa * nj - sb); if (d > far) far = d; }
+                        foreach (int q in cells) At(q);
+                        foreach (int q in musts) At(q);
+                        foreach (var sd in sides) At(sd[0]);
+                        return far;
+                    }
+                    int best = int.MaxValue;
+                    foreach (int s in cells) { int f = Far(s); if (f < best) { best = f; start = s; } }
+                }
+                seen[start] = stamp; queue[tail++] = start;
+                if (Met(start)) return true;
                 while (head < tail)
                 {
-                    int c = queue[head++], a = c / nj, b = c - a * nj, g = origin + a * nz + b;
+                    int c = queue[head++], a = c / nj, b = c - a * nj;
                     // (the four neighbours: +a, -a, +b, -b)
-                    if (a + 1 < ni) { int n = c + nj; if (seen[n] != stamp && open[n] && state[g + nz] == FloorPlan.Free) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
-                    if (a > 0) { int n = c - nj; if (seen[n] != stamp && open[n] && state[g - nz] == FloorPlan.Free) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
-                    if (b + 1 < nj) { int n = c + 1; if (seen[n] != stamp && open[n] && state[g + 1] == FloorPlan.Free) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
-                    if (b > 0) { int n = c - 1; if (seen[n] != stamp && open[n] && state[g - 1] == FloorPlan.Free) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
+                    if (a + 1 < ni) { int n = c + nj; if (seen[n] != stamp && box[n] == FloorPlan.Free && open[n]) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
+                    if (a > 0) { int n = c - nj; if (seen[n] != stamp && box[n] == FloorPlan.Free && open[n]) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
+                    if (b + 1 < nj) { int n = c + 1; if (seen[n] != stamp && box[n] == FloorPlan.Free && open[n]) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
+                    if (b > 0) { int n = c - 1; if (seen[n] != stamp && box[n] == FloorPlan.Free && open[n]) { seen[n] = stamp; queue[tail++] = n; if ((goal[n] == stamp || sideAt[n] == stamp) && Met(n)) return true; } }
                 }
                 return false;
             }
-            int[] _seen, _queue, _goal, _sideAt; int _stamp;
+            int[] _seen, _queue, _goal, _sideAt; byte[] _box; int _stamp;
             /// <summary>The clear cell of this room nearest (x, z), within `reach` cells (0.4 m), as an index into the room's
             /// box; -1 if none.</summary>
             int Nearest(float x, float z, int reach = 4)
@@ -1314,18 +1363,38 @@ namespace UnturnedSim
 
             /// <summary>Wall faces looking into this room along (nx, nz): the room's clear cells with a wall cell right
             /// behind them, gathered into straight runs -- (the face's coordinate across, the run's ends along).</summary>
+            /// <summary>Which cells of the room's box, and of the ring of cells round it, are wall on the floor's grid (State ==
+            /// Wall), at (a + 1) * (_nj + 2) + (b + 1); none past the grid's edge. Made once: no cell becomes or stops being wall
+            /// while a storey is furnished.</summary>
+            bool[] WallMask()
+            {
+                if (_wallMask != null) return _wallMask;
+                int w = _nj + 2;
+                var m = new bool[(_ni + 2) * w];
+                var row = new byte[w];
+                for (int a = -1; a <= _ni; a++)
+                {
+                    int i = _i0 + a;
+                    if (i < 0 || i >= _p.Nx) continue;
+                    int j0 = Math.Max(0, _j0 - 1), j1 = Math.Min(_p.Nz - 1, _j0 + _nj);
+                    Buffer.BlockCopy(_p.State, i * _p.Nz + j0, row, 0, j1 - j0 + 1);
+                    for (int j = j0; j <= j1; j++) m[(a + 1) * w + (j - _j0 + 1)] = row[j - j0] == FloorPlan.Wall;
+                }
+                return _wallMask = m;
+            }
+            bool[] _wallMask;
             List<(float Face, float Lo, float Hi)> Faces(int nx, int nz)
             {
                 if (_faces.TryGetValue((nx, nz), out var cached)) return cached;
                 var hits = new Dictionary<int, List<int>>();
-                var state = Flat(_p.State); int pnx = _p.Nx, pnz = _p.Nz;
+                var wall = WallMask(); int w = _nj + 2;
                 for (int i = _i0; i < _i0 + _ni; i++)
                     for (int j = _j0; j < _j0 + _nj; j++)
                     {
-                        int bi = i - nx, bj = j - nz;
-                        if (bi < 0 || bj < 0 || bi >= pnx || bj >= pnz) continue;
-                        if (state[bi * pnz + bj] != FloorPlan.Wall || state[i * pnz + j] == FloorPlan.Wall) continue;
-                        if (!_open[(i - _i0) * _nj + (j - _j0)]) continue;
+                        int a = i - _i0, b = j - _j0;
+                        // (the cell behind, and this one, by the mask: a cell past the plan's grid is no wall)
+                        if (!wall[(a - nx + 1) * w + (b - nz + 1)] || wall[(a + 1) * w + (b + 1)]) continue;
+                        if (!_open[a * _nj + b]) continue;
                         int key = nx != 0 ? i : j, along = nx != 0 ? j : i;
                         if (!hits.TryGetValue(key, out var l)) hits[key] = l = new List<int>();
                         l.Add(along);
